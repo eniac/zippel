@@ -1,0 +1,4 @@
+[workspace]
+
+members = ["lang", "share"]
+resolver = "2"

@@ -1,0 +1,126 @@
+WHITESPACE = _{ " " | "\n" | "\t" }
+lower = @{ 'a'..'z' }
+upper = @{ 'A'..'Z' }
+positive = @{ ASCII_DIGIT+ }
+negative = @{ "-" ~ ASCII_DIGIT+ }
+one = @{ "1" }
+two = @{ "2" }
+int = @{ positive | negative }
+colon = @{ ":" }
+add_op = @{ "+" }
+sub_op = @{ "-" }
+mul_op = @{ "*" }
+div_op = @{ "/" }
+pow_op = @{ "^" }
+dot_op = @{ "." }
+concat_op = @{ "++" }
+eq_op = @{ "==" }
+le_op = @{ "<=" }
+lt_op = @{ "<" }
+ge_op = @{ ">=" }
+gt_op = @{ ">" }
+and_op = @{ "&&" }
+or_op  = @{ "||" }
+
+/// Identifiers for functions, variables and types
+id   = @{ lower ~ (lower | upper | "_" | "-" | "'" )* }
+tid  = @ { upper ~ (lower | upper | "_" | "'" )* }
+ids  = _{ id ~ ("," ~ id)* }
+tids = _{ tid ~ ("," ~ tid)* }
+
+/// Type-level size arithmetic
+lin_ty = _{ lin_ty_term ~ (lin_op ~ lin_ty_term)* }
+    lin_op      = _{ add_op | sub_op }
+    lin_ty_term = _{ "(" ~ lin_ty ~ ")" | positive | tid | lin_mul }
+    lin_mul     = { positive ~ mul_op ~ lin_ty_term }
+
+bin_ty   = _{ one | two | bin_ty_term }
+    bin_ty_term = { two ~ pow_op ~ lin_ty }
+
+size_ty  = _{ size_ty_term ~ (size_ty_op ~ size_ty_term)* ~ (div_op ~ bin_ty)* }
+    size_ty_op   = { add_op | sub_op | mul_op }
+    size_ty_term = _{ "(" ~ size_ty ~ ")" | bin_ty | positive }
+
+/// Base kinds
+kind_ty = { "Field" | "Group" | "Size" }
+
+/// Derived kinds
+base_ty = _{ scalar_ty | pairing_ty | multiplicative_ty | tid }
+    scalar_ty         = { "Scalar" ~ "<" ~ tid ~ ">" }
+    pairing_ty        = { "Pairing" ~ "<" ~ tid ~ "," ~ tid ~ ">" }
+    multiplicative_ty = { "Multiplicative" ~ "<" ~ tid ~ ">" }
+
+typ = _{ base_ty | uni_ty | mle_ty | vec_ty | fin_ty }
+    uni_ty = { "Uni" ~ "<" ~ base_ty ~ "," ~ size_ty ~ ">" }              // Univariate polynomial
+    mle_ty = { "Mle" ~ "<" ~ base_ty ~ "," ~ size_ty ~ ">" }              // Multilinear expression
+    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }                               // Index type
+    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                          // Vector type
+
+/// Type variable declarations
+tdecl  = { tid ~ colon ~ kind_ty }
+tdecls = _{ tdecl ~ ("," ~ tdecl)* }
+
+/// Ranges appear in types and expressions
+range = { size_ty ~ ("," ~ bin_ty)? ~ ".." ~ size_ty }
+
+/// Function and protocol arguments
+arg = { qualifier ~ id ~ ":" ~ typ }
+   qualifier = { "public" | "private" }
+args = _{ arg ~ ("," ~ arg)* }
+
+/// Arithmetic expression language of Zippel
+aexp       = { aexp_term ~ (bin_op ~ aexp_term)* }
+aexp_term  = _{ "(" ~ aexp ~ ")"
+         | id
+         | int
+         | gen_exp
+         | coef_exp
+         | mle_exp
+         | interp_exp
+         | challenge_exp
+         | random_exp
+         | vec_exp
+         | map_exp
+         | index_exp
+         | range_exp
+         | app_exp
+         | reduce_exp
+         | assert_exp
+         | verify_exp
+         | let_exp
+         | log_exp
+    }
+    gen_exp       = { "gen" ~ "<" ~ tid ~ ">" }                                   // Group generator
+    coef_exp      = { "coef" ~ aexp  }                                            // Create a univariate polynomial
+    mle_exp       = { "mle"  ~ aexp  }                                            // Create a multilinear expression
+    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ "," ~ aexp ~ ")" }             // Interpolate (FFT) with domain and values
+    random_exp    = { "random" ~ "<" ~ typ ~ ">" }                                // Uniform random sampling (Prover)
+    challenge_exp = { "challenge" ~ "<" ~ typ ~ ">" }                             // Random oracle challenge (Verifier)
+    vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }                          // vector of elements
+    map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }               // Map comprehension
+    index_exp     = { id ~ "[" ~ aexp ~ "]" }                                     // Index or slice into a vector
+    range_exp     = { range }                                                     // Range expression
+    app_exp       = { id ~ "(" ~ aexps ~ ")" }                                    // Function application
+    reduce_exp    = { "reduce" ~ "(" ~ bin_op ~ "," ~ aexp }                      // Fold over vector with binary operator
+    assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" ~ ";" ~ aexp }                  // Assertion (Prover) expression
+    verify_exp    = { "verify" ~ "(" ~ bexp ~ ")" ~ ";" ~ aexp }                  // Assertion (Verifier) expression
+    let_exp       = { "let" ~ id ~ ":=" ~ aexp ~ "in" ~ aexp }                    // Let expression
+    log_exp       = { id ~ "<-" ~ aexp ~ ";" ~ aexp }                             // Transcript log expression
+    bin_op        = _{ add_op | sub_op | mul_op | div_op | pow_op | dot_op | concat_op }
+aexps = _{ aexp ~ ("," ~ aexp)* }
+
+/// Binary expressions
+bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
+bexp_term = _{ "(" ~ bexp ~ ")" | app_bexp | eq_bexp }
+    app_bexp = { id ~ "(" ~ aexps ~ ")" }
+    eq_bexp  = { aexp ~ eq_op ~ aexp  }
+    bool_op  = _{ and_op | or_op }
+
+/// Declarations are either [protocols] or [functions]. Protocols end with a [verify] and functions end with an [AExp]
+decl = { proto_decl | func_decl }
+    proto_decl = { "proto" ~ id ~ ("<" ~ tdecls ~ ">")? ~ "(" ~ args ~ ")"
+                        ~ "where" ~ bexp ~ ":=" ~ aexp ~ ";" ~ "verify" ~ "(" ~ bexp ~ ")" ~ "." }
+    func_decl  = { "fn" ~ id ~ ("<" ~ tdecls ~ ">")? ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ ":=" ~ aexp ~ "." }
+
+/// Top-level module
+module = { SOI ~ decl* ~ EOI }
