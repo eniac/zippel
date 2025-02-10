@@ -5,8 +5,7 @@ use std::{
     ops::{Add, Div, Mul, Rem, Sub},
     rc::Rc,
 };
-use ark_ff::Field;
-use share::traits::Pretty;
+use share::Pretty;
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.

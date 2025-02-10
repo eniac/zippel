@@ -14,6 +14,8 @@ div_op = @{ "/" }
 pow_op = @{ "^" }
 dot_op = @{ "." }
 concat_op = @{ "++" }
+max_op = @{ "max" }
+min_op = @{ "min" }
 eq_op = @{ "==" }
 le_op = @{ "<=" }
 lt_op = @{ "<" }
@@ -28,21 +30,19 @@ tid  = @ { upper ~ (lower | upper | "_" | "'" )* }
 ids  = _{ id ~ ("," ~ id)* }
 tids = _{ tid ~ ("," ~ tid)* }
 
+/// Ranges appear in types and expressions
+range = { size_ty ~ ("," ~ size_ty)? ~ ".." ~ size_ty }
+
 /// Type-level size arithmetic
-lin_ty = _{ lin_ty_term ~ (lin_op ~ lin_ty_term)* }
-    lin_op      = _{ add_op | sub_op }
-    lin_ty_term = _{ "(" ~ lin_ty ~ ")" | positive | tid | lin_mul }
-    lin_mul     = { positive ~ mul_op ~ lin_ty_term }
-
-bin_ty   = _{ one | two | bin_ty_term }
-    bin_ty_term = { two ~ pow_op ~ lin_ty }
-
-size_ty  = _{ size_ty_term ~ (size_ty_op ~ size_ty_term)* ~ (div_op ~ bin_ty)* }
-    size_ty_op   = { add_op | sub_op | mul_op }
-    size_ty_term = _{ "(" ~ size_ty ~ ")" | bin_ty | positive }
+size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
+    size_bin_op   = _{ add_op | sub_op | mul_op | div_op }
+    size_unary    = { two ~ pow_op ~ size_ty_term }
+    size_max      = { max_op ~ "(" ~ size_ty_term ~ "," ~ size_ty_term ~ ")" }
+    size_min      = { min_op ~ "(" ~ size_ty_term ~ "," ~ size_ty_term ~ ")" }
+    size_ty_term  = _{ "(" ~ size_ty ~ ")" | size_unary | upper | positive | size_max | size_min }
 
 /// Base kinds
-kind_ty = { "Field" | "Group" | "Size" }
+kind_ty = { "Field" | "Group" | range }
 
 /// Derived kinds
 base_ty = _{ scalar_ty | pairing_ty | multiplicative_ty | tid }
@@ -59,9 +59,6 @@ typ = _{ base_ty | uni_ty | mle_ty | vec_ty | fin_ty }
 /// Type variable declarations
 tdecl  = { tid ~ colon ~ kind_ty }
 tdecls = _{ tdecl ~ ("," ~ tdecl)* }
-
-/// Ranges appear in types and expressions
-range = { size_ty ~ ("," ~ bin_ty)? ~ ".." ~ size_ty }
 
 /// Function and protocol arguments
 arg = { qualifier ~ id ~ ":" ~ typ }
@@ -81,7 +78,7 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | random_exp
          | vec_exp
          | map_exp
-         | index_exp
+         | ram_exp
          | range_exp
          | app_exp
          | reduce_exp
@@ -98,8 +95,9 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
     challenge_exp = { "challenge" ~ "<" ~ typ ~ ">" }                             // Random oracle challenge (Verifier)
     vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }                          // vector of elements
     map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }               // Map comprehension
-    index_exp     = { id ~ "[" ~ aexp ~ "]" }                                     // Index or slice into a vector
-    range_exp     = { range }                                                     // Range expression
+    ram_exp       = { id ~ "[" ~ aexp ~ "]" }                                     // Randm access into a vector
+    range_exp     = _{ range }                                                    // Range expression
+    index_exp     = _{ size_ty }                                                  // Index expression
     app_exp       = { id ~ "(" ~ aexps ~ ")" }                                    // Function application
     reduce_exp    = { "reduce" ~ "(" ~ bin_op ~ "," ~ aexp }                      // Fold over vector with binary operator
     assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" ~ ";" ~ aexp }                  // Assertion (Prover) expression

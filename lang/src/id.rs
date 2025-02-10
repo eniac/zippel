@@ -1,7 +1,4 @@
-use crate::context::Set;
-use crate::traits::Pretty;
-
-use pretty::{DocAllocator, DocBuilder};
+use share::{Pretty, Set, DocAllocator, DocBuilder};
 use std::fmt;
 
 /// Generate a new identifier not in the set

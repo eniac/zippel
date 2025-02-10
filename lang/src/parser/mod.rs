@@ -1,3 +1,6 @@
+mod error;
+pub use error::InputError;
+
 use pest_derive::Parser;
 
 /// Pest parser for zippel
