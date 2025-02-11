@@ -17,8 +17,8 @@ pub enum Kind {
     Multiplicative(Tid),
     /// Pairing-friendly groups
     Pairing(Tid, Tid),
-    /// Finite size
-    Fin(Range<usize>)
+    /// Range of numbers
+    Range(Range<usize>)
 }
 
 impl Kind {
@@ -64,9 +64,10 @@ impl Kind {
         }
     }
 
-    pub fn in_fin(&self, x: &usize) -> bool {
+    pub fn in_range(&self, x: &usize) -> bool {
         match self {
-            Kind::Fin(a, b) => a <= x && x <= b,
+            Kind::Range(r) =>
+                r.start <= *x && *x <= r.step * r.end && *x % r.step == 0,
             _ => false,
         }
     }
@@ -87,7 +88,7 @@ where
             Kind::Multiplicative(f) => allocator.text(format!("Multiplicative({})", f)),
             Kind::Group => allocator.text(format!("Group")),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing({}, {})", g1, g2)),
-            Kind::Fin(r) => allocator.concat([
+            Kind::Range(r) => allocator.concat([
                 allocator.text("Fin("),
                 r.pretty(allocator),
                 allocator.text(")")
@@ -105,5 +106,31 @@ impl fmt::Display for Kind {
         <Kind as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
+    }
+}
+
+impl<'pest> FromPest<'pest> for Kind {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::kind_ty => Kind::from_pest(&mut pair.into_inner()),
+            Rule::field_ty => Ok(Kind::Field),
+            Rule::group_ty => Ok(Kind::Group),
+            Rule::scalar_ty => Ok(Kind::Scalar(Tid::from_pest(&mut pair.into_inner())?)),
+            Rule::multiplicative_ty => Ok(Kind::Multiplicative(Tid::from_pest(&mut pair.into_inner())?)),
+            Rule::pairing_ty => {
+                let mut inner = pair.into_inner();
+                let g1 = Tid::from_pest(&mut inner)?;
+                let g2 = Tid::from_pest(&mut inner)?;
+                Ok(Kind::Pairing(g1, g2))
+            }
+            Rule::range => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
+            _ => unreachable!(),
+        }
     }
 }

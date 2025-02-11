@@ -19,12 +19,10 @@ lazy_static! {
         PrattParser::new()
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
             .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left))
-            .op(Op::infix(pow_op, Right))
-            .op(Op::infix(max_op, Left) | Op::infix(min_op, Left))
     };
 }
 
-impl<'pest> FromPest<'pest> for BExp<Nothing> {
+impl<'pest> FromPest<'pest> for Size {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 
@@ -33,35 +31,38 @@ impl<'pest> FromPest<'pest> for BExp<Nothing> {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         SIZE_PARSER
             .map_primary(|pair| match pair.as_rule() {
-                // LEF: Copied from BExp parser, adapt to size_ty from zippel.pest
-                Rule::eq_bexp => {
+                Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
+                Rule::size_unary => Ok(Size::bin(Size::from_pest(&mut pair.into_inner())?)),
+                Rule::size_max => {
                     let mut inner = pair.into_inner();
-                    Ok(BExp::eq(
-                        AExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
+                    Ok(Size::max(
+                        Size::from_pest(&mut inner)?,
+                        Size::from_pest(&mut inner)?
                     ))
                 },
-                Rule::app_bexp => {
+                Rule::size_min => {
                     let mut inner = pair.into_inner();
-                    let func = Fid::from_pest(&mut inner)?;
-                    let mut ve = Vec::new();
-                    for x in inner {
-                        ve.push(AExp::from_pest(&mut Pairs::single(x))?);
-                    }
-                    Ok(BExp::app(func, ve))
+                    Ok(Size::min(
+                        Size::from_pest(&mut inner)?,
+                        Size::from_pest(&mut inner)?
+                    ))
                 },
-                Rule::bexp => BExp::from_pest(&mut pair.into_inner()),
+                Rule::upper => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
+                Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
                 _ => unreachable!()
             })
             .map_infix(|lhs, op, rhs|
                 match op.clone().as_rule() {
-                    Rule::and_op => Ok(BExp::and(lhs?, rhs?)),
-                    Rule::or_op => Ok(BExp::or(lhs?, rhs?)),
+                    Rule::add_op => Ok(lhs? + rhs?),
+                    Rule::sub_op => Ok(lhs? - rhs?),
+                    Rule::mul_op => Ok(lhs? * rhs?),
+                    Rule::div_op => Ok(lhs? / rhs?),
                     _ => unreachable!(),
                 })
             .parse(expression)
     }
 }
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Size {
     Var(Tid),            // N
@@ -328,55 +329,6 @@ impl<'a> fmt::Display for Size {
     }
 }
 
-impl<'pest> FromPest<'pest> for Size {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
-            Rule::
-            Rule::typ => Typ::from_pest(&mut pair.into_inner()), // Go into typ here
-            Rule::tid => Ok(Typ::Base(Tid::from_pest(&mut pair.into_inner())?)),
-            Rule::uni_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Uni(id, size))
-            }
-            Rule::mle_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Mle(id, size))
-            }
-            Rule::ind_ty =>
-                Ok(Typ::Index(Range::from_pest(&mut pair.into_inner())?)),
-            Rule::vec_ty => {
-                let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
-                let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Vec(id, size))
-            }
-            Rule::mat_ty => {
-                let mut innest = pair.into_inner();
-                let base = Tid::from_pest(&mut innest)?;
-                // Lef: The Pratt parser is too greedy.
-                // Split A1, A2 in [F; A1, A2] before calling it.
-                let mut pn = Pairs::single(innest.next().ok_or(ConversionError::NoMatch)?);
-                let mut pm = Pairs::single(innest.next().ok_or(ConversionError::NoMatch)?);
-                let n = Size::from_pest(&mut pn)?;
-                let m = Size::from_pest(&mut pm)?;
-                Ok(Typ::Mat(base, n, m))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
 /// Arbitrary instance for Size
 #[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
@@ -399,6 +351,27 @@ impl<'a> Arbitrary<'a> for Size {
             _ => unreachable!(),
         })
     }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+/// Parser tests
+////////////////////////////////////////////////////////////////////////////////////////
+#[test]
+fn size_parser() {
+    let mut pairs = ZippelParser.parse(Rule::qualifier, "N+1").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") + 1);
+
+    pairs = ZippelParser.parse(Rule::qualifier, "2*N+1").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N")*2 + 1);
+
+    pairs = ZippelParser.parse(Rule::qualifier, "2^N*2").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::bin(Size::varstr("N"))*2);
+
+    pairs = ZippelParser.parse(Rule::qualifier, "2^(N-1) / N").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::bin(Size::varstr("N") - 1) / Size::varstr("N"));
+
+    pairs = ZippelParser.parse(Rule::qualifier, "max(3, 4)").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::max(Size::lit(3), Size::lit(4)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

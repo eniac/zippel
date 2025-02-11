@@ -2,7 +2,7 @@ use thiserror::Error;
 use pest::iterators::Pair;
 
 use crate::id::Fid;
-use parser::derive::Rule;
+use crate::parser::Rule;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {

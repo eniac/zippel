@@ -1,15 +1,14 @@
-use std::convert::From;
 use std::fmt;
-use std::ops::{Add, Div, Mul, Rem, Sub};
 use share::{Pretty, Traversable1, Traversable2, DocAllocator, DocBuilder, Ctx, Set};
 
 use crate::typ::TypeVar;
 use crate::id::{Tid, Vid, Fid};
-use crate::typ::{Typ, Size, Bin, Nothing};
-use exp::{AExp, BExp, Arg};
+use crate::typ::{Typ, Size};
+use crate::arg::Arg;
+use crate::exp::{AExp, BExp};
 
 /// Different kinds of declarations in zippel programming language.
-/// It is parametrized by `A` the type of annotations.
+/// It is parametrized by `T` the type of annotations.
 #[derive(PartialEq, Eq, Clone)]
 pub enum Decl<N, T> {
     /// A protocol declaration.

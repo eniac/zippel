@@ -26,3 +26,20 @@ impl<'a> Pretty<'_, BoxAllocator, ()> for &'a str {
         self.is_empty()
     }
 }
+
+impl<'a, D, A, X, Y> Pretty<'a, D, A> for (X, Y)
+    where
+        X: Pretty<'a, D, A>,
+        Y: Pretty<'a, D, A>,
+        A: 'a,
+        D: DocAllocator<'a, A> {
+
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        let (x, y) = self;
+        x.pretty(allocator).append(allocator.text(", ")).append(y.pretty(allocator))
+    }
+
+    fn is_nil(&self) -> bool {
+        self.0.is_nil() && self.1.is_nil()
+    }
+}

@@ -23,6 +23,7 @@ ge_op = @{ ">=" }
 gt_op = @{ ">" }
 and_op = @{ "&&" }
 or_op  = @{ "||" }
+in_op  = @{ "in" }
 
 /// Identifiers for functions, variables and types
 id   = @{ lower ~ (lower | upper | "_" | "-" | "'" )* }
@@ -42,19 +43,18 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | size_unary | upper | positive | size_max | size_min }
 
 /// Base kinds
-kind_ty = { "Field" | "Group" | range }
-
-/// Derived kinds
-base_ty = _{ scalar_ty | pairing_ty | multiplicative_ty | tid }
+kind_ty = { field_ty | group_ty | range | scalar_ty | pairing_ty | multiplicative_ty }
+    field_ty          = { "Field" }
+    group_ty          = { "Group" }
     scalar_ty         = { "Scalar" ~ "<" ~ tid ~ ">" }
     pairing_ty        = { "Pairing" ~ "<" ~ tid ~ "," ~ tid ~ ">" }
     multiplicative_ty = { "Multiplicative" ~ "<" ~ tid ~ ">" }
 
-typ = _{ base_ty | uni_ty | mle_ty | vec_ty | fin_ty }
-    uni_ty = { "Uni" ~ "<" ~ base_ty ~ "," ~ size_ty ~ ">" }              // Univariate polynomial
-    mle_ty = { "Mle" ~ "<" ~ base_ty ~ "," ~ size_ty ~ ">" }              // Multilinear expression
-    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }                               // Index type
-    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                          // Vector type
+typ = _{ tid | uni_ty | mle_ty | vec_ty | fin_ty }
+    uni_ty = { "Uni" ~ "<" ~ tid ~ "," ~ size_ty ~ ">" }              // Univariate polynomial
+    mle_ty = { "Mle" ~ "<" ~ tid ~ "," ~ size_ty ~ ">" }              // Multilinear expression
+    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }                           // Index type
+    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                      // Vector type
 
 /// Type variable declarations
 tdecl  = { tid ~ colon ~ kind_ty }
@@ -112,7 +112,7 @@ bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
 bexp_term = _{ "(" ~ bexp ~ ")" | app_bexp | eq_bexp }
     app_bexp = { id ~ "(" ~ aexps ~ ")" }
     eq_bexp  = { aexp ~ eq_op ~ aexp  }
-    bool_op  = _{ and_op | or_op }
+    bool_op  = _{ and_op | or_op | in_op }
 
 /// Declarations are either [protocols] or [functions]. Protocols end with a [verify] and functions end with an [AExp]
 decl = { proto_decl | func_decl }
