@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::Hash;
-use crate::traits::Pretty;
+use crate::traits::{Traversable2, Pretty};
 use pretty::{DocAllocator, DocBuilder, BoxAllocator};
 
 /// General BTreeMap context

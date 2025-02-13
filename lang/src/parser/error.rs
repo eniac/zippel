@@ -1,5 +1,6 @@
 use thiserror::Error;
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::Pair;
+use pest::error::Error as PestError;
 
 use crate::id::Fid;
 use crate::range::Range;

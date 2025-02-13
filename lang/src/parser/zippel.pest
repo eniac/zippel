@@ -112,4 +112,4 @@ decl = { proto_decl | func_decl }
     func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ aexps ~ "}" }
 
 /// Top-level module
-module = { SOI ~ decl* ~ EOI }
+decls = { SOI ~ decl* ~ EOI }

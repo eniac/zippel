@@ -1,8 +1,9 @@
 use crate::id::Tid;
+use crate::range::Range;
 use crate::typ::kind::Kind;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
-use pest::{Parser, iterators::Pairs};
+use pest::iterators::Pairs;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
@@ -13,10 +14,29 @@ impl TypeVar {
     pub fn new<'a>(id: &'a str, kind: Kind) -> Self {
         TypeVar { id: Tid::new(id), kind }
     }
+
+    pub fn get_range(&self) -> Option<&Range<usize>> {
+        self.kind.get_range()
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeVars(Vec<TypeVar>);
+
+impl IntoIterator for TypeVars {
+    type Item = TypeVar;
+    type IntoIter = std::vec::IntoIter<TypeVar>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<TypeVar> for TypeVars {
+    fn from_iter<I: IntoIterator<Item = TypeVar>>(iter: I) -> Self {
+        TypeVars(iter.into_iter().collect())
+    }
+}
 
 impl<'pest> FromPest<'pest> for TypeVar {
     type Rule = Rule;
@@ -111,6 +131,7 @@ impl fmt::Display for TypeVars {
     }
 }
 
+#[cfg(test)] use pest::Parser;
 #[test]
 fn typevars_parser() {
     let ex = "A: Field, B: Group, C: Scalar<A>, D: Multiplicative<B>, E: Pairing<A, B>, F: 0..10";

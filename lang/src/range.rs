@@ -1,6 +1,5 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use pest::Parser;
 use std::fmt;
 
 use share::{Pretty, Traversable1, Ctx};
@@ -8,7 +7,7 @@ use share::{DocAllocator, DocBuilder, BoxAllocator};
 use crate::typ::Size;
 use crate::parser::*;
 
-/// Represents a range of numbers (potentially open)
+/// Represents a range of numbers
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct Range<N> {
     pub start : N,
@@ -16,9 +15,17 @@ pub struct Range<N> {
     pub end : N
 }
 
-impl<N> Range<N> {
-    pub fn new(start: N, step: N, end: N) -> Self {
-        Range { start, step, end }
+impl Iterator for Range<usize> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start >= self.end {
+            None
+        } else {
+            let current = self.start;
+            self.start = self.start.saturating_add(self.step);
+            Some(current)
+        }
     }
 }
 
@@ -78,7 +85,7 @@ impl<'pest> FromPest<'pest> for Range<usize> {
         let start = r.start.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.start)))?;
         let step = r.step.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.step)))?;
         let end = r.end.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.end)))?;
-        let rs = Range::new(start as usize, step as usize, end as usize);
+        let rs = Range { start: start as usize, step: step as usize, end: end as usize };
         if (start <= end) && ((end - start) % step == 0) {
             Ok(rs)
         } else {
@@ -102,12 +109,12 @@ impl<'pest> FromPest<'pest> for Range<Size> {
                     let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    Ok(Range::new(start, step, end))
+                    Ok(Range { start, step, end })
                 } else {
                     dbg!(&inner);
                     let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    Ok(Range::new(start, Size::one(), end))
+                    Ok(Range { start, step: Size::one(), end })
                 }
             },
             _ => unreachable!()
@@ -115,11 +122,12 @@ impl<'pest> FromPest<'pest> for Range<Size> {
     }
 }
 
+#[cfg(test)] use pest::Parser;
 #[test]
 fn range_parser() {
     let mut pairs = ZippelParser::parse(Rule::range, "0..10").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::one(), Size::from(10)));
+    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::one(), end: Size::from(10) });
 
     pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::from(2), Size::from(2) ^ Size::from("N")));
+    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::from(2), end: Size::from(2) ^ Size::from("N") });
 }

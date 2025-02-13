@@ -1,12 +1,10 @@
 use from_pest::{ConversionError, FromPest};
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
 use std::fmt;
-use pest::Parser;
-use thiserror::Error;
 use lazy_static::lazy_static;
-use itertools::Itertools;
+use thiserror::Error;
 
 use crate::id::Tid;
 use crate::parser::*;
@@ -26,6 +24,20 @@ pub enum Size {
     Pow(Box<Size>, Box<Size>), // A ^ B
     Max(Box<Size>, Box<Size>), // max(A, B)
     Min(Box<Size>, Box<Size>), // min(A, B)
+}
+
+#[derive(Error, Debug)]
+pub enum EvalError {
+    #[error("Division by zero: {0} / {1}")]
+    DivisionByZero(Size, Size),
+    #[error("Modulo by zero: {0} % {1}")]
+    ModuloByZero(Size, Size),
+    #[error("Negative exponentiation: {0} ^ {1}")]
+    NegativeExponentiation(Size, Size),
+    #[error("Negative variable value: {0}")]
+    NegativeVariableValue(Size),
+    #[error("Variable not found: {0}")]
+    VariableNotFound(Tid),
 }
 
 impl Size {
@@ -72,70 +84,64 @@ impl Size {
         }
     }
 
-    pub fn eval(&self, ctx: &Ctx<Tid, u8>) -> Option<u64> {
+    pub fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
         match self {
-            Size::Var(id) => ctx.get(id).map(|&x| x as u64),
-            Size::Lit(i) => Some(*i as u64),
+            Size::Var(id) =>
+                ctx.get(id).map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x as usize)),
+            Size::Lit(i) => Ok(*i as usize),
             Size::Add(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x + y)
+                Ok(x + y)
             }
             Size::Sub(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x - y)
+                Ok(x - y)
             }
             Size::Mul(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x * y)
+                Ok(x * y)
             }
             Size::Div(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
                 if y != 0 {
-                    Some(x / y)
+                    Ok(x / y)
                 } else {
-                    None
+                    Err(EvalError::DivisionByZero(a.clone(), b.clone()))
                 }
             }
             Size::Mod(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
                 if y != 0 {
-                    Some(x % y)
+                    Ok(x % y)
                 } else {
-                    None
+                    Err(EvalError::ModuloByZero(a.clone(), b.clone()))
                 }
             }
             Size::Pow(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x.pow(y as u32))
+                if y >= 0 {
+                    Ok(x.pow(y as u32))
+                } else {
+                    Err(EvalError::NegativeExponentiation(a.clone(), b.clone()))
+                }
             }
             Size::Max(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x.max(y))
+                Ok(x.max(y))
             }
             Size::Min(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Some(x.min(y))
+                Ok(x.min(y))
             }
         }
-    }
-
-    pub fn multieval(&self, ctx: Ctx<Tid, Set<u8>>) -> Set<u64> {
-        let free = self.free_vars();
-
-        ctx.into_iter()
-               .filter(|(k, _)| free.contains(k))
-               .map(|(k, v)| v.into_iter().map(|x| (k.clone(), x)).collect::<Vec<_>>())
-               .multi_cartesian_product()
-               .filter_map(|vals| self.eval(&Ctx::from(vals)))
-               .collect::<Set<u64>>()
     }
 }
 
@@ -489,6 +495,7 @@ impl<'a> Arbitrary<'a> for Size {
 ////////////////////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////////////////////
+#[cfg(test)] use pest::Parser;
 #[test]
 fn size_parser() {
     let mut pairs = ZippelParser::parse(Rule::size_ty, "N+1").unwrap();

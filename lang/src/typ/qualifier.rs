@@ -1,6 +1,5 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use pest::Parser;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -83,6 +82,7 @@ impl<'pest> FromPest<'pest> for Qualifier {
     }
 }
 
+#[cfg(test)] use pest::Parser;
 #[test]
 fn qualifier_parser() {
     let mut pairs = ZippelParser::parse(Rule::qualifier, "private").unwrap();

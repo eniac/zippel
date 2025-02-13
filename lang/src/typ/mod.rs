@@ -7,7 +7,7 @@ mod nothing;
 pub use crate::id::Tid;
 pub use crate::range::Range;
 pub use kind::Kind;
-pub use size::Size;
+pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;

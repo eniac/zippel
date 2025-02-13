@@ -33,6 +33,22 @@ pub trait Traversable2<B>: Sized {
     }
 }
 
+/// Traverse a structure on the 2nd type argument and apply a function
+pub trait Traversable3<C>: Sized {
+    type Output<Z>;
+
+    fn traverse3<Z, E>(self, f: &mut dyn FnMut(C) -> Result<Z, E>) -> Result<Self::Output<Z>, E>
+    where
+        Self::Output<Z>: Traversable3<Z>;
+
+    /// Derived function [map2]; traverse2 with no errors
+    fn map3<Z>(self, f: &mut dyn FnMut(C) -> Z) -> Self::Output<Z>
+    where
+        Self::Output<Z>: Traversable3<Z> {
+        Self::traverse3::<Z, ()>(self, &mut |a| Ok(f(a))).unwrap()
+    }
+}
+
 /// [Box] is a [Traversable1]
 impl<A> Traversable1<A> for Box<A> {
     type Output<Z> = Box<Z>;

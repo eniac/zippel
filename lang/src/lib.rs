@@ -5,6 +5,7 @@ mod decl;
 mod range;
 mod arg;
 mod typ;
+mod module;
 pub mod parser;
 
 pub use id::{Tid, Vid, Fid};

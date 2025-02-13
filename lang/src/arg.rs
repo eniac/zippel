@@ -1,6 +1,5 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use pest::Parser;
 use std::fmt;
 
 use share::{Traversable1, Pretty, DocAllocator, DocBuilder, BoxAllocator};
@@ -166,6 +165,7 @@ impl<'pest> FromPest<'pest> for Args<Size> {
     }
 }
 
+#[cfg(test)] use pest::Parser;
 #[test]
 fn arg_parser() {
     let ex = "public a: F, private foo: X";

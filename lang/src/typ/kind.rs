@@ -74,11 +74,10 @@ impl Kind {
             _ => false,
         }
     }
-    pub fn in_range(&self, x: &usize) -> bool {
+    pub fn get_range(&self) -> Option<&Range<usize>> {
         match self {
-            Kind::Range(r) =>
-                r.start <= *x && *x <= r.step * r.end && *x % r.step == 0,
-            _ => false,
+            Kind::Range(r) => Some(r),
+            _ => None,
         }
     }
 }
