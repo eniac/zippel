@@ -44,7 +44,7 @@ fn pair_proj1() {
     assert_eq!(pair.get_proj1(), &1);
     assert_eq!(pair.map_proj1(&mut |x| x + 1), (2, 2));
 
-    pair.modify_proj1(&mut |x| x + 2);
+    pair.modify_proj1(&mut |x| *x += 2);
     assert_eq!(pair.get_proj1(), &3);
 }
 
@@ -54,7 +54,7 @@ fn pair_proj2() {
     assert_eq!(pair.get_proj2(), &2);
     assert_eq!(pair.map_proj2(&mut |x| x + 1), (1, 3));
 
-    pair.modify_proj2(&mut |x| x + 2);
+    pair.modify_proj2(&mut |x| *x += 2);
     assert_eq!(pair.get_proj2(), &4);
 }
 

@@ -1,77 +1,29 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::{Pair, Pairs};
 use pest::pratt_parser::{Assoc, Op, PrattParser};
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
 use std::fmt;
+use pest::Parser;
 use thiserror::Error;
 use lazy_static::lazy_static;
+use itertools::Itertools;
 
 use crate::id::Tid;
 use crate::parser::*;
 use share::{Ctx, Set};
 use share::{Pretty, DocBuilder, DocAllocator, BoxAllocator};
 
-lazy_static! {
-    pub static ref SIZE_PARSER: PrattParser<Rule> = {
-        use Assoc::*;
-        use Rule::*;
-
-        PrattParser::new()
-            .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
-            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left))
-    };
-}
-
-impl<'pest> FromPest<'pest> for Size {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        expression: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        SIZE_PARSER
-            .map_primary(|pair| match pair.as_rule() {
-                Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
-                Rule::size_unary => Ok(Size::bin(Size::from_pest(&mut pair.into_inner())?)),
-                Rule::size_max => {
-                    let mut inner = pair.into_inner();
-                    Ok(Size::max(
-                        Size::from_pest(&mut inner)?,
-                        Size::from_pest(&mut inner)?
-                    ))
-                },
-                Rule::size_min => {
-                    let mut inner = pair.into_inner();
-                    Ok(Size::min(
-                        Size::from_pest(&mut inner)?,
-                        Size::from_pest(&mut inner)?
-                    ))
-                },
-                Rule::upper => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
-                Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
-                _ => unreachable!()
-            })
-            .map_infix(|lhs, op, rhs|
-                match op.clone().as_rule() {
-                    Rule::add_op => Ok(lhs? + rhs?),
-                    Rule::sub_op => Ok(lhs? - rhs?),
-                    Rule::mul_op => Ok(lhs? * rhs?),
-                    Rule::div_op => Ok(lhs? / rhs?),
-                    _ => unreachable!(),
-                })
-            .parse(expression)
-    }
-}
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Size {
     Var(Tid),            // N
     Lit(u32),            // 15
-    Bin(Box<Size>),      // 2^N
     Add(Box<Size>, Box<Size>), // A + B
     Sub(Box<Size>, Box<Size>), // A - B
     Mul(Box<Size>, Box<Size>), // A * B
     Div(Box<Size>, Box<Size>), // A / B
+    Mod(Box<Size>, Box<Size>), // A % B
+    Pow(Box<Size>, Box<Size>), // A ^ B
     Max(Box<Size>, Box<Size>), // max(A, B)
     Min(Box<Size>, Box<Size>), // min(A, B)
 }
@@ -83,10 +35,6 @@ impl Size {
 
     pub fn varstr<'a>(v: &'a str) -> Self {
         Size::var(Tid::from(v))
-    }
-
-    pub fn bin(b: Size) -> Self {
-        Size::Bin(Box::new(b))
     }
 
     pub fn max(a: Size, b: Size) -> Self {
@@ -113,11 +61,12 @@ impl Size {
         match self {
             Size::Var(id) => Set::from([id.clone()]),
             Size::Lit(_) => Set::new(),
-            Size::Bin(b) => b.free_vars(),
             Size::Add(a, b) => a.free_vars().union(b.free_vars()),
             Size::Sub(a, b) => a.free_vars().union(b.free_vars()),
             Size::Mul(a, b) => a.free_vars().union(b.free_vars()),
             Size::Div(a, b) => a.free_vars().union(b.free_vars()),
+            Size::Mod(a, b) => a.free_vars().union(b.free_vars()),
+            Size::Pow(a, b) => a.free_vars().union(b.free_vars()),
             Size::Max(a, b) => a.free_vars().union(b.free_vars()),
             Size::Min(a, b) => a.free_vars().union(b.free_vars()),
         }
@@ -127,7 +76,6 @@ impl Size {
         match self {
             Size::Var(id) => ctx.get(id).map(|&x| x as u64),
             Size::Lit(i) => Some(*i as u64),
-            Size::Bin(box b) => b.eval(ctx).map(|x| 1 << x),
             Size::Add(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
@@ -151,6 +99,20 @@ impl Size {
                 } else {
                     None
                 }
+            }
+            Size::Mod(box a, box b) => {
+                let x = a.eval(ctx)?;
+                let y = b.eval(ctx)?;
+                if y != 0 {
+                    Some(x % y)
+                } else {
+                    None
+                }
+            }
+            Size::Pow(box a, box b) => {
+                let x = a.eval(ctx)?;
+                let y = b.eval(ctx)?;
+                Some(x.pow(y as u32))
             }
             Size::Max(box a, box b) => {
                 let x = a.eval(ctx)?;
@@ -177,12 +139,7 @@ impl Size {
     }
 }
 
-// Which size to choose?
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////
 /// Addition of sizes
-//////////////////////////////////////////////////////////////////////////////////////////////
 impl Add for Size {
     type Output = Size;
     fn add(self, other: Self) -> Self::Output {
@@ -193,6 +150,12 @@ impl Add<u32> for Size {
     type Output = Size;
     fn add(self, other: u32) -> Self::Output {
         Size::Add(Box::new(self), Box::new(Size::Lit(other)))
+    }
+}
+impl Add<&Size> for Size {
+    type Output = Size;
+    fn add(self, other: &Size) -> Self::Output {
+        Size::add(self, other.clone())
     }
 }
 impl Add<Tid> for Size {
@@ -207,14 +170,24 @@ impl Add for &Size {
         self.clone() + other.clone()
     }
 }
+impl Add<Size> for &Size {
+    type Output = Size;
+    fn add(self, other: Size) -> Self::Output {
+        Size::add(self.clone(), other)
+    }
+}
 
-//////////////////////////////////////////////////////////////////////////////////////////////
 /// Subtraction of sizes
-//////////////////////////////////////////////////////////////////////////////////////////////
 impl Sub for Size {
     type Output = Size;
     fn sub(self, other: Self) -> Self::Output {
         Size::Sub(Box::new(self), Box::new(other))
+    }
+}
+impl Sub<&Size> for Size {
+    type Output = Size;
+    fn sub(self, other: &Size) -> Self::Output {
+        Size::sub(self, other.clone())
     }
 }
 impl Sub<u32> for Size {
@@ -235,14 +208,24 @@ impl Sub for &Size {
         self.clone() - other.clone()
     }
 }
+impl Sub<Size> for &Size {
+    type Output = Size;
+    fn sub(self, other: Size) -> Self::Output {
+        Size::sub(self.clone(), other)
+    }
+}
 
-//////////////////////////////////////////////////////////////////////////////////////////////
 /// Multiplication of sizes
-//////////////////////////////////////////////////////////////////////////////////////////////
 impl Mul for Size {
     type Output = Size;
     fn mul(self, other: Self) -> Self::Output {
         Size::Mul(Box::new(self), Box::new(other))
+    }
+}
+impl Mul<&Size> for Size {
+    type Output = Size;
+    fn mul(self, other: &Size) -> Self::Output {
+        Size::mul(self, other.clone())
     }
 }
 impl Mul<u32> for Size {
@@ -254,7 +237,7 @@ impl Mul<u32> for Size {
 impl Mul<Tid> for Size {
     type Output = Size;
     fn mul(self, other: Tid) -> Self::Output {
-        Size::Sub(Box::new(self), Box::new(Size::Var(other)))
+        Size::Mul(Box::new(self), Box::new(Size::Var(other)))
     }
 }
 impl Mul for &Size {
@@ -263,10 +246,14 @@ impl Mul for &Size {
         self.clone() * other.clone()
     }
 }
+impl Mul<Size> for &Size {
+    type Output = Size;
+    fn mul(self, other: Size) -> Self::Output {
+        Size::mul(self.clone(), other)
+    }
+}
 
-//////////////////////////////////////////////////////////////////////////////////////////////
 /// Division of sizes
-//////////////////////////////////////////////////////////////////////////////////////////////
 impl Div for Size {
     type Output = Size;
     fn div(self, other: Self) -> Self::Output {
@@ -277,6 +264,12 @@ impl Div<u32> for Size {
     type Output = Size;
     fn div(self, other: u32) -> Self::Output {
         Size::Div(Box::new(self), Box::new(Size::Lit(other)))
+    }
+}
+impl Div<&Size> for Size {
+    type Output = Size;
+    fn div(self, other: &Size) -> Self::Output {
+        Size::div(self, other.clone())
     }
 }
 impl Div<Tid> for Size {
@@ -291,7 +284,104 @@ impl Div for &Size {
         self.clone() / other.clone()
     }
 }
+impl Div<Size> for &Size {
+    type Output = Size;
+    fn div(self, other: Size) -> Self::Output {
+        Size::div(self.clone(), other)
+    }
+}
 
+/// Modulo of sizes
+impl Rem for Size {
+    type Output = Size;
+    fn rem(self, other: Self) -> Self::Output {
+        Size::Mod(Box::new(self), Box::new(other))
+    }
+}
+
+impl Rem<u32> for Size {
+    type Output = Size;
+    fn rem(self, other: u32) -> Self::Output {
+        Size::Mod(Box::new(self), Box::new(Size::Lit(other)))
+    }
+}
+impl Rem<&Size> for Size {
+    type Output = Size;
+    fn rem(self, other: &Size) -> Self::Output {
+        self % other.clone()
+    }
+}
+impl Rem<Tid> for Size {
+    type Output = Size;
+    fn rem(self, other: Tid) -> Self::Output {
+        Size::Mod(Box::new(self), Box::new(Size::Var(other)))
+    }
+}
+
+impl Rem for &Size {
+    type Output = Size;
+    fn rem(self, other: Self) -> Self::Output {
+        self.clone() % other.clone()
+    }
+}
+impl Rem<Size> for &Size {
+    type Output = Size;
+    fn rem(self, other: Size) -> Self::Output {
+        self.clone() % other
+    }
+}
+
+/// Exponentiation of sizes
+impl BitXor for Size {
+    type Output = Size;
+    fn bitxor(self, other: Self) -> Self::Output {
+        Size::Pow(Box::new(self), Box::new(other))
+    }
+}
+
+impl BitXor<u32> for Size {
+    type Output = Size;
+    fn bitxor(self, other: u32) -> Self::Output {
+        Size::Pow(Box::new(self), Box::new(Size::Lit(other)))
+    }
+}
+impl BitXor<&Size> for Size {
+    type Output = Size;
+    fn bitxor(self, other: &Size) -> Self::Output {
+        self ^ other.clone()
+    }
+}
+impl BitXor<Tid> for Size {
+    type Output = Size;
+    fn bitxor(self, other: Tid) -> Self::Output {
+        Size::Pow(Box::new(self), Box::new(Size::Var(other)))
+    }
+}
+impl BitXor for &Size {
+    type Output = Size;
+    fn bitxor(self, other: Self) -> Self::Output {
+        self.clone() ^ other.clone()
+    }
+}
+impl BitXor<Size> for &Size {
+    type Output = Size;
+    fn bitxor(self, other: Size) -> Self::Output {
+        self.clone() ^ other
+    }
+}
+
+/// To and from integers and strings
+impl From<u32> for Size {
+    fn from(n: u32) -> Self {
+        Size::Lit(n)
+    }
+}
+
+impl From<&str> for Size {
+    fn from(s: &str) -> Self {
+        Size::Var(Tid::from(s))
+    }
+}
 //////////////////////////////////////////////////////////////////////////////////////////////
 /// Pretty printing, display and Arbitrary for Size
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -305,11 +395,12 @@ where
         match self {
             Size::Var(id) => id.pretty(allocator),
             Size::Lit(n) => allocator.text(n.to_string()),
-            Size::Bin(box b) => allocator.text("2^").append(b.pretty(allocator)),
             Size::Add(box a, box b) => a.pretty(allocator).append(allocator.text(" + ")).append(b.pretty(allocator)),
             Size::Sub(box a, box b) => a.pretty(allocator).append(allocator.text(" - ")).append(b.pretty(allocator)),
             Size::Mul(box a, box b) => a.pretty(allocator).append(allocator.text(" * ")).append(b.pretty(allocator)),
             Size::Div(box a, box b) => a.pretty(allocator).append(allocator.text(" / ")).append(b.pretty(allocator)),
+            Size::Mod(box a, box b) => a.pretty(allocator).append(allocator.text(" % ")).append(b.pretty(allocator)),
+            Size::Pow(box a, box b) => a.pretty(allocator).append(allocator.text(" ^ ")).append(b.pretty(allocator)),
             Size::Max(box a, box b) => allocator.text("max(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
             Size::Min(box a, box b) => allocator.text("min(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
         }
@@ -329,25 +420,67 @@ impl<'a> fmt::Display for Size {
     }
 }
 
+lazy_static! {
+    pub static ref SIZE_PARSER: PrattParser<Rule> = {
+        use Assoc::*;
+        use Rule::*;
+
+        PrattParser::new()
+            .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
+            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left) | Op::infix(mod_op, Left))
+            .op(Op::infix(pow_op, Right))
+    };
+}
+
+impl<'pest> FromPest<'pest> for Size {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        expression: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        SIZE_PARSER
+            .map_primary(|pair|
+                match pair.as_rule() {
+                    Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
+                    Rule::size_var => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
+                    Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
+                    _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+                })
+            .map_infix(|lhs, op, rhs|
+                match op.clone().as_rule() {
+                    Rule::add_op => Ok(lhs? + rhs?),
+                    Rule::sub_op => Ok(lhs? - rhs?),
+                    Rule::mul_op => Ok(lhs? * rhs?),
+                    Rule::div_op => Ok(lhs? / rhs?),
+                    Rule::mod_op => Ok(lhs? % rhs?),
+                    Rule::pow_op => Ok(lhs? ^ rhs?),
+                    _ => unreachable!(),
+                })
+            .parse(expression)
+    }
+}
+
 /// Arbitrary instance for Size
 #[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
 impl<'a> Arbitrary<'a> for Size {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let variant = u.choose(&[
-            0, 1, 2, 3, 4, 5, 6, 7, 8
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
         ])?;
 
         Ok(match variant {
             0 => Size::Var(u.arbitrary()?),
             1 => Size::Lit(u.arbitrary()?),
-            2 => Size::Bin(Box::new(u.arbitrary()?)),
-            3 => Size::Add(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            4 => Size::Sub(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            5 => Size::Mul(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            6 => Size::Div(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            7 => Size::Max(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            8 => Size::Min(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            2 => Size::Add(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            3 => Size::Sub(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            4 => Size::Mul(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            5 => Size::Div(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            6 => Size::Mod(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            7 => Size::Pow(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            8 => Size::Max(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
+            9 => Size::Min(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             _ => unreachable!(),
         })
     }
@@ -358,160 +491,18 @@ impl<'a> Arbitrary<'a> for Size {
 ////////////////////////////////////////////////////////////////////////////////////////
 #[test]
 fn size_parser() {
-    let mut pairs = ZippelParser.parse(Rule::qualifier, "N+1").unwrap();
+    let mut pairs = ZippelParser::parse(Rule::size_ty, "N+1").unwrap();
     assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") + 1);
 
-    pairs = ZippelParser.parse(Rule::qualifier, "2*N+1").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N")*2 + 1);
+    pairs = ZippelParser::parse(Rule::size_ty, "2*N+1").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::from(2) * Size::varstr("N") + 1);
 
-    pairs = ZippelParser.parse(Rule::qualifier, "2^N*2").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::bin(Size::varstr("N"))*2);
+    pairs = ZippelParser::parse(Rule::size_ty, "2^N*2").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ Size::varstr("N")) * 2);
 
-    pairs = ZippelParser.parse(Rule::qualifier, "2^(N-1) / N").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::bin(Size::varstr("N") - 1) / Size::varstr("N"));
+    pairs = ZippelParser::parse(Rule::size_ty, "2^(N-1) / N").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N"));
 
-    pairs = ZippelParser.parse(Rule::qualifier, "max(3, 4)").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::max(Size::lit(3), Size::lit(4)));
-}
-
-////////////////////////////////////////////////////////////////////////////////////////
-/// Prop tests
-////////////////////////////////////////////////////////////////////////////////////////
-#[cfg(test)] use arbtest::arbtest;
-#[test]
-fn test_size_add_prop() {
-    // Associativity of addition
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-        let b = u.arbitrary::<Size>()?;
-        let c = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        b.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        c.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = (a + b) + c;
-        let r = a + (b + c);
-        assert_eq!(l.eval(ctx), r.eval(ctx));
-        Ok(())
-    });
-
-    // Commutativity of addition
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-        let b = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        b.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a + b;
-        let r = b + a;
-        assert_eq!(l.eval(ctx), r.eval(ctx));
-        Ok(())
-    });
-
-
-    // Unit of addition
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a;
-        let r1 = a + Size::zero();
-        let r2 = Size::zero() + a;
-        assert_eq!(l.eval(ctx), r1.eval(ctx));
-        assert_eq!(l.eval(ctx), r2.eval(ctx));
-        Ok(())
-    });
-}
-
-
-#[test]
-fn test_size_sub_prop() {
-    // Distributivity of Subtraction
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-        let b = u.arbitrary::<Size>()?;
-        let c = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        b.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        c.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a - (b + c);
-        let r = a - b - c;
-        assert_eq!(l.eval(ctx), r.eval(ctx));
-        Ok(())
-    });
-
-    // Unit of subtraction and involution
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a;
-        let r1 = a - Size::zero();
-        let r2 = a.neg().neg();
-        assert_eq!(l.eval(ctx), r1.eval(ctx));
-        assert_eq!(l.eval(ctx), r2.eval(ctx));
-        Ok(())
-    });
-}
-
-#[test]
-fn test_size_mul_prop() {
-    // Associativity of Multiplication
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-        let b = u.arbitrary::<Size>()?;
-        let c = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        b.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        c.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = (a * b) * c;
-        let r = a * (b * c);
-        assert_eq!(l.eval(ctx), r.eval(ctx));
-        Ok(())
-    });
-
-    // Commutativity of addition
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-        let b = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-        b.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a * b;
-        let r = b * a;
-        assert_eq!(l.eval(ctx), r.eval(ctx));
-        Ok(())
-    });
-
-
-    // Unit of addition
-    arbtest(|u| {
-        let a = u.arbitrary::<Size>()?;
-
-        let mut ctx = Ctx::new();
-        a.free_vars().into_iter().for_each(|x| { ctx.insert(x, u.arbitrary()?); });
-
-        let l = a;
-        let r1 = a * Size::one();
-        let r2 = Size::one() * a;
-        assert_eq!(l.eval(ctx), r1.eval(ctx));
-        assert_eq!(l.eval(ctx), r2.eval(ctx));
-        Ok(())
-    });
+    pairs = ZippelParser::parse(Rule::size_ty, "N % 2").unwrap();
+    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") % 2);
 }

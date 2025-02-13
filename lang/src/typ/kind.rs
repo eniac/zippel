@@ -3,6 +3,9 @@ use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
 pub use crate::range::Range;
+use crate::parser::*;
+use from_pest::{ConversionError, FromPest};
+use pest::iterators::Pairs;
 
 /// The kinds of type variables
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -22,20 +25,30 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub fn scalar<'a>(a: &'a str) -> Self {
+        Kind::Scalar(Tid::new(a))
+    }
+    pub fn multiplicative<'a>(a: &'a str) -> Self {
+        Kind::Multiplicative(Tid::new(a))
+    }
+    pub fn pairing<'a>(a: &'a str, b: &'a str) -> Self {
+        Kind::Pairing(Tid::new(a), Tid::new(b))
+    }
+    pub fn range(start: usize, step: usize, end: usize) -> Self {
+        Kind::Range(Range::new(start, step, end))
+    }
     pub fn is_field(&self) -> bool {
         match self {
             Kind::Field | Kind::Scalar(_)  => true,
             _ => false,
         }
     }
-
     pub fn is_group(&self) -> bool {
         match self {
             Kind::Group | Kind::Pairing(_, _) => true,
             _  => false,
         }
     }
-
     pub fn in_pairing(&self, a: &Tid) -> bool {
         match self {
             Kind::Pairing(x, y) => x == a || y == a,
@@ -49,21 +62,18 @@ impl Kind {
             _ => false
         }
     }
-
     pub fn is_multiplicative(&self, t: &Tid) -> bool {
         match self {
             Kind::Multiplicative(x) => x == t,
             _ => false,
         }
     }
-
     pub fn is_scalar(&self, t: &Tid) -> bool {
         match self {
             Kind::Scalar(x) => x == t,
             _ => false,
         }
     }
-
     pub fn in_range(&self, x: &usize) -> bool {
         match self {
             Kind::Range(r) =>
@@ -86,7 +96,6 @@ where
             Kind::Group => allocator.text(format!("Group")),
             Kind::Scalar(g) => allocator.text(format!("Scalar({})", g)),
             Kind::Multiplicative(f) => allocator.text(format!("Multiplicative({})", f)),
-            Kind::Group => allocator.text(format!("Group")),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing({}, {})", g1, g2)),
             Kind::Range(r) => allocator.concat([
                 allocator.text("Fin("),
@@ -129,8 +138,8 @@ impl<'pest> FromPest<'pest> for Kind {
                 let g2 = Tid::from_pest(&mut inner)?;
                 Ok(Kind::Pairing(g1, g2))
             }
-            Rule::range => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
-            _ => unreachable!(),
+            Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
 }

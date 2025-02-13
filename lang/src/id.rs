@@ -1,6 +1,10 @@
 use share::{Pretty, Set, DocAllocator, DocBuilder};
 use std::fmt;
 
+use from_pest::{ConversionError, FromPest};
+use pest::iterators::Pairs;
+use crate::parser::*;
+
 /// Generate a new identifier not in the set
 pub trait Gen: Ord + Sized {
     fn gen(s: &Set<Self>) -> Self;
@@ -72,6 +76,12 @@ impl<'a> Arbitrary<'a> for Tid {
     }
 }
 
+impl Tid {
+    pub fn new<'a>(s: &'a str) -> Self {
+        Tid(s.to_string())
+    }
+}
+
 /// Expression variable identifier
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Vid(pub String);
@@ -123,6 +133,12 @@ impl<'a> Arbitrary<'a> for Vid {
     }
 }
 
+impl Vid {
+    pub fn new<'a>(s: &'a str) -> Self {
+        Vid(s.to_string())
+    }
+}
+
 /// Function/protocol identifier
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Fid(pub String);
@@ -166,6 +182,12 @@ impl Default for Fid {
     }
 }
 
+impl Fid {
+    pub fn new<'a>(s: &'a str) -> Self {
+        Fid(s.to_string())
+    }
+}
+
 /// Arbitrary instance for Fid
 #[cfg(test)]
 impl<'a> Arbitrary<'a> for Fid {
@@ -175,9 +197,98 @@ impl<'a> Arbitrary<'a> for Fid {
     }
 }
 
+impl<'pest> FromPest<'pest> for Vid {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::id => {
+                let s = pair.as_str();
+                if s.chars().next().unwrap().is_lowercase() {
+                    Ok(Vid::from(s))
+                } else {
+                    Err(ConversionError::Malformed(InputError::VidCapitalize(pair)))
+                }
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<'pest> FromPest<'pest> for Fid {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::id => {
+                let s = pair.as_str();
+                if s.chars().next().unwrap().is_lowercase() {
+                    Ok(Fid::from(s))
+                } else {
+                    Err(ConversionError::Malformed(InputError::FidCapitalize(pair)))
+                }
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl<'pest> FromPest<'pest> for Tid {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::id => {
+                let s = pair.as_str();
+                if s.chars().next().unwrap().is_uppercase() {
+                    Ok(Tid::from(s))
+                } else {
+                    Err(ConversionError::Malformed(InputError::TidCapitalize(pair)))
+                }
+            },
+            _ => unreachable!()
+        }
+    }
+}
+
+
 #[test]
-fn test_gen() {
+fn tid_gen() {
     let bound = Set::from(vec![Tid("?T0".to_string()), Tid("?T1".to_string())]);
     let t = Tid::gen(&bound);
     assert_eq!(t, Tid("?T2".to_string()));
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+/// Parser tests
+////////////////////////////////////////////////////////////////////////////////////////
+#[cfg(test)] use pest::Parser;
+#[test]
+fn id_parser() {
+    let mut pairs = ZippelParser::parse(Rule::id, "N").unwrap();
+    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("N"));
+
+    pairs = ZippelParser::parse(Rule::id, "foo").unwrap();
+    assert_eq!(Fid::from_pest(&mut pairs).unwrap(), Fid::new("foo"));
+    assert!(Tid::from_pest(&mut pairs).is_err());
+
+    pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
+    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("Foo"));
+
+    pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
+    // assert there was an error
+    assert!(Fid::from_pest(&mut pairs).is_err());
+    assert!(Vid::from_pest(&mut pairs).is_err());
 }

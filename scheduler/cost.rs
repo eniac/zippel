@@ -1,4 +1,4 @@
-use crate::lang::{AExp, BExp};
+use crate::lang::{AExp, BExp, Exp};
 
 /// Cost represents the runtime and memory cost of running
 /// a zippel expression.
@@ -53,5 +53,21 @@ impl<T> Cost for BExp<T> {
     }
     fn memory(&self, num_thread: usize) -> f64 {
         unimplemented!()
+    }
+}
+
+impl<T> Cost for Exp<T> {
+    fn runtime(&self, num_thread: usize) -> f64 {
+        match self {
+            Exp::A(aexp) => aexp.runtime(num_thread),
+            Exp::B(bexp) => bexp.runtime(num_thread),
+        }
+    }
+
+    fn memory(&self, num_thread: usize) -> f64 {
+        match self {
+            Exp::A(aexp) => aexp.memory(num_thread),
+            Exp::B(bexp) => bexp.memory(num_thread),
+        }
     }
 }

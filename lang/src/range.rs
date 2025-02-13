@@ -1,8 +1,9 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
+use pest::Parser;
 use std::fmt;
 
-use share::{Pretty, Traversable1};
+use share::{Pretty, Traversable1, Ctx};
 use share::{DocAllocator, DocBuilder, BoxAllocator};
 use crate::typ::Size;
 use crate::parser::*;
@@ -24,7 +25,7 @@ impl<N> Range<N> {
 impl<N> Traversable1<N> for Range<N> {
     type Output<Z> = Range<Z>;
 
-    fn traverse1<Z, E>(self, mut f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Range<Z>, E> {
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Range<Z>, E> {
         Ok(Range {
             start: f(self.start)?,
             end: f(self.end)?,
@@ -65,6 +66,27 @@ impl<'a, N> fmt::Display for Range<N> where N: Pretty<'a, BoxAllocator, ()> + Cl
     }
 }
 
+impl<'pest> FromPest<'pest> for Range<usize> {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let r: Range<Size> = Range::from_pest(pest)?;
+        // Evaluate with empty context ~ cast to usize
+        let start = r.start.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.start)))?;
+        let step = r.step.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.step)))?;
+        let end = r.end.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.end)))?;
+        let rs = Range::new(start as usize, step as usize, end as usize);
+        if (start <= end) && ((end - start) % step == 0) {
+            Ok(rs)
+        } else {
+            Err(ConversionError::Malformed(InputError::MalformedRange(rs)))
+        }
+    }
+}
+
 impl<'pest> FromPest<'pest> for Range<Size> {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -77,13 +99,14 @@ impl<'pest> FromPest<'pest> for Range<Size> {
             Rule::range => {
                 let mut inner = pair.into_inner();
                 if inner.len() == 3 {
-                    let start = Size::from_pest(&mut inner.next().ok_or(ConversionError::NoMatch)?)?;
-                    let step = Size::from_pest(&mut inner.next().ok_or(ConversionError::NoMatch)?)?;
-                    let end = Size::from_pest(&mut inner.next().ok_or(ConversionError::NoMatch)?)?;
-                    Ok(Range::new(start, end, step))
+                    let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    Ok(Range::new(start, step, end))
                 } else {
-                    let start = Size::from_pest(&mut inner.next().ok_or(ConversionError::NoMatch)?)?;
-                    let end = Size::from_pest(&mut inner.next().ok_or(ConversionError::NoMatch)?)?;
+                    dbg!(&inner);
+                    let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Range::new(start, Size::one(), end))
                 }
             },
@@ -94,9 +117,9 @@ impl<'pest> FromPest<'pest> for Range<Size> {
 
 #[test]
 fn range_parser() {
-    let mut pairs = ZippelParser.parse(Rule::qualifier, "0..10").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::from(10), Size::one()));
+    let mut pairs = ZippelParser::parse(Rule::range, "0..10").unwrap();
+    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::one(), Size::from(10)));
 
-    pairs = ZippelParser.parse(Rule::qualifier, "0, 2..2^N").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::from(2), Size::bin(Size::var("N"))));
+    pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
+    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range::new(Size::from(0), Size::from(2), Size::from(2) ^ Size::from("N")));
 }

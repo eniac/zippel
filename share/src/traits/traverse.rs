@@ -42,6 +42,18 @@ impl<A> Traversable1<A> for Box<A> {
     }
 }
 
+/// [Option] is a [Traversable1]
+impl<A> Traversable1<A> for Option<A> {
+    type Output<Z> = Option<Z>;
+
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Option<Z>, E> {
+        match self {
+            Some(x) => Ok(Some(f(x)?)),
+            None => Ok(None),
+        }
+    }
+}
+
 /// [Vec] is a [Traversable1]
 impl<A> Traversable1<A> for Vec<A> {
     type Output<Z> = Vec<Z>;

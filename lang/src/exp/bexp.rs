@@ -7,7 +7,7 @@ use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::{Proj1, Proj2, Traversable2, Traversable1, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size, Nothing};
-use crate::exp::{AExp, UAExp};
+use crate::exp::{AExp, UAExp, AExps, UAExps};
 use crate::id::Fid;
 
 /// Represents boolean expressions in the Zippel language.
@@ -21,7 +21,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(sumcheck(a, b, c));
     ///     ```
-    App(Fid, Vec<AExp<N, T>>, T),
+    App(Fid, AExps<N, T>, T),
 
     ///     Represents inclusion of an element in a vector
     ///
@@ -83,9 +83,9 @@ impl<N, A, B> Proj1<A> for BExp<N, (A, B)> {
 
     fn get_proj1(&self) -> &A {
         match self {
-            BExp::Eq(a, b, t) => &a.0,
+            BExp::Eq(_, _, t) => &t.0,
             BExp::App(_, _, t) => &t.0,
-            BExp::Contains(a, b, t) => &t.0,
+            BExp::Contains(_, _, t) => &t.0,
             BExp::And(_, _, t) => &t.0,
             BExp::Or(_, _, t) => &t.0,
         }
@@ -94,9 +94,9 @@ impl<N, A, B> Proj1<A> for BExp<N, (A, B)> {
     fn map_proj1<Z>(self, f: &mut dyn FnMut(A)->Z) -> Self::Output<Z> {
         match self {
             BExp::Eq(a, b, (x, y)) =>
-                BExp::Eq(a.map_proj1(f), b.map_proj2(f), (f(x), y)),
+                BExp::Eq(a.map_proj1(f), b.map_proj1(f), (f(x), y)),
             BExp::App(id, v, (x, y)) =>
-                BExp::App(id, v.into_iter().map(|e| e.map_proj1(f)).collect(), (f(x), y)),
+                BExp::App(id, AExps(v.0.into_iter().map(|e| e.map_proj1(f)).collect()), (f(x), y)),
             BExp::Contains(a, b, (x, y)) =>
                 BExp::contains(a.map_proj1(f), b.map_proj1(f), (f(x), y)),
             BExp::And(box a, box b, (x, y)) =>
@@ -108,13 +108,13 @@ impl<N, A, B> Proj1<A> for BExp<N, (A, B)> {
 
     fn modify_proj1(&mut self, f: &mut dyn FnMut(&mut A)) {
         match self {
-            BExp::Eq(box a, box b, (x, _)) => {
+            BExp::Eq(a, b, (x, _)) => {
                 a.modify_proj1(f);
                 b.modify_proj1(f);
                 f(x);
             },
             BExp::App(_, v, (x, _)) => {
-                for e in v.iter_mut() {
+                for e in v.0.iter_mut() {
                     e.modify_proj1(f);
                 }
                 f(x);
@@ -143,7 +143,7 @@ impl<N, A, B> Proj2<B> for BExp<N, (A, B)> {
 
     fn get_proj2(&self) -> &B {
         match self {
-            BExp::Eq(a, b, t) => &b.0,
+            BExp::Eq(_, _, t) => &t.1,
             BExp::App(_, _, t) => &t.1,
             BExp::Contains(_, _, t) => &t.1,
             BExp::And(_, _, t) => &t.1,
@@ -156,7 +156,7 @@ impl<N, A, B> Proj2<B> for BExp<N, (A, B)> {
             BExp::Eq(a, b, (x, y)) =>
                 BExp::Eq(a.map_proj2(f), b.map_proj2(f), (x, f(y))),
             BExp::App(id, v, (x, y)) =>
-                BExp::App(id, v.into_iter().map(|e| e.map_proj2(f)).collect(), (x, f(y))),
+                BExp::App(id, AExps(v.0.into_iter().map(|e| e.map_proj2(f)).collect()), (x, f(y))),
             BExp::Contains(a, b, (x, y)) =>
                 BExp::contains(a.map_proj2(f), b.map_proj2(f), (x, f(y))),
             BExp::And(box a, box b, (x, y)) =>
@@ -174,7 +174,7 @@ impl<N, A, B> Proj2<B> for BExp<N, (A, B)> {
                 f(y);
             },
             BExp::App(_, v, (_, y)) => {
-                for e in v.iter_mut() {
+                for e in v.0.iter_mut() {
                     e.modify_proj2(f);
                 }
                 f(y);
@@ -202,13 +202,13 @@ impl<N, A, B> Proj2<B> for BExp<N, (A, B)> {
 impl<N, T> Traversable1<N> for BExp<N, T> {
     type Output<Z> = BExp<Z, T>;
 
-    fn traverse1<Z, E>(self, mut f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z, T>, E> {
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z, T>, E> {
         match self {
             BExp::Eq(a, b, t) =>
                 Ok(BExp::Eq(a.traverse1(f)?, b.traverse1(f)?, t)),
             BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.traverse1(&mut |e| e.traverse1(f))?, t)),
-            BExp::Contains(box a, b, t) =>
+                Ok(BExp::App(id, v.traverse1(f)?, t)),
+            BExp::Contains(a, b, t) =>
                 Ok(BExp::contains(
                     a.traverse1(f)?,
                     b.traverse1(f)?,
@@ -233,11 +233,11 @@ impl<N, T> Traversable1<N> for BExp<N, T> {
 impl<N, T> Traversable2<T> for BExp<N, T> {
     type Output<Z> = BExp<N, Z>;
 
-    fn traverse2<Z, E>(self, mut f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<BExp<N, Z>, E> {
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<BExp<N, Z>, E> {
         match self {
             BExp::Eq(a, b, t) => Ok(BExp::Eq(a.traverse2(f)?, b.traverse2(f)?, f(t)?)),
             BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.traverse1(&mut |e| e.traverse2(f))?, f(t)?)),
+                Ok(BExp::App(id, v.traverse2(f)?, f(t)?)),
             BExp::Contains(a, b, t) =>
                 Ok(BExp::contains(
                     a.traverse2(f)?,
@@ -270,11 +270,11 @@ impl<N, T> BExp<N, T> {
     pub fn eq(l: AExp<N, T>, r: AExp<N, T>, t: T) -> Self {
         BExp::Eq(l, r, t)
     }
-    pub fn app(id: Fid, args: Vec<AExp<N, T>>, t: T) -> Self {
+    pub fn app(id: Fid, args: AExps<N, T>, t: T) -> Self {
         BExp::App(id, args, t)
     }
     pub fn contains(a: AExp<N, T>, b: AExp<N, T>, t: T) -> Self {
-        BExp::Contains(Box::new(a), Box::new(b), t)
+        BExp::Contains(a, b, t)
     }
 }
 
@@ -289,11 +289,11 @@ impl UBExp {
     pub fn ueq(l: UAExp, r: UAExp) -> Self {
         BExp::eq(l, r, Nothing)
     }
-    pub fn uapp(id: Fid, args: Vec<UAExp>) -> Self {
+    pub fn uapp(id: Fid, args: UAExps) -> Self {
         BExp::App(id, args, Nothing)
     }
     pub fn ucontains(a: UAExp, b: UAExp) -> Self {
-        BExp::Contains(Box::new(a), Box::new(b), Nothing)
+        BExp::Contains(a, b, Nothing)
     }
 }
 /// Pretty printer instance
@@ -307,32 +307,52 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            BExp::Eq(a, b) => allocator.concat([
+            BExp::Eq(a, b, t) => allocator.concat([
                 a.pretty(allocator),
                 allocator.text(" == "),
                 b.pretty(allocator),
-            ]),
-            BExp::App(id, args) => allocator.concat([
+                if t.is_nil() {
+                    allocator.nil()
+                } else {
+                    allocator.text(" ⇝ ").append(t.pretty(allocator))
+                }]),
+            BExp::App(id, args, t) => allocator.concat([
                 id.pretty(allocator),
                 allocator.text("("),
-                allocator.intersperse(args.into_iter().map(|a| a.pretty(allocator)), ", "),
+                args.pretty(allocator),
                 allocator.text(")"),
-            ]),
-            BExp::And(a, b) => allocator.concat([
+                if t.is_nil() {
+                    allocator.nil()
+                } else {
+                    allocator.text(" ⇝ ").append(t.pretty(allocator))
+                }]),
+            BExp::And(a, b, t) => allocator.concat([
                 (*a).pretty(allocator),
                 allocator.text(" && "),
                 (*b).pretty(allocator),
-            ]),
-            BExp::Or(a, b) => allocator.concat([
+                if t.is_nil() {
+                    allocator.nil()
+                } else {
+                    allocator.text(" ⇝ ").append(t.pretty(allocator))
+                }]),
+            BExp::Or(a, b, t) => allocator.concat([
                 (*a).pretty(allocator),
                 allocator.text(" || "),
                 (*b).pretty(allocator),
-            ]),
-            BExp::Contains(a, b) => allocator.concat([
+                if t.is_nil() {
+                    allocator.nil()
+                } else {
+                    allocator.text(" ⇝ ").append(t.pretty(allocator))
+                }]),
+            BExp::Contains(a, b, t) => allocator.concat([
                 a.pretty(allocator),
                 allocator.text(" in "),
                 b.pretty(allocator),
-            ]),
+                if t.is_nil() {
+                    allocator.nil()
+                } else {
+                    allocator.text(" ⇝ ").append(t.pretty(allocator))
+                }]),
         }
     }
 
@@ -377,33 +397,32 @@ impl<'pest> FromPest<'pest> for UBExp {
                 Rule::eq_bexp => {
                     let mut inner = pair.into_inner();
                     Ok(BExp::ueq(
-                        UAExp::from_pest(&mut inner)?,
-                        UAExp::from_pest(&mut inner)?
+                        UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
                 Rule::contains_bexp => {
                     let mut inner = pair.into_inner();
                     Ok(BExp::ucontains(
-                        UAExp::from_pest(&mut inner)?,
-                        UAExp::from_pest(&mut inner)?
+                        UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
                 Rule::app_bexp => {
                     let mut inner = pair.into_inner();
+                    // Call a protocol
                     let func = Fid::from_pest(&mut inner)?;
-                    let mut ve = Vec::new();
-                    for x in inner {
-                        ve.push(UAExp::from_pest(&mut Pairs::single(x))?);
-                    }
-                    Ok(BExp::uapp(func, ve))
+                    // Parameters
+                    let params = UAExps::from_pest(&mut inner)?;
+                    Ok(BExp::uapp(func, params))
                 },
                 Rule::bexp => BExp::from_pest(&mut pair.into_inner()),
                 _ => unreachable!()
             })
             .map_infix(|lhs, op, rhs|
                 match op.clone().as_rule() {
-                    Rule::and_op => Ok(BExp::and(lhs?, rhs?)),
-                    Rule::or_op => Ok(BExp::or(lhs?, rhs?)),
+                    Rule::and_op => Ok(BExp::uand(lhs?, rhs?)),
+                    Rule::or_op => Ok(BExp::uor(lhs?, rhs?)),
                     _ => unreachable!(),
                 })
             .parse(expression)
@@ -411,10 +430,8 @@ impl<'pest> FromPest<'pest> for UBExp {
 }
 
 
-////////////////////////////////////////////////////////////////////
 /// BExp parser tests
-////////////////////////////////////////////////////////////////////
-
+#[cfg(test)] use pest::Parser;
 #[test]
 fn parser_eq() {
     let ex = "x == 2";
@@ -427,7 +444,7 @@ fn parser_eq() {
 
 #[test]
 fn parser_and() {
-    let ex = "x == 2 && 0 == 0";
+    let ex = "(x == 2) && (0 == 0)";
     let mut pairs = ZippelParser::parse(Rule::bexp, ex).expect("Failure to parse");
     assert_eq!(
         UBExp::from_pest(&mut pairs),
@@ -463,6 +480,20 @@ fn parser_contains() {
         ))
     )
 }
+
+#[test]
+fn parser_call() {
+    let ex = "proto(x) && foo(y)";
+    let mut pairs = ZippelParser::parse(Rule::bexp, ex).unwrap();
+    assert_eq!(
+        UBExp::from_pest(&mut pairs),
+        Ok(BExp::uand(
+            BExp::uapp(Fid::from("proto"), AExps(vec![AExp::uvarstr("x")])),
+            BExp::uapp(Fid::from("foo"), AExps(vec![AExp::uvarstr("y")]))
+        ))
+    );
+}
+
 #[test]
 fn parser_and_or1() {
     let ex = "x == 2 && (x == 2 || 0 == 0)";
@@ -485,12 +516,12 @@ fn parser_and_or2() {
     let mut pairs = ZippelParser::parse(Rule::bexp, ex).expect("Failure to parse");
     assert_eq!(
         UBExp::from_pest(&mut pairs),
-        Ok(UBExp::uor(
-            UBExp::uand(
+        Ok(UBExp::uand(
+            UBExp::ueq(UAExp::uvarstr("x"), UAExp::ulit(2)),
+            UBExp::uor(
                 UBExp::ueq(UAExp::uvarstr("x"), UAExp::ulit(2)),
-                UBExp::ueq(UAExp::uvarstr("x"), UAExp::ulit(2))
-            ),
-            UBExp::ueq(UAExp::ulit(0), UAExp::ulit(0))
+                UBExp::ueq(UAExp::ulit(0), UAExp::ulit(0))
+            )
         ))
     )
 }

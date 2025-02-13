@@ -9,10 +9,10 @@ pub use crate::range::Range;
 pub use kind::Kind;
 pub use size::Size;
 pub use qualifier::Qualifier;
-pub use typevar::TypeVar;
+pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 
-use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Pretty, Traversable1, BoxAllocator, DocAllocator, DocBuilder};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
@@ -35,19 +35,19 @@ pub enum Typ<N> {
 
 impl<N> Typ<N> {
     pub fn varstr<'a>(b: &'a str) -> Self {
-        Typ::Base(Tid::new(b.clone()))
+        Typ::Base(Tid::new(b))
     }
     pub fn var(b: Tid) -> Self {
         Typ::Base(b)
     }
-    pub fn uni(b: Tid, n: Size) -> Self {
-        Typ::Uni(b.clone(), n.clone())
+    pub fn uni(b: Tid, n: N) -> Self {
+        Typ::Uni(b, n)
     }
-    pub fn mle(b: Tid, n: Size) -> Self {
-        Typ::Mle(b.clone(), n.clone())
+    pub fn mle(b: Tid, n: N) -> Self {
+        Typ::Mle(b, n)
     }
     pub fn vec(b: Typ<N>, n: N) -> Self {
-        Typ::Vec(Box::new(b.clone()), n.clone())
+        Typ::Vec(Box::new(b), n)
     }
     pub fn index(range: Range<N>) -> Self {
         Typ::Index(range)
@@ -56,6 +56,21 @@ impl<N> Typ<N> {
         match self {
             Typ::Base(b) => Some(b),
             _ => None
+        }
+    }
+}
+
+/// Modular get/set acccess to type parameters using [Traversable1] and [Traversable2]
+impl<N> Traversable1<N> for Typ<N> {
+    type Output<Z> = Typ<Z>;
+
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Typ<Z>, E> {
+        match self {
+            Typ::Uni(b, n) => Ok(Typ::Uni(b, f(n)?)),
+            Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
+            Typ::Base(b) => Ok(Typ::Base(b)),
+            Typ::Vec(box b, n) => Ok(Typ::vec(b.traverse1(f)?, f(n)?)),
+            Typ::Index(r) => Ok(Typ::Index(r.traverse1(f)?)),
         }
     }
 }
@@ -85,15 +100,17 @@ where
                 allocator.text(">")
             ]),
             Typ::Base(base) => allocator.text(base.to_string()),
-            Typ::Vec(t, n) => allocator.concat([
-                allocator.text(format!("[{}; ", t)),
+            Typ::Vec(box t, n) => allocator.concat([
+                allocator.text("["),
+                t.pretty(allocator),
+                allocator.text("; "),
                 n.pretty(allocator),
                 allocator.text("]")
             ]),
             Typ::Index(r) => allocator.concat([
-                allocator.text("["),
+                allocator.text("Fin<"),
                 r.pretty(allocator),
-                allocator.text("]")
+                allocator.text(">")
             ]),
         }
     }
@@ -103,7 +120,7 @@ where
     }
 }
 
-impl<'a, N: Pretty<'a, BoxAllocator, ()>> fmt::Display for Typ<N> {
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typ<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Typ<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
@@ -121,7 +138,7 @@ impl<'pest> FromPest<'pest> for Typ<Size> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
             Rule::typ => Typ::from_pest(&mut pair.into_inner()), // Go into typ here
-            Rule::tid => Ok(Typ::Base(Tid::from_pest(&mut pair.into_inner())?)),
+            Rule::base_ty => Ok(Typ::Base(Tid::from_pest(&mut pair.into_inner())?)),
             Rule::uni_ty => {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut inner)?;
@@ -138,11 +155,31 @@ impl<'pest> FromPest<'pest> for Typ<Size> {
                 Ok(Typ::index(Range::from_pest(&mut pair.into_inner())?)),
             Rule::vec_ty => {
                 let mut inner = pair.into_inner();
-                let id = Tid::from_pest(&mut inner)?;
+                let id = Typ::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
                 Ok(Typ::vec(id, size))
             }
             _ => unreachable!(),
         }
     }
+}
+
+#[cfg(test)] use pest::Parser;
+
+#[test]
+fn typ_parser() {
+    let mut pairs = ZippelParser::parse(Rule::typ, "A").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::varstr("A"));
+
+    pairs = ZippelParser::parse(Rule::typ, "Uni<X, 2^N>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
+
+    pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::mle(Tid::from("X"), Size::from(2)));
+
+    pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::vec(Typ::varstr("A"), Size::from("N")));
+
+    pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::index(Range::new(Size::zero(), Size::one(), Size::from("N"))));
 }

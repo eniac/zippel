@@ -1,5 +1,5 @@
 #![allow(refining_impl_trait)]
-pub use pretty::{BoxAllocator, DocAllocator, DocBuilder};
+pub use pretty::{DocAllocator, DocBuilder};
 
 /// Pretty printing instance
 pub trait Pretty <'a, D, A> where A: 'a, D: DocAllocator<'a, A> {
@@ -7,8 +7,8 @@ pub trait Pretty <'a, D, A> where A: 'a, D: DocAllocator<'a, A> {
     fn is_nil(&self) -> bool;
 }
 
-impl Pretty<'_, BoxAllocator, ()> for String {
-    fn pretty(self, allocator: &BoxAllocator) -> DocBuilder<'_, BoxAllocator, ()> {
+impl<'a, D, A> Pretty<'a, D, A> for String where A: 'a, D: DocAllocator<'a, A> {
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.text(format!("{}", self))
     }
 
@@ -17,13 +17,43 @@ impl Pretty<'_, BoxAllocator, ()> for String {
     }
 }
 
-impl<'a> Pretty<'_, BoxAllocator, ()> for &'a str {
-    fn pretty(self, allocator: &BoxAllocator) -> DocBuilder<'_, BoxAllocator, ()> {
+impl<'a, D, A> Pretty<'a, D, A> for &'a str where A: 'a, D: DocAllocator<'a, A> {
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.text(format!("{}", self))
     }
 
     fn is_nil(&self) -> bool {
         self.is_empty()
+    }
+}
+
+impl<'a, D, A> Pretty<'a, D, A> for u64 where A: 'a, D: DocAllocator<'a, A> {
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+impl<'a, D, A> Pretty<'a, D, A> for usize where A: 'a, D: DocAllocator<'a, A> {
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+impl<'a, D, A> Pretty<'a, D, A> for i32 where A: 'a, D: DocAllocator<'a, A> {
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
     }
 }
 

@@ -1,5 +1,6 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
+use pest::Parser;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -69,11 +70,12 @@ impl<'pest> FromPest<'pest> for Qualifier {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
             Rule::qualifier => {
-                let mut inner = pair.into_inner();
-                if inner.as_str() == "private" {
+                if pair.as_str() == "private" {
                     Ok(Qualifier::Private)
-                } else {
+                } else if pair.as_str() == "public" {
                     Ok(Qualifier::Public)
+                } else {
+                    Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
                 }
             },
             _ => unreachable!()
@@ -83,13 +85,12 @@ impl<'pest> FromPest<'pest> for Qualifier {
 
 #[test]
 fn qualifier_parser() {
-    let input = "private";
-    let mut pairs = ZippelParser.parse(Rule::qualifier, input).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::qualifier, "private").unwrap();
     let qual = Qualifier::from_pest(&mut pairs).unwrap();
     assert_eq!(qual, Qualifier::Private);
 
     let input = "public";
-    let mut pairs = ZippelParser.parse(Rule::qualifier, input).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::qualifier, input).unwrap();
     let qual = Qualifier::from_pest(&mut pairs).unwrap();
     assert_eq!(qual, Qualifier::Public);
 }

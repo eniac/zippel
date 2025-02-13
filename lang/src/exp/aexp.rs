@@ -90,7 +90,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     let result1 = f(x + 2, x)
     ///     ```
-    App(Fid, Vec<AExp<N,A>>, A),
+    App(Fid, AExps<N,A>, A),
 
     ///     Fold over non-empty vector
     ///     **Zippel Code:**
@@ -145,7 +145,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     let first = v[0]
     ///     ```
-    Ram(Vid, Box<AExp<N, A>>, A),
+    Ram(Box<AExp<N, A>>, Box<AExp<N, A>>, A),
 
     ///     Sample pseudo-random number generator
     ///     **Zippel Code:**
@@ -174,7 +174,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     let x = 5 + 3;
     ///     ```
-    Let(Vid, Box<AExp<N, A>>, Box<AExp<N, A>>, A),
+    Let(Vid, Box<AExp<N, A>>, A),
 
     ///     Represents a log-let expression with transcript dependency.
     ///     This variant is used to bind a value to an identifier while logging the operation.
@@ -182,7 +182,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     p <- interpolate(v, [0,1,2])
     ///     ```
-    Log(Vid, Box<AExp<N, A>>, Box<AExp<N, A>>, A),
+    Log(Vid, Box<AExp<N, A>>, A),
 
     ///     Prover assertion followed by expression.
     ///     **Zippel Code:**
@@ -190,7 +190,7 @@ pub enum AExp<N, A> {
     ///     assert(1 == 1);
     ///     ...
     ///     ```
-    Assert(Box<BExp<N, A>>, Box<AExp<N, A>>, A),
+    Assert(Box<BExp<N, A>>, A),
 
     ///     Verifier check followed by expression.
     ///     **Zippel Code:**
@@ -198,14 +198,24 @@ pub enum AExp<N, A> {
     ///     verify(a == a);
     ///     ...
     ///     ```
-    Verify(Box<BExp<N, A>>, Box<AExp<N, A>>, A)
+    Verify(Box<BExp<N, A>>, A)
 }
+
+/// Represents a sequence of arithmetic expressions in the Zippel language
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+pub struct AExps<N, A>(pub Vec<AExp<N, A>>);
 
 /// Typed AST node
 pub type TAExp<N, A> = AExp<N, (A, Typ<N>)>;
 
 /// Untyped AST node, as parsed from input
 pub type UAExp = AExp<Size, Nothing>;
+
+/// Typed AST sequence
+pub type TAExps<N, A> = AExps<N, (A, Typ<N>)>;
+
+/// Untyped AST sequence, as parsed from input
+pub type UAExps = AExps<Size, Nothing>;
 
 /// Modular get/set acccess to expression annotations using [Proj1] and [Proj2]
 impl<N, A, B> Proj1<A> for AExp<N, (A, B)> {
@@ -222,15 +232,15 @@ impl<N, A, B> Proj1<A> for AExp<N, (A, B)> {
             AExp::Map(_, _, _, t) => &t.0,
             AExp::Challenge(_, t) => &t.0,
             AExp::Random(_, t) => &t.0,
-            AExp::Verify(_, _, t) => &t.0,
+            AExp::Verify(_, t) => &t.0,
             AExp::App(_, _, t) => &t.0,
             AExp::Reduce(_, _, t) => &t.0,
             AExp::Interpolate(_, _, t) => &t.0,
             AExp::Ram(_, _, t) => &t.0,
             AExp::Range(_, t) => &t.0,
-            AExp::Let(_, _, _, t) => &t.0,
-            AExp::Log(_, _, _, t) => &t.0,
-            AExp::Assert(_, _, t) => &t.0,
+            AExp::Let(_, _, t) => &t.0,
+            AExp::Log(_, _, t) => &t.0,
+            AExp::Assert(_, t) => &t.0,
             AExp::Gen(_, t) => &t.0
         }
     }
@@ -242,9 +252,9 @@ impl<N, A, B> Proj1<A> for AExp<N, (A, B)> {
             AExp::Coef(box a, (x, y)) => AExp::coef(a.map_proj1(f), (f(x), y)),
             AExp::Mle(box a, (x, y)) => AExp::mle(a.map_proj1(f), (f(x), y)),
             AExp::Vec(a, (x, y)) =>
-                AExp::Vec(a.traverse1(&mut |x| Ok(x.map_proj1(f))), (f(x), y)),
+                AExp::Vec(a.into_iter().map(|x| x.map_proj1(f)).collect(), (f(x), y)),
             AExp::App(a, b, (x, y)) =>
-                AExp::App(a, b.traverse1(&mut |x| Ok(x.map_proj1(f))), (f(x), y)),
+                AExp::App(a, AExps(b.0.into_iter().map(|x| x.map_proj1(f)).collect()), (f(x), y)),
             AExp::Reduce(op, box d, (x, y)) =>
                 AExp::reduce(op, d.map_proj1(f), (f(x), y)),
             AExp::Bin(op, box x, box z, (y, w)) =>
@@ -252,90 +262,86 @@ impl<N, A, B> Proj1<A> for AExp<N, (A, B)> {
             AExp::Map(box x, id, box r, (y, z)) =>
                 AExp::map(x.map_proj1(f), id, r.map_proj1(f), (f(y), z)),
             AExp::Challenge(t, (x, y)) => AExp::challenge(t, (f(x), y)),
+            AExp::Random(t, (x, y)) => AExp::random(t, (f(x), y)),
             AExp::Gen(t, (x, y)) => AExp::gen(t, (f(x), y)),
             AExp::Range(r, (x, y)) => AExp::range(r, (f(x), y)),
             AExp::Interpolate(box x, box y, (z, w)) =>
                 AExp::interpolate(x.map_proj1(f), y.map_proj1(f), (f(z), w)),
-            AExp::Reduce(op, box x, (y, z)) =>
-                AExp::reduce(op, x.map_proj1(f), (f(y), z)),
             AExp::Ram(box x, box i, (y, z)) =>
-                AExp::index(x.map_proj1(f), i.map_proj1(f), (f(y), z)),
-            AExp::Let(x, box a, box b, t) =>
-                AExp::letx(x, a.map_proj1(f), b.map_proj1(f), (f(t), t)),
-            AExp::Log(x, box a, box b, t) =>
-                AExp::logx(x, a.map_proj1(f), b.map_proj1(f), (f(t), t)),
-            AExp::Assert(box x, box t, (y, z)) =>
-                AExp::assert(x.map_proj1(f), t.map_proj1(f), (f(y), z)),
-            AExp::Verify(box x, box t, (y, z)) =>
-                AExp::verify(x.map_proj1(f), t.map_proj1(f), (f(y), z))
+                AExp::ram(x.map_proj1(f), i.map_proj1(f), (f(y), z)),
+            AExp::Let(x, box a,  (y, z)) =>
+                AExp::letx(x, a.map_proj1(f), (f(y), z)),
+            AExp::Log(x, box a, (y, z)) =>
+                AExp::logx(x, a.map_proj1(f), (f(y), z)),
+            AExp::Assert(box x, (y, z)) =>
+                AExp::assert(x.map_proj1(f), (f(y), z)),
+            AExp::Verify(box x, (y, z)) =>
+                AExp::verify(x.map_proj1(f), (f(y), z))
         }
     }
 
     fn modify_proj1(&mut self, f: &mut dyn FnMut(&mut A)) {
         match self {
-            AExp::Lit(_, (x, y)) => f(x),
-            AExp::Var(_, (x, y)) => f(x),
-            AExp::Coef(box a, (x, y)) => { a.modify_proj1(f); f(x) },
-            AExp::Mle(box a, (x, y)) => { a.modify_proj1(f); f(x) },
-            AExp::Vec(v, (x, y)) => {
+            AExp::Lit(_, (x, _)) => f(x),
+            AExp::Var(_, (x, _)) => f(x),
+            AExp::Coef(box a, (x, _)) => { a.modify_proj1(f); f(x) },
+            AExp::Mle(box a, (x, _)) => { a.modify_proj1(f); f(x) },
+            AExp::Vec(v, (x, _)) => {
                 for e in v.iter_mut() {
                     e.modify_proj1(f);
                 }
                 f(x)
             },
-            AExp::Bin(_, box a, box b, (x, y)) => {
+            AExp::Bin(_, box a, box b, (x, _)) => {
                 a.modify_proj1(f);
                 b.modify_proj1(f);
                 f(x)
             },
-            AExp::Map(box a, _, box b, (x, y)) => {
+            AExp::Map(box a, _, box b, (x, _)) => {
                 a.modify_proj1(f);
                 b.modify_proj1(f);
                 f(x)
             },
-            AExp::Challenge(_, (x, y)) => f(x),
-            AExp::Random(_, (x, y)) => f(x),
-            AExp::Verify(box a, box b, (x, y)) => {
+            AExp::Challenge(_, (x, _)) => f(x),
+            AExp::Random(_, (x, _)) => f(x),
+            AExp::Verify(box a, (x, _)) => {
                 a.modify_proj1(f);
-                b.modify_proj1(f);
                 f(x)
             },
-            AExp::App(_, b, (x, y)) => {
-                for e in b.iter_mut() {
+            AExp::App(_, b, (x, _)) => {
+                for e in b.0.iter_mut() {
                     e.modify_proj1(f);
                 }
                 f(x)
             },
-            AExp::Reduce(_, box a, (x, y)) => {
+            AExp::Reduce(_, box a, (x, _)) => {
                 a.modify_proj1(f);
                 f(x)
             },
-            AExp::Interpolate(box a, box b, (x, y)) => {
-                a.modify_proj1(f);
-                b.modify_proj1(f);
-                f(x)
-            },
-            AExp::Ram(_, box a, (x, y)) => {
-                a.modify_proj1(f);
-                f(x)
-            },
-            AExp::Range(_, (x, y)) => f(x),
-            AExp::Let(_, box a, box b, (x, y)) => {
+            AExp::Interpolate(box a, box b, (x, _)) => {
                 a.modify_proj1(f);
                 b.modify_proj1(f);
                 f(x)
             },
-            AExp::Log(_, box a, box b, (x, y)) => {
+            AExp::Ram(box a, box b, (x, _)) => {
                 a.modify_proj1(f);
                 b.modify_proj1(f);
                 f(x)
             },
-            AExp::Assert(box a, box b, (x, y)) => {
+            AExp::Range(_, (x, _)) => f(x),
+            AExp::Let(_, box a, (x, _)) => {
                 a.modify_proj1(f);
-                b.modify_proj1(f);
                 f(x)
             },
-            AExp::Gen(_, (x, y)) => f(x)
+            AExp::Log(_, box a, (x, _)) => {
+                a.modify_proj1(f);
+                f(x)
+            },
+            AExp::Assert(box a, (x, _)) => {
+                a.modify_proj1(f);
+                f(x)
+            },
+            AExp::Gen(_, (x, _)) => f(x)
         }
     }
 }
@@ -354,15 +360,15 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
             AExp::Map(_, _, _, t) => &t.1,
             AExp::Challenge(_, t) => &t.1,
             AExp::Random(_, t) => &t.1,
-            AExp::Verify(_, _, t) => &t.1,
+            AExp::Verify(_, t) => &t.1,
             AExp::App(_, _, t) => &t.1,
             AExp::Reduce(_, _, t) => &t.1,
             AExp::Interpolate(_, _, t) => &t.1,
-            AExp::Index(_, _, t) => &t.1,
+            AExp::Ram(_, _, t) => &t.1,
             AExp::Range(_, t) => &t.1,
-            AExp::Let(_, _, _, t) => &t.1,
-            AExp::Log(_, _, _, t) => &t.1,
-            AExp::Assert(_, _, t) => &t.1,
+            AExp::Let(_, _, t) => &t.1,
+            AExp::Log(_, _, t) => &t.1,
+            AExp::Assert(_, t) => &t.1,
             AExp::Gen(_, t) => &t.1
         }
     }
@@ -374,9 +380,9 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
             AExp::Coef(box a, (x, y)) => AExp::coef(a.map_proj2(f), (x, f(y))),
             AExp::Mle(box a, (x, y)) => AExp::mle(a.map_proj2(f), (x, f(y))),
             AExp::Vec(a, (x, y)) =>
-                AExp::Vec(a.traverse1(&mut |x| Ok(x.map_proj2(f))), (x, f(y))),
+                AExp::Vec(a.into_iter().map(|x| x.map_proj2(f)).collect(), (x, f(y))),
             AExp::App(a, b, (x, y)) =>
-                AExp::App(a, b.traverse1(&mut |x| Ok(x.map_proj2(f))), (x, f(y))),
+                AExp::App(a, AExps(b.0.into_iter().map(|x| x.map_proj2(f)).collect()), (x, f(y))),
             AExp::Reduce(op, box d, (x, y)) =>
                 AExp::reduce(op, d.map_proj2(f), (x, f(y))),
             AExp::Bin(op, box x, box z, (y, w)) =>
@@ -384,22 +390,21 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
             AExp::Map(box x, id, box r, (y, z)) =>
                 AExp::map(x.map_proj2(f), id, r.map_proj2(f), (y, f(z))),
             AExp::Challenge(t, (x, y)) => AExp::challenge(t, (x, f(y))),
+            AExp::Random(t, (x, y)) => AExp::random(t, (x, f(y))),
             AExp::Gen(t, (x, y)) => AExp::gen(t, (x, f(y))),
             AExp::Range(r, (x, y)) => AExp::range(r, (x, f(y))),
             AExp::Interpolate(box x, box y, (z, w)) =>
                 AExp::interpolate(x.map_proj2(f), y.map_proj2(f), (z, f(w))),
-            AExp::Reduce(op, box x, (y, z)) =>
-                AExp::reduce(op, x.map_proj2(f), (y, f(z))),
             AExp::Ram(box x, box i, (y, z)) =>
-                AExp::index(x.map_proj2(f), i.map_proj2(f), (y, f(z))),
-            AExp::Let(x, box a, box b, t) =>
-                AExp::letx(x, a.map_proj2(f), b.map_proj2(f), (t, f(t))),
-            AExp::Log(x, box a, box b, t) =>
-                AExp::logx(x, a.map_proj2(f), b.map_proj2(f), (t, f(t))),
-            AExp::Assert(box a, box b, (x, y)) =>
-                AExp::assert(a.map_proj2(f), b.map_proj2(f), (x, f(y))),
-            AExp::Verify(box a, box b, (x, y)) =>
-                AExp::verify(a.map_proj2(f), b.map_proj2(f), (x, f(y)))
+                AExp::ram(x.map_proj2(f), i.map_proj2(f), (y, f(z))),
+            AExp::Let(x, box a, (y, z)) =>
+                AExp::letx(x, a.map_proj2(f), (y, f(z))),
+            AExp::Log(x, box a, (y, z)) =>
+                AExp::logx(x, a.map_proj2(f), (y, f(z))),
+            AExp::Assert(box a, (x, y)) =>
+                AExp::assert(a.map_proj2(f), (x, f(y))),
+            AExp::Verify(box a, (x, y)) =>
+                AExp::verify(a.map_proj2(f), (x, f(y)))
         }
     }
 
@@ -427,13 +432,12 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
             },
             AExp::Challenge(_, (_, y)) => f(y),
             AExp::Random(_, (_, y)) => f(y),
-            AExp::Verify(box a, box b, (_, y)) => {
+            AExp::Verify(box a, (_, y)) => {
                 a.modify_proj2(f);
-                b.modify_proj2(f);
                 f(y)
             },
             AExp::App(_, b, (_, y)) => {
-                for e in b.iter_mut() {
+                for e in b.0.iter_mut() {
                     e.modify_proj2(f);
                 }
                 f(y)
@@ -452,19 +456,16 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
                 f(y)
             },
             AExp::Range(_, (_, y)) => f(y),
-            AExp::Let(_, box a, box b, (_, y)) => {
+            AExp::Let(_, box a, (_, y)) => {
                 a.modify_proj2(f);
-                b.modify_proj2(f);
                 f(y)
             },
-            AExp::Log(_, box a, box b, (_, y)) => {
+            AExp::Log(_, box a, (_, y)) => {
                 a.modify_proj2(f);
-                b.modify_proj2(f);
                 f(y)
             },
-            AExp::Assert(box a, box b, (_, y)) => {
+            AExp::Assert(box a, (_, y)) => {
                 a.modify_proj2(f);
-                b.modify_proj2(f);
                 f(y)
             },
             AExp::Gen(_, (_, y)) => f(y)
@@ -476,7 +477,7 @@ impl<N, A, B> Proj2<B> for AExp<N, (A, B)> {
 impl<N, T> Traversable1<N> for AExp<N, T> {
     type Output<Z> = AExp<Z, T>;
 
-    fn traverse1<Z, E>(self, mut f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
         match self {
             AExp::Lit(x, a) => Ok(AExp::Lit(x, a)),
             AExp::Var(v, a) => Ok(AExp::Var(v, a)),
@@ -485,9 +486,7 @@ impl<N, T> Traversable1<N> for AExp<N, T> {
             AExp::Vec(v, a) =>
                 Ok(AExp::Vec(v.traverse1(&mut |x| x.traverse1(f))?, a)),
             AExp::App(x, ts, a) =>
-                Ok(AExp::App(x, ts.traverse1(&mut |x| x.traverse1(f))? , a)),
-            AExp::Reduce(op, box d, a) =>
-                Ok(AExp::reduce(op, d.traverse1(f)?, a)),
+                Ok(AExp::App(x, ts.traverse1(f)?, a)),
             AExp::Bin(op, box x, box y, a) =>
                 Ok(AExp::bin(
                     op,
@@ -498,6 +497,7 @@ impl<N, T> Traversable1<N> for AExp<N, T> {
             AExp::Map(box x, id, box r, a) =>
                 Ok(AExp::map(x.traverse1(f)?, id, r.traverse1(f)?, a)),
             AExp::Challenge(t, a) => Ok(AExp::challenge(t.traverse1(f)?, a)),
+            AExp::Random(t, a) => Ok(AExp::random(t.traverse1(f)?, a)),
             AExp::Gen(t, a) => Ok(AExp::gen(t, a)),
             AExp::Range(r, a) => Ok(AExp::range(r.traverse1(f)?, a)),
             AExp::Interpolate(box x, box y, a) =>
@@ -511,26 +511,36 @@ impl<N, T> Traversable1<N> for AExp<N, T> {
                     x.traverse1(f)?,
                     a
                 )),
-            AExp::Index(box x, box i, a) =>
-                Ok(AExp::index(
+            AExp::Ram(box x, box i, a) =>
+                Ok(AExp::ram(
                         x.traverse1(f)?,
                         i.traverse1(f)?,
                         a
                 )),
-            AExp::Let(x, box a, box b, t) =>
-                Ok(AExp::letx(x, a.traverse1(f)?, b.traverse1(f)?, a)),
-            AExp::Log(x, box a, box b, t) =>
-                Ok(AExp::log(x, a.traverse1(f)?, b.traverse1(f)?, a)),
-            AExp::Assert(box x, box t, a) =>
-                Ok(AExp::assert(x.traverse1(f)?, t.traverse1(f)?, a))
+            AExp::Let(x, box a, t) =>
+                Ok(AExp::letx(x, a.traverse1(f)?, t)),
+            AExp::Log(x, box a, t) =>
+                Ok(AExp::logx(x, a.traverse1(f)?, t)),
+            AExp::Assert(box x,  t) =>
+                Ok(AExp::assert(x.traverse1(f)?, t)),
+            AExp::Verify(box x, t) =>
+                Ok(AExp::verify(x.traverse1(f)?, t))
         }
+    }
+}
+
+impl<N, T> Traversable1<N> for AExps<N, T> {
+    type Output<Z> = AExps<Z, T>;
+
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z, T>, E> {
+        Ok(AExps(self.0.traverse1(&mut |x| x.traverse1(f))?))
     }
 }
 
 impl<N, T> Traversable2<T> for AExp<N, T> {
     type Output<Z> = AExp<N, Z>;
 
-    fn traverse2<Z, E>(self, mut f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
         match self {
             AExp::Lit(x, a) => Ok(AExp::Lit(x, f(a)?)),
             AExp::Var(v, a) => Ok(AExp::Var(v, f(a)?)),
@@ -539,9 +549,7 @@ impl<N, T> Traversable2<T> for AExp<N, T> {
             AExp::Vec(v, a) =>
                 Ok(AExp::Vec(v.traverse1(&mut |x| x.traverse2(f))?, f(a)?)),
             AExp::App(x, ts, a) =>
-                Ok(AExp::App(x, ts.traverse1(&mut |x| x.traverse2(f))? , f(a)?)),
-            AExp::Reduce(op, box d, a) =>
-                Ok(AExp::reduce(op, d.traverse2(f)?, f(a)?)),
+                Ok(AExp::App(x, ts.traverse2(f)?, f(a)?)),
             AExp::Bin(op, box x, box y, a) =>
                 Ok(AExp::bin(
                     op,
@@ -553,6 +561,7 @@ impl<N, T> Traversable2<T> for AExp<N, T> {
                 Ok(AExp::map(x.traverse2(f)?, id, r.traverse2(f)?, f(a)?))
             }
             AExp::Challenge(t, a) => Ok(AExp::challenge(t, f(a)?)),
+            AExp::Random(t, a) => Ok(AExp::random(t, f(a)?)),
             AExp::Gen(t, a) => Ok(AExp::gen(t, f(a)?)),
             AExp::Range(r, a) => Ok(AExp::range(r, f(a)?)),
             AExp::Interpolate(box x, box y, a) =>
@@ -566,26 +575,36 @@ impl<N, T> Traversable2<T> for AExp<N, T> {
                     x.traverse2(f)?,
                     f(a)?
                 )),
-            AExp::Index(box x, box i, a) =>
-                Ok(AExp::index(
+            AExp::Ram(box x, box i, a) =>
+                Ok(AExp::ram(
                         x.traverse2(f)?,
                         i.traverse2(f)?,
                         f(a)?
                 )),
-            AExp::Let(x, box a, box b, t) =>
-                Ok(AExp::letx(x, a.traverse2(f)?, b.traverse2(f)?, f(t)?)),
-            AExp::Log(x, box a, box b, t) =>
-                Ok(AExp::log(x, a.traverse2(f)?, b.traverse2(f)?, f(t)?)),
-            AExp::Assert(x, box t, a) =>
-                Ok(AExp::assert(x.traverse2(f)?, t.traverse2(f)?, f(a)?))
+            AExp::Let(x, box a,t) =>
+                Ok(AExp::letx(x, a.traverse2(f)?, f(t)?)),
+            AExp::Log(x, box a, t) =>
+                Ok(AExp::logx(x, a.traverse2(f)?, f(t)?)),
+            AExp::Assert(box x, a) =>
+                Ok(AExp::assert(x.traverse2(f)?, f(a)?)),
+            AExp::Verify(box x, a) =>
+                Ok(AExp::verify(x.traverse2(f)?, f(a)?))
         }
+    }
+}
+
+impl<N, T> Traversable2<T> for AExps<N, T> {
+    type Output<Z> = AExps<N, Z>;
+
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExps<N, Z>, E> {
+        Ok(AExps(self.0.traverse1(&mut |x| x.traverse2(f))?))
     }
 }
 
 /// Construct untyped expressions and type infer later [types/infer.rs]
 impl<N, T> AExp<N, T> {
     /// Annotated constructors
-    pub fn lit(v: u32, ann: T) -> Self {
+    pub fn lit(v: i32, ann: T) -> Self {
         AExp::Lit(v, ann)
     }
     pub fn bin(op: BinOp, l: Self, r: Self, ann: T) -> Self {
@@ -606,14 +625,17 @@ impl<N, T> AExp<N, T> {
     pub fn challenge(t: Typ<N>, ann: T) -> Self {
         AExp::Challenge(t, ann)
     }
+    pub fn random(t: Typ<N>, ann: T) -> Self {
+        AExp::Random(t, ann)
+    }
     pub fn vec(v: Vec<Self>, ann: T) -> Self {
         AExp::Vec(v, ann)
     }
     pub fn map(l: Self, x: Vid, range: Self, ann: T) -> Self {
         AExp::Map(Box::new(l), x, Box::new(range), ann)
     }
-    pub fn index(v: Self, i: Self, ann: T) -> Self {
-        AExp::Index(Box::new(v), Box::new(i), ann)
+    pub fn ram(v: Self, i: Self, ann: T) -> Self {
+        AExp::Ram(Box::new(v), Box::new(i), ann)
     }
     pub fn range(r: Range<N>, ann: T) -> Self {
         AExp::Range(r, ann)
@@ -645,30 +667,30 @@ impl<N, T> AExp<N, T> {
     pub fn varstr<'a>(x: &'a str, ann: T) -> Self {
         AExp::var(Vid::from(x), ann)
     }
-    pub fn app(e: Fid, d: Vec<Self>, ann: T) -> Self {
+    pub fn app(e: Fid, d: AExps<N, T>, ann: T) -> Self {
         AExp::App(e, d, ann)
     }
     pub fn reduce(op: BinOp, d: Self, ann: T) -> Self {
         AExp::Reduce(op, Box::new(d), ann)
     }
-    pub fn assert(b: BExp<N, T>, d: Self, ann: T) -> Self {
-        AExp::Assert(Box::new(b), Box::new(d), ann)
+    pub fn assert(b: BExp<N, T>, ann: T) -> Self {
+        AExp::Assert(Box::new(b), ann)
     }
-    pub fn verify(b: BExp<N, T>, d: Self, ann: T) -> Self {
-        AExp::Verify(Box::new(b), Box::new(d), ann)
+    pub fn verify(b: BExp<N, T>, ann: T) -> Self {
+        AExp::Verify(Box::new(b), ann)
     }
-    pub fn letx(a: Vid, d: Self, e: Self, ann: T) -> Self {
-        AExp::Let(a, Box::new(d), Box::new(e), ann)
+    pub fn letx(a: Vid, d: Self, ann: T) -> Self {
+        AExp::Let(a, Box::new(d), ann)
     }
-    pub fn logx(a: Vid, d: Self, e: Self, ann: T) -> Self {
-        AExp::Log(a, Box::new(d), Box::new(e), ann)
+    pub fn logx(a: Vid, d: Self, ann: T) -> Self {
+        AExp::Log(a, Box::new(d), ann)
     }
 }
 
 /// Constructors for un-annotated, untyped expressions with symbolic sizes
 impl UAExp {
     /// Unannotated constructors
-    pub fn ulit(v: u32) -> Self {
+    pub fn ulit(v: i32) -> Self {
         AExp::Lit(v, Nothing)
     }
     pub fn ubin(op: BinOp, l: Self, r: Self) -> Self {
@@ -689,6 +711,9 @@ impl UAExp {
     pub fn uchallenge(t: Typ<Size>) -> Self {
         AExp::challenge(t, Nothing)
     }
+    pub fn urandom(t: Typ<Size>) -> Self {
+        AExp::random(t, Nothing)
+    }
     pub fn uvec(v: Vec<Self>) -> Self {
         AExp::Vec(v, Nothing)
     }
@@ -698,8 +723,8 @@ impl UAExp {
     pub fn umap(l: Self, id: Vid, r: Self) -> Self {
         AExp::map(l, id,  r, Nothing)
     }
-    pub fn uindex(v: Self, i: Self) -> Self {
-        AExp::index(v, i, Nothing)
+    pub fn uram(v: Self, i: Self) -> Self {
+        AExp::ram(v, i, Nothing)
     }
     pub fn urange(r: Range<Size>) -> Self {
         AExp::Range(r, Nothing)
@@ -728,23 +753,23 @@ impl UAExp {
     pub fn uvarstr<'a>(x: &'a str) -> Self {
         AExp::uvar(Vid::from(x))
     }
-    pub fn uapp(e: Fid, d: Vec<Self>) -> Self {
+    pub fn uapp(e: Fid, d: UAExps) -> Self {
         AExp::App(e, d, Nothing)
     }
     pub fn ureduce(op: BinOp, d: Self) -> Self {
         AExp::Reduce(op, Box::new(d), Nothing)
     }
-    pub fn uassert(b: BExp<Size, Nothing>, d: Self) -> Self {
-        AExp::Assert(Box::new(b), Box::new(d), Nothing)
+    pub fn uassert(b: BExp<Size, Nothing>) -> Self {
+        AExp::Assert(Box::new(b), Nothing)
     }
-    pub fn uverify(b: BExp<Size, Nothing>, d: Self) -> Self {
-        AExp::Verify(Box::new(b), Box::new(d), Nothing)
+    pub fn uverify(b: BExp<Size, Nothing>) -> Self {
+        AExp::Verify(Box::new(b), Nothing)
     }
-    pub fn uletx(a: Vid, d: Self, e: Self) -> Self {
-        AExp::Let(a, Box::new(d), Box::new(e), Nothing)
+    pub fn uletx(a: Vid, d: Self) -> Self {
+        AExp::Let(a, Box::new(d), Nothing)
     }
-    pub fn ulogx(a: Vid, d: Self, e: Self) -> Self {
-        AExp::Log(a, Box::new(d), Box::new(e), Nothing)
+    pub fn ulogx(a: Vid, d: Self)  -> Self {
+        AExp::Log(a, Box::new(d), Nothing)
     }
 }
 
@@ -873,7 +898,7 @@ where
             AExp::App(x, d, t) => allocator.concat([
                 x.pretty(allocator),
                 allocator.text("("),
-                allocator.intersperse(d.into_iter().map(|x| x.pretty(allocator)), ", "),
+                d.pretty(allocator),
                 allocator.text(")"),
                 if t.is_nil() {
                     allocator.nil()
@@ -902,8 +927,8 @@ where
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 }]),
-            AExp::Index(x, i, t) => allocator.concat([
-                x.pretty(allocator),
+            AExp::Ram(x, i, t) => allocator.concat([
+                (*x).pretty(allocator),
                 allocator.text("["),
                 (*i).pretty(allocator),
                 allocator.text("]"),
@@ -912,7 +937,7 @@ where
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 }]),
-            AExp::Let(x, a, b, t) => allocator.concat([
+            AExp::Let(x, a, t) => allocator.concat([
                 allocator.text("let "),
                 x.pretty(allocator),
                 allocator.text(" = "),
@@ -923,45 +948,36 @@ where
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 },
-                allocator.line(),
-                (*b).pretty(allocator),
             ]),
-            AExp::Log(x, a, b, t) => allocator.concat([
+            AExp::Log(x, a, t) => allocator.concat([
                 x.pretty(allocator),
                 allocator.text(" <- "),
                 (*a).pretty(allocator),
-                allocator.text("; "),
                 if t.is_nil() {
                     allocator.nil()
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 },
-                allocator.line(),
-                (*b).pretty(allocator),
             ]),
-            AExp::Assert(c, b, t) => allocator.concat([
+            AExp::Assert(c, t) => allocator.concat([
                 allocator.text("assert("),
                 (*c).pretty(allocator),
-                allocator.text("); "),
+                allocator.text(")"),
                 if t.is_nil() {
                     allocator.nil()
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 },
-                allocator.line(),
-                (*b).pretty(allocator)
             ]),
-            AExp::Verify(c, b, t) => allocator.concat([
+            AExp::Verify(c, t) => allocator.concat([
                 allocator.text("verify("),
                 (*c).pretty(allocator),
-                allocator.text("); "),
+                allocator.text(")"),
                 if t.is_nil() {
                     allocator.nil()
                 } else {
                     allocator.text("⇝").append(t.pretty(allocator))
                 },
-                allocator.line(),
-                (*b).pretty(allocator)
             ])
         }
     }
@@ -971,35 +987,70 @@ where
     }
 }
 
-impl<N, T> Add for AExp<N, T> {
-    type Output = AExp<N, T>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        AExp::add(self, rhs, T::default())
+impl<'a, D, A, N, T> Pretty<'a, D, A> for AExps<N, T>
+where
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    T: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A>,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.intersperse(
+            self.0.into_iter().map(|x| x.pretty(allocator)), ";\n")
+    }
+    fn is_nil(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
-impl<N, T> Sub for AExp<N, T> {
-    type Output = AExp<N, T>;
+impl Add for UAExp {
+    type Output = Self;
 
-    fn sub(self, rhs: Self) -> Self::Output {
-        AExp::sub(self, rhs, T::default())
+    fn add(self, rhs: Self) -> Self {
+        UAExp::uadd(self, rhs)
     }
 }
 
-impl<N, T> Mul for AExp<N, T> {
-    type Output = AExp<N, T>;
+impl Sub for UAExp {
+    type Output = Self;
 
-    fn mul(self, rhs: Self) -> Self::Output {
-        AExp::mul(self, rhs, T::default())
+    fn sub(self, rhs: Self) -> Self {
+        UAExp::usub(self, rhs)
     }
 }
 
-impl<N, T> Div for AExp<N, T> {
-    type Output = AExp<N, T>;
+impl Mul for UAExp {
+    type Output = Self;
 
-    fn div(self, rhs: Self) -> Self::Output {
-        AExp::div(self, rhs, T::default())
+    fn mul(self, rhs: Self) -> Self {
+        UAExp::umul(self, rhs)
+    }
+}
+
+impl Div for UAExp {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self {
+        UAExp::udiv(self, rhs)
+    }
+}
+
+impl From<i32> for UAExp {
+    fn from(x: i32) -> Self {
+        UAExp::ulit(x)
+    }
+}
+
+impl From<Vid> for UAExp {
+    fn from(x: Vid) -> Self {
+        UAExp::uvar(x)
+    }
+}
+
+impl From<&str> for UAExp {
+    fn from(x: &str) -> Self {
+        UAExp::uvarstr(x)
     }
 }
 
@@ -1024,6 +1075,18 @@ where
     }
 }
 
+impl<'a, N, T> fmt::Display for AExps<N, T>
+where
+    T: Clone + Pretty<'a, BoxAllocator, ()>,
+    N: Clone + Pretty<'a, BoxAllocator, ()>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <AExps<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+            .1
+            .render_fmt(100, f)
+    }
+}
+
 lazy_static! {
     pub static ref AEXP_PARSER: PrattParser<Rule> = {
         use Assoc::*;
@@ -1037,6 +1100,27 @@ lazy_static! {
     };
 }
 
+impl<'pest> FromPest<'pest> for BinOp {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::add_op => Ok(BinOp::Add),
+            Rule::sub_op => Ok(BinOp::Sub),
+            Rule::mul_op => Ok(BinOp::Mul),
+            Rule::div_op => Ok(BinOp::Div),
+            Rule::pow_op => Ok(BinOp::Pow),
+            Rule::dot_op => Ok(BinOp::Dot),
+            Rule::concat_op => Ok(BinOp::Concat),
+            _ => unreachable!()
+        }
+    }
+}
+
 impl<'pest> FromPest<'pest> for UAExp {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -1046,94 +1130,88 @@ impl<'pest> FromPest<'pest> for UAExp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
-                Rule::id => Ok(AExp::uvar(pair.as_str().to_string())),
-                Rule::int => Ok(AExp::ulit(pair.as_str().parse().unwrap())),
+                Rule::id => Ok(AExp::uvar(Vid(pair.as_str().to_string()))),
+                Rule::positive => Ok(AExp::ulit(pair.as_str().parse().unwrap())),
                 Rule::gen_exp => Ok(AExp::ugen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(AExp::ucoef(AExp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(AExp::umle(AExp::from_pest(&mut pair.into_inner())?)),
                 Rule::interp_exp => {
                     let mut inner = pair.into_inner();
                     Ok(AExp::uinterpolate(
-                        AExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
-                Rule::challenge_exp => Ok(AExp::uchallenge(Typ::from_pest(&mut pair.into_inner())?)),
+                Rule::challenge_exp =>
+                    Ok(AExp::uchallenge(Typ::from_pest(&mut pair.into_inner())?)),
+                Rule::random_exp =>
+                    Ok(AExp::urandom(Typ::from_pest(&mut pair.into_inner())?)),
                 Rule::vec_exp => {
-                    let mut inner = pair.into_inner();
+                    let inner = pair.into_inner();
                     let mut ve = Vec::new();
                     for x in inner {
                         ve.push(AExp::from_pest(&mut Pairs::single(x))?);
                     }
                     Ok(AExp::uvec(ve))
                 },
-                Rule::concat_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(AExp::uconcat(
-                        AExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
-                    ))
-                },
                 Rule::map_exp => {
                     let mut inner = pair.into_inner();
                     Ok(AExp::umap(
-                        AExp::from_pest(&mut inner)?,
-                        Vid::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
                 Rule::ram_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(AExp::uindex(
-                        AExp::uvar(Vid::from_pest(&mut inner)?),
-                        AExp::from_pest(&mut inner)?
+                    Ok(AExp::uram(
+                        AExp::uvar(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
-                Rule::range_exp => {
+                Rule::app_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(AExp::urange(Range {
-                        start: Size::from_pest(&mut inner)?,
-                        step: Size::from_pest(&mut inner)?,
-                        end: Size::from_pest(&mut inner)?
-                    }))
+                    // Call a function
+                    let func = Fid::from_pest(&mut inner)?;
+                    // Arguments
+                    let params = AExps::from_pest(&mut inner)?;
+                    Ok(AExp::uapp(func, params))
                 },
                 Rule::reduce_exp => {
                     let mut inner = pair.into_inner();
                     Ok(AExp::ureduce(
-                        BinOp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
+                        BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(AExp::uassert(
-                        BExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
-                    ))
+                    Ok(AExp::uassert(BExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?))
                 },
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
+                    dbg!(&inner);
                     Ok(AExp::uverify(
-                        BExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?
+                        BExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
                 },
                 Rule::let_exp => {
                     let mut inner = pair.into_inner();
                     Ok(AExp::uletx(
-                        Vid::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?))
+                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
                 },
                 Rule::log_exp => {
                     let mut inner = pair.into_inner();
                     Ok(AExp::ulogx(
-                        Vid::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?,
-                        AExp::from_pest(&mut inner)?))
+                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        AExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
                 },
                 Rule::aexp => AExp::from_pest(&mut pair.into_inner()),
-                _ => unreachable!(),
+                Rule::range_exp => Ok(AExp::urange(Range::from_pest(&mut pair.into_inner())?)),
+                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
             })
             .map_infix(|lhs, op, rhs|
                 match op.clone().as_rule() {
@@ -1150,28 +1228,50 @@ impl<'pest> FromPest<'pest> for UAExp {
     }
 }
 
+impl<'pest> FromPest<'pest> for UAExps {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        pest: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+            Rule::aexps => {
+                let mut aexps = Vec::new();
+                for pair in pair.into_inner() {
+                    aexps.push(UAExp::from_pest(&mut Pairs::single(pair))?);
+                }
+                Ok(AExps(aexps))
+            },
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////
+#[cfg(test)] use pest::Parser;
 #[test]
-fn test_parser_aexp_lit() {
+fn parser_lit() {
     let ex = "2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::ulit(2)));
 }
 
 #[test]
-fn test_parser_aexp_var() {
+fn parser_var() {
     let ex = "x";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::uvarstr("x")));
 }
 
 #[test]
-fn test_parser_aexp_bin() {
+fn parser_bin() {
     // Add
     let ex1 = "x + 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex1).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex1).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uvarstr("x") + AExp::ulit(2))
@@ -1179,7 +1279,7 @@ fn test_parser_aexp_bin() {
 
     // Sub
     let ex2 = "x - 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex2).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex2).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uvarstr("x") - AExp::ulit(2))
@@ -1187,7 +1287,7 @@ fn test_parser_aexp_bin() {
 
     // Mul
     let ex3 = "x * 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex3).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex3).unwrap();
     assert_eq!(
         AExp::from_pest(&mut pairs),
         Ok(AExp::uvarstr("x") * AExp::ulit(2))
@@ -1195,7 +1295,7 @@ fn test_parser_aexp_bin() {
 
     // Div
     let ex4 = "x / 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex4).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex4).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uvarstr("x") / AExp::ulit(2))
@@ -1203,7 +1303,7 @@ fn test_parser_aexp_bin() {
 
     // Pow
     let ex6 = "x ^ 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex6).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex6).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::upow(AExp::uvarstr("x"), AExp::ulit(2)))
@@ -1211,9 +1311,9 @@ fn test_parser_aexp_bin() {
 }
 
 #[test]
-fn test_parser_aexp_interpolate() {
+fn parser_interpolate() {
     let ex = "interpolate(x + 2, 4*x)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uinterpolate(
@@ -1224,64 +1324,63 @@ fn test_parser_aexp_interpolate() {
 }
 
 #[test]
-fn test_parser_aexp_call() {
+fn parser_call_two() {
     let ex = "f(x + 2, x)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uapp(
-            "f".to_string(),
-            vec![AExp::uvarstr("x") + AExp::ulit(2), AExp::uvarstr("x")]
+            Fid::from("f"),
+            AExps(vec![AExp::uvarstr("x") + AExp::ulit(2), AExp::uvarstr("x")])
         ))
     );
 }
 
 #[test]
-fn test_parser_aexp_call_neg() {
-    let ex = "f(-2)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+fn parser_range() {
+    let ex = "0..N";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
-        Ok(AExp::uapp("f".to_string(), vec![AExp::ulit(-2)]))
-    )
+        Ok(AExp::urange(Range::new(Size::from(0), Size::from(1), Size::from("N"))))
+    );
 }
 
 #[test]
-fn test_parser_aexp_for() {
-    let ex = "[ 3^i | i in 0..N ]";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+fn parser_for() {
+    let ex = "[ 3^i for i in 0..N ]";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
-        Ok(AExp::ufor(
-            "i".to_string(),
+        Ok(AExp::umap(
             AExp::upow(AExp::ulit(3), AExp::uvarstr("i")),
-            Size::from(0),
-            Size::from("N")
+            Vid::from("i"),
+            AExp::urange(Range::new(Size::from(0), Size::from(1), Size::from("N")))
         ))
     );
 }
 
 #[test]
-fn test_parser_aexp_rand1() {
-    let ex = "rand<Poly<2>>";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+fn parser_random() {
+    let ex = "random<Uni<A, 2>>";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
-        Ok(AExp::urand(Typ::poly(Size::from(2))))
+        Ok(AExp::urandom(Typ::uni(Tid::from("A"), Size::from(2))))
     );
 }
 
 #[test]
-fn test_parser_aexp_rand2() {
-    let ex = "rand<F>";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
-    assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::urand(Typ::field())));
+fn parser_challenge() {
+    let ex = "challenge<F>";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::uchallenge(Typ::varstr("F"))));
 }
 
 #[test]
-fn test_parser_aexp_concat() {
-    let ex = "concat(x + 2, x)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+fn parser_concat() {
+    let ex = "(x + 2) ++ x";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::uconcat(
@@ -1292,15 +1391,78 @@ fn test_parser_aexp_concat() {
 }
 
 #[test]
-fn test_parser_aexp_reduce() {
-    let ex = "reduce(+, 0, [1,2,3])";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).expect("Failure to parse");
+fn parser_reduce() {
+    let ex = "reduce(+, [1,2,3])";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
         Ok(AExp::ureduce(
             BinOp::Add,
-            AExp::ulit(0),
-            AExp::uvec(AExp::ulit(1), vec![AExp::ulit(2), AExp::ulit(3)])
+            AExp::uvec(vec![AExp::ulit(1), AExp::ulit(2), AExp::ulit(3)])
         ))
+    );
+}
+
+#[test]
+fn parser_let() {
+    let ex = "let x = 2";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UAExp::from_pest(&mut pairs),
+        Ok(AExp::uletx(
+            Vid::from("x"),
+            AExp::ulit(2)
+        ))
+    );
+}
+
+#[test]
+fn parser_log() {
+    let ex = "x <- 2";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UAExp::from_pest(&mut pairs),
+        Ok(AExp::ulogx(
+            Vid::from("x"),
+            AExp::ulit(2),
+        ))
+    );
+}
+
+#[test]
+fn parser_assert() {
+    let ex = "assert(x == 2)";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UAExp::from_pest(&mut pairs),
+        Ok(AExp::uassert(
+            BExp::ueq(AExp::uvarstr("x"), AExp::ulit(2)),
+        ))
+    );
+}
+
+#[test]
+fn parser_verify() {
+    let ex = "verify(x == 2)";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UAExp::from_pest(&mut pairs),
+        Ok(AExp::uverify(
+            BExp::ueq(AExp::uvarstr("x"), AExp::ulit(2)),
+        ))
+    );
+}
+
+#[test]
+fn parser_seq() {
+    let ex = "x <- 2; y <- 3; let x = 2 * 4";
+    let mut pairs = ZippelParser::parse(Rule::aexps, ex).unwrap();
+    assert_eq!(
+        UAExps::from_pest(&mut pairs),
+        Ok(AExps(vec![
+            AExp::ulogx(Vid::from("x"), AExp::ulit(2)),
+            AExp::ulogx(Vid::from("y"), AExp::ulit(3)),
+            AExp::uletx(Vid::from("x"), AExp::ulit(2) * AExp::ulit(4))
+        ]))
     );
 }
