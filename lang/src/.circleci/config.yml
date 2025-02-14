@@ -1,0 +1,25 @@
+version: 2.1
+jobs:
+  test:
+    machine:
+      image: ubuntu-2204:2024.05.1
+    steps:
+      - checkout
+      - run: |
+          docker pull elefthei/gurobi-rust:latest
+          docker run -v .:/app -e GUROBI_KEY=$GUROBI_KEY elefthei/gurobi-rust:latest
+  docker:
+    machine:
+      image: ubuntu-2204:2024.05.1
+    steps:
+      - checkout
+      - run: |
+          echo "$DOCKER_PASS" | docker login --username $DOCKER_USER --password-stdin
+          docker build -t elefthei/gurobi-rust:latest .
+          docker push elefthei/gurobi-rust:latest
+
+workflows:
+  test:
+    jobs:
+      - docker
+      - test
