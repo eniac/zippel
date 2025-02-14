@@ -33,8 +33,9 @@ To install the Zippel compiler, you need to have [Rust](https://www.rust-lang.or
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/pratyush/poly-dsl
-   cd poly-dsl
+   git clone https://github.com/elefthei/zippel
+   cd zippel
+   ```
 2. Install Gurobi and licence at [Gurobi](https://www.gurobi.com/)
 3. Build zippel:
    ```bash
