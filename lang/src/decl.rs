@@ -1,6 +1,7 @@
 use std::fmt;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
+use pest::Parser;
 use bumpalo::Bump;
 
 use share::{Pretty, Traversable1, Traversable2, BoxAllocator, DocAllocator, DocBuilder};
@@ -9,7 +10,7 @@ use crate::typ::TypeVars;
 use crate::id::Fid;
 use crate::typ::{Typ, Size, Nothing};
 use crate::arg::Args;
-use crate::exp::{AExps, BExp};
+use crate::exp::{UAExp, UAExps, AExps, BExp};
 use crate::parser::*;
 
 /// Different kinds of declarations in zippel programming language.
@@ -66,10 +67,17 @@ pub type TDecls<N, A> = Decls<N, (A, Typ<N>)>;
 /// Untyped declarations with symbolic sizes
 pub type UDecls =  Decls<Size, Nothing>;
 
+impl UDecl {
+    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
+        let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
+        UDecl::from_pest(&mut pairs)
+    }
+}
+
 impl UDecls {
     /// Parse a string into a Zippel declarations list
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::module, input_str).unwrap();
+        let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         Decls::from_pest(&mut pairs)
     }
 
@@ -92,7 +100,7 @@ impl IntoIterator for UDecls {
 
 impl FromIterator<UDecl> for UDecls {
     fn from_iter<I: IntoIterator<Item = UDecl>>(iter: I) -> Self {
-        UDecls(iter.into_iter().collect())
+        Decls(iter.into_iter().collect())
     }
 }
 
@@ -368,7 +376,7 @@ impl<'pest> FromPest<'pest> for UDecl {
                     body,
                 })
             },
-            _ => unreachable!(),
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
         }
     }
 }
@@ -384,19 +392,31 @@ impl<'pest> FromPest<'pest> for UDecls {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
             Rule::decls => {
-                let mut decls = Ctx::new();
-                for pair in pair.into_inner() {
-                    let d = UDecl::from_pest(&mut Pairs::single(pair))?;
-                    decls.insert(d.name().clone(), d);
+                let mut decls = Vec::new();
+                for p in pair.into_inner() {
+                    match p.as_rule() {
+                        Rule::decl => {
+                            decls.push(Decl::from_pest(&mut Pairs::single(p))?);
+                        },
+                        Rule::EOI => (),
+                        _ => unreachable!(),
+                    }
                 }
                 Ok(Decls(decls))
-            },
+            }
             _ => unreachable!()
         }
     }
 }
 
-#[cfg(test)] use pest::Parser;
+#[cfg(test)] use crate::{
+        arg::Arg,
+        id::Vid,
+        range::Range,
+        exp::UBExp,
+        typ::{Kind, TypeVar}
+};
+
 #[test]
 fn proto_easy() {
     let ex =
@@ -419,11 +439,11 @@ fn proto_parser() {
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::Proto {
         name: Fid::from("test"),
         typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        args: Args(vec![Arg::new("a", Typ::varstr("F"))]),
-        relation: UBExp::ueq(UAExp::uvarstr("a"), UAExp::uvarstr("a")),
+        args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
+        relation: UBExp::eq(UAExp::varstr("a"), UAExp::varstr("a")),
         body: AExps(vec![
-            UAExp::ulet(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::uvarstr("a"))),
-            UAExp::Verify(UBExp::ueq(UAExp::uvarstr("x"), UAExp::uvarstr("x"))),
+            UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::varstr("a")),
+            UAExp::verify(UBExp::eq(UAExp::varstr("x"), UAExp::varstr("x"))),
         ]),
     });
 }
@@ -431,7 +451,7 @@ fn proto_parser() {
 #[test]
 fn fn_parser1() {
     let ex = concat!(
-        "fn test<F: Field, N: 0..10>(public a: [F; N]) -> F {\n",
+        "fn test<F: Field, N: 0..10>(private a: [F; N]) -> F {\n",
         "    let x = 3*a[0];\n",
         "    x + x\n",
         "}"
@@ -441,13 +461,13 @@ fn fn_parser1() {
         name: Fid::from("test"),
         typevars: TypeVars(vec![
             TypeVar::new("F", Kind::Field),
-            TypeVar::new("N", Kind::Range(Range::new(Size::zero(), Size::one(), Size::from(10)))),
+            TypeVar::new("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
         ]),
-        args: Args(vec![Arg::new("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+        args: Args(vec![Arg::private("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
         typ: Typ::varstr("F"),
         body: AExps(vec![
-            UAExp::ulet(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::index(Vid::from("a"), Size::zero()))),
-            UAExp::add(UAExp::uvarstr("x"), UAExp::uvarstr("x")),
+            UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::ram(UAExp::from("a"), UAExp::from(0))),
+            UAExp::varstr("x") + UAExp::varstr("x"),
         ]),
     });
 }
@@ -466,13 +486,13 @@ fn fn_parser2() {
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::Func {
         name: Fid::from("test"),
         typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        args: Args(vec![Arg::new("a", Typ::varstr("F"))]),
+        args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
         typ: Typ::varstr("F"),
         body: AExps(vec![
-            UAExp::ulet(Vid::from("v"), UAExp::array(vec![UAExp::from(1), UAExp::from(2), UAExp::from(3)])),
-            UAExp::ulet(Vid::from("p"), UAExp::interpolate(UAExp::uvarstr("v"), UAExp::array(vec![UAExp::from(0), UAExp::from(1), UAExp::from(2)]))),
-            UAExp::ulet(Vid::from("x"), UAExp::challenge(Typ::varstr("F"))),
-            UAExp::apply(UAExp::uvarstr("p"), UAExp::uvarstr("x")),
+            UAExp::letx(Vid::from("v"), UAExp::vec(vec![UAExp::from(1), UAExp::from(2), UAExp::from(3)])),
+            UAExp::logx(Vid::from("p"), UAExp::interpolate(UAExp::varstr("v"), UAExp::vec(vec![UAExp::from(0), UAExp::from(1), UAExp::from(2)]))),
+            UAExp::logx(Vid::from("x"), UAExp::challenge(Typ::varstr("F"))),
+            UAExp::app(Fid::from("p"), AExps(vec![UAExp::varstr("x")])),
         ]),
     });
 }
@@ -490,28 +510,28 @@ fn decls_parser() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decls, ex).unwrap();
-    assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), UDecls(vec![
+    assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), Decls(vec![
         UDecl::Proto {
             name: Fid::from("test"),
             typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-            args: Args(vec![Arg::new("a", Typ::varstr("F"))]),
-            relation: UBExp::ueq(UAExp::uvarstr("a"), UAExp::uvarstr("a")),
+            args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
+            relation: UBExp::eq(UAExp::varstr("a"), UAExp::varstr("a")),
             body: AExps(vec![
-                UAExp::ulet(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::uvarstr("a"))),
-                UAExp::Verify(UBExp::ueq(UAExp::uvarstr("x"), UAExp::uvarstr("x"))),
+                UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::varstr("a"))),
+                UAExp::verify(UBExp::eq(UAExp::varstr("x"), UAExp::varstr("x"))),
             ]),
         },
         UDecl::Func {
             name: Fid::from("test"),
             typevars: TypeVars(vec![
                 TypeVar::new("F", Kind::Field),
-                TypeVar::new("N", Kind::Range(Range::new(Size::zero(), Size::one(), Size::from(10)))),
+                TypeVar::new("N", Kind::Range(Range { start:0, step:1, end: 10 })),
             ]),
-            args: Args(vec![Arg::new("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+            args: Args(vec![Arg::public("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
             typ: Typ::varstr("F"),
             body: AExps(vec![
-                UAExp::ulet(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::index(Vid::from("a"), Size::zero()))),
-                UAExp::add(UAExp::uvarstr("x"), UAExp::uvarstr("x")),
+                UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::ram(UAExp::varstr("a"), UAExp::from(0)))),
+                UAExp::varstr("x") + UAExp::varstr("x"),
             ]),
         },
     ]));

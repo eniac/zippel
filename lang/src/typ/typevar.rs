@@ -21,7 +21,7 @@ impl TypeVar {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct TypeVars(Vec<TypeVar>);
+pub struct TypeVars(pub Vec<TypeVar>);
 
 impl IntoIterator for TypeVars {
     type Item = TypeVar;

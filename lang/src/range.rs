@@ -19,7 +19,7 @@ impl Iterator for Range<usize> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start >= self.end {
+        if self.start > self.end {
             None
         } else {
             let current = self.start;
@@ -81,11 +81,13 @@ impl<'pest> FromPest<'pest> for Range<usize> {
         pest: &mut Pairs<'pest, Self::Rule>,
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let r: Range<Size> = Range::from_pest(pest)?;
-        // Evaluate with empty context ~ cast to usize
-        let start = r.start.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.start)))?;
-        let step = r.step.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.step)))?;
-        let end = r.end.eval(&Ctx::new()).ok_or(ConversionError::Malformed(InputError::ExpectedConstSize(r.end)))?;
-        let rs = Range { start: start as usize, step: step as usize, end: end as usize };
+        // Evaluate Size with empty context ~ cast to usize
+        let start = r.start.eval(&Ctx::new())?;
+        let step = r.step.eval(&Ctx::new())?;
+        let end = r.end.eval(&Ctx::new())?;
+
+        // Check if the range is well formed
+        let rs = Range { start, step, end };
         if (start <= end) && ((end - start) % step == 0) {
             Ok(rs)
         } else {

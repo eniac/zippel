@@ -8,7 +8,6 @@ mul_op = @{ "*" }
 div_op = @{ "/" }
 pow_op = @{ "^" }
 dot_op = @{ "." }
-mod_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
 le_op = @{ "<=" }
@@ -28,7 +27,7 @@ range = { size_ty ~ ("," ~ size_ty)? ~ ".." ~ size_ty }
 
 /// Type-level size arithmetic
 size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
-    size_bin_op   = _{ add_op | sub_op | mul_op | div_op | mod_op | pow_op }
+    size_bin_op   = _{ add_op | sub_op | mul_op | div_op | pow_op }
     size_var      = { id }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 
@@ -104,7 +103,7 @@ tvars = { tvar ~ ("," ~ tvar)* }
 /// Function and protocol arguments
 arg = { qualifier ~ id ~ ":" ~ typ }
    qualifier = { "public" | "private" }
-args = { arg ~ ("," ~ arg)* }
+args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols] or [functions]. Protocols end with a [verify] and functions end with an [AExp]
 decl = { proto_decl | func_decl }

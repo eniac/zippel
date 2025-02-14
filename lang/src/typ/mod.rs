@@ -181,5 +181,5 @@ fn typ_parser() {
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::vec(Typ::varstr("A"), Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::index(Range::new(Size::zero(), Size::one(), Size::from("N"))));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::index(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
 }

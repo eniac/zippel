@@ -35,7 +35,7 @@ impl Kind {
         Kind::Pairing(Tid::new(a), Tid::new(b))
     }
     pub fn range(start: usize, step: usize, end: usize) -> Self {
-        Kind::Range(Range::new(start, step, end))
+        Kind::Range(Range { start, step, end })
     }
     pub fn is_field(&self) -> bool {
         match self {

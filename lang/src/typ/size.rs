@@ -20,18 +20,15 @@ pub enum Size {
     Sub(Box<Size>, Box<Size>), // A - B
     Mul(Box<Size>, Box<Size>), // A * B
     Div(Box<Size>, Box<Size>), // A / B
-    Mod(Box<Size>, Box<Size>), // A % B
     Pow(Box<Size>, Box<Size>), // A ^ B
     Max(Box<Size>, Box<Size>), // max(A, B)
     Min(Box<Size>, Box<Size>), // min(A, B)
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, PartialEq, Debug)]
 pub enum EvalError {
     #[error("Division by zero: {0} / {1}")]
     DivisionByZero(Size, Size),
-    #[error("Modulo by zero: {0} % {1}")]
-    ModuloByZero(Size, Size),
     #[error("Negative exponentiation: {0} ^ {1}")]
     NegativeExponentiation(Size, Size),
     #[error("Negative variable value: {0}")]
@@ -77,7 +74,6 @@ impl Size {
             Size::Sub(a, b) => a.free_vars().union(b.free_vars()),
             Size::Mul(a, b) => a.free_vars().union(b.free_vars()),
             Size::Div(a, b) => a.free_vars().union(b.free_vars()),
-            Size::Mod(a, b) => a.free_vars().union(b.free_vars()),
             Size::Pow(a, b) => a.free_vars().union(b.free_vars()),
             Size::Max(a, b) => a.free_vars().union(b.free_vars()),
             Size::Min(a, b) => a.free_vars().union(b.free_vars()),
@@ -111,15 +107,6 @@ impl Size {
                     Ok(x / y)
                 } else {
                     Err(EvalError::DivisionByZero(a.clone(), b.clone()))
-                }
-            }
-            Size::Mod(box a, box b) => {
-                let x = a.eval(ctx)?;
-                let y = b.eval(ctx)?;
-                if y != 0 {
-                    Ok(x % y)
-                } else {
-                    Err(EvalError::ModuloByZero(a.clone(), b.clone()))
                 }
             }
             Size::Pow(box a, box b) => {
@@ -297,46 +284,6 @@ impl Div<Size> for &Size {
     }
 }
 
-/// Modulo of sizes
-impl Rem for Size {
-    type Output = Size;
-    fn rem(self, other: Self) -> Self::Output {
-        Size::Mod(Box::new(self), Box::new(other))
-    }
-}
-
-impl Rem<u32> for Size {
-    type Output = Size;
-    fn rem(self, other: u32) -> Self::Output {
-        Size::Mod(Box::new(self), Box::new(Size::Lit(other)))
-    }
-}
-impl Rem<&Size> for Size {
-    type Output = Size;
-    fn rem(self, other: &Size) -> Self::Output {
-        self % other.clone()
-    }
-}
-impl Rem<Tid> for Size {
-    type Output = Size;
-    fn rem(self, other: Tid) -> Self::Output {
-        Size::Mod(Box::new(self), Box::new(Size::Var(other)))
-    }
-}
-
-impl Rem for &Size {
-    type Output = Size;
-    fn rem(self, other: Self) -> Self::Output {
-        self.clone() % other.clone()
-    }
-}
-impl Rem<Size> for &Size {
-    type Output = Size;
-    fn rem(self, other: Size) -> Self::Output {
-        self.clone() % other
-    }
-}
-
 /// Exponentiation of sizes
 impl BitXor for Size {
     type Output = Size;
@@ -405,7 +352,6 @@ where
             Size::Sub(box a, box b) => a.pretty(allocator).append(allocator.text(" - ")).append(b.pretty(allocator)),
             Size::Mul(box a, box b) => a.pretty(allocator).append(allocator.text(" * ")).append(b.pretty(allocator)),
             Size::Div(box a, box b) => a.pretty(allocator).append(allocator.text(" / ")).append(b.pretty(allocator)),
-            Size::Mod(box a, box b) => a.pretty(allocator).append(allocator.text(" % ")).append(b.pretty(allocator)),
             Size::Pow(box a, box b) => a.pretty(allocator).append(allocator.text(" ^ ")).append(b.pretty(allocator)),
             Size::Max(box a, box b) => allocator.text("max(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
             Size::Min(box a, box b) => allocator.text("min(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
@@ -433,7 +379,7 @@ lazy_static! {
 
         PrattParser::new()
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
-            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left) | Op::infix(mod_op, Left))
+            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left))
             .op(Op::infix(pow_op, Right))
     };
 }
@@ -459,7 +405,6 @@ impl<'pest> FromPest<'pest> for Size {
                     Rule::sub_op => Ok(lhs? - rhs?),
                     Rule::mul_op => Ok(lhs? * rhs?),
                     Rule::div_op => Ok(lhs? / rhs?),
-                    Rule::mod_op => Ok(lhs? % rhs?),
                     Rule::pow_op => Ok(lhs? ^ rhs?),
                     _ => unreachable!(),
                 })
@@ -483,7 +428,6 @@ impl<'a> Arbitrary<'a> for Size {
             3 => Size::Sub(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             4 => Size::Mul(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             5 => Size::Div(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            6 => Size::Mod(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             7 => Size::Pow(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             8 => Size::Max(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
             9 => Size::Min(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
@@ -509,7 +453,4 @@ fn size_parser() {
 
     pairs = ZippelParser::parse(Rule::size_ty, "2^(N-1) / N").unwrap();
     assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N"));
-
-    pairs = ZippelParser::parse(Rule::size_ty, "N % 2").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") % 2);
 }

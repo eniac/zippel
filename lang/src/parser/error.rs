@@ -1,11 +1,11 @@
+use from_pest::ConversionError;
 use thiserror::Error;
 use pest::iterators::Pair;
-use pest::error::Error as PestError;
 
 use crate::id::Fid;
 use crate::range::Range;
 use crate::parser::Rule;
-use crate::typ::Size;
+use crate::typ::{Size, EvalError};
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {
@@ -25,4 +25,12 @@ pub enum InputError<'pest> {
     FidCapitalize(Pair<'pest, Rule>),
     #[error("Variables should start with a lowercase letter and contain alphanumerics or '_', '-', '\'' {0}")]
     VidCapitalize(Pair<'pest, Rule>),
+    #[error("Error statically evaluating range expression {0}")]
+    RangeError(#[from] EvalError),
+}
+
+impl From<EvalError> for ConversionError<InputError<'_>> {
+    fn from(e: EvalError) -> Self {
+        ConversionError::Malformed(InputError::RangeError(e))
+    }
 }

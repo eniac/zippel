@@ -1,10 +1,10 @@
 mod aexp;
 mod bexp;
 
-pub use aexp::{AExp, TAExp, UAExp, AExps, TAExps, UAExps};
+pub use aexp::{AExp, TAExp, UAExp, AExps, UAExps};
 pub use bexp::{BExp, TBExp, UBExp};
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Traversable1, Traversable2, Proj1, Proj2};
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Traversable1, Traversable2};
 
 use crate::typ::{Nothing, Typ, Size};
 use std::fmt;
@@ -41,56 +41,6 @@ impl<N, T> Traversable2<T> for Exp<N, T> {
         match self {
             Exp::A(aexp) => aexp.traverse2(f).map(Exp::A),
             Exp::B(bexp) => bexp.traverse2(f).map(Exp::B),
-        }
-    }
-}
-
-impl<N, A, B> Proj1<A> for Exp<N, (A, B)> {
-    type Output<Z> = Exp<N, (Z, B)>;
-
-    fn get_proj1(&self) -> &A {
-        match self {
-            Exp::A(aexp) => aexp.get_proj1(),
-            Exp::B(bexp) => bexp.get_proj1(),
-        }
-    }
-
-    fn map_proj1<Z>(self, f: &mut dyn FnMut(A)->Z) -> Self::Output<Z> {
-        match self {
-            Exp::A(aexp) => Exp::A(aexp.map_proj1(f)),
-            Exp::B(bexp) => Exp::B(bexp.map_proj1(f)),
-        }
-    }
-
-    fn modify_proj1(&mut self, f: &mut dyn FnMut(&mut A)) {
-        match self {
-            Exp::A(aexp) => aexp.modify_proj1(f),
-            Exp::B(bexp) => bexp.modify_proj1(f),
-        }
-    }
-}
-
-impl<N, A, B> Proj2<B> for Exp<N, (A, B)> {
-    type Output<Z> = Exp<N, (A, Z)>;
-
-    fn get_proj2(&self) -> &B {
-        match self {
-            Exp::A(aexp) => aexp.get_proj2(),
-            Exp::B(bexp) => bexp.get_proj2(),
-        }
-    }
-
-    fn map_proj2<Z>(self, f: &mut dyn FnMut(B)->Z) -> Self::Output<Z> {
-        match self {
-            Exp::A(aexp) => Exp::A(aexp.map_proj2(f)),
-            Exp::B(bexp) => Exp::B(bexp.map_proj2(f)),
-        }
-    }
-
-    fn modify_proj2(&mut self, f: &mut dyn FnMut(&mut B)) {
-        match self {
-            Exp::A(aexp) => aexp.modify_proj2(f),
-            Exp::B(bexp) => bexp.modify_proj2(f),
         }
     }
 }

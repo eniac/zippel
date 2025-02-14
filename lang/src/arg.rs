@@ -24,11 +24,17 @@ pub struct Arg<N> {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Args<N>(Vec<Arg<N>>);
+pub struct Args<N>(pub Vec<Arg<N>>);
 
 impl<N> Arg<N> {
     pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<N>) -> Self {
         Arg { qualifier, id: Vid::new(id), typ }
+    }
+    pub fn public<'a>(id: &'a str, typ: Typ<N>) -> Self {
+        Arg { qualifier: Qualifier::Public, id: Vid::new(id), typ }
+    }
+    pub fn private<'a>(id: &'a str, typ: Typ<N>) -> Self {
+        Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
     }
 }
 
