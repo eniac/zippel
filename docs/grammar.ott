@@ -1,0 +1,130 @@
+%% This file uses the Ott tool to specify the grammar, typing and
+%% evaluation rules for the Zippel language.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% METAVARIABLES
+
+indexvar index, n, i, j, k ::= {{ com index metavariables }}
+
+metavar int, v    ::= {{ com integer literal }}
+metavar ident, x  ::= {{ com variable identifiers }}
+metavar fident, f ::= {{ com function identitifer }}
+metavar tvar, T ::= {{ com type-level variable identifiers }}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% GRAMMAR
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+grammar
+
+lin :: 'lin_' ::= {{ com Linear arithmetic expression }}
+  | n          :: :: lit {{ com integer literal }}
+  | T          :: :: var {{ com integer variable }}
+  | lin + lin' :: :: add {{ com linear addition }}
+  | lin - lin' :: :: sub {{ com linear subtraction }}
+  | n * T      :: :: mul {{ com linear product }}
+
+pow, p :: 'pow_' ::= {{ com Power of two }}
+  | 1       :: :: one {{ com one }}
+  | 2       :: :: two {{ com two }}
+  | 2 ^ lin :: :: lin {{ com linear exponent of two }}
+
+size, s :: 'size_' ::= {{ com Sizes as dyadic numbers }}
+  | n       :: :: sconst {{ com constant size }}
+  | p       :: :: pow {{ com power of two size }}
+  | s / p   :: :: dib {{ com division of size power of two }} {{ tex [[s]] / [[p]] }}
+  | s + s'  :: :: add {{ com addition of sizes }}
+  | s - s'  :: :: sub {{ com subtraction of sizes }}
+  | s * s'  :: :: mul {{ com multiplication of sizes }}
+
+range, R :: 'r_' ::= {{ com range of numeric indices }}
+  | s '..' s'    :: :: unit {{ com Range with unit step }}
+  | s, p '..' s' :: :: step {{ com Range with step power of two }}
+
+tkind, K :: 'kind_' ::= {{ com Type kinds }}
+  | 'Group'                 :: :: Group       {{ com Elliptic curve group }}
+  | 'Field'                 :: :: Field       {{ com Finite field modulo prime }}
+  | 'Size'                  :: :: Size        {{ com Size type variable }}
+
+tbase, B :: 'base_' ::= {{ com Base types }}
+  | 'Scalar' T        :: :: Scalar          {{ com Scalar field of group }}
+  | 'Pairing' T1 T2    :: :: Pairing        {{ com Pairing-friendly groups }}
+  | 'Additive' T       :: :: Additive       {{ com Additive subgroup of field }}
+  | 'Multiplicative' T :: :: Multiplicative {{ com Multiplicative subgroup of field }}
+  | T                  :: :: TVar           {{ com Type variable }}
+
+type, t :: 'typ_' ::= {{ com Static types }}
+  | 'Uni' < B , s >  :: :: Uni {{ com Univariate polynomial }} {{ tex \mathbf{Uni}\langle [[B]], [[s]] \rangle }}
+  | 'Mle' < B , s >  :: :: Mle {{ com Multilinear polynomial }} {{ tex \mathbf{Mle}\langle [[B]], [[s]] \rangle }}
+  | [t; s]           :: :: Vec {{ com Vector type }}
+  | 'Fin' < R >      :: :: Index {{ com Index type }}
+  | B                :: :: Base {{ com Base type }}
+
+tdecl, TD :: '' ::=
+  | T ':' K     :: :: Tdecl  {{ com Type variable of given kind }}
+tdecls, TDs :: '' ::=
+  | TD0 ,..., TDn :: :: Tdecls    {{ com Type variable declarations }}
+
+qualifier, q :: 'qual_' ::= {{ com Visibility qualifier }}
+  | public :: :: public {{ com Publicly visible argument }}
+  | private :: :: private {{ com Private argument }}
+
+arg :: '' ::= {{ com Argument }}
+  | q x : t :: :: argument {{ com Typed, qualified argument }}
+args :: '' ::= {{ com Arguments }}
+  | arg0 ,..., argn :: :: args {{ com Argument list }}
+
+bin_op, op :: 'op_' ::= {{ com Zippel binary operators }}
+  | +                       :: :: add {{ com Addition }} {{ tex + }}
+  | -                       :: :: sub {{ com Subtraction }} {{ tex - }}
+  | *                       :: :: mul {{ com Product }} {{ tex * }}
+  | .                       :: :: dot {{ com Inner product }} {{ tex \cdot }}
+  | /                       :: :: div {{ com Division }} {{ tex / }}
+  | ^                       :: :: pow {{ com Exponentiation }} {{ tex \wedge }}
+  | ++                      :: :: concat {{ com Vector concatenation }} {{ tex ++ }}
+
+exp, e, d :: '' ::= {{ com Zippel expressions }}
+  | v                           :: :: literal {{ com Field literal }}
+  | x                           :: :: var {{ com Variable }}
+  | e op d                      :: :: bin {{ com Binary operation }}
+  | gen < T >                   :: :: gen {{ com Group generator }}
+  | coef ( e )                  :: :: coef {{ com Univariate polynomial coefficients }}
+  | mle ( e )                   :: :: mle  {{ com Multilinear evaluations over bool hypercube }}
+  | interpolate ( e, d )        :: :: interpolate  {{ com Lagrange interpolation from points }}
+  | random < t >                :: :: random {{ com Sample pseudorandom number generator }}
+  | challenge < t >             :: :: challenge {{ com Generate a verifier challenge }}
+  | R                           :: :: range {{ com Range over indices }}
+  | [ e0 ,..., en ]             :: :: vec {{ com Vector of expressions }}
+  | [ e' for x in e ]           :: :: map {{ com Map comprehension }}
+  | x [ s ]                     :: :: index {{ com index a vector }}
+  | f ( e0 ,..., en )           :: :: fapp {{ com Function application }}
+  | reduce ( op , e )           :: :: reduce {{ com Reduce vector with binary operator }}
+  | assert ( b ) ; e            :: :: assert {{ com Prover assertion }}
+  | verify ( b ) ; e            :: :: verify {{ com Verifier assertion }}
+  | let x := e 'in' d           :: :: let {{ com Let binding }}
+  | x <- e ; d                  :: :: log {{ com Transcript binding }}
+
+bexp, b :: '' ::= {{ com Boolean expressions }}
+  | e == e'           :: :: equal {{ com Equality of expressions }} {{ tex [[e]] = [[e']] }}
+  | f ( e0 ,..., en ) :: :: papp  {{ com Protocol application }}
+  | b && b'           :: :: and {{ com Boolean and operation }} {{ tex [[b]] ~\&\&~ [[b']] }}
+  | b || b'           :: :: or {{ com Boolean or operation }} {{ tex [[b]] ~||~ [[b']] }}
+
+decl, D :: '' ::= {{ com Top-level declarations }}
+  | proto f < TDs > ( args ) 'where' b := e ; verify ( b' ) . :: :: proto {{ com Zippel protocol }}
+  | fn f < TDs > ( args ) -> t := e . :: :: func {{ com Zippel function }}
+
+terminals :: terminals_ ::=
+  | |- :: :: entails {{ tex \vdash }}
+  | G :: :: gamma {{ tex \Gamma }}
+  | -> :: :: to {{ tex \to }}
+  | <- :: :: from {{ tex \leftarrow }}
+  | ++ :: :: concat {{ tex \mathtt{++} }}
+  | ^  :: :: power  {{ tex \wedge }}
+  | <  :: :: langle {{ tex \langle }}
+  | >  :: :: rangle {{ tex \rangle }}
+
+formula :: formula_ ::=
+  | judgement          ::   :: judgement
+  | formula1 .. formulai   :: :: dots
