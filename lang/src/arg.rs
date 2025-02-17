@@ -2,7 +2,8 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::{Traversable1, Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::traverse::Traversal;
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::id::Vid;
 use crate::typ::{Size, Typ, Qualifier};
 use crate::parser::*;
@@ -39,6 +40,19 @@ impl<N> Arg<N> {
 }
 
 /// Traversable1 instance for Arg
+pub struct ArgTraversalN<N>(std::marker::PhantomData<N>);
+impl<N, M> Traversal<N, M> for ArgTraversalN<N> {
+    type Domain = Arg<N>;
+    type Codomain = Arg<M>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(N) -> Result<M, E>,
+    ) -> Result<Self::Codomain, E> {
+        let Arg { qualifier, id, typ } = on;
+        Ok(Arg { qualifier, id, typ: Typ::n_traversal(typ, f)? })
+    }
+}
+
 impl<N> Traversable1<N> for Arg<N> {
     type Output<Z> = Arg<Z>;
     fn traverse1<Z, E>(

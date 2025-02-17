@@ -1,5 +1,5 @@
 #![allow(refining_impl_trait)]
-pub use pretty::{DocAllocator, DocBuilder};
+pub use pretty::{DocAllocator, DocBuilder, BoxAllocator};
 
 /// Pretty printing instance
 pub trait Pretty <'a, D, A> where A: 'a, D: DocAllocator<'a, A> {
