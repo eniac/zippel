@@ -2,7 +2,6 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::traverse::Traversal;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::id::Vid;
 use crate::typ::{Size, Typ, Qualifier};

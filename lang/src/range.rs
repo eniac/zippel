@@ -3,8 +3,7 @@ use pest::iterators::Pairs;
 use std::fmt;
 use thiserror::Error;
 
-use share::{Pretty, Traversable1, Ctx};
-use share::{DocAllocator, DocBuilder, BoxAllocator};
+use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use crate::typ::Size;
 use crate::parser::*;
 
@@ -45,6 +44,22 @@ impl Range<usize> {
     }
 }
 
+pub struct RangeTraversal1<N>(std::marker::PhantomData<N>);
+impl<A, B> Traversal<A, B> for RangeTraversal1<A> {
+    type Domain = Range<A>;
+    type Codomain = Range<B>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        Ok(Range {
+            start: f(on.start)?,
+            step: f(on.step)?,
+            end: f(on.end)?,
+        })
+    }
+}
+
 impl Iterator for Range<usize> {
     type Item = usize;
 
@@ -56,18 +71,6 @@ impl Iterator for Range<usize> {
             self.start = self.start.saturating_add(self.step);
             Some(current)
         }
-    }
-}
-
-impl<N> Traversable1<N> for Range<N> {
-    type Output<Z> = Range<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Range<Z>, E> {
-        Ok(Range {
-            start: f(self.start)?,
-            end: f(self.end)?,
-            step: f(self.step)?,
-        })
     }
 }
 

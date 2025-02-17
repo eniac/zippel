@@ -7,7 +7,7 @@ mod infer;
 mod lub;
 
 pub use crate::id::Tid;
-pub use crate::range::Range;
+pub use crate::range::{Range, RangeTraversal1};
 pub use kind::Kind;
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
@@ -15,7 +15,7 @@ pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 pub use lub::Lub;
 
-use share::{Pretty, Traversable1, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
@@ -74,18 +74,37 @@ impl<N> Typ<N> {
     }
 }
 
-/// Modular get/set acccess to type parameters using [Traversable1] and [Traversable2]
-impl<N> Traversable1<N> for Typ<N> {
-    type Output<Z> = Typ<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Typ<Z>, E> {
-        match self {
+pub struct TypTraversal1<N>(std::marker::PhantomData<N>);
+impl<A, B> Traversal<A, B> for TypTraversal1<A> {
+    type Domain = Typ<A>;
+    type Codomain = Typ<B>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        match on {
             Typ::Uni(b, n) => Ok(Typ::Uni(b, f(n)?)),
             Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
-            Typ::Vec(box b, n) => Ok(Typ::vec(b.traverse1(f)?, f(n)?)),
-            Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
+            Typ::Vec(box b, n) =>
+                Ok(Typ::vec(Self::traverse(b, f)?, f(n)?)),
+            Typ::Fin(r) => Ok(Typ::Fin(RangeTraversal1::traverse(r, f)?)),
             Typ::Bool => Ok(Typ::Bool)
+        }
+    }
+}
+
+pub struct TypTraversalRange<N>(std::marker::PhantomData<N>);
+impl<A> Traversal<Range<A>> for TypTraversalRange<A> {
+    type Domain = Typ<A>;
+    type Codomain = Typ<A>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(Range<A>) -> Result<Range<A>, E>,
+    ) -> Result<Self::Codomain, E> {
+        match on {
+            Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
+            _ => Ok(on)
         }
     }
 }

@@ -1,7 +1,7 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
-use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
+use std::ops::{Add, Sub, Mul, Div, BitXor};
 use std::fmt;
 use lazy_static::lazy_static;
 use thiserror::Error;
@@ -10,7 +10,7 @@ use crate::id::Tid;
 use crate::parser::*;
 use share::{Ctx, Set};
 use share::{Pretty, DocBuilder, DocAllocator, BoxAllocator};
-
+use share::Traversal;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Size {

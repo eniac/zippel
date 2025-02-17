@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::Hash;
-use crate::pretty::Pretty;
-use pretty::{DocAllocator, DocBuilder, BoxAllocator};
+
+
+use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use crate::traversal::Traversal;
 
 /// General BTreeMap context
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -36,6 +38,20 @@ where
         self.0.is_empty()
     }
 }
+
+/// Traversal instance for Ctx values
+pub struct CtxValueTraversal<K, V>(std::marker::PhantomData<(K, V)>);
+impl<K: Ord, V1, V2> Traversal<V1, V2> for CtxValueTraversal<K, V1> {
+    type Domain = Ctx<K, V1>;
+    type Codomain = Ctx<K, V2>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(V1) -> Result<V2, E>,
+    ) -> Result<Self::Codomain, E> {
+        on.into_iter().map(|(k, v)| Ok((k, f(v)?))).collect()
+    }
+}
+
 
 /// IntoIterator instance for Ctx
 impl<K, V> IntoIterator for Ctx<K, V> {

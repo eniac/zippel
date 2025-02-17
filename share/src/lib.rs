@@ -2,7 +2,9 @@
 #![feature(btree_extract_if)]
 mod context;
 mod pretty;
+mod traversal;
 
 pub use pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 pub use context::{Ctx, Set};
+pub use traversal::Traversal;
 
