@@ -23,6 +23,16 @@ impl TypeVar {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeVars(pub Vec<TypeVar>);
 
+impl TypeVars {
+    pub fn remove(&mut self, id: &Tid) {
+        self.0.retain(|tvar| &tvar.id != id);
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<TypeVar> {
+        self.0.iter()
+    }
+}
+
 impl IntoIterator for TypeVars {
     type Item = TypeVar;
     type IntoIter = std::vec::IntoIter<TypeVar>;

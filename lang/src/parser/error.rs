@@ -3,7 +3,7 @@ use thiserror::Error;
 use pest::iterators::Pair;
 
 use crate::id::Fid;
-use crate::range::Range;
+use crate::range::{Range, RangeError};
 use crate::parser::Rule;
 use crate::typ::{Size, EvalError};
 
@@ -17,8 +17,8 @@ pub enum InputError<'pest> {
     UnsupportedOp(Pair<'pest, Rule>),
     #[error("Expected constant arithmetic size expression,found {0}")]
     ExpectedConstSize(Size),
-    #[error("Malformed range expression {0}")]
-    MalformedRange(Range<usize>),
+    #[error(transparent)]
+    MalformedRange(RangeError),
     #[error("Type variables should start with a capital letter and contain alphanumerics or '_', '-', '\'' {0}")]
     TidCapitalize(Pair<'pest, Rule>),
     #[error("Functions should start with a lowercase letter and contain alphanumerics or '_', '-', '\'' {0}")]
@@ -32,5 +32,11 @@ pub enum InputError<'pest> {
 impl From<EvalError> for ConversionError<InputError<'_>> {
     fn from(e: EvalError) -> Self {
         ConversionError::Malformed(InputError::RangeError(e))
+    }
+}
+
+impl From<RangeError> for ConversionError<InputError<'_>> {
+    fn from(e: RangeError) -> Self {
+        ConversionError::Malformed(InputError::MalformedRange(e))
     }
 }

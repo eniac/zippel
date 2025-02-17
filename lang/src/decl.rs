@@ -7,7 +7,7 @@ use bumpalo::Bump;
 use share::{Pretty, Traversable1, Traversable2, BoxAllocator, DocAllocator, DocBuilder};
 
 use crate::typ::TypeVars;
-use crate::id::Fid;
+use crate::id::{Tid, Fid};
 use crate::typ::{Typ, Size, Nothing};
 use crate::arg::Args;
 use crate::exp::{UAExp, UAExps, AExps, BExp};
@@ -206,6 +206,12 @@ impl<N, T> Decl<N, T> {
             | Decl::Func { body, .. } => body
         }
     }
+    pub fn remove_typevar(&mut self, t: &Tid) {
+        match self {
+            Decl::Proto { typevars, .. }
+            | Decl::Func { typevars, .. } => typevars.remove(t)
+        }
+    }
 }
 
 /// Pretty printer instance
@@ -243,6 +249,7 @@ where
                     allocator.text(") {"),
                     allocator.line(),
                     body.pretty(allocator).indent(2),
+                    allocator.line(),
                     allocator.text("}")
                 ]),
             Decl::Func {
@@ -263,12 +270,14 @@ where
                             allocator.text(">")
                         ])
                     },
+                    allocator.text("("),
                     args.pretty(allocator),
                     allocator.text(") -> "),
                     typ.pretty(allocator),
                     allocator.text(" {"),
                     allocator.line(),
                     body.pretty(allocator).indent(2),
+                    allocator.line(),
                     allocator.text("}")
                 ]),
         }

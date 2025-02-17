@@ -1,146 +1,102 @@
 #![allow(refining_impl_trait)]
-use crate::context::Ctx;
 
-/// Traverse a structure on the 1st type argument and apply a function
-pub trait Traversable1<A>: Sized {
-    type Output<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>
-    where
-        Self::Output<Z>: Traversable1<Z>;
-
-    /// Derived function [map1]; traverse1 with no errors
-    fn map1<Z>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z>
-    where
-        Self::Output<Z>: Traversable1<Z> {
-        Self::traverse1::<Z, ()>(self, &mut |a| Ok(f(a))).unwrap()
-    }
+/// Define traversals as a relation between a structure and a
+/// subfield of that structure. Maybe this is more akin to lenses.
+pub trait Traversal<A, B=A> {
+    type Domain;
+    type Codomain;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E>;
 }
 
-/// Traverse a structure on the 2nd type argument and apply a function
-pub trait Traversable2<B>: Sized {
-    type Output<Z>;
-
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(B) -> Result<Z, E>) -> Result<Self::Output<Z>, E>
-    where
-        Self::Output<Z>: Traversable2<Z>;
-
-    /// Derived function [map2]; traverse2 with no errors
-    fn map2<Z>(self, f: &mut dyn FnMut(B) -> Z) -> Self::Output<Z>
-    where
-        Self::Output<Z>: Traversable2<Z> {
-        Self::traverse2::<Z, ()>(self, &mut |a| Ok(f(a))).unwrap()
-    }
-}
-
-/// Traverse a structure on the 2nd type argument and apply a function
-pub trait Traversable3<C>: Sized {
-    type Output<Z>;
-
-    fn traverse3<Z, E>(self, f: &mut dyn FnMut(C) -> Result<Z, E>) -> Result<Self::Output<Z>, E>
-    where
-        Self::Output<Z>: Traversable3<Z>;
-
-    /// Derived function [map2]; traverse2 with no errors
-    fn map3<Z>(self, f: &mut dyn FnMut(C) -> Z) -> Self::Output<Z>
-    where
-        Self::Output<Z>: Traversable3<Z> {
-        Self::traverse3::<Z, ()>(self, &mut |a| Ok(f(a))).unwrap()
-    }
-}
-
-/// [Box] is a [Traversable1]
-impl<A> Traversable1<A> for Box<A> {
-    type Output<Z> = Box<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Box<Z>, E> {
-        Ok(Box::new(f(*self)?))
-    }
-}
-
-/// [Option] is a [Traversable1]
-impl<A> Traversable1<A> for Option<A> {
-    type Output<Z> = Option<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Option<Z>, E> {
-        match self {
-            Some(x) => Ok(Some(f(x)?)),
-            None => Ok(None),
-        }
-    }
-}
-
-/// [Vec] is a [Traversable1]
-impl<A> Traversable1<A> for Vec<A> {
-    type Output<Z> = Vec<Z>;
-
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Vec<Z>, E> {
-        let mut v = Vec::with_capacity(self.len());
-        for x in self.into_iter() {
+/// How to traverse vectors
+pub struct VecTraversal<A>(std::marker::PhantomData<A>);
+impl<A, B> Traversal<A, B> for VecTraversal<A> {
+    type Domain = Vec<A>;
+    type Codomain = Vec<B>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        let mut v = Vec::with_capacity(on.len());
+        for x in on.into_iter() {
             v.push(f(x)?);
         }
         Ok(v)
     }
 }
 
-/// [Ctx] is a [Traversable2]
-impl<A: Ord, B> Traversable2<B> for Ctx<A, B> {
-    type Output<Z> = Ctx<A, Z>;
-    fn traverse2<Z, E>(
-        self,
-        f: &mut dyn FnMut(B) -> Result<Z, E>,
-    ) -> Result<Ctx<A, Z>, E> {
-        let mut m = Ctx::new();
-        for (k, v) in self.into_iter() {
-            m.insert(k, f(v)?);
+/// How to traverse vector of pairs
+pub struct Vec2Traversal1<A>(std::marker::PhantomData<A>);
+impl<A, B, C> Traversal<A, B> for Vec2Traversal1<(A, C)> {
+    type Domain = Vec<(A, C)>;
+    type Codomain = Vec<(B, C)>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        let mut v = Vec::with_capacity(on.len());
+        for (x, y) in on.into_iter() {
+            v.push((f(x)?, y));
         }
-        Ok(m)
+        Ok(v)
     }
 }
 
-/// Testing traversable instances
+pub struct Vec2Traversal2<A>(std::marker::PhantomData<A>);
+impl<A, B, C> Traversal<B, C> for Vec2Traversal2<(A, B)> {
+    type Domain = Vec<(A, B)>;
+    type Codomain = Vec<(A, C)>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(B) -> Result<C, E>,
+    ) -> Result<Self::Codomain, E> {
+        let mut v = Vec::with_capacity(on.len());
+        for (x, y) in on.into_iter() {
+            v.push((x, f(y)?));
+        }
+        Ok(v)
+    }
+}
+/// How to traverse options
+pub struct OptionTraversal<A>(std::marker::PhantomData<A>);
+impl<A, B> Traversal<A, B> for OptionTraversal<A> {
+    type Domain = Option<A>;
+    type Codomain = Option<B>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        match on {
+            Some(x) => Ok(Some(f(x)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+/// How to traverse Boxes
+pub struct BoxTraversal<A>(std::marker::PhantomData<A>);
+impl<A, B> Traversal<A, B> for BoxTraversal<A> {
+    type Domain = Box<A>;
+    type Codomain = Box<B>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(A) -> Result<B, E>,
+    ) -> Result<Self::Codomain, E> {
+        Ok(Box::new(f(*on)?))
+    }
+}
+
+/// Testing traversal instances
 mod test {
     use super::*;
 
-    #[derive(Debug, PartialEq, Clone)]
-    struct Vec3<A, B, C>(Vec<(A, B, C)>);
-
-    /// [Vec3] is a [Traversable1]
-    impl<A, B, C> Traversable1<A> for Vec3<A, B, C> {
-        type Output<Z> = Vec3<Z, B, C>;
-
-        fn traverse1<Z, E>(
-            self,
-            f: &mut dyn FnMut(A) -> Result<Z, E>,
-        ) -> Result<Vec3<Z, B, C>, E> {
-            let mut v = Vec::with_capacity(self.0.len());
-            for (a, b, c) in self.0.into_iter() {
-                v.push((f(a)?, b, c));
-            }
-            Ok(Vec3(v))
-        }
-    }
-
-    /// [Vec3] is a [Traversable2]
-    impl<A, B, C> Traversable2<B> for Vec3<A, B, C> {
-        type Output<Z> = Vec3<A, Z, C>;
-
-        fn traverse2<Z, E>(
-            self,
-            f: &mut dyn FnMut(B) -> Result<Z, E>,
-        ) -> Result<Vec3<A, Z, C>, E> {
-            let mut v = Vec::with_capacity(self.0.len());
-            for (a, b, c) in self.0.into_iter() {
-                v.push((a, f(b)?, c));
-            }
-            Ok(Vec3(v))
-        }
-    }
-
     #[test]
-    fn test_traverse1_good() {
-        let v = Vec3(vec![(0, 'a', true), (2, 'b', false)]);
-        let v2 = v.clone().traverse1(&mut |a| {
+    fn test_traversal_good() {
+        let v = vec![(0, 'a'), (2, 'b')];
+        let v2 = Vec2Traversal1::traverse(v.clone(), &mut |a| {
             if a % 2 == 0 {
                 Ok(a)
             } else {
@@ -151,9 +107,9 @@ mod test {
     }
 
     #[test]
-    fn test_traverse1_bad() {
-        let v = Vec3(vec![(1, 'a', true), (2, 'b', false)]);
-        let v2 = v.traverse1(&mut |a| {
+    fn test_traversal_bad() {
+        let v = vec![(1, 'a'), (2, 'b')];
+        let v2 = Vec2Traversal1::traverse(v.clone(), &mut |a| {
             if a % 2 == 0 {
                 Ok(a)
             } else {
@@ -164,18 +120,8 @@ mod test {
     }
 
     #[test]
-    fn test_traverse2() {
-        let v = Vec3(vec![(1, true, true), (2, true, false)]);
-        let mut cnt = 0;
-        let v2 = v.traverse2(&mut |b: bool| {
-            if b {
-                cnt += 1;
-                Ok(b)
-            } else {
-                Err("Only expected [true]")
-            }
-        });
-        assert_eq!(v2, Ok(Vec3(vec![(1, true, true), (2, true, false)])));
-        assert_eq!(cnt, 2);
+    fn test_traversal_option() {
+        let v : Option<usize> = None;
+        assert_eq!(OptionTraversal::traverse::<()>(v, &mut |a| Ok(a)), Ok(None));
     }
 }

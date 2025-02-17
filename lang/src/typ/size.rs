@@ -31,6 +31,8 @@ pub enum EvalError {
     DivisionByZero(Size, Size),
     #[error("Negative exponentiation: {0} ^ {1}")]
     NegativeExponentiation(Size, Size),
+    #[error("Underflow by subtraction: {0} - {1}")]
+    UnderflowBySubtraction(Size, Size),
     #[error("Negative variable value: {0}")]
     NegativeVariableValue(Size),
     #[error("Variable not found: {0}")]
@@ -93,7 +95,11 @@ impl Size {
             Size::Sub(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                Ok(x - y)
+                if x < y {
+                    Err(EvalError::UnderflowBySubtraction(a.clone(), b.clone()))
+                } else {
+                    Ok(x - y)
+                }
             }
             Size::Mul(box a, box b) => {
                 let x = a.eval(ctx)?;

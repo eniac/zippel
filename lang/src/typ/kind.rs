@@ -97,10 +97,15 @@ where
             Kind::Multiplicative(f) => allocator.text(format!("Multiplicative({})", f)),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing({}, {})", g1, g2)),
             Kind::Range(r) => allocator.concat([
-                allocator.text("Fin("),
-                r.pretty(allocator),
-                allocator.text(")")
-            ])
+                r.start.pretty(allocator),
+                if r.step == 1 {
+                    allocator.nil()
+                } else {
+                    allocator.text(", ").append(r.step.pretty(allocator))
+                },
+                allocator.text(".."),
+                r.end.pretty(allocator),
+            ]),
         }
     }
 

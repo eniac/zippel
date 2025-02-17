@@ -109,6 +109,25 @@ impl<K: Ord, V> Ctx<K, V> {
         self.0.insert(k, v)
     }
 
+    pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
+    where
+        K: Clone,
+        V: Clone,
+        FF: Fn(V, V) -> Result<V, E>
+    {
+        match self.0.get(&k) {
+            Some(v1) => {
+                let v = f(v1.clone(), v)?;
+                // Warning: this could modify the whole dictionary recursively
+                self.insert_with(k, v, f)
+            }
+            None => {
+                self.0.insert(k, v);
+                Ok(())
+            }
+        }
+    }
+
     pub fn union_with<FF>(&self, other: Self, f: &FF) -> Self
     where
         K: Clone,

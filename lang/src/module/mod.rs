@@ -1,32 +1,67 @@
 mod sizesubsts;
 use std::fmt;
+use thiserror::Error;
 
 pub use sizesubsts::SizeSubsts;
 use share::{Pretty, Traversable1, Traversable2, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use crate::id::Fid;
+use crate::arg::Args;
 use crate::decl::{Decl, UDecls};
 use crate::typ::{EvalError, Nothing};
 
 /// Module is a collection of declarations with concrete sizes
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Module<T>(pub Ctx<(Fid, SizeSubsts), Decl<usize, T>>);
+pub struct Module<T>(pub Ctx<(Fid, Args<usize>), Decl<usize, T>>);
 
 /// Module with no size substitutions
 pub type UModule = Module<Nothing>;
 
+#[derive(Error, PartialEq, Debug)]
+pub enum ModuleError {
+    #[error("Duplicate declarations: \n---------------------- \n{0} \n=====================\n{1}")]
+    DuplicateDeclaration(Decl<usize, Nothing>, Decl<usize, Nothing>),
+    #[error("Error evaluating size type variables: \n-----------------------\n{0}")]
+    EvalError(#[from] EvalError),
+}
+
 impl UModule {
     /// Concretize sizes in all declarations to generate a module
-    pub fn from_decls(decls: UDecls) -> Result<UModule, EvalError> {
+    pub fn from_decls(decls: UDecls) -> Result<UModule, ModuleError> {
         let mut ctx = Ctx::new();
         for decl in decls.into_iter() {
             // Generate all possible size substitutions for this declaration
             let all_substs = SizeSubsts::from_decl(&decl);
 
-            // For each size substitution, evaluate the sizes in the declaration
+            if all_substs.is_empty() {
+                // No size substitutions, just add the declaration with concrete sizes
+                ctx.insert_with(
+                    (
+                        decl.name().clone(),
+                        decl.args().clone().traverse1(&mut |s| s.eval(&Ctx::new()))?
+                    ),
+                    decl.traverse1(&mut |s| s.eval(&Ctx::new()))?,
+                    &|d1, d2| Err(ModuleError::DuplicateDeclaration(d1, d2))
+                )?;
+                continue;
+            }
+
+            // For each size substitution, evaluate the sizes
             for substs in all_substs.iter() {
                 // Evaluate all sizes, with [EvalError]
-                let d = decl.clone().traverse1(&mut |s| s.eval(&substs.0))?;
-                ctx.insert((d.name().clone(), substs.clone()), d);
+                let mut d = decl.clone().traverse1(&mut |s| s.eval(&substs.0))?;
+
+                // Remove typevars substituted
+                for tid in substs.0.keys() {
+                    d.remove_typevar(&tid);
+                }
+                ctx.insert_with(
+                    (
+                        d.name().clone(),
+                        d.args().clone()
+                    ),
+                    d,
+                    &|d1, d2| Err(ModuleError::DuplicateDeclaration(d1, d2))
+                )?;
             }
         }
         Ok(Module(ctx))
@@ -53,10 +88,18 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(
-            self.0.into_iter().map(|(_, decl)| decl.pretty(allocator)),
-            allocator.hardline()
-        )
+       allocator.intersperse(
+            self.0.into_iter().map(|((fid, args), decl)|
+                    allocator.concat([
+                        fid.pretty(allocator),
+                        allocator.text(" ("),
+                        args.pretty(allocator),
+                        allocator.text(") -> "),
+                        allocator.hardline(),
+                        decl.pretty(allocator).indent(2)
+                    ])),
+       allocator.hardline()
+       )
     }
 
     fn is_nil(&self) -> bool {
@@ -74,4 +117,57 @@ where
             .1
             .render_fmt(100, f)
     }
+}
+
+#[test]
+fn from_decl_subst1() {
+    let ex = concat!(
+        "fn sum<N: 1..4, F: Field>(public a: [F; N]) -> F {\n",
+        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
+        "}\n",
+        "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
+        "   a[0]\n",
+        "}");
+    let decls = UDecls::from_str(ex).unwrap();
+    let module = UModule::from_decls(decls).unwrap();
+    assert_eq!(module.0.len(), 4);
+}
+
+#[test]
+fn from_decl_duplicate() {
+    let ex = concat!(
+        "fn sum<N: 1..2, F: Field>(public a: [F; N]) -> F {\n",
+        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
+        "}\n",
+        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
+        "   a[0]\n",
+        "}");
+    let decls = UDecls::from_str(ex).unwrap();
+    assert!(UModule::from_decls(decls).is_err());
+}
+
+#[test]
+fn from_decl_underflow() {
+    let ex = concat!(
+        "fn sum<N: 0..3, F: Field>(public a: [F; N]) -> F {\n",
+        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
+        "}");
+    let decls = UDecls::from_str(ex).unwrap();
+    assert!(UModule::from_decls(decls).is_err());
+}
+#[test]
+fn from_decl_subst2() {
+    let ex = concat!(
+       "fn sum<N: 1..4, F: Field>(public a: [F; N]) -> F {\n",
+        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
+        "}\n",
+        "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
+        "   a[0]\n",
+        "}",
+        "fn prod_sum<N: 0..4, M: 0..3, F: Field>(public a: [F; N], public b: [F; M]) -> F {\n",
+        "   sum(a) * sum(b)\n",
+        "}");
+    let decls = UDecls::from_str(ex).unwrap();
+    let module = UModule::from_decls(decls).unwrap();
+    assert_eq!(module.0.len(), 16);
 }

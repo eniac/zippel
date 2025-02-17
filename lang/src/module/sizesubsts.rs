@@ -11,6 +11,9 @@ use crate::range::Range;
 pub struct SizeSubsts(pub Ctx<Tid, usize>);
 
 impl SizeSubsts {
+    pub fn new() -> Self {
+        SizeSubsts(Ctx::new())
+    }
     pub fn from_decl<N, T>(decl: &Decl<N, T>) -> Set<Self> {
         // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
         let typevar_ranges: Vec<(Tid, Range<usize>)> =
@@ -39,7 +42,7 @@ impl From<Vec<(Tid, usize)>> for SizeSubsts {
 
 #[test]
 fn test_size_substs() {
-    let decl = Decl::from_str("fn test<N: 0..3, M: 1..2>(public a: N) -> N { 1 }").unwrap();
+    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
     assert_eq!(SizeSubsts::from_decl(&decl),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),

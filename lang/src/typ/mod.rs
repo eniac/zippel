@@ -3,6 +3,8 @@ mod typevar;
 mod size;
 mod qualifier;
 mod nothing;
+mod infer;
+mod lub;
 
 pub use crate::id::Tid;
 pub use crate::range::Range;
@@ -11,6 +13,7 @@ pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
+pub use lub::Lub;
 
 use share::{Pretty, Traversable1, BoxAllocator, DocAllocator, DocBuilder};
 use crate::parser::*;
@@ -29,9 +32,17 @@ pub enum Typ<N> {
     Vec(Box<Typ<N>>, N),
     /// Tid type [Tid]
     Base(Tid),
-    /// Index within range
-    Index(Range<N>),
+    /// Fin within range
+    Fin(Range<N>),
+    /// Boolean (BExp)
+    Bool
 }
+
+/// Sybolic size types
+pub type STyp = Typ<Size>;
+
+/// Concrete size types
+pub type CTyp = Typ<usize>;
 
 impl<N> Typ<N> {
     pub fn varstr<'a>(b: &'a str) -> Self {
@@ -49,8 +60,11 @@ impl<N> Typ<N> {
     pub fn vec(b: Typ<N>, n: N) -> Self {
         Typ::Vec(Box::new(b), n)
     }
-    pub fn index(range: Range<N>) -> Self {
-        Typ::Index(range)
+    pub fn fin(range: Range<N>) -> Self {
+        Typ::Fin(range)
+    }
+    pub fn bool() -> Self {
+        Typ::Bool
     }
     pub fn get_base(&self) -> Option<&Tid> {
         match self {
@@ -70,7 +84,8 @@ impl<N> Traversable1<N> for Typ<N> {
             Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) => Ok(Typ::vec(b.traverse1(f)?, f(n)?)),
-            Typ::Index(r) => Ok(Typ::Index(r.traverse1(f)?)),
+            Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
+            Typ::Bool => Ok(Typ::Bool)
         }
     }
 }
@@ -107,11 +122,12 @@ where
                 n.pretty(allocator),
                 allocator.text("]")
             ]),
-            Typ::Index(r) => allocator.concat([
+            Typ::Fin(r) => allocator.concat([
                 allocator.text("Fin<"),
                 r.pretty(allocator),
                 allocator.text(">")
             ]),
+            Typ::Bool => allocator.text("Bool")
         }
     }
 
@@ -152,7 +168,7 @@ impl<'pest> FromPest<'pest> for Typ<Size> {
                 Ok(Typ::mle(id, size))
             }
             Rule::fin_ty =>
-                Ok(Typ::index(Range::from_pest(&mut pair.into_inner())?)),
+                Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
             Rule::vec_ty => {
                 let mut inner = pair.into_inner();
                 let id = Typ::from_pest(&mut inner)?;
@@ -181,5 +197,5 @@ fn typ_parser() {
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::vec(Typ::varstr("A"), Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::index(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
 }

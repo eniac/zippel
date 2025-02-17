@@ -1,11 +1,19 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
+use thiserror::Error;
 
 use share::{Pretty, Traversable1, Ctx};
 use share::{DocAllocator, DocBuilder, BoxAllocator};
 use crate::typ::Size;
 use crate::parser::*;
+
+
+#[derive(Error, PartialEq, Debug)]
+pub enum RangeError {
+    #[error("Instantiated an invalid range [{0},{1}..{2}]")]
+    RangeOrder(usize, usize, usize),
+}
 
 /// Represents a range of numbers
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -15,11 +23,33 @@ pub struct Range<N> {
     pub end : N
 }
 
+impl Range<usize> {
+    /// Create a range from a start, step and end numbers, checking their order
+    pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
+        // Check if the range is well formed
+        let rs = Range { start, step, end };
+        if (start <= end) &&  (step > 0) && ((end - start) % step == 0) {
+            Ok(rs)
+        } else {
+            Err(RangeError::RangeOrder(start, step, end))
+        }
+    }
+
+    /// Warning: overapproximation. Think about using OpenSet from Reef?
+    pub fn lub(&self, other: &Self) -> Self {
+        Range {
+            start: self.start.min(other.start),
+            step: self.step.min(other.step),
+            end: self.end.max(other.end)
+        }
+    }
+}
+
 impl Iterator for Range<usize> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start > self.end {
+        if self.start >= self.end {
             None
         } else {
             let current = self.start;
@@ -87,12 +117,7 @@ impl<'pest> FromPest<'pest> for Range<usize> {
         let end = r.end.eval(&Ctx::new())?;
 
         // Check if the range is well formed
-        let rs = Range { start, step, end };
-        if (start <= end) && ((end - start) % step == 0) {
-            Ok(rs)
-        } else {
-            Err(ConversionError::Malformed(InputError::MalformedRange(rs)))
-        }
+        Ok(Range::from_num(start, step, end)?)
     }
 }
 
@@ -113,7 +138,6 @@ impl<'pest> FromPest<'pest> for Range<Size> {
                     let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Range { start, step, end })
                 } else {
-                    dbg!(&inner);
                     let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Range { start, step: Size::one(), end })
