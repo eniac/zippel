@@ -6,11 +6,12 @@ use std::fmt;
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
-use share::{Proj1, Proj2, Traversable2, Traversable1, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, Size, Nothing};
-use crate::exp::{BExp, UBExp};
+use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2, VecTraversal};
+use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
+use crate::typ::{Typ, TypTraversal, Size, Nothing};
+use crate::exp::{BExp, UBExp, BExpTraversal};
 use crate::id::{Tid, Fid, Vid};
-use crate::range::Range;
+use crate::range::{Range, RangeTraversal};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -92,13 +93,6 @@ pub enum AExp<N, A> {
     ///     ```
     App(Fid, AExps<N,A>, A),
 
-    ///     Fold over non-empty vector
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let sum = reduce(+, v)
-    ///     ```
-    Reduce(BinOp, Box<AExp<N, A>>, A),
-
     ///     Coefficients of a univariate vector
     ///     **Zippel Code:**
     ///     ```zippel
@@ -132,7 +126,6 @@ pub enum AExp<N, A> {
     ///     let r = 0..5;
     ///     ```
     Range(Range<N>, A),
-
 
     ///     Map comprehension
     ///     **Zippel Code:**
@@ -206,6 +199,12 @@ pub enum AExp<N, A> {
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub struct AExps<N, A>(pub Vec<AExp<N, A>>);
 
+/// How to traverse structures of arithmetic expressions (AExp)
+pub trait AExpTraversal<N, A> {
+    type Output<Z>;
+    fn aexp_traverse<E, Z>(self, f: &mut dyn FnMut(AExp<N, A>) -> Result<AExp<Z, A>, E>) -> Result<Self::Output<Z>, E>;
+}
+
 /// Typed AST node
 pub type TAExp<N, A> = AExp<N, (A, Typ<N>)>;
 
@@ -218,12 +217,14 @@ pub type TAExps<N, A> = AExps<N, (A, Typ<N>)>;
 /// Untyped AST sequence, as parsed from input
 pub type UAExps = AExps<Size, Nothing>;
 
-/// Modular get/set acccess to type parameters using [Traversable1] and [Traversable2]
-impl<N, T> Traversable1<N> for AExp<N, T> {
-    type Output<Z> = AExp<Z, T>;
+/// Modular get/set acccess to type parameters using [Traversal]
+struct AExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, T, Z> Traversal<N, Z> for AExpTraversal1<N, T> {
+    type Domain = AExp<N, T>;
+    type Codomain = AExp<Z, T>;
 
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
-        match self {
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Codomain, E> {
+        match on {
             AExp::Lit(x, a) => Ok(AExp::Lit(f(x)?, a)),
             AExp::Var(v, a) => Ok(AExp::Var(v, a)),
             AExp::Coef(box p, a) => Ok(AExp::Coef(Box::new(p.traverse1(f)?), a)),
@@ -251,11 +252,6 @@ impl<N, T> Traversable1<N> for AExp<N, T> {
                     Box::new(y.traverse1(f)?),
                     a
                 )),
-            AExp::Reduce(op, box x, a) =>
-                Ok(AExp::Reduce(op,
-                    Box::new(x.traverse1(f)?),
-                    a
-                )),
             AExp::Ram(box x, box i, a) =>
                 Ok(AExp::Ram(
                         Box::new(x.traverse1(f)?),
@@ -274,19 +270,25 @@ impl<N, T> Traversable1<N> for AExp<N, T> {
     }
 }
 
-impl<N, T> Traversable1<N> for AExps<N, T> {
-    type Output<Z> = AExps<Z, T>;
+/// Traverse the first free type parameter [N]
+struct AExpsTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, T, Z> Traversal<N, Z> for AExps<N, T> {
+    type Domain = AExps<N, T>;
+    type Codomain = AExps<Z, T>;
 
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z, T>, E> {
-        Ok(AExps(self.0.traverse1(&mut |x| x.traverse1(f))?))
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z, T>, E> {
+        Ok(AExps(VecTraversal::traverse(on.0, &mut |x| AExpTraversal1::traverse(x, f))?))
     }
 }
 
-impl<N, T> Traversable2<T> for AExp<N, T> {
-    type Output<Z> = AExp<N, Z>;
+/// Traverse the second free type parameter [T]
+struct AExpTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, T, Z> Traversal<T, Z> for AExpTraversal2<N, T> {
+    type Domain = AExp<N, T>;
+    type Codomain = AExp<N, Z>;
 
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
-        match self {
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
+        match on {
             AExp::Lit(x, a) => Ok(AExp::Lit(x, f(a)?)),
             AExp::Var(v, a) => Ok(AExp::Var(v, f(a)?)),
             AExp::Coef(box p, a) => Ok(AExp::Coef(Box::new(p.traverse2(f)?), f(a)?)),
@@ -314,11 +316,6 @@ impl<N, T> Traversable2<T> for AExp<N, T> {
                     Box::new(y.traverse2(f)?),
                     f(a)?
                 )),
-            AExp::Reduce(op, box x, a) =>
-                Ok(AExp::Reduce(op,
-                    Box::new(x.traverse2(f)?),
-                    f(a)?
-                )),
             AExp::Ram(box x, box i, a) =>
                 Ok(AExp::Ram(
                         Box::new(x.traverse2(f)?),
@@ -337,11 +334,159 @@ impl<N, T> Traversable2<T> for AExp<N, T> {
     }
 }
 
-impl<N, T> Traversable2<T> for AExps<N, T> {
-    type Output<Z> = AExps<N, Z>;
+struct AExpsTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, T, Z> Traversal<T, Z> for AExpsTraversal2<N, T> {
+    type Domain = AExps<N, T>;
+    type Codomain = AExps<N, Z>;
 
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExps<N, Z>, E> {
-        Ok(AExps(self.0.traverse1(&mut |x| x.traverse2(f))?))
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
+        Ok(AExps(on.0.traverse1(&mut |x| AExpTraversal2::traverse(x, f))?))
+    }
+}
+
+/// Traverse [Range] inside a [UAExp]
+struct UAExpTraversalRange();
+impl Traversal<Range<Size>> for UAExpTraversalRange {
+    type Domain = UAExp;
+    type Codomain = UAExp;
+
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(Range<Size>) -> Result<Range<Size>, E>) -> Result<Self::Codomain, E> {
+        match on {
+            AExp::Range(r, a) => Ok(AExp::Range(f(r)?, a)),
+            AExp::Lit(x, a) => Ok(AExp::Lit(x, a)),
+            AExp::Var(v, a) => Ok(AExp::Var(v, a)),
+            AExp::Gen(t, a) => Ok(AExp::Gen(t.range_traverse(f)?, a)),
+            AExp::Challenge(t, a) => Ok(AExp::Challenge(t.range_traverse(f)?, a)),
+            AExp::Random(t, a) => Ok(AExp::Random(t.range_traverse(f)?, a)),
+            AExp::Coef(p, a) => Ok(AExp::Coef(p.traverse1(
+                        &mut |x| x.range_traverse(f))?, a)),
+            AExp::Mle(p, a) => Ok(AExp::Mle(BoxTraversal::traverse(p,
+                        &mut |x| x.range_traverse(f))?, a)),
+            AExp::Vec(v, a) => Ok(AExp::Vec(VecTraversal::traverse(v,
+                        &mut |x| x.range_traverse(f))?, a)),
+            AExp::Bin(op, x, y, a) => Ok(AExp::Bin(op,
+                    BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
+                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?, a)),
+            AExp::Map(x, id, r, a) => Ok(AExp::Map(
+                    BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?, id,
+                    BoxTraversal::traverse(r, &mut |x| x.range_traverse(f))?, a)),
+            AExp::Ram(x, i, a) => Ok(AExp::Ram(
+                    BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
+                    BoxTraversal::traverse(i, &mut |x| x.range_traverse(f))?, a)),
+            AExp::Interpolate(x, y, a) => Ok(AExp::Interpolate(
+                    BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
+                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?, a)),
+            AExp::Let(x, a, t) => Ok(AExp::Let(x,
+                    BoxTraversal::traverse(a, &mut |x| x.range_traverse(f))?, t)),
+            AExp::Log(x, a, t) => Ok(AExp::Log(x,
+                    BoxTraversal::traverse(a, &mut |x| x.range_traverse(f))?, t)),
+            AExp::Assert(x, t) => Ok(BoxTraversal::traverse(x,
+                    &mut |x| x.aexp_traverse(&mut |y| x.range_traverse(f)))?),
+            AExp::Verify(x, t) => Ok(BoxTraversal::traverse(x,
+                    &mut |x| x.aexp_traverse(&mut |y| x.range_traverse(f)))?),
+            AExp::App(x, ts, a) => Ok(AExp::App(x,
+                    ts.traverse1(&mut |x| x.range_traverse(f))?, a)),
+        }
+    }
+}
+
+/// AExp<N, T> has some Typ<N> in it, but not all the types.
+/// TAExp<N, A> has all the type annotations, so define [Typ<N>] traversal for it.
+struct TAExpTraversalTyp<N, A>(std::marker::PhantomData<(N, A)>);
+impl<N, A> Traversal<Typ<N>> for TAExpTraversalTyp<N, A> {
+    type Domain = TAExp<N, A>;
+    type Codomain = TAExp<N, A>;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self::Codomain, E> {
+        match on {
+            AExp::Lit(x, (a, t)) => Ok(AExp::Lit(x, (a, f(t)?))),
+            AExp::Var(v, (a, t)) => Ok(AExp::Var(v, (a, f(t)?))),
+            AExp::Coef(p, (a, t)) =>
+                Ok(AExp::Coef(p.traverse1(&mut |x| x.typ_traverse(f)?), (a, f(t)?))),
+            AExp::Mle(p, (a, t)) =>
+                Ok(AExp::Mle(p.traverse1(&mut |x| x.typ_traverse(f)?), (a, f(t)?))),
+            AExp::Vec(v, (a, t)) =>
+                Ok(AExp::Vec(v.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
+            AExp::App(x, ts, (a, t)) =>
+                Ok(AExp::App(x, ts.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
+            AExp::Bin(op, x, y, (a, t)) =>
+                Ok(AExp::Bin(
+                    op,
+                    x.traverse1(&mut |x| x.typ_traverse(f))?,
+                    y.traverse1(&mut |x| x.typ_traverse(f))?,
+                    (a, f(t)?)
+                )),
+            AExp::Map(x, id, r, (a, t)) =>
+                Ok(AExp::Map(
+                    x.traverse1(&mut |x| x.typ_traverse(f))?,
+                    id,
+                    r.traverse1(&mut |x| x.typ_traverse(f))?,
+                    (a, f(t)?)
+                )),
+            AExp::Challenge(t, (a, t1)) =>
+                Ok(AExp::Challenge(f(t)?, (a, f(t1)?))),
+            AExp::Random(t, (a, t1)) =>
+                Ok(AExp::Random(f(t)?, (a, f(t1)?))),
+            AExp::Gen(t, (a, t1)) =>
+                Ok(AExp::Gen(f(t)?, (a, f(t1)?))),
+            AExp::Range(r, (a, t)) => Ok(AExp::Range(r, (a, f(t)?))),
+            AExp::Interpolate(x, y, (a, t)) =>
+                Ok(AExp::Interpolate(
+                    x.traverse1(&mut |x| x.typ_traverse(f))?,
+                    y.traverse1(&mut |x| x.typ_traverse(f))?,
+                    (a, f(t)?)
+                )),
+            AExp::Ram(x, i, (a, t)) =>
+                Ok(AExp::Ram(
+                    x.traverse1(&mut |x| x.typ_traverse(f))?,
+                    i.traverse1(&mut |x| x.typ_traverse(f))?,
+                    (a, f(t)?)
+                )),
+            AExp::Let(x, a, (a1, t)) =>
+                Ok(AExp::Let(x, a.traverse1(&mut |x| x.typ_traverse(f))?, (a1, f(t)?))),
+            AExp::Log(x, a, (a1, t)) =>
+                Ok(AExp::Log(x, a.traverse1(&mut |x| x.typ_traverse(f))?, (a1, f(t)?))),
+            AExp::Assert(x, (a, t)) =>
+                Ok(AExp::Assert(x.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
+            AExp::Verify(x, (a, t)) =>
+                Ok(AExp::Verify(x.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?)))
+        }
+    }
+}
+
+/// How to traverse the first type parameter [N]
+impl<N, T> ToTraversal1<N> for AExp<N, T> {
+    type Output<Z> = AExp<Z, T>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
+        AExpTraversal1::traverse(self, f)
+    }
+}
+
+/// How to traverse the second type parameter [T]
+impl<N, T> ToTraversal2<T> for AExp<N, T> {
+    type Output<Z> = AExp<N, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
+        AExpTraversal1::traverse(self, f)
+    }
+}
+
+/// How to traverse [BExp] inside an [AExp]
+impl<N, T> BExpTraversal<N, T> for AExp<N, T> {
+    type Output<Z> = AExp<Z, T>;
+    fn bexp_traverse<E, Z>(self, f: &mut dyn FnMut(BExp<N, T>) -> Result<BExp<Z, T>, E>) -> Result<AExp<Z, T>, E> {
+        Ok(self)
+    }
+}
+
+/// How to traverse [Range] inside an [AExp]
+impl RangeTraversal<Size> for UAExp {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<Size>) -> Result<Range<Size>, E>) -> Result<Self, E> {
+        UAExpTraversalRange::traverse(self, f)
+    }
+}
+
+impl<N, T> TypTraversal<N> for AExp<N, T> {
+    fn typ_traverse<E>(self, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self, E> {
+        TAExpTraversalTyp::traverse(self, f)
     }
 }
 
@@ -413,9 +558,6 @@ impl UAExp {
     }
     pub fn app(e: Fid, d: UAExps) -> Self {
         AExp::App(e, d, Nothing)
-    }
-    pub fn reduce(op: BinOp, d: Self) -> Self {
-        AExp::Reduce(op, Box::new(d), Nothing)
     }
     pub fn assert(b: UBExp) -> Self {
         AExp::Assert(Box::new(b), Nothing)
@@ -560,17 +702,6 @@ where
                 x.pretty(allocator),
                 allocator.text("("),
                 d.pretty(allocator),
-                allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Reduce(op, d, t) => allocator.concat([
-                allocator.text("reduce("),
-                op.pretty(allocator),
-                allocator.text(", "),
-                (*d).pretty(allocator),
                 allocator.text(")"),
                 if t.is_nil() {
                     allocator.nil()

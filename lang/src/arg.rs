@@ -2,7 +2,8 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::traversal::VecTraversal;
+use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::id::Vid;
 use crate::typ::{Size, Typ, Qualifier};
 use crate::parser::*;
@@ -36,11 +37,26 @@ impl<N> Arg<N> {
     pub fn private<'a>(id: &'a str, typ: Typ<N>) -> Self {
         Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
     }
+    pub fn get_traversal1() -> ArgTraversal1<N> {
+        ArgTraversal1(std::marker::PhantomData)
+    }
+    pub fn get_traversal_type() -> ArgTraversalType<N> {
+        ArgTraversalType(std::marker::PhantomData)
+    }
 }
 
-/// Traversable1 instance for Arg
-pub struct ArgTraversalN<N>(std::marker::PhantomData<N>);
-impl<N, M> Traversal<N, M> for ArgTraversalN<N> {
+impl<N> Args<N> {
+    pub fn get_traversal1() -> ArgsTraversal1<N> {
+        ArgsTraversal1(std::marker::PhantomData)
+    }
+    pub fn get_traversal_type() -> ArgsTraversalType<N> {
+        ArgsTraversalType(std::marker::PhantomData)
+    }
+}
+
+/// Traversal instance for Arg
+pub struct ArgTraversal1<N>(std::marker::PhantomData<N>);
+impl<N, M> Traversal<N, M> for ArgTraversal1<N> {
     type Domain = Arg<N>;
     type Codomain = Arg<M>;
     fn traverse<E>(
@@ -48,29 +64,47 @@ impl<N, M> Traversal<N, M> for ArgTraversalN<N> {
         f: &mut dyn FnMut(N) -> Result<M, E>,
     ) -> Result<Self::Codomain, E> {
         let Arg { qualifier, id, typ } = on;
-        Ok(Arg { qualifier, id, typ: Typ::n_traversal(typ, f)? })
+        Ok(Arg { qualifier, id, typ: Typ::get_traversal::traverse(typ, f)? })
     }
 }
 
-impl<N> Traversable1<N> for Arg<N> {
-    type Output<Z> = Arg<Z>;
-    fn traverse1<Z, E>(
-        self,
-        f: &mut dyn FnMut(N) -> Result<Z, E>,
-    ) -> Result<Arg<Z>, E> {
-        let Arg { qualifier, id, typ } = self;
-        Ok(Arg { qualifier, id, typ: typ.traverse1(f)? })
+/// Traversal instance for Arg types
+pub struct ArgTraversalType<N>(std::marker::PhantomData<N>);
+impl<N> Traversal<Typ<N>> for ArgTraversalType<N> {
+    type Domain = Arg<N>;
+    type Codomain = Arg<N>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>,
+    ) -> Result<Self::Codomain, E> {
+        let Arg { qualifier, id, typ } = on;
+        Ok(Arg { qualifier, id, typ: f(typ)? })
     }
 }
 
-/// Traversable1 instance for Args
-impl<N> Traversable1<N> for Args<N> {
-    type Output<Z> = Args<Z>;
-    fn traverse1<Z, E>(
-        self,
-        f: &mut dyn FnMut(N) -> Result<Z, E>,
-    ) -> Result<Args<Z>, E> {
-        Ok(Args(self.0.traverse1(&mut |x| x.traverse1(f))?))
+/// Traversal instance for Args
+pub struct ArgsTraversal1<N>(std::marker::PhantomData<N>);
+impl<N, M> Traversal<N, M> for ArgsTraversal1<N> {
+    type Domain = Args<N>;
+    type Codomain = Args<M>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(N) -> Result<M, E>,
+    ) -> Result<Self::Codomain, E> {
+        VecTraversal::traverse(on.0, &mut |x| ArgTraversal1::traverse(x, f)).map(Args)
+    }
+}
+
+/// Traversal instance for Args types
+pub struct ArgsTraversalType<N>(std::marker::PhantomData<N>);
+impl<N> Traversal<Typ<N>> for ArgsTraversalType<N> {
+    type Domain = Args<N>;
+    type Codomain = Args<N>;
+    fn traverse<E>(
+        on: Self::Domain,
+        f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>,
+    ) -> Result<Self::Codomain, E> {
+        VecTraversal::traverse(on.0, &mut |arg| ArgTraversalType::traverse(arg, f)).map(Args)
     }
 }
 
@@ -199,4 +233,11 @@ fn arg_parser() {
 
     let ex3 = "a: F";
     assert!(ZippelParser::parse(Rule::arg, ex3).is_err());
+}
+
+#[test]
+fn arg_traversal() {
+    let arg = Arg::new(Qualifier::Public, "a", Typ::fin(Size::from(2)));
+    assert_eq!(Arg::get_traversal1::traverse(arg.clone(), &mut |x| Ok(x + 1)).unwrap(),
+       Arg::new(Qualifier::Public, "a", Typ::fin(Size::from(3)))); // 2 + 1 = 3
 }

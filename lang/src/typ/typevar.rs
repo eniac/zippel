@@ -1,10 +1,11 @@
 use crate::id::Tid;
 use crate::range::Range;
-use crate::typ::kind::Kind;
+use crate::typ::kind::{Kind, KindTraversal};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::traversal::VecTraversal;
+use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
 /// A type variable with an associated kind
@@ -30,6 +31,18 @@ impl TypeVars {
 
     pub fn iter(&self) -> std::slice::Iter<TypeVar> {
         self.0.iter()
+    }
+}
+
+impl KindTraversal for TypeVar {
+    fn kind_traverse<E>(self, f: &mut dyn FnMut(Kind) -> Result<Kind, E>) -> Result<Self, E> {
+        Ok(TypeVar { id: self.id, kind: f(self.kind)? })
+    }
+}
+
+impl KindTraversal for TypeVars {
+    fn kind_traverse<E>(self, f: &mut dyn FnMut(Kind) -> Result<Kind, E>) -> Result<Self, E> {
+        Ok(TypeVars(VecTraversal::traverse(self.0, &mut |tvar| tvar.kind_traverse(f))?))
     }
 }
 

@@ -24,6 +24,10 @@ pub enum Kind {
     Range(Range<usize>)
 }
 
+pub trait KindTraversal : Sized {
+    fn kind_traverse<E>(self, f: &mut dyn FnMut(Kind) -> Result<Kind, E>) -> Result<Self, E>;
+}
+
 impl Kind {
     pub fn scalar<'a>(a: &'a str) -> Self {
         Kind::Scalar(Tid::new(a))

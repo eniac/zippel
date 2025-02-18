@@ -7,7 +7,7 @@ mod infer;
 mod lub;
 
 pub use crate::id::Tid;
-pub use crate::range::{Range, RangeTraversal1};
+pub use crate::range::{Range, RangeTraversal};
 pub use kind::Kind;
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
@@ -16,6 +16,7 @@ pub use nothing::Nothing;
 pub use lub::Lub;
 
 use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
+use share::traversal::ToTraversal1;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
@@ -74,7 +75,12 @@ impl<N> Typ<N> {
     }
 }
 
-pub struct TypTraversal1<N>(std::marker::PhantomData<N>);
+/// Traverse a structure with [Typ<N>] objects
+pub trait TypTraversal<N> : Sized {
+    fn typ_traverse<E>(self, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self, E>;
+}
+
+struct TypTraversal1<N>(std::marker::PhantomData<N>);
 impl<A, B> Traversal<A, B> for TypTraversal1<A> {
     type Domain = Typ<A>;
     type Codomain = Typ<B>;
@@ -88,13 +94,13 @@ impl<A, B> Traversal<A, B> for TypTraversal1<A> {
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) =>
                 Ok(Typ::vec(Self::traverse(b, f)?, f(n)?)),
-            Typ::Fin(r) => Ok(Typ::Fin(RangeTraversal1::traverse(r, f)?)),
+            Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Bool => Ok(Typ::Bool)
         }
     }
 }
 
-pub struct TypTraversalRange<N>(std::marker::PhantomData<N>);
+struct TypTraversalRange<N>(std::marker::PhantomData<N>);
 impl<A> Traversal<Range<A>> for TypTraversalRange<A> {
     type Domain = Typ<A>;
     type Codomain = Typ<A>;
@@ -106,6 +112,19 @@ impl<A> Traversal<Range<A>> for TypTraversalRange<A> {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
             _ => Ok(on)
         }
+    }
+}
+
+impl<N> ToTraversal1<N> for Typ<N> {
+    type Output<Z> = Typ<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        TypTraversal1::traverse(self, f)
+    }
+}
+
+impl<N> RangeTraversal<N> for Typ<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        TypTraversalRange::traverse(self, f)
     }
 }
 

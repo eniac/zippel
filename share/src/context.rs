@@ -4,7 +4,7 @@ use std::hash::Hash;
 
 
 use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
-use crate::traversal::Traversal;
+use crate::traversal::{ToTraversal2, Traversal};
 
 /// General BTreeMap context
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -52,6 +52,12 @@ impl<K: Ord, V1, V2> Traversal<V1, V2> for CtxValueTraversal<K, V1> {
     }
 }
 
+impl<K: Ord, V1> ToTraversal2<V1> for Ctx<K, V1> {
+    type Output<Z> = Ctx<K, Z>;
+    fn traverse2<V2, E>(self, f: &mut dyn FnMut(V1) -> Result<V2, E>) -> Result<Self::Output<V2>, E> {
+        CtxValueTraversal::traverse(self, f)
+    }
+}
 
 /// IntoIterator instance for Ctx
 impl<K, V> IntoIterator for Ctx<K, V> {

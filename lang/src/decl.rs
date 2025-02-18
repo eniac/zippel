@@ -4,8 +4,8 @@ use pest::iterators::Pairs;
 use pest::Parser;
 use bumpalo::Bump;
 
-use share::{Pretty, Traversable1, Traversable2, BoxAllocator, DocAllocator, DocBuilder};
-
+use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
+use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::typ::TypeVars;
 use crate::id::{Tid, Fid};
 use crate::typ::{Typ, Size, Nothing};
@@ -105,13 +105,12 @@ impl FromIterator<UDecl> for UDecls {
 }
 
 /// Traversable1 instance for Decl (N)
-impl<N, T> Traversable1<N> for Decl<N, T> {
-    type Output<Z> = Decl<Z, T>;
-    fn traverse1<Z, E>(
-        self,
-        f: &mut dyn FnMut(N) -> Result<Z, E>,
-    ) -> Result<Decl<Z, T>, E> {
-        match self {
+struct DeclTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, Z, T> Traversal<N, Z> for DeclTraversal1<N, T> {
+    type Domain = Decl<N, T>;
+    type Codomain = Decl<Z, T>;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Decl<Z, T>, E> {
+        match on {
             Decl::Proto { name, typevars, args, relation, body } =>
                 Ok(Decl::Proto {
                     name,
@@ -132,13 +131,12 @@ impl<N, T> Traversable1<N> for Decl<N, T> {
     }
 }
 
-impl<N, T> Traversable2<T> for Decl<N, T> {
-    type Output<Z> = Decl<N, Z>;
-    fn traverse2<Z, E>(
-        self,
-        f: &mut dyn FnMut(T) -> Result<Z, E>,
-    ) -> Result<Decl<N, Z>, E> {
-        match self {
+struct DeclTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
+impl<N, Z, T> Traversal<T, Z> for DeclTraversal2<N, T> {
+    type Domain = Decl<N, T>;
+    type Codomain = Decl<N, Z>;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Decl<N, Z>, E> {
+        match on {
             Decl::Proto { name, typevars, args, relation, body } =>
                 Ok(Decl::Proto {
                     name,
@@ -159,24 +157,17 @@ impl<N, T> Traversable2<T> for Decl<N, T> {
     }
 }
 
-/// Traversable1 instance for Decls (N)
-impl<N, T> Traversable1<N> for Decls<N, T> {
-    type Output<Z> = Decls<Z, T>;
-    fn traverse1<Z, E>(
-        self,
-        f: &mut dyn FnMut(N) -> Result<Z, E>,
-    ) -> Result<Decls<Z, T>, E> {
-        Ok(Decls(self.0.into_iter().map(|d| d.traverse1(f)).collect::<Result<_, _>>()?))
+impl<N, T> ToTraversal1<N> for Decl<N, T> {
+    type Output<Z> = Decl<Z, T>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Decl<Z, T>, E> {
+        DeclTraversal1::traverse(self, f)
     }
 }
 
-impl<N, T> Traversable2<T> for Decls<N, T> {
-    type Output<Z> = Decls<N, Z>;
-    fn traverse2<Z, E>(
-        self,
-        f: &mut dyn FnMut(T) -> Result<Z, E>,
-    ) -> Result<Decls<N, Z>, E> {
-        Ok(Decls(self.0.into_iter().map(|d| d.traverse2(f)).collect::<Result<_, _>>()?))
+impl<N, T> ToTraversal2<T> for Decl<N, T> {
+    type Output<Z> = Decl<N, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Decl<N, Z>, E> {
+        DeclTraversal2::traverse(self, f)
     }
 }
 

@@ -11,6 +11,20 @@ pub trait Traversal<A, B=A> {
     ) -> Result<Self::Codomain, E>;
 }
 
+/// Acess the traversal for free type parameters (1, 2, 3)
+pub trait ToTraversal1<A> {
+    type Output<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+}
+pub trait ToTraversal2<A> {
+    type Output<Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+}
+pub trait ToTraversal3<A> {
+    type Output<Z>;
+    fn traverse3<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+}
+
 /// How to traverse vectors
 pub struct VecTraversal<A>(std::marker::PhantomData<A>);
 impl<A, B> Traversal<A, B> for VecTraversal<A> {
@@ -25,6 +39,13 @@ impl<A, B> Traversal<A, B> for VecTraversal<A> {
             v.push(f(x)?);
         }
         Ok(v)
+    }
+}
+
+impl<A> ToTraversal1<A> for Vec<A> {
+    type Output<Z> = Vec<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        VecTraversal::traverse(self, f)
     }
 }
 
@@ -76,6 +97,13 @@ impl<A, B> Traversal<A, B> for OptionTraversal<A> {
     }
 }
 
+impl<A> ToTraversal1<A> for Option<A> {
+    type Output<Z> = Option<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        OptionTraversal::traverse(self, f)
+    }
+}
+
 /// How to traverse Boxes
 pub struct BoxTraversal<A>(std::marker::PhantomData<A>);
 impl<A, B> Traversal<A, B> for BoxTraversal<A> {
@@ -86,6 +114,13 @@ impl<A, B> Traversal<A, B> for BoxTraversal<A> {
         f: &mut dyn FnMut(A) -> Result<B, E>,
     ) -> Result<Self::Codomain, E> {
         Ok(Box::new(f(*on)?))
+    }
+}
+
+impl<A> ToTraversal1<A> for Box<A> {
+    type Output<Z> = Box<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        BoxTraversal::traverse(self, f)
     }
 }
 

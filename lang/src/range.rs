@@ -4,6 +4,7 @@ use std::fmt;
 use thiserror::Error;
 
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
+use share::traversal::ToTraversal1;
 use crate::typ::Size;
 use crate::parser::*;
 
@@ -20,6 +21,22 @@ pub struct Range<N> {
     pub start : N,
     pub step : N,
     pub end : N
+}
+
+/// Implementations of this trait can modify ranges
+pub trait RangeTraversal<N> : Sized {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E>;
+}
+
+impl<N> ToTraversal1<N> for Range<N> {
+    type Output<Z> = Range<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Range<Z>, E> {
+        Ok(Range {
+            start: f(self.start)?,
+            step: f(self.step)?,
+            end: f(self.end)?
+        })
+    }
 }
 
 impl Range<usize> {
@@ -159,4 +176,13 @@ fn range_parser() {
 
     pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
     assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::from(2), end: Size::from(2) ^ Size::from("N") });
+}
+
+#[test]
+fn range_traversal() {
+    let r = Range { start: Size::varstr("N"), step: Size::from(2), end: Size::from(10) };
+    assert_eq!(
+        RangeTraversal::traverse(r, &mut |x| x.eval(&Ctx::singleton("N", 0))).unwrap(),
+        Range { start: 0, step: 2, end: 10 }
+    );
 }
