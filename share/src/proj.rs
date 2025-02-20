@@ -18,5 +18,11 @@ impl<A, B> Proj2<A, B> for (A, B) {
     }
 }
 
+#[test]
+fn test_proj() {
+    let x = (1, 2);
+    assert_eq!(x.proj1(), 1);
+    assert_eq!(x.proj2(), 2);
+}
 
 

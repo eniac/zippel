@@ -1,8 +1,7 @@
-mod sizesubsts;
 use std::fmt;
 use thiserror::Error;
 
-pub use sizesubsts::SizeSubsts;
+use crate::typ::SizeSubsts;
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
 use crate::id::Fid;

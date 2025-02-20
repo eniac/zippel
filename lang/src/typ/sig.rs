@@ -36,7 +36,7 @@ impl Sig {
         }
     }
 
-    pub fn lub_all(self, v: Vec<CTyp>, ctx: &Ctx<Tid, Kind>) -> Result<Vec<CTyp>, SigError> {
+    pub fn lub_all(self, v: Vec<CTyp>, ctx: &Ctx<Tid, Kind>) -> Result<Self, SigError> {
         let args = self.args();
         if args.len() != v.len() {
             return Err(SigError::ArityMismatch(args.len(), v.len(), self));
@@ -46,7 +46,10 @@ impl Sig {
         for (l, r) in args.iter().zip(v.iter()) {
             res.push(CTyp::lub_equ(l.clone(), r.clone(), ctx)?);
         }
-        Ok(res)
+        match self {
+            Sig::Func { ret, .. } => Ok(Sig::Func { args: res, ret }),
+            Sig::Proto { .. } => Ok(Sig::Proto { args: res })
+        }
     }
 }
 

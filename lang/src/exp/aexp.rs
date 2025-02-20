@@ -484,7 +484,7 @@ impl<N, T> ToTraversal1<N> for AExp<N, T> {
 impl<N, T> ToTraversal2<T> for AExp<N, T> {
     type Output<Z> = AExp<N, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
-        AExpTraversal1::traverse(self, f)
+        AExpTraversal2::traverse(self, f)
     }
 }
 

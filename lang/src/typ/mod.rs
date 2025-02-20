@@ -4,8 +4,9 @@ mod size;
 mod qualifier;
 mod nothing;
 mod infer;
-mod lub;
+mod unify;
 mod sig;
+mod subst;
 
 pub use crate::id::Tid;
 pub use crate::range::{Range, RangeTraversal};
@@ -14,8 +15,9 @@ pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
-pub use lub::Lub;
+pub use unify::Unify;
 pub use sig::Sig;
+pub use subst::{Substs, SizeSubsts, AliasSubsts};
 
 use share::{Ctx, Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;

@@ -3,11 +3,13 @@
 mod context;
 mod pretty;
 pub mod traversal;
-pub mod proj;
+mod proj;
 
 pub use pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 pub use context::{Ctx, Set};
 pub use traversal::Traversal;
+pub use proj::Proj1;
+pub use proj::Proj2;
 
 /// Logarithm with "remainder"
 /// ex: log2(12) = (2, 3)    [means 2^2 * 3]
