@@ -39,6 +39,8 @@ impl<N> ToTraversal1<N> for Range<N> {
     }
 }
 
+impl Copy for Range<usize> {}
+
 impl Range<usize> {
     /// Create a range from a start, step and end numbers, checking their order
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
@@ -51,14 +53,26 @@ impl Range<usize> {
         }
     }
 
-    /// Warning: overapproximation. Think about using OpenSet from Reef?
-    pub fn lub(&self, other: &Self) -> Self {
-        Range {
-            start: self.start.min(other.start),
-            step: self.step.min(other.step),
-            end: self.end.max(other.end)
-        }
+    /// Create a singleton range
+    pub fn singleton(start: usize) -> Self {
+        Range { start, step: 1, end: start + 1 }
     }
+
+    /// Function to check if a value is contained in the range
+    pub fn contains(&self, value: usize) -> bool {
+        // Check if the value is within the bounds of the range
+        if value < self.start || value >= self.end {
+            return false;
+        }
+
+        // Check if the value aligns with the step
+        (value - self.start) % self.step == 0
+    }
+
+    pub fn get_size(&self) -> usize {
+        (self.end - self.start) / self.step
+    }
+
 }
 
 pub struct RangeTraversal1<N>(std::marker::PhantomData<N>);

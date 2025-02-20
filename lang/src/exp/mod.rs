@@ -1,8 +1,8 @@
 mod aexp;
 mod bexp;
 
-pub use aexp::{AExp, TAExp, UAExp, AExps, UAExps, AExpTraversal};
-pub use bexp::{BExp, TBExp, UBExp, BExpTraversal};
+pub use aexp::{AExp, TAExp, UAExp, AExps, TAExps, UAExps, CAExp, AExpTraversal, BinOp};
+pub use bexp::{BExp, TBExp, UBExp, CBExp, BExpTraversal};
 
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Traversable1, Traversable2};
 

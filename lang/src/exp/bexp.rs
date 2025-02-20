@@ -6,8 +6,9 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{VecTraversal, BoxTraversal, ToTraversal1, ToTraversal2};
+use share::proj::Proj2;
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, TypTraversal, Size, Nothing};
+use crate::typ::{Typ, CTyp, TypTraversal, Size, Nothing};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
 use crate::id::Fid;
 use crate::range::{Range, RangeTraversal};
@@ -74,10 +75,13 @@ pub enum BExp<N, T> {
 }
 
 /// Typed AST node
-pub type TBExp<N, A> = BExp<N, (A, Typ<N>)>;
+pub type TBExp = BExp<usize, Typ<usize>>;
 
 /// Untyped AST node with symbolic sizes
 pub type UBExp = BExp<Size, Nothing>;
+
+/// Untyped AST node with concrete sizes
+pub type CBExp = BExp<usize, Nothing>;
 
 /// How to traverse a structure containing [BExp]
 pub trait BExpTraversal<N, T> {
@@ -201,12 +205,12 @@ impl Traversal<Range<Size>> for UBExpTraversalRange {
 }
 
 /// BExp<N, T> has some Typ<N> in it, but not all the types.
-/// TBExp<N, A> has all the type annotations, so define [Typ<N>] traversal for it.
-struct TBExpTraversalTyp<N, A>(std::marker::PhantomData<(N, A)>);
-impl<N, A> Traversal<Typ<N>> for TBExpTraversalTyp<N, A> {
-    type Domain = TBExp<N, A>;
-    type Codomain = TBExp<N, A>;
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self::Codomain, E> {
+/// TBExp has all the type annotations, so define [CTyp] traversal for it.
+struct TBExpTraversalTyp();
+impl Traversal<CTyp> for TBExpTraversalTyp {
+    type Domain = TBExp;
+    type Codomain = TBExp;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(CTyp) -> Result<CTyp, E>) -> Result<Self::Codomain, E> {
         match on {
             BExp::Eq(a, b, (x, t)) =>
                 Ok(BExp::Eq(a.typ_traverse(f)?, b.typ_traverse(f)?, (x, f(t)?))),
@@ -253,9 +257,21 @@ impl RangeTraversal<Size> for UBExp {
     }
 }
 
-impl<N, A> TypTraversal<N> for TBExp<N, A> {
-    fn typ_traverse<E>(self, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self, E> {
+impl TypTraversal for TBExp {
+    fn typ_traverse<E>(self, f: &mut dyn FnMut(CTyp) -> Result<CTyp, E>) -> Result<Self, E> {
         TBExpTraversalTyp::traverse(self, f)
+    }
+}
+
+impl<N, T> Proj2<N, T> for BExp<N,T> {
+    fn proj2(self) -> T {
+        match self {
+            BExp::Eq(_, _, t) => t,
+            BExp::App(_, _, t) => t,
+            BExp::Contains(_, _, t) => t,
+            BExp::And(_, _, t) => t,
+            BExp::Or(_, _, t) => t,
+        }
     }
 }
 

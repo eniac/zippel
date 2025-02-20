@@ -7,8 +7,10 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2, VecTraversal};
+use share::proj::Proj2;
+
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, TypTraversal, Size, Nothing};
+use crate::typ::{Typ, CTyp, TypTraversal, Size, Nothing};
 use crate::exp::{BExp, UBExp, BExpTraversal};
 use crate::id::{Tid, Fid, Vid};
 use crate::range::{Range, RangeTraversal};
@@ -205,17 +207,23 @@ pub trait AExpTraversal<N, A> {
     fn aexp_traverse<E, Z>(self, f: &mut dyn FnMut(AExp<N, A>) -> Result<AExp<Z, A>, E>) -> Result<Self::Output<Z>, E>;
 }
 
-/// Typed AST node
-pub type TAExp<N, A> = AExp<N, (A, Typ<N>)>;
-
 /// Untyped AST node, as parsed from input
 pub type UAExp = AExp<Size, Nothing>;
 
-/// Typed AST sequence
-pub type TAExps<N, A> = AExps<N, (A, Typ<N>)>;
+/// Concrete size untyped AST node
+pub type CAExp = AExp<usize, Nothing>;
+
+/// Typed AST node
+pub type TAExp = AExp<usize, Typ<usize>>;
 
 /// Untyped AST sequence, as parsed from input
 pub type UAExps = AExps<Size, Nothing>;
+
+/// Concrete size untyped AST node
+pub type CAExps = AExps<usize, Nothing>;
+
+/// Typed AST sequence
+pub type TAExps = AExps<usize, Typ<usize>>;
 
 /// Modular get/set acccess to type parameters using [Traversal]
 struct AExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
@@ -392,18 +400,18 @@ impl Traversal<Range<Size>> for UAExpTraversalRange {
 
 /// AExp<N, T> has some Typ<N> in it, but not all the types.
 /// TAExp<N, A> has all the type annotations, so define [Typ<N>] traversal for it.
-struct TAExpTraversalTyp<N, A>(std::marker::PhantomData<(N, A)>);
-impl<N, A> Traversal<Typ<N>> for TAExpTraversalTyp<N, A> {
-    type Domain = TAExp<N, A>;
-    type Codomain = TAExp<N, A>;
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self::Codomain, E> {
+struct TAExpTraversalTyp();
+impl Traversal<CTyp> for TAExpTraversalTyp {
+    type Domain = TAExp;
+    type Codomain = TAExp;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(CTyp) -> Result<CTyp, E>) -> Result<Self::Codomain, E> {
         match on {
             AExp::Lit(x, (a, t)) => Ok(AExp::Lit(x, (a, f(t)?))),
             AExp::Var(v, (a, t)) => Ok(AExp::Var(v, (a, f(t)?))),
             AExp::Coef(p, (a, t)) =>
-                Ok(AExp::Coef(p.traverse1(&mut |x| x.typ_traverse(f)?), (a, f(t)?))),
+                Ok(AExp::Coef(p.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
             AExp::Mle(p, (a, t)) =>
-                Ok(AExp::Mle(p.traverse1(&mut |x| x.typ_traverse(f)?), (a, f(t)?))),
+                Ok(AExp::Mle(p.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
             AExp::Vec(v, (a, t)) =>
                 Ok(AExp::Vec(v.traverse1(&mut |x| x.typ_traverse(f))?, (a, f(t)?))),
             AExp::App(x, ts, (a, t)) =>
@@ -453,6 +461,17 @@ impl<N, A> Traversal<Typ<N>> for TAExpTraversalTyp<N, A> {
     }
 }
 
+/// Traverse [AExp] inside [AExps]
+struct AExpsTraversalAExp<N, T>(std::marker::PhantomData<(N, T)>);
+impl <N1, T1, N2, T2> Traversal<AExp<N1, T1>, AExp<N2, T2>> for AExpsTraversalAExp<N1, T1> {
+    type Domain = AExps<N1, T1>;
+    type Codomain = AExps<N2, T2>;
+
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(AExp<N1, T1>) -> Result<AExp<N2, T2>, E>) -> Result<Self::Codomain, E> {
+        Ok(AExps(VecTraversal::traverse(on.0, f)?))
+    }
+}
+
 /// How to traverse the first type parameter [N]
 impl<N, T> ToTraversal1<N> for AExp<N, T> {
     type Output<Z> = AExp<Z, T>;
@@ -487,6 +506,37 @@ impl RangeTraversal<Size> for UAExp {
 impl<N, T> TypTraversal<N> for AExp<N, T> {
     fn typ_traverse<E>(self, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self, E> {
         TAExpTraversalTyp::traverse(self, f)
+    }
+}
+
+impl<N, A> AExps<N, A> {
+    pub fn aexps_traverse<E, Z, T>(self, f: &mut dyn FnMut(AExp<N, A>) -> Result<AExp<Z, T>, E>) -> Result<AExps<Z, T>, E> {
+        Ok(AExps(VecTraversal::traverse(self.0, f)?))
+    }
+}
+
+impl<N, T> Proj2<N, T> for AExp<N, T> {
+    fn proj2(self) -> T {
+        match self {
+            AExp::Lit(_, a) => a,
+            AExp::Var(_, a) => a,
+            AExp::Coef(_, a) => a,
+            AExp::Mle(_, a) => a,
+            AExp::Vec(_, a) => a,
+            AExp::Bin(_, _, _, a) => a,
+            AExp::Map(_, _, _, a) => a,
+            AExp::Challenge(_, a) => a,
+            AExp::Random(_, a) => a,
+            AExp::Gen(_, a) => a,
+            AExp::Range(_, a) => a,
+            AExp::Interpolate(_, _, a) => a,
+            AExp::Ram(_, _, a) => a,
+            AExp::Let(_, _, a) => a,
+            AExp::Log(_, _, a) => a,
+            AExp::Assert(_, a) => a,
+            AExp::Verify(_, a) => a,
+            AExp::App(_, _, a) => a,
+        }
     }
 }
 

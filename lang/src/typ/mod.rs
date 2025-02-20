@@ -5,6 +5,7 @@ mod qualifier;
 mod nothing;
 mod infer;
 mod lub;
+mod sig;
 
 pub use crate::id::Tid;
 pub use crate::range::{Range, RangeTraversal};
@@ -14,8 +15,9 @@ pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 pub use lub::Lub;
+pub use sig::Sig;
 
-use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Ctx, Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
@@ -70,6 +72,23 @@ impl<N> Typ<N> {
     pub fn get_base(&self) -> Option<&Tid> {
         match self {
             Typ::Base(b) => Some(b),
+            _ => None
+        }
+    }
+    pub fn to_field(self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
+        match self {
+            Typ::Base(b) => {
+                let k = ctx.get(&b)?;
+                if k.is_field() {
+                    Some(b)
+                } else {
+                    None
+                }
+            },
+            Typ::Index(_) =>
+                // Find the first field and return It
+                ctx.into_iter().find(|(_, k)| k.is_field()),
+
             _ => None
         }
     }

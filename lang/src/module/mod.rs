@@ -3,7 +3,8 @@ use std::fmt;
 use thiserror::Error;
 
 pub use sizesubsts::SizeSubsts;
-use share::{Pretty, Traversable1, Traversable2, DocAllocator, DocBuilder, BoxAllocator, Ctx};
+use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
+use share::traversal::ToTraversal1;
 use crate::id::Fid;
 use crate::arg::Args;
 use crate::decl::{Decl, UDecls};
@@ -11,7 +12,7 @@ use crate::typ::{EvalError, Nothing};
 
 /// Module is a collection of declarations with concrete sizes
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Module<T>(pub Ctx<(Fid, Args<usize>), Decl<usize, T>>);
+pub struct Module<T>(Ctx<(Fid, Args<usize>), Decl<usize, T>>);
 
 /// Module with no size substitutions
 pub type UModule = Module<Nothing>;
@@ -30,16 +31,20 @@ impl UModule {
         let mut ctx = Ctx::new();
         for decl in decls.into_iter() {
             // Generate all possible size substitutions for this declaration
-            let all_substs = SizeSubsts::from_decl(&decl);
+            let all_substs = SizeSubsts::from_typevars(decl.typevars());
 
             if all_substs.is_empty() {
+                let d = decl.clone()
+                            .traverse1(&mut |s| s.eval(&Ctx::new()))?
+                            .range_traverse(&mut |r| r.check())?;
+
                 // No size substitutions, just add the declaration with concrete sizes
                 ctx.insert_with(
                     (
-                        decl.name().clone(),
-                        decl.args().clone().traverse1(&mut |s| s.eval(&Ctx::new()))?
+                        d.name().clone(),
+                        d.args().clone(),
                     ),
-                    decl.traverse1(&mut |s| s.eval(&Ctx::new()))?,
+                    d,
                     &|d1, d2| Err(ModuleError::DuplicateDeclaration(d1, d2))
                 )?;
                 continue;
@@ -48,7 +53,9 @@ impl UModule {
             // For each size substitution, evaluate the sizes
             for substs in all_substs.iter() {
                 // Evaluate all sizes, with [EvalError]
-                let mut d = decl.clone().traverse1(&mut |s| s.eval(&substs.0))?;
+                let mut d = decl.clone()
+                                .traverse1(&mut |s| s.eval(&substs.0))?
+                                .range_traverse(&mut |r| r.check())?;
 
                 // Remove typevars substituted
                 for tid in substs.0.keys() {
@@ -69,13 +76,19 @@ impl UModule {
 }
 
 /// Traversable1 instance for Module (T)
-impl<T> Traversable1<T> for Module<T> {
+struct ModuleTraversal1<T>(std::marker::PhantomData<T>);
+impl<T, Z> Traversal<T, Z> for ModuleTraversal1<T> {
+    type Domain = Module<T>;
+    type Codomain = Module<Z>;
+    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
+        Ok(Module(on.0.traverse2(&mut |x| x.traverse2(f))?))
+    }
+}
+
+impl<T> ToTraversal1<T> for Module<T> {
     type Output<Z> = Module<Z>;
-    fn traverse1<Z, E>(
-        self,
-        f: &mut dyn FnMut(T) -> Result<Z, E>,
-    ) -> Result<Module<Z>, E> {
-        Ok(Module(self.0.traverse2(&mut |x| x.traverse2(f))?))
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Module<Z>, E> {
+        ModuleTraversal1::traverse(self, f)
     }
 }
 
