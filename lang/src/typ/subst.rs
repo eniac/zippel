@@ -15,7 +15,6 @@ pub type SizeSubsts = Substs<usize>;
 /// Aliasing for type variables
 pub type AliasSubsts = Substs<Set<Tid>>;
 
-
 impl<T> Substs<T> {
     pub fn new() -> Self {
         Substs(Ctx::new())
@@ -24,18 +23,10 @@ impl<T> Substs<T> {
 
 impl<T> IntoIterator for Substs<T> {
     type Item = (Tid, T);
-    type IntoIter = std::vec::IntoIter<(Tid, T)>;
+    type IntoIter = std::collections::btree_map::IntoIter<Tid, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
-    }
-}
-
-impl<T> Iterator for Substs<T> {
-    type Item = (Tid, T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
     }
 }
 
@@ -73,29 +64,58 @@ impl SizeSubsts {
 }
 
 impl AliasSubsts {
-    /// Transitive, symmetric closure of the equivalence relation
-    pub fn add_equ(&mut self, a: &Tid, b: &Tid) -> bool {
-        // Get or create sets for both a and b
-        let mut a_set = self.entry(a.clone()).or_insert_with(Set::new);
-        a_set.insert(b.clone());
+    /// Transitive, reflexive, symmetric closure of the equivalence relation
+    pub fn add_equ(&mut self, a: &Tid, b: &Tid) -> Tid {
+        // Quick return if a and b are equal
+        if a == b {
+            return a.clone();
+        }
 
-        let mut b_set = self.entry(b.clone()).or_insert_with(Set::new);
-        b_set.insert(a.clone());
+        // Create a new equivalence class with [a, b]
+        let mut eqclass = Set::from([a.clone(), b.clone()]);
 
-        // Get the union of both sets
-        let mut combined = a_set.union(b_set);
+        // Add equivalence classes of [a] into [eqclass]
+        for v in self.0.get(a).map(|x|x.clone()).unwrap_or(Set::new()) {
+            eqclass.insert(v.clone());
+        }
 
-        combined.insert(a.clone());
-        combined.insert(b.clone());
+        // Add equivalence classes of [b] into [eqclass]
+        for v in self.0.get(b).map(|x|x.clone()).unwrap_or(Set::new()) {
+            eqclass.insert(v.clone());
+        }
 
         // Update all related entries to maintain transitive closure
-        for item in combined.clone() {
-            self.insert(item, combined.clone());
+        for item in eqclass.clone() {
+            self.0.insert(item, eqclass.clone());
+        }
+
+        // Return the representative of the class as the lowest lexicographic [Tid]
+        // TODO: Perhaps a better way would be to return the [Tid] with less dependencies
+        // (i.e. the one with the lowest number of type variables)
+        eqclass.into_iter().min().unwrap()
+    }
+
+    /// Union two equivalence classes
+    pub fn union_equ(&mut self, other: &mut Self) {
+        for (tid, set) in other.0.iter() {
+            for item in set.iter() {
+                self.add_equ(tid, item);
+            }
         }
     }
 
-    pub fn get_equivalents(&self, tid: &Tid) -> &Set<Tid> {
-        self.get(tid).unwrap_or(&Set::new())
+    /// Return the equivalence class of a type variable
+    pub fn get_equivalents(&self, tid: &Tid) -> Set<Tid> {
+        if let Some(x) = self.0.get(tid) {
+            x.clone()
+        } else {
+            Set::new()
+        }
+    }
+
+    /// Return the representative of the equivalence class of a type variable
+    pub fn get_repr(&self, tid: &Tid) -> Option<Tid> {
+        self.get_equivalents(tid).into_iter().min()
     }
 }
 
@@ -129,9 +149,14 @@ fn alias_substs_equ_clos() {
     alias.add_equ(&Tid::from("B"), &Tid::from("C"));
     alias.add_equ(&Tid::from("D"), &Tid::from("E"));
 
-    assert_eq!(alias.get_equivalents(&Tid::from("A")), &Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("B")), &Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("C")), &Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("D")), &Set::from(vec![Tid::from("D"), Tid::from("E")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("E")), &Set::from(vec![Tid::from("D"), Tid::from("E")]));
+    assert_eq!(alias.get_equivalents(&Tid::from("A")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
+    assert_eq!(alias.get_equivalents(&Tid::from("B")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
+    assert_eq!(alias.get_equivalents(&Tid::from("C")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
+    assert_eq!(alias.get_equivalents(&Tid::from("D")), Set::from(vec![Tid::from("D"), Tid::from("E")]));
+    assert_eq!(alias.get_equivalents(&Tid::from("E")), Set::from(vec![Tid::from("D"), Tid::from("E")]));
+
+    assert_eq!(alias.get_repr(&Tid::from("B")), Some(Tid::from("A")));
+    assert_eq!(alias.get_repr(&Tid::from("C")), Some(Tid::from("A")));
+    assert_eq!(alias.get_repr(&Tid::from("D")), Some(Tid::from("D")));
+    assert_eq!(alias.get_repr(&Tid::from("E")), Some(Tid::from("D")));
 }

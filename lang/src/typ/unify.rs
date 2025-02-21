@@ -26,37 +26,39 @@ pub enum BinopError<K: fmt::Display> {
 
 #[derive(Error, PartialEq, Eq, Debug)]
 pub enum UnifyError {
-    #[error("ArithmeticKindError: {0}")]
+    #[error("UnificationError: During binary operation typechecking kinds\n\t{0}")]
     Kind(#[from] BinopError<TypeVar>),
+    #[error("UnificationError: During binary operation typechecking ranges\n\t{0}")]
+    Range(#[from] BinopError<Range<usize>>),
     #[error("Kind {0} not found in context {1}")]
     KindNotFound(Tid, Ctx<Tid, Kind>),
     #[error("ArithmeticContainerError: {0}")]
     Container(#[from] BinopError<CTyp>),
+    #[error("NotBooleanType: {0} where boolean was expected")]
+    NotBoolean(CTyp),
 }
 
 /// Instances of this trait can be added, muliplied, divided, exp'd and dot product'd together, generating constraints and type errors
 pub trait Unify where Self: Sized {
-    type Term;
-    fn unify_equ(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_add(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_sub(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_mul(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_div(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_pow(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
-    fn unify_dot(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_equ(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_add(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_sub(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_mul(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_div(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_pow(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
+    fn unify_dot(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;
 }
 
 /// Least-upper bounds for [Range] overapproximate sets of integers
 impl Unify for Range<usize> {
-    type Term = Range<usize>;
-    fn unify_equ(r1: Self::Term, r2: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_equ(r1: Self, r2: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
         // Find the maximum of the starts and minimum of the ends
         let max_start = std::cmp::max(r1.start, r2.start);
         let min_end = std::cmp::min(r1.end, r2.end);
 
         // Check if there's an overlap
         if max_start >= min_end {
-            return Err(BinopError::Equ(r1, r2));
+            return Err(UnifyError::Range(BinopError::Equ(r1, r2)));
         }
 
         // Determine the step for the intersection. If one range's step is a multiple of the other,
@@ -67,8 +69,8 @@ impl Unify for Range<usize> {
             r2.step
         } else {
             // LCM calculation for when steps are not multiples of each other
-            let gcd = num::integer::gcd(r1.step.abs(), r2.step.abs());
-            (r1.step.abs() * r2.step.abs()) / gcd
+            let gcd = num::integer::gcd(r1.step, r2.step);
+            (r1.step * r2.step) / gcd
         };
 
         // Ensure the intersection start aligns with the new step
@@ -80,7 +82,7 @@ impl Unify for Range<usize> {
 
         // If the adjusted start goes beyond the end, there's no valid intersection
         if adjusted_start >= min_end {
-            Err(BinopError::Equ(r1, r2))
+            Err(UnifyError::Range(BinopError::Equ(r1, r2)))
         } else {
             Ok(Range {
                 start: adjusted_start,
@@ -90,7 +92,7 @@ impl Unify for Range<usize> {
         }
     }
 
-    fn unify_add(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_add(a: Self, b: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
         let new_start = a.start + b.start;
         let new_end = (a.end - a.step) + (b.end - b.step) + 1;
         let new_step = num::integer::gcd(a.step, b.step);
@@ -102,7 +104,7 @@ impl Unify for Range<usize> {
         })
     }
 
-    fn unify_sub(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_sub(a: Self, b: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
         let new_start = a.start.saturating_sub(b.end - b.step); // Use saturating_sub to avoid underflow
         let new_end = (a.end - a.step) - b.start + 1;
         let new_step = num::integer::gcd(a.step, b.step);
@@ -114,7 +116,7 @@ impl Unify for Range<usize> {
         })
     }
 
-    fn unify_mul(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_mul(a: Self, b: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
         let a_min = a.start;
         let a_max = a.end - a.step;
         let b_min = b.start;
@@ -140,10 +142,10 @@ impl Unify for Range<usize> {
         })
     }
 
-    fn unify_div(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_div(a: Self, b: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
         // Check if the divisor range includes zero
         if b.start == 0 {
-            return Err(UnifyError::DivError(a, b)); // Division by zero is undefined
+            return Err(UnifyError::Range(BinopError::Div(a, b))); // Division by zero is undefined
         }
 
         let a_min = a.start;
@@ -165,7 +167,7 @@ impl Unify for Range<usize> {
         })
     }
 
-    fn unify_pow(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_pow(a: Self, b: Self, _: &Ctx<Tid, Kind>, _: &mut AliasSubsts) -> Result<Self, UnifyError> {
 
         let a_min = a.start;
         let a_max = a.end - a.step;
@@ -173,8 +175,8 @@ impl Unify for Range<usize> {
         let b_max = b.end - b.step;
 
         // Compute new start and end
-        let new_start = a_min.pow(b_min); // Smallest power
-        let new_end = a_max.pow(b_max) + 1; // Largest power + 1 (right-exclusive)
+        let new_start = a_min.pow(b_min as u32); // Smallest power
+        let new_end = a_max.pow(b_max as u32) + 1; // Largest power + 1 (right-exclusive)
 
         // Use a step of 1 for safe overapproximation
         let new_step = 1;
@@ -186,136 +188,149 @@ impl Unify for Range<usize> {
         })
     }
 
-    fn unify_dot(a: Self::Term, b: Self::Term, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify_dot(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
         Self::unify_mul(a, b, ctx, subs)
     }
 }
 
-/// Least-upper bound of kinds
-impl Unify for Kind {
-    type Term = Tid;
+/// Least-upper bound of type variables
+impl Unify for Tid {
 
-    /// LEF: Propagate alias substitutions here
     /// Can the two kinds be unified into one kind that describes both?
-    fn unify_equ(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b, ctx.clone()))?;
+    fn unify_equ(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
         match (ka, kb) {
             // Both kinds are defined
-            (Kind::Field, Kind::Field) => {
-                subs.add_equ(&a, &b);
-                Ok(a)
-            },
+            (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Scalar(x), Kind::Scalar(y)) => {
-                subs.add_equ(&a, &b);
-                Ok(a)
+                subs.add_equ(x, y);
+                Ok(subs.add_equ(&a, &b))
             },
             (Kind::Multiplicative(x), Kind::Multiplicative(y)) => {
-                subs.add_equ(&a, &b);
-                Ok(a)
+                subs.add_equ(x, y);
+                Ok(subs.add_equ(&a, &b))
             },
-            (Kind::Group, Kind::Group) => Ok(a),
-            (Kind::Pairing(k1, k2), Kind::Pairing(k3, k4)) if k1 == k3 && k2 == k4 => Ok(a),
+            (Kind::Group, Kind::Group) => Ok(subs.add_equ(&a, &b)),
+            (Kind::Pairing(k1, k2), Kind::Pairing(k3, k4)) => {
+                subs.add_equ(k1, k3);
+                subs.add_equ(k2, k4);
+                Ok(subs.add_equ(&a, &b))
+            },
             // Ranges in kinds should be concretized already, if not its a bug
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) =>
                 Err(UnifyError::Kind(BinopError::Add(
-                            TypeVar::new(a, ka),
-                            TypeVar::new(b, kb)))),
+                            TypeVar { id: a, kind: ka.clone() },
+                            TypeVar { id: b, kind: kb.clone() })))
         }
     }
 
     /// Type inference for addition of different kinds
-    fn unify_add(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
+    fn unify_add(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
         Self::unify_equ(a, b, ctx, subs)
     }
 
     /// Type inference for subtraction same as addition
-    fn unify_sub(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
+    fn unify_sub(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
         Self::unify_equ(a, b, ctx, subs)
     }
 
     /// Type inference for multiplication of different kinds
-    fn unify_mul(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b, ctx.clone()))?;
+    fn unify_mul(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
         match (ka, kb) {
-            (Kind::Field, Kind::Field) => Ok(a.clone()),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
+            (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) => {
+                subs.add_equ(g1, g2);
+                Ok(subs.add_equ(&a, &b))
+            },
             // Scalar multiplication: Scalar * Group = Group
-            (_, Kind::Scalar(g)) if g == a && ka.is_group() => Ok(a),
-            (Kind::Scalar(g), _) if g == b && kb.is_group() => Ok(b),
+            (Kind::Scalar(g1), Kind::Group) => Ok(subs.add_equ(&g1, &b)),
+            (Kind::Group, Kind::Scalar(g2)) => Ok(subs.add_equ(&g2, &a)),
+            (Kind::Multiplicative(f1), Kind::Field) => Ok(subs.add_equ(&f1, &b)),
+            (Kind::Field, Kind::Multiplicative(f2)) => Ok(subs.add_equ(&a, &f2)),
+            // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             // Group multiplication is only allowed for pairing friendly curves
             // G1 * G2 => Pairing(G1, G2)
             // forces G1: Group, G2: Group
-            (_, _) =>
-                if ka.is_group() && kb.is_group() {
-                    if let Some((pid, _)) = ctx.find(|pid, k| k == &Kind::Pairing(a, b)) {
-                        Ok(pid.clone())
-                    } else {
-                        Err(UnifyError::Kind(BinopError::Mul(
-                                TypeVar::new(a, ka),
-                                TypeVar::new(b, kb))))
-                    }
+            (Kind::Group, Kind::Group) =>
+                if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(&a, &b)) {
+                    Ok(pid.clone())
                 } else {
                     Err(UnifyError::Kind(BinopError::Mul(
-                            TypeVar::new(a, ka),
-                            TypeVar::new(b, kb))))
+                            TypeVar { id: a, kind: ka.clone() },
+                            TypeVar { id: b, kind: kb.clone() })))
                 }
+            (_, _) =>
+                Err(UnifyError::Kind(BinopError::Mul(
+                        TypeVar { id: a, kind: ka.clone() },
+                        TypeVar { id: b, kind: kb.clone() })))
         }
     }
 
     /// Type inference for division of different kinds
-    fn unify_div(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b, ctx.clone()))?;
+    fn unify_div(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
         match (ka, kb) {
-            (Kind::Field, Kind::Field) => Ok(a.clone()),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
+            (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) => {
+                subs.add_equ(g1, g2);
+                Ok(subs.add_equ(&a, &b))
+            },
             // Group / Scalar = Group
-            (Kind::Scalar(g), k2) if g == b && k2.is_group() => Ok(b),
+            (Kind::Group, Kind::Scalar(g)) => Ok(subs.add_equ(&a, g)),
+            (Kind::Multiplicative(f), Kind::Field) => Ok(subs.add_equ(f, &b)),
+            // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) =>
-                Err(UnifyError::Kind(BinopError::Div(TypeVar::new(a, ka), TypeVar::new(b, kb)))),
+                Err(UnifyError::Kind(BinopError::Div(
+                        TypeVar { id: a, kind: ka.clone() },
+                        TypeVar { id: b, kind: kb.clone() })))
         }
     }
 
     /// Type inference for exponentiation of different kinds
-    fn unify_pow(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b, ctx.clone()))?;
+    fn unify_pow(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
         match (ka, kb) {
-            (Kind::Field, Kind::Field) => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
-            // Group ^ Scalar = Group
-            (_, Kind::Scalar(g)) if ka.is_group() => Ok(a),
+            (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) => {
+                subs.add_equ(g1, g2);
+                Ok(subs.add_equ(&a, &b))
+            },
+            // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) =>
-                Err(UnifyError::Kind(BinopError::Pow(TypeVar::new(a, ka), TypeVar::new(b, kb)))),
+                Err(UnifyError::Kind(BinopError::Pow(
+                        TypeVar { id: a, kind: ka.clone() },
+                        TypeVar { id: b, kind: kb.clone() })))
         }
     }
     /// Type inference for dot product is the same as multiplication (for kinds)
-    fn unify_dot(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Kind, UnifyError> {
+    fn unify_dot(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
         Self::unify_mul(a, b, ctx, subs)
     }
 }
 
 impl Unify for CTyp {
-    type Term = CTyp;
     fn unify_equ(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_equ(a, b, ctx, subs))),
+                Ok(CTyp::Base(Unify::unify_equ(a, b, ctx, subs)?)),
             // Fin<A..B> == Fin<C..D>
             (CTyp::Fin(a), CTyp::Fin(b)) =>
                 Ok(CTyp::Fin(Range::unify_equ(a, b, ctx, subs)?)),
             // Uni<A> == Uni<B>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Kind::unify_equ(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Uni(Unify::unify_equ(a, b, ctx, subs)?, n.max(m))),
             // Mle<A> == Mle<B>
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Kind::unify_equ(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Mle(Unify::unify_equ(a, b, ctx, subs)?, n.max(m))),
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -325,13 +340,13 @@ impl Unify for CTyp {
                 },
             // Finite fields can act like 0 degree polynomals
             (CTyp::Uni(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Uni(a, n)) =>
-                Ok(CTyp::Uni(Kind::unify_equ(a, b, ctx, subs)?, n)),
+                Ok(CTyp::Uni(Unify::unify_equ(a, b, ctx, subs)?, n)),
             // Finite fields can act like 0 variable MLEs
             (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) =>
-                Ok(CTyp::Mle(Kind::unify_equ(a, b, ctx, subs)?, n)),
+                Ok(CTyp::Mle(Unify::unify_equ(a, b, ctx, subs)?, n)),
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Index(_)) | (CTyp::Index(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -343,17 +358,17 @@ impl Unify for CTyp {
     }
 
     fn unify_add(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_add(a, b, ctx, subs)?)),
-            (CTyp::Index(a), CTyp::Index(b)) =>
-                Ok(CTyp::Index(Range::unify_add(a, b, ctx, subs)?)),
+                Ok(CTyp::Base(Unify::unify_add(a, b, ctx, subs)?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::unify_add(a, b, ctx, subs)?)),
             // Uni<A> + Uni<B> = Uni<max(A, B)>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Kind::unify_add(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Uni(Unify::unify_add(a, b, ctx, subs)?, n.max(m))),
             // Mle<A> + Mle<B> = Mle<max(A, B)>
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Kind::unify_add(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Mle(Unify::unify_add(a, b, ctx, subs)?, n.max(m))),
 
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
@@ -364,21 +379,21 @@ impl Unify for CTyp {
                 },
             // Uni<A> + c = Uni<A> if c is a finite field
             (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_add(a.clone(), CTyp::base(&b), ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_add(a.clone(), CTyp::Base(b), ctx, subs)? {
                     Ok(CTyp::Uni(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Add(x, y)))
                 },
             // Mle<A> + c = Mle<A> if c is a finite field
             (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_add(a.clone(), CTyp::base(&b), ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_add(a.clone(), CTyp::Base(b), ctx, subs)? {
                     Ok(CTyp::Mle(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Add(x, y)))
                 },
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Index(_)) | (CTyp::Index(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -390,17 +405,17 @@ impl Unify for CTyp {
     }
 
     fn unify_sub(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_sub(a, b, ctx, subs)?)),
-            (CTyp::Index(a), CTyp::Index(b)) =>
-                Ok(CTyp::Index(Range::unify_sub(a, b, ctx, subs)?)),
+                Ok(CTyp::Base(Unify::unify_sub(a, b, ctx, subs)?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::unify_sub(a, b, ctx, subs)?)),
             // Uni<A> - Uni<B> = Uni<max(A, B)>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Kind::unify_sub(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Uni(Unify::unify_sub(a, b, ctx, subs)?, n.max(m))),
             // Mle<A> - Mle<B> = Mle<max(A, B)>
             (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Kind::unify_sub(a, b, ctx, subs)?, n.max(m))),
+                Ok(CTyp::Mle(Unify::unify_sub(a, b, ctx, subs)?, n.max(m))),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -410,21 +425,21 @@ impl Unify for CTyp {
                 },
             // Uni<A> - c = Uni<A> if c is a finite field
             (CTyp::Uni(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_sub(CTyp::base(&b), a, ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_sub(CTyp::Base(b), a, ctx, subs)? {
                     Ok(CTyp::Uni(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Sub(x, y)))
                 },
             // Mle<A> - c = Mle<A> if c is a finite field
             (CTyp::Mle(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_sub(CTyp::base(&b), a, ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_sub(CTyp::Base(b), a, ctx, subs)? {
                     Ok(CTyp::Mle(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Sub(x, y)))
                 },
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Index(_)) | (CTyp::Index(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -436,16 +451,16 @@ impl Unify for CTyp {
     }
 
     fn unify_mul(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_mul(a, b, ctx, subs)?)),
-            (CTyp::Index(a), CTyp::Index(b)) =>
-                Ok(CTyp::Index(Range::unify_mul(a, b, ctx, subs)?)),
+                Ok(CTyp::Base(Unify::unify_mul(a, b, ctx, subs)?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::unify_mul(a, b, ctx, subs)?)),
             // Uni<A> * Uni<B> = Uni<max(A, B)>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Kind::unify_sub(a, b, ctx, subs)?, n + m)),
+                Ok(CTyp::Uni(Unify::unify_sub(a, b, ctx, subs)?, n + m)),
             // Mle<A> * Mle<B> = error!
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
+            (CTyp::Mle(_, _), CTyp::Mle(_, _)) =>
                 Err(UnifyError::Container(BinopError::Mul(x, y))),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
@@ -456,24 +471,24 @@ impl Unify for CTyp {
                 },
             // Vec<A> * c = Vec<A>
             (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
-                Ok(CTyp::Vec(CTyp::unify_mul(a, b, ctx, subs)?, n)),
+                Ok(CTyp::vec(Unify::unify_mul(a, b, ctx, subs)?, n)),
             // Uni<A> * c = Uni<A> if c is a finite field
             (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_mul(a.clone(), CTyp::base(&b), ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_mul(a, CTyp::Base(b), ctx, subs)? {
                     Ok(CTyp::Uni(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Mul(x, y)))
                 },
             // Mle<A> * c = Mle<A> if c is a finite field
             (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_mul(a.clone(), CTyp::base(&b), ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_mul(a, CTyp::Base(b), ctx, subs)? {
                     Ok(CTyp::Mle(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Mul(x, y)))
                 },
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Index(_)) | (CTyp::Index(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -485,17 +500,16 @@ impl Unify for CTyp {
     }
 
     fn unify_div(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_div(a, b, ctx, subs)?)),
-            (CTyp::Index(a), CTyp::Index(b)) =>
-                Ok(CTyp::Index(Range::unify_div(a, b, ctx, subs)?)),
+                Ok(CTyp::Base(Unify::unify_div(a, b, ctx, subs)?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::unify_div(a, b, ctx, subs)?)),
             // Uni<A> * Uni<B> = Uni<max(A, B)>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Kind::unify_div(a, b, ctx, subs)?, n - m)),
+                Ok(CTyp::Uni(Unify::unify_div(a, b, ctx, subs)?, n - m)),
             // Mle<A> / Mle<B> = error!
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Err(UnifyError::Container(BinopError::Mul(x, y))),
+            (CTyp::Mle(_, _), CTyp::Mle(_, _)) => Err(UnifyError::Container(BinopError::Mul(x, y))),
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -505,25 +519,25 @@ impl Unify for CTyp {
                 },
             // Vec<A> / c = Vec<A>
             (CTyp::Vec(box b, n), a) =>
-                Ok(CTyp::Vec(CTyp::unify_div(a, b, ctx, subs)?, n)),
+                Ok(CTyp::vec(CTyp::unify_div(a, b, ctx, subs)?, n)),
 
             // Uni<A> / c = Uni<A> if c is a finite field
             (CTyp::Uni(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_div(CTyp::base(&b), a, ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_div(CTyp::Base(b), a, ctx, subs)? {
                     Ok(CTyp::Uni(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Div(x, y)))
                 },
             // Mle<A> / c = Mle<A> if c is a finite field
             (CTyp::Mle(b, n), a) =>
-                if let CTyp::Base(c) = CTyp::unify_div(CTyp::base(&b), a, ctx, subs)? {
+                if let CTyp::Base(c) = CTyp::unify_div(CTyp::Base(b), a, ctx, subs)? {
                     Ok(CTyp::Mle(c, n))
                 } else {
                     Err(UnifyError::Container(BinopError::Div(x, y)))
                 },
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Index(_)) | (CTyp::Index(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a, ctx.clone()))?;
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -535,17 +549,24 @@ impl Unify for CTyp {
     }
 
     fn unify_pow(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
             (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Kind::unify_pow(a, b, ctx, subs)?)),
-            (CTyp::Base(a), CTyp::Index(_)) => Ok(x),
+                Ok(CTyp::Base(Unify::unify_pow(a, b, ctx, subs)?)),
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                if ka.is_field() {
+                    Ok(CTyp::Base(a))
+                } else {
+                    Err(UnifyError::Container(BinopError::Pow(x, y)))
+                }
+            },
 
             // Vec<B> ^ A = Vec<B>
             (CTyp::Vec(box a, n), b) =>
-                Ok(CTyp::vec(&CTyp::unify_pow(a, b, ctx, subs)?, &n)),
+                Ok(CTyp::vec(CTyp::unify_pow(a, b, ctx, subs)?, n)),
 
             // Uni<B> ^ Fin<i..j> = Uni<B*j>
-            (CTyp::Uni(a, n), CTyp::Index(r)) =>
+            (CTyp::Uni(a, n), CTyp::Fin(r)) =>
                 Ok(CTyp::Uni(a, n * r.end)),
 
             (_, _) => Err(UnifyError::Container(BinopError::Pow(x, y)))
@@ -553,11 +574,47 @@ impl Unify for CTyp {
     }
 
     fn unify_dot(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
-        match (x, y) {
+        match (x.clone(), y.clone()) {
+            (CTyp::Base(a), CTyp::Base(b)) =>
+                Ok(CTyp::Base(Unify::unify_dot(a, b, ctx, subs)?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::unify_dot(a, b, ctx, subs)?)),
+            // Uni<A> * Uni<B> = Uni<max(A, B)>
+            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
+                Ok(CTyp::Uni(Unify::unify_sub(a, b, ctx, subs)?, n + m)),
+            // Mle<A> * Mle<B> = error!
+            (CTyp::Mle(_, _), CTyp::Mle(_, _)) =>
+                Err(UnifyError::Container(BinopError::Dot(x, y))),
+            // Vec<A> * Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
                 CTyp::unify_dot(a, b, ctx, subs),
-            (_, _) => CTyp::unify_mul(x, y, ctx, subs)
-                    .map_err(|_| UnifyError::Container(BinopError::Dot(x.clone(), y.clone())))
+            // Vec<A> * c = Vec<A>
+            (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
+                Ok(CTyp::vec(Unify::unify_dot(a, b, ctx, subs)?, n)),
+            // Uni<A> * c = Uni<A> if c is a finite field
+            (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) =>
+                if let CTyp::Base(c) = CTyp::unify_dot(a, CTyp::Base(b), ctx, subs)? {
+                    Ok(CTyp::Uni(c, n))
+                } else {
+                    Err(UnifyError::Container(BinopError::Dot(x, y)))
+                },
+            // Mle<A> * c = Mle<A> if c is a finite field
+            (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) =>
+                if let CTyp::Base(c) = CTyp::unify_dot(a, CTyp::Base(b), ctx, subs)? {
+                    Ok(CTyp::Mle(c, n))
+                } else {
+                    Err(UnifyError::Container(BinopError::Dot(x, y)))
+                },
+            // Indices can act like finite fields
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                if ka.is_field() {
+                    Ok(CTyp::Base(a))
+                } else {
+                    Err(UnifyError::Container(BinopError::Dot(x, y)))
+                }
+            },
+            (_, _) => Err(UnifyError::Container(BinopError::Dot(x, y)))
         }
     }
 }

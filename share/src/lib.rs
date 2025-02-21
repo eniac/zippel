@@ -1,6 +1,7 @@
 #![feature(extract_if)]
 #![feature(btree_extract_if)]
 mod context;
+mod opt;
 mod pretty;
 pub mod traversal;
 mod proj;
@@ -8,8 +9,8 @@ mod proj;
 pub use pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 pub use context::{Ctx, Set};
 pub use traversal::Traversal;
-pub use proj::Proj1;
-pub use proj::Proj2;
+pub use proj::{Proj1, Proj2};
+pub use opt::Opt;
 
 /// Logarithm with "remainder"
 /// ex: log2(12) = (2, 3)    [means 2^2 * 3]

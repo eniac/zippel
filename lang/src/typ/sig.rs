@@ -1,5 +1,6 @@
 use crate::typ::{Kind, CTyp};
-use crate::typ::lub::{Lub, ArithmeticTypeError};
+use crate::typ::subst::AliasSubsts;
+use crate::typ::unify::{Unify, UnifyError};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use crate::id::Tid;
 use std::fmt;
@@ -7,10 +8,10 @@ use thiserror::Error;
 
 #[derive(PartialEq, Error, Debug)]
 pub enum SigError {
-    #[error("Arity mismatch: expected {0} arguments, got {1} in {2}")]
-    ArityMismatch(usize, usize, Sig),
+    #[error("Arity mismatch: expected {0} arguments, got {1}")]
+    ArityMismatch(usize, usize),
     #[error(transparent)]
-    ArithmeticError(#[from] ArithmeticTypeError)
+    Unify(#[from] UnifyError)
 }
 
 /// Function and protocol signatures
@@ -36,15 +37,22 @@ impl Sig {
         }
     }
 
-    pub fn lub_all(self, v: Vec<CTyp>, ctx: &Ctx<Tid, Kind>) -> Result<Self, SigError> {
+    pub fn ret(&self) -> &CTyp {
+        match self {
+            Sig::Func { ret, .. } => ret,
+            _ => &CTyp::Bool
+        }
+    }
+
+    pub fn unify_all(self, v: Vec<CTyp>, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, SigError> {
         let args = self.args();
         if args.len() != v.len() {
-            return Err(SigError::ArityMismatch(args.len(), v.len(), self));
+            return Err(SigError::ArityMismatch(args.len(), v.len()));
         }
 
         let mut res = Vec::new();
         for (l, r) in args.iter().zip(v.iter()) {
-            res.push(CTyp::lub_equ(l.clone(), r.clone(), ctx)?);
+            res.push(CTyp::unify_equ(l.clone(), r.clone(), ctx, subs)?);
         }
         match self {
             Sig::Func { ret, .. } => Ok(Sig::Func { args: res, ret }),

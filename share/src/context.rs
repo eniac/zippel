@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::Hash;
 
-
 use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::traversal::{ToTraversal2, Traversal};
 
