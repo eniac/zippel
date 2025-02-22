@@ -1,20 +1,24 @@
 #![allow(refining_impl_trait)]
-use share::{Ctx, Set, Opt, Proj2, log2};
-use share::traversal::{ToTraversal1, ToTraversal2};
+use share::{Ctx, Set, log2};
+use share::traversal::ToTraversal1;
 use crate::id::{Fid, Tid, Vid};
 use crate::exp::{BinOp, CAExp, AExps, CExp, CAExps, TAExp, TAExps, CBExp, TBExp};
 use crate::decl::{CDecl, TDecl, CDecls, TDecls};
+use crate::module::{UModule, TModule};
 use crate::typ::unify::{Unify, UnifyError};
 use crate::typ::sig::Sig;
 use crate::typ::AliasSubsts;
-use crate::range::Range;
+use crate::range::{Range, RangeError};
 use crate::typ::{CTyp, Nothing, Kind};
 use thiserror::Error;
 
 use std::fmt;
 
-#[derive(Error, PartialEq, Eq, Debug)]
+#[derive(Error, PartialEq, Debug)]
 pub enum TypeError<'a> {
+    #[error("TypeError: In declaration {0}:\n\n{1}")]
+    Decl(Fid, Box<TypeError<'a>>),
+
     #[error("TypeError: In expression {0}, {1} |- {2} \n\n{3}")]
     Next(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, CExp, Box<TypeError<'a>>),
 
@@ -38,6 +42,9 @@ pub enum TypeError<'a> {
 
     #[error("VarError: Variable {0} not found in context {1}")]
     VarNotFound(Vid, &'a Ctx<Vid, CTyp>),
+
+    #[error("RangeError: Not a valid range expression {0}, {1} |- {2}\n\n{3}")]
+    Range(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, Range<usize>, RangeError),
 
     #[error("AssertError: Assertion must be a boolean expression {0}, {1} |- assert {2}")]
     Assert(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TBExp),
@@ -111,7 +118,7 @@ impl Typeable for CAExp {
                         .map_err(|e| TypeError::anext(kctx, vctx, self, e))?;
 
                 // It must be a vector of fields, or a vector of Fin
-                match tv.proj2() {
+                match tv.typ() {
                     CTyp::Vec(box b, n) => {
                         let i = b.to_field(kctx).ok_or(TypeError::Coef(kctx, vctx, *tv))?;
 
@@ -129,7 +136,7 @@ impl Typeable for CAExp {
                         .map_err(|e| TypeError::anext(kctx, vctx, self, e))?;
 
                 // It must be a vector of fields, or a vector of Fin
-                match tv.proj2() {
+                match tv.typ() {
                     CTyp::Vec(box b, n) => {
                         let i = b.to_field(kctx)
                             .ok_or(TypeError::Mle(kctx, vctx, *tv))?;
@@ -158,11 +165,11 @@ impl Typeable for CAExp {
                 }
 
                 // For reference, the type of the first element
-                let mut t = ts.0[0].proj2();
+                let mut t = ts.0[0].typ();
 
                 // Unify types of all elements in the vector to [t]
                 for tx in ts.0.iter() {
-                    t = CTyp::unify_equ(t.clone(), tx.proj2(), kctx, subs)
+                    t = CTyp::unify_equ(t.clone(), tx.typ(), kctx, subs)
                         .map_err(|e| TypeError::Vec(kctx, vctx, tx.clone(), t, Box::new(TypeError::from(e))))?;
                 }
 
@@ -177,7 +184,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_add(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_add(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Add, ta, tb, t))
             }
@@ -190,7 +197,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_sub(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_sub(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Sub, ta, tb, t))
             }
@@ -203,7 +210,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_mul(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_mul(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Mul, ta, tb, t))
             }
@@ -216,7 +223,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_div(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_div(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Div, ta, tb, t))
             }
@@ -229,7 +236,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_pow(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_pow(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Pow, ta, tb, t))
             }
@@ -242,7 +249,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                let t = CTyp::unify_dot(ta.proj2(), tb.proj2(), kctx, subs)
+                let t = CTyp::unify_dot(ta.typ(), tb.typ(), kctx, subs)
                         .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Dot, ta, tb, t))
             }
@@ -255,7 +262,7 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                match (ta.proj2(), tb.proj2()) {
+                match (ta.typ(), tb.typ()) {
                     (CTyp::Vec(a, x), CTyp::Vec(b, y)) => {
                         // Type [a] and [b] should be the same ([c])
                         let c = CTyp::unify_equ(*a, *b, kctx, subs)
@@ -269,9 +276,13 @@ impl Typeable for CAExp {
             }
 
             // Range expression
-            CAExp::Range(r, _) =>
+            CAExp::Range(r, _) => {
                 // Infer the type of the range expression as a vector of sizes
-                Ok(TAExp::Range(r.clone(), CTyp::vec(CTyp::Fin(r.clone()), r.get_size()))),
+                let rr = Range::from_num(r.start, r.step, r.end)
+                    .map_err(|e| TypeError::Range(kctx, vctx, r.clone(), e))?;
+
+                Ok(TAExp::Range(r.clone(), CTyp::vec(CTyp::Fin(r.clone()), r.get_size())))
+            }
 
             // Map comprehension
             CAExp::Map(x, id, r, _) => {
@@ -283,7 +294,7 @@ impl Typeable for CAExp {
                 // Clone the context
                 let mut innerctx = vctx;
 
-                match tr.proj2() {
+                match tr.typ() {
                     CTyp::Vec(box inner, n) => {
                         // Add variable [id] to the context with type [inner]
                         innerctx.insert(id, inner);
@@ -292,7 +303,7 @@ impl Typeable for CAExp {
                             x.traverse1(&mut |x| x.infer(kctx, fctx, &mut innerctx, subs))
                                 .map_err(|e| TypeError::anext(kctx, innerctx, *x, e))?;
 
-                        Ok(TAExp::Map(tx, id, tr, CTyp::vec(tx.proj2(), n)))
+                        Ok(TAExp::Map(tx, id, tr, CTyp::vec(tx.typ(), n)))
                     },
                     _ => Err(TypeError::Map(kctx, vctx, *x, id, *tr))
                 }
@@ -300,18 +311,21 @@ impl Typeable for CAExp {
 
             // Variable context lookup
             CAExp::Var(id, _) => {
-                let v = vctx.get(&id).ok_or(TypeError::VarNotFound(id, vctx))?;
+                let v = vctx.get(&id).ok_or(TypeError::VarNotFound(id.clone(), vctx))?;
                 Ok(TAExp::Var(id.clone(), v.clone()))
             },
 
             // Random oracle challenge
             CAExp::Challenge(t, _) => Ok(TAExp::Challenge(t.clone(), t)),
 
+            // Random number generator
+            CAExp::Random(t, _) => Ok(TAExp::Random(t.clone(), t)),
+
             // Group generator
             CAExp::Gen(t, _) => {
                 // What kind if [t]?
                 let k = kctx.get(&t).ok_or(
-                    TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(t, kctx.clone())))?;
+                    TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(t)))?;
 
                 // Only generate elements of groups
                 if k.is_group() {
@@ -330,7 +344,7 @@ impl Typeable for CAExp {
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 // Only field vectors can be interpolated
-                match (ta.proj2(), tb.proj2()) {
+                match (ta.typ(), tb.typ()) {
                     (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
                         // Unify inner types [a] and [b]
                         let t = CTyp::unify_equ(a.clone(), b.clone(), kctx, subs)
@@ -339,8 +353,7 @@ impl Typeable for CAExp {
                         // Only interpolate vectors of fields
                         if let CTyp::Base(a) = t {
                             // What kind if [t]?
-                            let k = kctx.get(&a).ok_or(
-                           TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(a, kctx.clone())))?;
+                            let k = kctx.get(&a).ok_or(TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(a)))?;
 
                             // Only interpolate elements of fields
                             if k.is_field() {
@@ -366,7 +379,7 @@ impl Typeable for CAExp {
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
 
                 // Must be a vector and a Fin type
-                match (tv.proj2(), ti.proj2()) {
+                match (tv.typ(), ti.typ()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(m)) if m.end < n =>
                             Ok(TAExp::Ram(tv, ti, typ.clone())),
                     (_, _) => Err(TypeError::Ram(kctx, vctx, *tv, *ti))
@@ -390,7 +403,7 @@ impl Typeable for CAExp {
                         // The argument types must match the parameter types
                         let vs =
                             sig.unify_all(
-                                typed_params.into_iter().map(|x| x.proj2()).collect(),
+                                typed_params.into_iter().map(|x| x.typ()).collect(),
                                 kctx, &mut nsubs).ok()?;
                         Some((vs, nsubs))
                     } else {
@@ -412,35 +425,26 @@ impl Typeable for CAExp {
                 let tassert =
                     assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                if tassert.proj2() != CTyp::bool() {
-                    Err(TypeError::Assert(kctx, vctx, *tassert))
-                } else {
-                    Ok(TAExp::Assert(tassert, CTyp::bool()))
-                }
+                Ok(TAExp::Assert(tassert, CTyp::bool()))
             }
 
             CAExp::Verify(assert, _) => {
                 let tassert =
                     assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
-                // It would be pretty weird if this fails
-                if tassert.proj2() != CTyp::bool() {
-                    Err(TypeError::Verify(kctx, vctx, *tassert))
-                } else {
-                    Ok(TAExp::Verify(tassert, CTyp::bool()))
-                }
+                Ok(TAExp::Verify(tassert, CTyp::bool()))
             }
 
             CAExp::Let(var, right, _) => {
                 let tright = right.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                vctx.insert(var, tright.proj2());
-                Ok(TAExp::Let(var, tright, tright.proj2()))
+                vctx.insert(var, tright.typ());
+                Ok(TAExp::Let(var, tright, tright.typ()))
             },
 
             CAExp::Log(var, right, _) => {
                 let tright = right.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                vctx.insert(var, tright.proj2());
-                Ok(TAExp::Log(var, tright, tright.proj2()))
+                vctx.insert(var, tright.typ());
+                Ok(TAExp::Log(var, tright, tright.typ()))
             },
         }
     }
@@ -461,29 +465,29 @@ impl Typeable for CBExp {
     fn infer<'a>(self, kctx: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
         vctx: &'a mut Ctx<Vid, CTyp>, subs: &'a mut AliasSubsts) -> Result<TBExp, TypeError<'a>> {
         match self.clone() {
-            CBExp::Equ(a, b, _) => {
+            CBExp::Equ(a, b) => {
                 let ta = a.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
                 let tb = b.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
 
                 // Values are equal when their types are equal (with unification)
-                CTyp::unify_equ(ta.proj2(), tb.proj2(), kctx, subs)
+                CTyp::unify_equ(ta.typ(), tb.typ(), kctx, subs)
                     .map_err(|e| TypeError::bunify(kctx, vctx, self, e))?;
-                Ok(TBExp::Equ(ta, tb, CTyp::bool()))
+                Ok(TBExp::Equ(ta, tb))
             }
-            CBExp::Contains(a, b, _) => {
+            CBExp::Contains(a, b) => {
                 let ta = a.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
                 let tb = b.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
 
-                match (ta.proj2(), tb.proj2()) {
+                match (ta.typ(), tb.typ()) {
                     (x, CTyp::Vec(box a, n)) => {
                         let t = CTyp::unify_equ(x, a, kctx, subs)
                             .map_err(|e| TypeError::bunify(kctx, vctx, self, e))?;
-                        Ok(TBExp::Contains(ta, tb, CTyp::bool()))
+                        Ok(TBExp::Contains(ta, tb))
                     },
                     (_, _) => Err(TypeError::Contains(kctx, vctx, ta.clone(), tb.clone()))
                 }
             }
-            CBExp::App(id, params, _) => {
+            CBExp::App(id, params) => {
                 // type inference for each parameter
                 let typed_params =
                     params.aexps_traverse(&mut |p| p.infer(kctx, fctx, vctx, subs))
@@ -499,7 +503,7 @@ impl Typeable for CBExp {
                         // The argument types must match the parameter types
                         let vs =
                             sig.unify_all(
-                                typed_params.into_iter().map(|x| x.proj2()).collect(),
+                                typed_params.into_iter().map(|x| x.typ()).collect(),
                                 kctx, &mut nsubs).ok()?;
                         Some((vs, nsubs))
                     } else {
@@ -516,23 +520,23 @@ impl Typeable for CBExp {
                     Ok(TBExp::App(id, typed_params, sig.ret().clone()))
                 }
             }
-            CBExp::And(a, b, _) => {
+            CBExp::And(a, b) => {
                 let ta =
                     a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
-                Ok(TBExp::And(ta, tb, CTyp::bool()))
+                Ok(TBExp::And(ta, tb))
             },
-            CBExp::Or(a, b, _) => {
+            CBExp::Or(a, b) => {
                 let ta =
                     a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
                         .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
-                Ok(TBExp::Or(ta, tb, CTyp::bool()))
+                Ok(TBExp::Or(ta, tb))
             }
         }
     }
@@ -555,10 +559,12 @@ impl Typeable for CDecl {
                 let mut subs = AliasSubsts::new();
 
                 // Type inference on the body
-                let typed_body = body.infer(&kctx, fctx, &mut vctx, &mut subs)?;
+                let typed_body = body.infer(&kctx, fctx, &mut vctx, &mut subs)
+                    .map_err(|e| TypeError::Decl(name, Box::new(e)))?;
 
                 // Type inference on the precondition relation
-                let typed_relation = relation.infer(&kctx, fctx, &mut vctx, &mut subs)?;
+                let typed_relation = relation.infer(&kctx, fctx, &mut vctx, &mut subs)
+                    .map_err(|e| TypeError::Decl(name, Box::new(e)))?;
 
                 Ok(TDecl::Proto {
                     name,
@@ -585,8 +591,8 @@ impl Typeable for CDecl {
                 let last = typed_body.0.last().unwrap();
 
                 // Type check the return type
-                let ft = CTyp::unify_equ(typ, last.proj2(), &kctx, &mut subs)
-                        .map_err(|e| TypeError::from(e))?;
+                let ft = CTyp::unify_equ(typ, last.typ(), &kctx, &mut subs)
+                        .map_err(|e| TypeError::Decl(name, TypeError::from(e)))?;
 
                 Ok(TDecl::Func {
                     name,
@@ -604,7 +610,20 @@ impl Typeable for CDecls {
     type Output = TDecls;
     fn infer<'a>(self, _: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
         _: &'a mut Ctx<Vid, CTyp>, _: &'a mut AliasSubsts) -> Result<TDecls, TypeError<'a>> {
-        self.into_iter().map(|x| x.infer(&Ctx::new(), fctx, &mut Ctx::new(), &mut AliasSubsts::new())).collect()
+        self.decl_traverse(&mut |x| x.infer(&Ctx::new(), fctx, &mut Ctx::new(), &mut AliasSubsts::new()))
     }
 }
 
+/// Type inference for [Module]
+impl Typeable for UModule {
+    type Output = TModule;
+    fn infer<'a>(self, _: &'a Ctx<Tid, Kind>, _: &'a Set<(Fid, Sig)>,
+        _: &'a mut Ctx<Vid, CTyp>, _: &'a mut AliasSubsts) -> Result<TModule, TypeError<'a>> {
+
+        // Create a function context from the declarations
+        let fctx: Set<(Fid, Sig)> = self.iter().map(|((name, args), decl)| (name.clone(), decl.sig())).collect();
+
+        // Type inference on the declarations
+        Ok(self.decl_traverse(&mut |x| x.infer(&Ctx::new(), &fctx, &mut Ctx::new(), &mut AliasSubsts::new()))?)
+    }
+}

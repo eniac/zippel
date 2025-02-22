@@ -26,6 +26,19 @@ pub type UExp = Exp<Size, Nothing>;
 /// Concrete size AST node
 pub type CExp = Exp<usize, Nothing>;
 
+/// Cast [AExp], [BExp] to [Exp]
+impl<N, T> Into<Exp<N, T>> for AExp<N, T> {
+    fn into(self) -> Exp<N, T> {
+        Exp::A(self)
+    }
+}
+
+impl<N, T> Into<Exp<N, T>> for BExp<N, T> {
+    fn into(self) -> Exp<N, T> {
+        Exp::B(self)
+    }
+}
+
 /// Modular get/set acccess to type parameters using [Traversal]
 struct ExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
 impl<N, T, Z> Traversal<N, Z> for ExpTraversal1<N, T> {
@@ -102,4 +115,3 @@ where
             .render_fmt(30, f)
     }
 }
-

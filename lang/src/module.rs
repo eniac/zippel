@@ -3,18 +3,21 @@ use thiserror::Error;
 
 use crate::typ::SizeSubsts;
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
-use share::traversal::ToTraversal1;
+use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::Fid;
 use crate::arg::Args;
-use crate::decl::{Decl, UDecls};
-use crate::typ::{EvalError, Nothing};
+use crate::decl::{Decl, UDecls, DeclTraversal};
+use crate::typ::{Typ, EvalError, Nothing};
 
 /// Module is a collection of declarations with concrete sizes
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Module<T>(Ctx<(Fid, Args<usize>), Decl<usize, T>>);
 
-/// Module with no size substitutions
+/// Module with no types
 pub type UModule = Module<Nothing>;
+
+/// Module with types
+pub type TModule = Module<Typ<usize>>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
@@ -34,8 +37,7 @@ impl UModule {
 
             if all_substs.is_empty() {
                 let d = decl.clone()
-                            .traverse1(&mut |s| s.eval(&Ctx::new()))?
-                            .range_traverse(&mut |r| r.check())?;
+                            .traverse1(&mut |s| s.eval(&Ctx::new()))?;
 
                 // No size substitutions, just add the declaration with concrete sizes
                 ctx.insert_with(
@@ -53,8 +55,7 @@ impl UModule {
             for substs in all_substs.iter() {
                 // Evaluate all sizes, with [EvalError]
                 let mut d = decl.clone()
-                                .traverse1(&mut |s| s.eval(&substs.0))?
-                                .range_traverse(&mut |r| r.check())?;
+                                .traverse1(&mut |s| s.eval(&substs.0))?;
 
                 // Remove typevars substituted
                 for tid in substs.0.keys() {
@@ -91,6 +92,13 @@ impl<T> ToTraversal1<T> for Module<T> {
     }
 }
 
+impl<T> DeclTraversal<usize, T> for Module<T> {
+    type Output<Z> = Module<Z>;
+    fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<usize, T>) -> Result<Decl<usize, Z>, E>) -> Result<Self::Output<Z>, E> {
+        Ok(Module(self.0.traverse2(f)?))
+    }
+}
+
 /// Pretty printer instance
 impl<'a, D, A, T> Pretty<'a, D, A> for Module<T>
 where
@@ -110,8 +118,7 @@ where
                         allocator.hardline(),
                         decl.pretty(allocator).indent(2)
                     ])),
-       allocator.hardline()
-       )
+       allocator.hardline())
     }
 
     fn is_nil(&self) -> bool {

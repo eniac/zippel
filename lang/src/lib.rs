@@ -13,5 +13,6 @@ pub use id::{Tid, Vid, Fid};
 pub use range::{Range, RangeError, RangeTraversal};
 pub use arg::Arg;
 pub use exp::{AExp, BExp, Exp, TExp, TAExp, TBExp};
-pub use decl::{Decl, TDecl};
+pub use decl::{Decl, TDecl, Decls, TDecls, UDecls};
+pub use module::{Module, UModule, ModuleError};
 pub use typ::Kind;

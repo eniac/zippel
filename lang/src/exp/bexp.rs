@@ -6,7 +6,6 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{ToTraversal1, ToTraversal2};
-use share::Proj2;
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size, Nothing};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
@@ -24,7 +23,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(sumcheck(a, b, c));
     ///     ```
-    App(Fid, AExps<N, T>, T),
+    App(Fid, AExps<N, T>),
 
     ///     Represents inclusion of an element in a vector
     ///
@@ -32,7 +31,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(x in v);
     ///     ```
-    Contains(AExp<N, T>, AExp<N, T>, T),
+    Contains(AExp<N, T>, AExp<N, T>),
 
     ///     Represents the equality comparison between two arithmetic expressions.
     ///
@@ -45,7 +44,7 @@ pub enum BExp<N, T> {
     ///     ```rust
     ///     BExp::Equ(AExp::Lit(5), AExp::Lit(5))
     ///     ```
-    Equ(AExp<N, T>, AExp<N, T>, T),
+    Equ(AExp<N, T>, AExp<N, T>),
 
     ///     Represents the logical AND of two boolean expressions.
     ///
@@ -58,7 +57,7 @@ pub enum BExp<N, T> {
     ///     ```rust
     ///     BExp::And(Box::new(BExp::TrueE), Box::new(BExp::FalseE))
     ///     ```
-    And(Box<BExp<N, T>>, Box<BExp<N, T>>, T),
+    And(Box<BExp<N, T>>, Box<BExp<N, T>>),
 
     ///     Represents the logical OR of two boolean expressions.
     ///
@@ -71,7 +70,7 @@ pub enum BExp<N, T> {
     ///     ```rust
     ///     BExp::Or(Box::new(BExp::TrueE), Box::new(BExp::FalseE))
     ///     ```
-    Or(Box<BExp<N, T>>, Box<BExp<N, T>>, T),
+    Or(Box<BExp<N, T>>, Box<BExp<N, T>>),
 }
 
 /// Typed AST node
@@ -94,21 +93,21 @@ impl<N, T> Traversal<BExp<N, T>> for BExpTraversalBExp<N, T> {
     type Codomain = BExp<N, T>;
     fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(BExp<N, T>) -> Result<BExp<N, T>, E>) -> Result<Self::Codomain, E> {
         match on {
-            BExp::Equ(a, b, t) =>
-                Ok(BExp::Equ(a.bexp_traverse(f)?, b.bexp_traverse(f)?, t)),
-            BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.bexp_traverse(f))?, t)),
-            BExp::Contains(a, b, t) =>
-                Ok(BExp::Contains(a.bexp_traverse(f)?, b.bexp_traverse(f)?, t)),
-            BExp::And(a, b, t) =>
+            BExp::Equ(a, b) =>
+                Ok(BExp::Equ(a.bexp_traverse(f)?, b.bexp_traverse(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.bexp_traverse(f))?)),
+            BExp::Contains(a, b) =>
+                Ok(BExp::Contains(a.bexp_traverse(f)?, b.bexp_traverse(f)?)),
+            BExp::And(a, b) =>
                 Ok(BExp::And(
                     a.traverse1(&mut |x| f(x)?.bexp_traverse(f))?,
-                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?, t
+                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?
                 )),
-            BExp::Or(a, b, t) =>
+            BExp::Or(a, b) =>
                 Ok(BExp::Or(
                     a.traverse1(&mut |x| f(x)?.bexp_traverse(f))?,
-                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?, t
+                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?
                 ))
         }
     }
@@ -122,21 +121,21 @@ impl<N, T> Traversal<AExp<N, T>> for BExpTraversalAExp<N, T> {
 
     fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(AExp<N, T>) -> Result<AExp<N, T>, E>) -> Result<Self::Codomain, E> {
         match on {
-            BExp::Equ(a, b, t) =>
-                Ok(BExp::Equ(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?, t)),
-            BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.aexps_traverse(f)?, t)),
-            BExp::Contains(a, b, t) =>
-                Ok(BExp::Contains(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?, t)),
-            BExp::And(a, b, t) =>
+            BExp::Equ(a, b) =>
+                Ok(BExp::Equ(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.aexps_traverse(f)?)),
+            BExp::Contains(a, b) =>
+                Ok(BExp::Contains(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?)),
+            BExp::And(a, b) =>
                 Ok(BExp::And(
                     a.traverse1(&mut |x| x.aexp_traverse(f))?,
-                    b.traverse1(&mut |x| x.aexp_traverse(f))?, t
+                    b.traverse1(&mut |x| x.aexp_traverse(f))?
                 )),
-            BExp::Or(a, b, t) =>
+            BExp::Or(a, b) =>
                 Ok(BExp::Or(
                     a.traverse1(&mut |x| x.aexp_traverse(f))?,
-                    b.traverse1(&mut |x| x.aexp_traverse(f))?, t
+                    b.traverse1(&mut |x| x.aexp_traverse(f))?
                 )),
         }
     }
@@ -150,16 +149,16 @@ impl<N, T, Z> Traversal<N, Z> for BExpTraversal1<N, T> {
 
     fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Codomain, E> {
         match on {
-            BExp::Equ(a, b, t) =>
-                Ok(BExp::Equ(a.traverse1(f)?, b.traverse1(f)?, t)),
-            BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse1(f))? , t)),
-            BExp::Contains(a, b, t) =>
-                Ok(BExp::Contains(a.traverse1(f)?, b.traverse1(f)?, t)),
-            BExp::And(a, b, t) =>
-                Ok(BExp::And(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?, t)),
-            BExp::Or(a, b, t) =>
-                Ok(BExp::Or(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?, t)),
+            BExp::Equ(a, b) =>
+                Ok(BExp::Equ(a.traverse1(f)?, b.traverse1(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse1(f))? )),
+            BExp::Contains(a, b) =>
+                Ok(BExp::Contains(a.traverse1(f)?, b.traverse1(f)?)),
+            BExp::And(a, b) =>
+                Ok(BExp::And(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
+            BExp::Or(a, b) =>
+                Ok(BExp::Or(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
         }
     }
 }
@@ -171,26 +170,23 @@ impl<N, T, Z> Traversal<T, Z> for BExpTraversal2<N, T> {
 
     fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
         match on {
-            BExp::Equ(a, b, t) => Ok(BExp::Equ(a.traverse2(f)?, b.traverse2(f)?, f(t)?)),
-            BExp::App(id, v, t) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse2(f))?, f(t)?)),
-            BExp::Contains(a, b, t) =>
+            BExp::Equ(a, b) => Ok(BExp::Equ(a.traverse2(f)?, b.traverse2(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse2(f))?)),
+            BExp::Contains(a, b) =>
                 Ok(BExp::Contains(
                     a.traverse2(f)?,
                     b.traverse2(f)?,
-                    f(t)?,
                 )),
-            BExp::And(a, b, t) =>
+            BExp::And(a, b) =>
                 Ok(BExp::And(
                     a.traverse1(&mut |x| x.traverse2(f))?,
                     b.traverse1(&mut |x| x.traverse2(f))?,
-                    f(t)?
                 )),
-            BExp::Or(a, b, t) =>
+            BExp::Or(a, b) =>
                 Ok(BExp::Or(
                     a.traverse1(&mut |x| x.traverse2(f))?,
                     b.traverse1(&mut |x| x.traverse2(f))?,
-                    f(t)?
                 ))
         }
     }
@@ -245,34 +241,22 @@ impl RangeTraversal<Size> for UBExp {
     }
 }
 
-impl<N, T> Proj2<N, T> for BExp<N,T> {
-    fn proj2(self) -> T {
-        match self {
-            BExp::Equ(_, _, t) => t,
-            BExp::App(_, _, t) => t,
-            BExp::Contains(_, _, t) => t,
-            BExp::And(_, _, t) => t,
-            BExp::Or(_, _, t) => t,
-        }
-    }
-}
-
 /// Constructor for BExp
 impl UBExp {
     pub fn and(l: Self, r: Self) -> Self {
-        BExp::And(Box::new(l), Box::new(r), Nothing)
+        BExp::And(Box::new(l), Box::new(r))
     }
     pub fn or(l: Self, r: Self) -> Self {
-        BExp::Or(Box::new(l), Box::new(r), Nothing)
+        BExp::Or(Box::new(l), Box::new(r))
     }
     pub fn equ(l: UAExp, r: UAExp) -> Self {
-        BExp::Equ(l, r, Nothing)
+        BExp::Equ(l, r)
     }
     pub fn app(id: Fid, args: UAExps) -> Self {
-        BExp::App(id, args, Nothing)
+        BExp::App(id, args)
     }
     pub fn contains(a: UAExp, b: UAExp) -> Self {
-        BExp::Contains(a, b, Nothing)
+        BExp::Contains(a, b)
     }
 }
 
@@ -287,52 +271,32 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            BExp::Equ(a, b, t) => allocator.concat([
+            BExp::Equ(a, b) => allocator.concat([
                 a.pretty(allocator),
                 allocator.text(" == "),
                 b.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            BExp::App(id, args, t) => allocator.concat([
+            ]),
+            BExp::App(id, args) => allocator.concat([
                 id.pretty(allocator),
                 allocator.text("("),
                 args.pretty(allocator),
                 allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            BExp::And(a, b, t) => allocator.concat([
+            ]),
+            BExp::And(a, b) => allocator.concat([
                 (*a).pretty(allocator),
                 allocator.text(" && "),
                 (*b).pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            BExp::Or(a, b, t) => allocator.concat([
+            ]),
+            BExp::Or(a, b) => allocator.concat([
                 (*a).pretty(allocator),
                 allocator.text(" || "),
                 (*b).pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            BExp::Contains(a, b, t) => allocator.concat([
+            ]),
+            BExp::Contains(a, b) => allocator.concat([
                 a.pretty(allocator),
                 allocator.text(" in "),
                 b.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
+            ]),
         }
     }
 

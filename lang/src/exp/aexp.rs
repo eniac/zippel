@@ -7,7 +7,6 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2, VecTraversal};
-use share::Proj2;
 
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, CTyp, TypTraversal, Size, Nothing};
@@ -562,8 +561,22 @@ impl<N, A> AExps<N, A> {
     }
 }
 
-impl<N, T> Proj2<N, T> for AExp<N, T> {
-    fn proj2(self) -> T {
+impl<N, T> IntoIterator for AExps<N, T> {
+    type Item = AExp<N, T>;
+    type IntoIter = std::vec::IntoIter<AExp<N, T>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<N, T> FromIterator<AExp<N, T>> for AExps<N, T> {
+    fn from_iter<I: IntoIterator<Item = AExp<N, T>>>(iter: I) -> Self {
+        AExps(iter.into_iter().collect())
+    }
+}
+
+impl TAExp {
+    pub fn typ(self) -> Typ<usize> {
         match self {
             AExp::Lit(_, a) => a,
             AExp::Var(_, a) => a,
@@ -584,20 +597,6 @@ impl<N, T> Proj2<N, T> for AExp<N, T> {
             AExp::Verify(_, a) => a,
             AExp::App(_, _, a) => a,
         }
-    }
-}
-
-impl<N, T> IntoIterator for AExps<N, T> {
-    type Item = AExp<N, T>;
-    type IntoIter = std::vec::IntoIter<AExp<N, T>>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
-impl<N, T> FromIterator<AExp<N, T>> for AExps<N, T> {
-    fn from_iter<I: IntoIterator<Item = AExp<N, T>>>(iter: I) -> Self {
-        AExps(iter.into_iter().collect())
     }
 }
 

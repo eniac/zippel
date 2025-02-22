@@ -51,6 +51,12 @@ pub enum Decl<N, T> {
     },
 }
 
+/// Structures with declarations can be traversed
+pub trait DeclTraversal<N, T> {
+    type Output<Z>;
+    fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<N, T>) -> Result<Decl<N, Z>, E>) -> Result<Self::Output<Z>, E>;
+}
+
 /// A collection of declarations
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decls<N, T>(pub Vec<Decl<N, T>>);
@@ -109,6 +115,13 @@ impl<N, T> IntoIterator for Decls<N, T> {
 impl<N, T> FromIterator<Decl<N, T>> for Decls<N, T> {
     fn from_iter<I: IntoIterator<Item = Decl<N, T>>>(iter: I) -> Self {
         Decls(iter.into_iter().collect())
+    }
+}
+
+impl<N, T> DeclTraversal<N, T> for Decls<N, T> {
+    type Output<Z> = Decls<N, Z>;
+    fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<N,T>) -> Result<Decl<N, Z>, E>) -> Result<Self::Output<Z>, E> {
+        self.0.traverse1(&mut |x| f(x))
     }
 }
 

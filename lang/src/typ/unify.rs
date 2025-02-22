@@ -30,12 +30,10 @@ pub enum UnifyError {
     Kind(#[from] BinopError<TypeVar>),
     #[error("UnificationError: During binary operation typechecking ranges\n\t{0}")]
     Range(#[from] BinopError<Range<usize>>),
-    #[error("Kind {0} not found in context {1}")]
-    KindNotFound(Tid, Ctx<Tid, Kind>),
+    #[error("Kind {0} not found")]
+    KindNotFound(Tid),
     #[error("ArithmeticContainerError: {0}")]
     Container(#[from] BinopError<CTyp>),
-    #[error("NotBooleanType: {0} where boolean was expected")]
-    NotBoolean(CTyp),
 }
 
 /// Instances of this trait can be added, muliplied, divided, exp'd and dot product'd together, generating constraints and type errors
@@ -198,8 +196,8 @@ impl Unify for Tid {
 
     /// Can the two kinds be unified into one kind that describes both?
     fn unify_equ(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone()))?;
         match (ka, kb) {
             // Both kinds are defined
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
@@ -238,8 +236,8 @@ impl Unify for Tid {
 
     /// Type inference for multiplication of different kinds
     fn unify_mul(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone()))?;
         match (ka, kb) {
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Scalar(g1), Kind::Scalar(g2)) => {
@@ -273,8 +271,8 @@ impl Unify for Tid {
 
     /// Type inference for division of different kinds
     fn unify_div(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone()))?;
         match (ka, kb) {
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Scalar(g1), Kind::Scalar(g2)) => {
@@ -295,8 +293,8 @@ impl Unify for Tid {
 
     /// Type inference for exponentiation of different kinds
     fn unify_pow(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
-        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
-        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone(), ctx.clone()))?;
+        let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
+        let kb = ctx.get(&b).ok_or(UnifyError::KindNotFound(b.clone()))?;
         match (ka, kb) {
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Scalar(g1), Kind::Scalar(g2)) => {
@@ -346,7 +344,7 @@ impl Unify for CTyp {
                 Ok(CTyp::Mle(Unify::unify_equ(a, b, ctx, subs)?, n)),
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -393,7 +391,7 @@ impl Unify for CTyp {
                 },
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -439,7 +437,7 @@ impl Unify for CTyp {
                 },
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -488,7 +486,7 @@ impl Unify for CTyp {
                 },
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -537,7 +535,7 @@ impl Unify for CTyp {
                 },
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -553,7 +551,7 @@ impl Unify for CTyp {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Unify::unify_pow(a, b, ctx, subs)?)),
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
@@ -607,7 +605,7 @@ impl Unify for CTyp {
                 },
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone(), ctx.clone()))?;
+                let ka = ctx.get(&a).ok_or(UnifyError::KindNotFound(a.clone()))?;
                 if ka.is_field() {
                     Ok(CTyp::Base(a))
                 } else {
