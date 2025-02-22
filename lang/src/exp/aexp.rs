@@ -279,7 +279,7 @@ impl<N, T, Z> Traversal<N, Z> for AExpTraversal1<N, T> {
 
 /// Traverse the first free type parameter [N]
 struct AExpsTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T, Z> Traversal<N, Z> for AExps<N, T> {
+impl<N, T, Z> Traversal<N, Z> for AExpsTraversal1<N, T> {
     type Domain = AExps<N, T>;
     type Codomain = AExps<Z, T>;
 
@@ -505,9 +505,7 @@ impl<N, T> Traversal<BExp<N, T>> for AExpTraversalBExp<N, T> {
     }
 }
 
-
-
-/// How to traverse the first type parameter [N]
+/// How to traverse the first type parameter [N] for AExp<N, T>
 impl<N, T> ToTraversal1<N> for AExp<N, T> {
     type Output<Z> = AExp<Z, T>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
@@ -515,11 +513,26 @@ impl<N, T> ToTraversal1<N> for AExp<N, T> {
     }
 }
 
-/// How to traverse the second type parameter [T]
+/// How to traverse the second type parameter [T] for AExp<N, T>
 impl<N, T> ToTraversal2<T> for AExp<N, T> {
     type Output<Z> = AExp<N, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
         AExpTraversal2::traverse(self, f)
+    }
+}
+/// How to traverse the first type parameter [N] for AExps<N, T>
+impl<N, T> ToTraversal1<N> for AExps<N, T> {
+    type Output<Z> = AExps<Z, T>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z, T>, E> {
+        AExpsTraversal1::traverse(self, f)
+    }
+}
+
+/// How to traverse the second type parameter [T] for AExps<N, T>
+impl<N, T> ToTraversal2<T> for AExps<N, T> {
+    type Output<Z> = AExps<N, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExps<N, Z>, E> {
+        AExpsTraversal2::traverse(self, f)
     }
 }
 

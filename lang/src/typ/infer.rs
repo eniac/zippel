@@ -2,8 +2,8 @@
 use share::{Ctx, Set, Opt, Proj2, log2};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Fid, Tid, Vid};
-use crate::exp::{BinOp, CAExp, AExps, CAExps, TAExp, TAExps, CBExp, TBExp};
-use crate::Decl;
+use crate::exp::{BinOp, CAExp, AExps, CExp, CAExps, TAExp, TAExps, CBExp, TBExp};
+use crate::decl::{CDecl, TDecl, CDecls, TDecls};
 use crate::typ::unify::{Unify, UnifyError};
 use crate::typ::sig::Sig;
 use crate::typ::AliasSubsts;
@@ -14,194 +14,257 @@ use thiserror::Error;
 use std::fmt;
 
 #[derive(Error, PartialEq, Eq, Debug)]
-pub enum TypeError {
-    #[error("AddTypeError: In expression {0}, {1} |- {2} + {3}\n\t{4}")]
-    Add(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("SubTypeError: In expression {0}, {1} |- {2} - {3}\n\t{4}")]
-    Sub(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("MulTypeError: In expression {0}, {1} |- {2} * {3}\n\t{4}")]
-    Mul(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("DivTypeError: In expression {0}, {1} |- {2} / {3}\n\t{4}")]
-    Div(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("PowTypeError: In expression {0}, {1} |- {2} ^ {3}\n\t{4}")]
-    Pow(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("DotTypeError: In expression {0}, {1} |- {2} . {3}\n\t{4}")]
-    Dot(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("EquTypeError: In expression {0}, {1} |- {2} == {3}\n\t{4}")]
-    Equ(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
-    #[error("ContainsTypeError: Expects a vector and element of the same type: {0}, {1} |- contains {2} [ {3} ]\n\t{4}")]
-    Contains(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, Opt<UnifyError>),
-    #[error("VecInnerType: Container elements must have a base type {0}, {1} |- [ {2}, .., {3} ]\n\t{4}")]
-    VecInner(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, UnifyError),
+pub enum TypeError<'a> {
+    #[error("TypeError: In expression {0}, {1} |- {2} \n\n{3}")]
+    Next(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, CExp, Box<TypeError<'a>>),
+
     #[error("VecEmptyError: Cannot define empty vector {0}, {1} |- []")]
-    VecEmpty(Ctx<Tid, Kind>, Ctx<Vid, CTyp>),
+    VecEmpty(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>),
+
+    #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- [ {2} not a {3} ]\n\n{4}")]
+    Vec(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp, CTyp, Box<TypeError<'a>>),
+
     #[error("CoefficientError: Argument to [coef] must be a vector of fields {0}, {1} |- coef {2}")]
-    Coef(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp),
-    #[error("Mle: Arguments to [mle] must be a vector type with size a power of 2: {0}, {1} |- mle {2}")]
-    Mle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp),
-    #[error("GenError: Type parameter to [gen] must be a Group kind {0}, {1} |- gen {2}\n\t{3}")]
-    Gen(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Opt<UnifyError>),
+    Coef(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp),
+
+    #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2: {0}, {1} |- mle {2}")]
+    Mle(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp),
+
     #[error("MapError: Arguments to [for] must be a vector type {0}, {1} |- [{2} for {3} in {4}]")]
-    Map(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CAExp, Vid, TAExp),
+    Map(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, CAExp, Vid, TAExp),
+
+    #[error("GenError: Only group generators are allowed: {0}, {1} |- gen< {2} : {3} >")]
+    Gen(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, Tid, Kind),
+
     #[error("VarError: Variable {0} not found in context {1}")]
-    VarNotFound(Vid, Ctx<Vid, CTyp>),
-    #[error("AssertError: Assertion must be a boolean expression {0}, {1} |- assert {2}\n\t{3}")]
-    Assert(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TBExp, Opt<UnifyError>),
-    #[error("VerifyError: Verification must be a boolean expression {0}, {1} |- verify {2}\n\t{3}")]
-    Verify(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TBExp, Opt<UnifyError>),
-    #[error("ConcatenateError: Cannot concatenate {0}, {1} |- {2} ++ {3}\n\t{4}")]
-    Concat(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, Opt<UnifyError>),
-    #[error("InterpolateError: Cannot interpolate {0} |- interpolate ({1}, {2})\n\t{3}")]
-    Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp, Opt<UnifyError>),
+    VarNotFound(Vid, &'a Ctx<Vid, CTyp>),
+
+    #[error("AssertError: Assertion must be a boolean expression {0}, {1} |- assert {2}")]
+    Assert(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TBExp),
+
+    #[error("VerifyError: Verification must be a boolean expression {0}, {1} |- verify {2}")]
+    Verify(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TBExp),
+
+    #[error("ConcatenateError: Expects two vectors with the same element types {0}, {1} |- {2} ++ {3}")]
+    Concat(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp, TAExp),
+
+    #[error("InterpolateError: Expects two field vectors with the same size {0} |- interpolate ( {1}, {2} )")]
+    Interp(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp, TAExp),
+
     #[error("RamError: Index must be a Fin type within the bounds of the vector {0}, {1} |- {2} [ {3} ]")]
-    Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp),
+    Ram(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp, TAExp),
+
     #[error("AppMultipleError: Function has multiple matching definitions in context {0} |- {1} ( {2} )")]
-    AppMultiple(Set<(Fid, Sig)>, Fid, TAExps),
+    AppMultiple(&'a Set<(Fid, Sig)>, Fid, TAExps),
+
     #[error("FuncNotFound: No matching definition found for function {0} |- {1} ( {2} )")]
-    FuncNotFound(Set<(Fid, Sig)>, Fid, TAExps),
+    FuncNotFound(&'a Set<(Fid, Sig)>, Fid, TAExps),
+
+    #[error("ContainsError: Expects an element and a vector: {0}, {1} |- contains( {2} , {3} )")]
+    Contains(&'a Ctx<Tid, Kind>, &'a Ctx<Vid, CTyp>, TAExp, TAExp),
+
+    #[error(transparent)]
+    Unify(#[from] UnifyError),
+}
+
+impl<'a> TypeError<'a> {
+    pub fn anext(kctx: &'a Ctx<Tid, Kind>, vctx: &'a Ctx<Vid, CTyp>, e: CAExp, t: Self) -> Self {
+        TypeError::Next(kctx, vctx, CExp::A(e), Box::new(t))
+    }
+    pub fn aunify(kctx: &'a Ctx<Tid, Kind>, vctx: &'a Ctx<Vid, CTyp>, e: CAExp, u: UnifyError) -> Self {
+        TypeError::anext(kctx, vctx, e, TypeError::from(u))
+    }
+    pub fn bnext(kctx: &'a Ctx<Tid, Kind>, vctx: &'a Ctx<Vid, CTyp>, e: CBExp, t: Self) -> Self {
+        TypeError::Next(kctx, vctx, CExp::B(e), Box::new(t))
+    }
+    pub fn bunify(kctx: &'a Ctx<Tid, Kind>, vctx: &'a Ctx<Vid, CTyp>, e: CBExp, u: UnifyError) -> Self {
+        TypeError::bnext(kctx, vctx, e, TypeError::from(u))
+    }
 }
 
 /// Infer a type with a typing context and typing constraints
 pub trait Typeable {
     type Output;
-    fn infer(self,
-        kctx: &Ctx<Tid, Kind>,      // Kind context Tid -> Kind
-        fctx: &Set<(Fid, Sig)>,     // Function context Fid -> Sig
-        vctx: &mut Ctx<Vid, CTyp>,  // Variable context Vid -> CTyp
-        subs: &mut AliasSubsts,     // Substitutions of type variables
-        ) -> Result<Self::Output, TypeError>;
+    fn infer<'a>(self,
+        kctx: &'a Ctx<Tid, Kind>,      // Kind context Tid -> Kind
+        fctx: &'a Set<(Fid, Sig)>,     // Function context Fid -> Sig
+        vctx: &'a mut Ctx<Vid, CTyp>,  // Variable context Vid -> CTyp
+        subs: &'a mut AliasSubsts,     // Substitutions of type variables
+        ) -> Result<Self::Output, TypeError<'a>>;
 }
 
 /// Type inference for [CAExp]
 impl Typeable for CAExp {
     type Output = TAExp;
-    fn infer(self,kctx: &Ctx<Tid, Kind>, fctx: &Set<(Fid, Sig)>,
-        vctx: &mut Ctx<Vid, CTyp>, subs: &mut AliasSubsts) -> Result<Self::Output, TypeError> {
-        match self {
+    fn infer<'a>(self, kctx: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
+        vctx: &'a mut Ctx<Vid, CTyp>, subs: &'a mut AliasSubsts) -> Result<Self::Output, TypeError<'a>> {
+        match self.clone() {
             // Infer the type of a literal [n] as a Fin<n> type
             CAExp::Lit(n, _) =>
                 Ok(TAExp::Lit(n, CTyp::fin(Range::singleton(n)))),
 
             // Infer the type of a univariate polynomial from its coefficients' vector
-            CAExp::Coef(box v, _) => {
+            CAExp::Coef(v, _) => {
                 // Infer the type of its argument
-                let tv = v.infer(kctx, fctx, vctx, subs)?;
+                let tv : Box<TAExp> =
+                    v.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self, e))?;
+
                 // It must be a vector of fields, or a vector of Fin
                 match tv.proj2() {
                     CTyp::Vec(box b, n) => {
-                        let i = b.to_field(kctx).ok_or(TypeError::Coef(kctx.clone(), vctx.clone(), tv))?;
-                        Ok(TAExp::Coef(Box::new(tv), CTyp::uni(i, n)))
+                        let i = b.to_field(kctx).ok_or(TypeError::Coef(kctx, vctx, *tv))?;
+
+                        Ok(TAExp::Coef(tv, CTyp::uni(i, n)))
                     },
-                    _ => Err(TypeError::Coef(kctx.clone(), vctx.clone(), tv))
+                    _ => Err(TypeError::Coef(kctx, vctx, *tv))
                 }
             }
 
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
-            CAExp::Mle(box v, _) => {
+            CAExp::Mle(v, _) => {
                 // Infer the type of its argument
-                let tv = v.infer(kctx, fctx, vctx, subs)?;
+                let tv =
+                    v.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self, e))?;
+
                 // It must be a vector of fields, or a vector of Fin
                 match tv.proj2() {
                     CTyp::Vec(box b, n) => {
-                        let i = b.to_field(kctx).ok_or(TypeError::Mle(kctx.clone(), vctx.clone(), tv))?;
+                        let i = b.to_field(kctx)
+                            .ok_or(TypeError::Mle(kctx, vctx, *tv))?;
+
+                        // MLEs come in sizes 2^n
                         let (exp, rem) = log2(n);
                         if rem == 0 {
-                            Ok(TAExp::Mle(Box::new(tv), CTyp::mle(i, exp)))
+                            Ok(TAExp::Mle(tv, CTyp::mle(i, exp)))
                         } else {
-                            Err(TypeError::Mle(kctx.clone(), vctx.clone(), tv))
+                            Err(TypeError::Mle(kctx, vctx, *tv))
                         }
                     },
-                    _ => Err(TypeError::Mle(kctx.clone(), vctx.clone(), tv))
+                    _ => Err(TypeError::Mle(kctx, vctx, *tv))
                 }
             },
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
             CAExp::Vec(mut v, _) => {
-                match v.0.pop() {
-                    None => Err(TypeError::VecEmpty(kctx.clone(), vctx.clone())),
-                    Some(h) => {
-                        let th = h.infer(kctx, fctx, vctx, subs)?;
-                        let mut t = th.proj2();
-                        let mut typeds = Vec::new();
-                        // Unify all elements of vector [v] into type [t]
-                        for x in v.into_iter() {
-                            let tx = x.infer(kctx, fctx, vctx, subs)?;
-                            t = CTyp::unify_equ(t.clone(), tx.proj2(), kctx, subs)
-                                .map_err(|e| TypeError::VecInner(kctx.clone(), vctx.clone(), th.clone(), tx, e))?;
-                            // Use [t] as the type of element [tx] to ensure it is the
-                            // representative of the equivalence class
-                            typeds.push(tx.traverse2(&mut |_| Ok(t))?);
-                        }
-                        Ok(TAExp::Vec(AExps(typeds), CTyp::vec(t, typeds.len())))
-                    }
+                let ts =
+                    v.aexps_traverse(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                    .map_err(|e| TypeError::anext(kctx, vctx, self, e))?;
+
+                // Vectors cannot be empty for type inference to work
+                if ts.0.is_empty() {
+                    return Err(TypeError::VecEmpty(kctx, vctx));
                 }
+
+                // For reference, the type of the first element
+                let mut t = ts.0[0].proj2();
+
+                // Unify types of all elements in the vector to [t]
+                for tx in ts.0.iter() {
+                    t = CTyp::unify_equ(t.clone(), tx.proj2(), kctx, subs)
+                        .map_err(|e| TypeError::Vec(kctx, vctx, tx.clone(), t, Box::new(TypeError::from(e))))?;
+                }
+
+                Ok(TAExp::Vec(ts, CTyp::vec(t, ts.0.len())))
             }
 
             // Handle +
             CAExp::Bin(BinOp::Add, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_add(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Add(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Add, ta, tb, t))
             }
 
             // Handle -
             CAExp::Bin(BinOp::Sub, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_sub(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Sub(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Sub, ta, tb, t))
             }
 
             // Handle *
             CAExp::Bin(BinOp::Mul, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_mul(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Mul(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Mul, ta, tb, t))
             }
 
             // Handle /
             CAExp::Bin(BinOp::Div, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_div(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Div(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Div, ta, tb, t))
             }
 
             // Handle ^
             CAExp::Bin(BinOp::Pow, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_pow(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Pow(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Pow, ta, tb, t))
             }
 
             // Handle .
             CAExp::Bin(BinOp::Dot, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 let t = CTyp::unify_dot(ta.proj2(), tb.proj2(), kctx, subs)
-                            .map_err(|e| TypeError::Dot(kctx.clone(), vctx.clone(), *ta, *tb, e))?;
+                        .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
                 Ok(TAExp::Bin(BinOp::Dot, ta, tb, t))
             }
 
             // Handle ++
             CAExp::Bin(BinOp::Concat, a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 match (ta.proj2(), tb.proj2()) {
-                    (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
-                        let c = CTyp::unify_equ(a.clone(), b.clone(), kctx, subs)
-                            .map_err(|e| TypeError::Concat(kctx.clone(), vctx.clone(), *ta, *tb, Opt::some(e)))?;
-                        Ok(TAExp::Bin(BinOp::Concat, ta, tb, CTyp::Vec(Box::new(c), x + y)))
+                    (CTyp::Vec(a, x), CTyp::Vec(b, y)) => {
+                        // Type [a] and [b] should be the same ([c])
+                        let c = CTyp::unify_equ(*a, *b, kctx, subs)
+                            .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
+
+                        // Add the sizes of the vectors
+                        Ok(TAExp::Bin(BinOp::Concat, ta, tb, CTyp::vec(c, x + y)))
                     },
-                    (_, _) => Err(TypeError::Concat(kctx.clone(), vctx.clone(), *ta, *tb, Opt::none()))
+                    (_, _) => Err(TypeError::Concat(kctx, vctx, *ta, *tb))
                 }
             }
 
@@ -213,25 +276,31 @@ impl Typeable for CAExp {
             // Map comprehension
             CAExp::Map(x, id, r, _) => {
                 // Type infer the range expression
-                let tr = r.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let tr =
+                    r.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
 
                 // Clone the context
-                let mut innerctx = vctx.clone();
+                let mut innerctx = vctx;
 
                 match tr.proj2() {
-                    CTyp::Vec(box inner, size) => {
+                    CTyp::Vec(box inner, n) => {
+                        // Add variable [id] to the context with type [inner]
                         innerctx.insert(id, inner);
+                        // Type infer the expression [x] with the new context
                         let tx =
-                            x.traverse1(&mut |x| x.infer(kctx, fctx, &mut innerctx, subs))?;
-                        Ok(TAExp::Map(tx, id, tr, CTyp::vec(tx.proj2(), size)))
+                            x.traverse1(&mut |x| x.infer(kctx, fctx, &mut innerctx, subs))
+                                .map_err(|e| TypeError::anext(kctx, innerctx, *x, e))?;
+
+                        Ok(TAExp::Map(tx, id, tr, CTyp::vec(tx.proj2(), n)))
                     },
-                    typ => Err(TypeError::Map(kctx.clone(), innerctx, *x, id, *tr))
+                    _ => Err(TypeError::Map(kctx, vctx, *x, id, *tr))
                 }
             }
 
             // Variable context lookup
             CAExp::Var(id, _) => {
-                let v = vctx.get(&id).ok_or(TypeError::VarNotFound(id, vctx.clone()))?;
+                let v = vctx.get(&id).ok_or(TypeError::VarNotFound(id, vctx))?;
                 Ok(TAExp::Var(id.clone(), v.clone()))
             },
 
@@ -240,50 +309,67 @@ impl Typeable for CAExp {
 
             // Group generator
             CAExp::Gen(t, _) => {
+                // What kind if [t]?
                 let k = kctx.get(&t).ok_or(
-                    TypeError::Gen(kctx.clone(), vctx.clone(), t, Opt::some(UnifyError::KindNotFound(t, kctx.clone()))))?;
+                    TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(t, kctx.clone())))?;
+
+                // Only generate elements of groups
                 if k.is_group() {
                     Ok(TAExp::Gen(t.clone(), CTyp::Base(t)))
                 } else {
-                    Err(TypeError::Gen(kctx.clone(), vctx.clone(), t, Opt::none()))
+                    Err(TypeError::Gen(kctx, vctx, t, k.clone()))
                 }
             }
 
             // Interpolation of points into a univariate polynomial
             CAExp::Interpolate(a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                // Only field vectors can be interpolated
                 match (ta.proj2(), tb.proj2()) {
                     (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
                         // Unify inner types [a] and [b]
                         let t = CTyp::unify_equ(a.clone(), b.clone(), kctx, subs)
-                                .map_err(|e| TypeError::Interp(kctx.clone(), vctx.clone(), *ta, *tb, Opt::some(e)))?;
+                                .map_err(|e| TypeError::aunify(kctx, vctx, self, e))?;
 
                         // Only interpolate vectors of fields
                         if let CTyp::Base(a) = t {
-                            let k = kctx.get(&a).ok_or(UnifyError::KindNotFound(a, kctx.clone()))
-                                .map_err(|e| TypeError::Interp(kctx.clone(), vctx.clone(), *ta, *tb, Opt::some(e)))?;
+                            // What kind if [t]?
+                            let k = kctx.get(&a).ok_or(
+                           TypeError::aunify(kctx, vctx, self, UnifyError::KindNotFound(a, kctx.clone())))?;
+
+                            // Only interpolate elements of fields
                             if k.is_field() {
                                 Ok(TAExp::Interpolate(ta, tb, CTyp::Uni(a, n)))
                             } else {
-                                Err(TypeError::Interp(kctx.clone(), vctx.clone(), *ta, *tb, Opt::none()))
+                                Err(TypeError::Interp(kctx, vctx, *ta, *tb))
                             }
                         } else {
-                            Err(TypeError::Interp(kctx.clone(), vctx.clone(), *ta, *tb, Opt::none()))
+                            Err(TypeError::Interp(kctx, vctx, *ta, *tb))
                         }
                     },
-                    (_, _) => Err(TypeError::Interp(kctx.clone(), vctx.clone(), *ta, *tb, Opt::none()))
+                    (_, _) => Err(TypeError::Interp(kctx, vctx, *ta, *tb))
                 }
             },
 
-            // Random access memory
+            // Random access into vectors
             CAExp::Ram(v, i, _) => {
-                let tv = v.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let ti = i.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let tv =
+                    v.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                let ti =
+                    i.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+
+                // Must be a vector and a Fin type
                 match (tv.proj2(), ti.proj2()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(m)) if m.end < n =>
                             Ok(TAExp::Ram(tv, ti, typ.clone())),
-                    (_, _) => Err(TypeError::Ram(kctx.clone(), vctx.clone(), *tv, *ti))
+                    (_, _) => Err(TypeError::Ram(kctx, vctx, *tv, *ti))
                 }
             }
 
@@ -291,7 +377,8 @@ impl Typeable for CAExp {
             CAExp::App(id, params, _) => {
                 // type inference for each parameter
                 let typed_params =
-                    params.aexps_traverse(&mut |p| p.infer(kctx, fctx, vctx, subs))?;
+                    params.aexps_traverse(&mut |p| p.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
 
                 // Find all matching functions in function context [fctx]
                 let matching_sigs = fctx.into_iter().filter_map(|(fid, sig)|
@@ -311,9 +398,9 @@ impl Typeable for CAExp {
                     }).collect::<Vec<_>>();
 
                 if matching_sigs.len() > 1 {
-                    Err(TypeError::AppMultiple(fctx.clone(), id, typed_params))
+                    Err(TypeError::AppMultiple(fctx, id, typed_params))
                 } else if matching_sigs.len() == 0 {
-                    Err(TypeError::FuncNotFound(fctx.clone(), id, typed_params))
+                    Err(TypeError::FuncNotFound(fctx, id, typed_params))
                 } else {
                     let (sig, nsubs) = matching_sigs[0];
                     subs.union_equ(&mut nsubs);
@@ -322,18 +409,23 @@ impl Typeable for CAExp {
             }
 
             CAExp::Assert(assert, _) => {
-                let tassert = assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let tassert =
+                    assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
                 if tassert.proj2() != CTyp::bool() {
-                    Err(TypeError::Assert(kctx.clone(), vctx.clone(), *tassert, Opt::some(UnifyError::NotBoolean(tassert.proj2()))))
+                    Err(TypeError::Assert(kctx, vctx, *tassert))
                 } else {
                     Ok(TAExp::Assert(tassert, CTyp::bool()))
                 }
             }
 
             CAExp::Verify(assert, _) => {
-                let tassert = assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let tassert =
+                    assert.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::anext(kctx, vctx, self.clone(), e))?;
+                // It would be pretty weird if this fails
                 if tassert.proj2() != CTyp::bool() {
-                    Err(TypeError::Verify(kctx.clone(), vctx.clone(), *tassert, Opt::some(UnifyError::NotBoolean(tassert.proj2()))))
+                    Err(TypeError::Verify(kctx, vctx, *tassert))
                 } else {
                     Ok(TAExp::Verify(tassert, CTyp::bool()))
                 }
@@ -354,44 +446,48 @@ impl Typeable for CAExp {
     }
 }
 
-/// Type inference for [CAExp]
+/// Type inference for [CAExps]
 impl Typeable for CAExps {
     type Output = TAExps;
-    fn infer(self,  kctx: &Ctx<Tid, Kind>, fctx: &Set<(Fid, Sig)>,
-        vctx: &mut Ctx<Vid, CTyp>, subs: &mut AliasSubsts) -> Result<Self::Output, TypeError> {
+    fn infer<'a>(self,  kctx: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
+        vctx: &'a mut Ctx<Vid, CTyp>, subs: &'a mut AliasSubsts) -> Result<Self::Output, TypeError<'a>> {
         self.aexps_traverse(&mut |x| x.infer(kctx, fctx, vctx, subs))
     }
 }
 
-/// Type inference for [BExp] with type context [ctx]
+/// Type inference for [BExp]
 impl Typeable for CBExp {
     type Output = TBExp;
-    fn infer(self, kctx: &Ctx<Tid, Kind>, fctx: &Set<(Fid, Sig)>,
-        vctx: &mut Ctx<Vid, CTyp>, subs: &mut AliasSubsts) -> Result<TBExp, TypeError> {
-        match self {
+    fn infer<'a>(self, kctx: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
+        vctx: &'a mut Ctx<Vid, CTyp>, subs: &'a mut AliasSubsts) -> Result<TBExp, TypeError<'a>> {
+        match self.clone() {
             CBExp::Equ(a, b, _) => {
-                let ta = a.infer(kctx, fctx, vctx, subs)?;
-                let tb = b.infer(kctx, fctx, vctx, subs)?;
+                let ta = a.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
+                let tb = b.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
+
+                // Values are equal when their types are equal (with unification)
                 CTyp::unify_equ(ta.proj2(), tb.proj2(), kctx, subs)
-                    .map_err(|e| TypeError::Equ(kctx.clone(), vctx.clone(), ta.clone(), tb.clone(), e))?;
+                    .map_err(|e| TypeError::bunify(kctx, vctx, self, e))?;
                 Ok(TBExp::Equ(ta, tb, CTyp::bool()))
             }
             CBExp::Contains(a, b, _) => {
-                let ta = a.infer(kctx, fctx, vctx, subs)?;
-                let tb = b.infer(kctx, fctx, vctx, subs)?;
+                let ta = a.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
+                let tb = b.infer(kctx, fctx, vctx, subs).map_err(|e| TypeError::bnext(kctx, vctx, self, e))?;
+
                 match (ta.proj2(), tb.proj2()) {
                     (x, CTyp::Vec(box a, n)) => {
                         let t = CTyp::unify_equ(x, a, kctx, subs)
-                            .map_err(|e| TypeError::Contains(kctx.clone(), vctx.clone(), ta.clone(), tb.clone(), Opt::some(e)))?;
+                            .map_err(|e| TypeError::bunify(kctx, vctx, self, e))?;
                         Ok(TBExp::Contains(ta, tb, CTyp::bool()))
                     },
-                    (_, _) => Err(TypeError::Contains(kctx.clone(), vctx.clone(), ta.clone(), tb.clone(), Opt::none())),
+                    (_, _) => Err(TypeError::Contains(kctx, vctx, ta.clone(), tb.clone()))
                 }
             }
             CBExp::App(id, params, _) => {
                 // type inference for each parameter
                 let typed_params =
-                    params.aexps_traverse(&mut |p| p.infer(kctx, fctx, vctx, subs))?;
+                    params.aexps_traverse(&mut |p| p.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
 
                 // Find all matching functions in function context [fctx]
                 let matching_sigs = fctx.into_iter().filter_map(|(fid, sig)|
@@ -411,9 +507,9 @@ impl Typeable for CBExp {
                     }).collect::<Vec<_>>();
 
                 if matching_sigs.len() > 1 {
-                    Err(TypeError::AppMultiple(fctx.clone(), id, typed_params))
+                    Err(TypeError::AppMultiple(fctx, id, typed_params))
                 } else if matching_sigs.len() == 0 {
-                    Err(TypeError::FuncNotFound(fctx.clone(), id, typed_params))
+                    Err(TypeError::FuncNotFound(fctx, id, typed_params))
                 } else {
                     let (sig, nsubs) = matching_sigs[0];
                     subs.union_equ(&mut nsubs);
@@ -421,86 +517,80 @@ impl Typeable for CBExp {
                 }
             }
             CBExp::And(a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
                 Ok(TBExp::And(ta, tb, CTyp::bool()))
             },
             CBExp::Or(a, b, _) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))?;
+                let ta =
+                    a.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
+                let tb =
+                    b.traverse1(&mut |x| x.infer(kctx, fctx, vctx, subs))
+                        .map_err(|e| TypeError::bnext(kctx, vctx, self.clone(), e))?;
                 Ok(TBExp::Or(ta, tb, CTyp::bool()))
             }
         }
     }
 }
 
-/// Type inference for Decl (annotate each AST node with the type)
-impl<A: fmt::Display> Typeable<A> for Decl<A> {
-    type Output<Z> = Decl<Z>;
-    type MutContext = Constraints;
-    type ImContext = ();
-    fn infer(self, _: &(), constr: &mut Constraints) -> Result<TDecl<A>, TypeError<A>> {
-        match self {
-            Decl::Proto {
-                name,
-                generics,
-                args,
-                principal,
-                relation,
-                body,
-                assert
-            } => {
-                // Create a new context with generics and their kinds
-                let mut ctx = TypCtx::from(generics.clone());
+/// Type inference for [Decl]
+impl Typeable for CDecl {
+    type Output = TDecl;
+    fn infer<'a>(self, _: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
+        _: &'a mut Ctx<Vid, CTyp>, _: &'a mut AliasSubsts) -> Result<TDecl, TypeError<'a>> {
+        match self.clone() {
+            CDecl::Proto { name, typevars, args, relation, body } => {
+                // Create a new context from type vars
+                let mut kctx = typevars.to_ctx();
 
-                // Append the argument types to typecontext (a: T)
-                for Arg { id, typ, .. } in args.iter() {
-                    ctx.add_var(id, typ);
-                }
+                // Create a new variable context from args
+                let mut vctx = args.to_ctx();
 
-                // Type annotate the body
-                let typed_body = body.infer(&ctx, constr)?;
+                // Substitutions for type aliases are empty
+                let mut subs = AliasSubsts::new();
 
-                // Type annotate the relation
-                let typed_relation = relation.infer(&ctx, constr)?;
+                // Type inference on the body
+                let typed_body = body.infer(&kctx, fctx, &mut vctx, &mut subs)?;
 
-                // Type annotate the assert
-                let typed_assert = assert.infer(&ctx, constr)?;
+                // Type inference on the precondition relation
+                let typed_relation = relation.infer(&kctx, fctx, &mut vctx, &mut subs)?;
 
-                Ok(Decl::Proto {
+                Ok(TDecl::Proto {
                     name,
-                    generics,
+                    typevars,
                     args,
-                    principal,
                     relation: typed_relation,
-                    body: typed_body,
-                    assert: typed_assert,
+                    body: typed_body
                 })
             }
-            Decl::Func {
-                name,
-                generics,
-                args,
-                typ,
-                body,
-            } => {
-                // Create a new context with generics and their kinds
-                let mut ctx = TypCtx::from(generics.clone());
+            CDecl::Func { name, typevars, args, body, typ } => {
+                // Create a new context from type vars
+                let mut kctx = typevars.to_ctx();
 
-                // Append the argument types to typecontext (a: T)
-                for Arg { id, typ, .. } in args.iter() {
-                    ctx.add_var(id, typ);
-                }
+                // Create a new variable context from args
+                let mut vctx = args.to_ctx();
 
-                // Type annotate the body
-                let typed_body = body.infer(&ctx, constr)?;
+                // Substitutions for type aliases are empty
+                let mut subs = AliasSubsts::new();
+
+                // Type inference on the body
+                let typed_body = body.infer(&kctx, fctx, &mut vctx, &mut subs)?;
+
+                // Last expression gives us the type
+                let last = typed_body.0.last().unwrap();
 
                 // Type check the return type
-                let ft = Typ::unify_equ(typed_body.get_type().clone(), typ.clone(), &ctx, constr)?;
+                let ft = CTyp::unify_equ(typ, last.proj2(), &kctx, &mut subs)
+                        .map_err(|e| TypeError::from(e))?;
 
-                Ok(Decl::Func {
+                Ok(TDecl::Func {
                     name,
-                    generics,
+                    typevars,
                     args,
                     typ: ft,
                     body: typed_body
@@ -510,22 +600,11 @@ impl<A: fmt::Display> Typeable<A> for Decl<A> {
     }
 }
 
-/// Type inference for Modules.
-/// Annotate each AST node with the type and each decl with the
-/// constraints.
-impl<A: fmt::Display, B> Typeable<A> for Module<A, B> {
-    type Output<Z> = Module<Z, (B, Constraints)>;
-    type ImContext = ();
-    type MutContext = ();
-    fn infer(self, _: &(), _: &mut ()) -> Result<TModule<A, B>, TypeError<A>> {
-        let mut decls = Vec::new();
-        for (decl, ann) in self.0.into_iter() {
-            // Fresh constraints for each declaration (template polymorphism)
-            let mut constr = Constraints::new();
-            // Type annotate the declaration
-            decls.push((decl.infer(&(), &mut constr)?, (ann, constr)));
-        }
-        Ok(Module(decls))
+impl Typeable for CDecls {
+    type Output = TDecls;
+    fn infer<'a>(self, _: &'a Ctx<Tid, Kind>, fctx: &'a Set<(Fid, Sig)>,
+        _: &'a mut Ctx<Vid, CTyp>, _: &'a mut AliasSubsts) -> Result<TDecls, TypeError<'a>> {
+        self.into_iter().map(|x| x.infer(&Ctx::new(), fctx, &mut Ctx::new(), &mut AliasSubsts::new())).collect()
     }
 }
 

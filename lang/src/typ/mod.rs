@@ -87,9 +87,10 @@ impl<N> Typ<N> {
                     None
                 }
             },
-            Typ::Index(_) =>
+            Typ::Fin(_) =>
                 // Find the first field and return It
-                ctx.into_iter().find(|(_, k)| k.is_field()),
+                ctx.iter().find(|(_, k)| k.is_field())
+                    .map(|(b, _)| b.clone()),
 
             _ => None
         }

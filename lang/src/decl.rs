@@ -10,7 +10,7 @@ use crate::typ::TypeVars;
 use crate::id::{Tid, Fid};
 use crate::typ::{Typ, Size, Nothing};
 use crate::arg::Args;
-use crate::exp::{UAExp, UAExps, AExps, BExp};
+use crate::exp::{AExps, BExp};
 use crate::parser::*;
 
 /// Different kinds of declarations in zippel programming language.
@@ -55,18 +55,25 @@ pub enum Decl<N, T> {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decls<N, T>(pub Vec<Decl<N, T>>);
 
-/// Typed declaration
-pub type TDecl<N, A> = Decl<N, (A, Typ<N>)>;
-
 /// Untyped declaration with symbolic sizes
 pub type UDecl =  Decl<Size, Nothing>;
 
-/// Typed declarations
-pub type TDecls<N, A> = Decls<N, (A, Typ<N>)>;
+/// Concrete sized declaration
+pub type CDecl = Decl<usize, Nothing>;
 
-/// Untyped declarations with symbolic sizes
+/// Typed declaration
+pub type TDecl = Decl<usize, Typ<usize>>;
+
+/// Untyped declaration with symbolic sizes
 pub type UDecls =  Decls<Size, Nothing>;
 
+/// Concrete sized declaration
+pub type CDecls = Decls<usize, Nothing>;
+
+/// Typed declaration
+pub type TDecls = Decls<usize, Typ<usize>>;
+
+/// Parser for declarations using pest
 impl UDecl {
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
@@ -89,17 +96,18 @@ impl UDecls {
     }
 }
 
-impl IntoIterator for UDecls {
-    type Item = UDecl;
-    type IntoIter = std::vec::IntoIter<UDecl>;
+
+impl<N, T> IntoIterator for Decls<N, T> {
+    type Item = Decl<N, T>;
+    type IntoIter = std::vec::IntoIter<Decl<N, T>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl FromIterator<UDecl> for UDecls {
-    fn from_iter<I: IntoIterator<Item = UDecl>>(iter: I) -> Self {
+impl<N, T> FromIterator<Decl<N, T>> for Decls<N, T> {
+    fn from_iter<I: IntoIterator<Item = Decl<N, T>>>(iter: I) -> Self {
         Decls(iter.into_iter().collect())
     }
 }
@@ -413,7 +421,7 @@ impl<'pest> FromPest<'pest> for UDecls {
         arg::Arg,
         id::Vid,
         range::Range,
-        exp::UBExp,
+        exp::{UAExp, UBExp},
         typ::{Kind, TypeVar}
 };
 
@@ -440,10 +448,10 @@ fn proto_parser() {
         name: Fid::from("test"),
         typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
         args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
-        relation: UBExp::eq(UAExp::varstr("a"), UAExp::varstr("a")),
+        relation: UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
         body: AExps(vec![
             UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::varstr("a")),
-            UAExp::verify(UBExp::eq(UAExp::varstr("x"), UAExp::varstr("x"))),
+            UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
         ]),
     });
 }
@@ -515,10 +523,10 @@ fn decls_parser() {
             name: Fid::from("test"),
             typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
             args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
-            relation: UBExp::eq(UAExp::varstr("a"), UAExp::varstr("a")),
+            relation: UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
             body: AExps(vec![
                 UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::varstr("a"))),
-                UAExp::verify(UBExp::eq(UAExp::varstr("x"), UAExp::varstr("x"))),
+                UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
             ]),
         },
         UDecl::Func {
