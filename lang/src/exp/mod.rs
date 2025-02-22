@@ -39,6 +39,17 @@ impl<N, T> Into<Exp<N, T>> for BExp<N, T> {
     }
 }
 
+impl<N: Clone, T: Clone> Into<Exp<N, T>> for &AExp<N, T> {
+    fn into(self) -> Exp<N, T> {
+        Exp::A(self.clone())
+    }
+}
+
+impl<N: Clone, T: Clone> Into<Exp<N, T>> for &BExp<N, T> {
+    fn into(self) -> Exp<N, T> {
+        Exp::B(self.clone())
+    }
+}
 /// Modular get/set acccess to type parameters using [Traversal]
 struct ExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
 impl<N, T, Z> Traversal<N, Z> for ExpTraversal1<N, T> {

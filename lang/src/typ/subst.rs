@@ -85,8 +85,8 @@ impl AliasSubsts {
         }
 
         // Update all related entries to maintain transitive closure
-        for item in eqclass.clone() {
-            self.0.insert(item, eqclass.clone());
+        for item in eqclass.iter() {
+            self.0.insert(item, &eqclass);
         }
 
         // Return the representative of the class as the lowest lexicographic [Tid]

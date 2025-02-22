@@ -45,6 +45,20 @@ impl<N: Clone> Args<N> {
     }
 }
 
+impl<N> IntoIterator for Args<N> {
+    type Item = Arg<N>;
+    type IntoIter = std::vec::IntoIter<Arg<N>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<N> FromIterator<Arg<N>> for Args<N> {
+    fn from_iter<I: IntoIterator<Item=Arg<N>>>(iter: I) -> Self {
+        Args(iter.into_iter().collect())
+    }
+}
+
 /// Traversal instance for Arg
 pub struct ArgTraversal1<N>(std::marker::PhantomData<N>);
 impl<N, M> Traversal<N, M> for ArgTraversal1<N> {
@@ -216,9 +230,11 @@ fn arg_parser() {
 }
 
 #[cfg(test)] use crate::range::Range;
+#[cfg(test)] use share::Ctx;
 #[test]
 fn arg_traversal() {
-    let arg = Arg::new(Qualifier::Public, "a", Typ::fin(Range::singleton(2)));
-    assert_eq!(arg.traverse1(&mut |x| Ok::<_,()>(x + 1)).unwrap(),
-       Arg::new(Qualifier::Public, "a", Typ::fin(Range::singleton(3))));
+    let arg = Arg::new(Qualifier::Public, "a",
+        Typ::fin(Range { start: Size::varstr("N") / 2, step: Size::one(), end: Size::varstr("N")*2 }));
+    assert_eq!(arg.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 2))).unwrap(),
+       Arg::new(Qualifier::Public, "a", Typ::fin(Range { start: 1, step: 1, end: 4 })));
 }

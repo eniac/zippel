@@ -8,7 +8,7 @@ use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::typ::TypeVars;
 use crate::id::{Tid, Fid};
-use crate::typ::{Typ, Size, Nothing};
+use crate::typ::{Typ, Size, Sig, Nothing};
 use crate::arg::Args;
 use crate::exp::{AExps, BExp};
 use crate::parser::*;
@@ -121,7 +121,7 @@ impl<N, T> FromIterator<Decl<N, T>> for Decls<N, T> {
 impl<N, T> DeclTraversal<N, T> for Decls<N, T> {
     type Output<Z> = Decls<N, Z>;
     fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<N,T>) -> Result<Decl<N, Z>, E>) -> Result<Self::Output<Z>, E> {
-        self.0.traverse1(&mut |x| f(x))
+        Ok(Decls(self.0.traverse1(&mut |x| f(x))?))
     }
 }
 
@@ -222,6 +222,18 @@ impl<N, T> Decl<N, T> {
         match self {
             Decl::Proto { typevars, .. }
             | Decl::Func { typevars, .. } => typevars.remove(t)
+        }
+    }
+
+}
+
+impl<T> Decl<usize, T> {
+    pub fn sig(&self) -> Sig {
+        match self {
+            Decl::Proto { args, .. } =>
+                Sig::proto(args.clone().into_iter().map(|a| a.typ).collect()),
+            Decl::Func { args, typ, .. } =>
+                Sig::func(args.clone().into_iter().map(|a| a.typ).collect(), typ.clone())
         }
     }
 }

@@ -126,8 +126,8 @@ impl<K: Ord, V> Ctx<K, V> {
         self.0.len()
     }
 
-    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
-        self.0.insert(k, v)
+    pub fn insert(&mut self, k: &K, v: &V) -> Option<V> where K: Clone, V: Clone {
+        self.0.insert(k.clone(), v.clone())
     }
 
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
@@ -179,7 +179,7 @@ impl<K: Ord, V> Ctx<K, V> {
         for (k, v1) in self.0.clone().into_iter() {
             if let Some(v2) = other.0.get(&k) {
                 if let Some(v) = f(v1.clone(), v2.clone()) {
-                    diff.insert(k, v);
+                    diff.insert(&k, &v);
                 }
             }
         }
@@ -242,7 +242,7 @@ impl<K: Ord, V> Ctx<K, V> {
         let mut c = Ctx::new();
         for (k, v) in self.0.clone().into_iter() {
             if f(&k, &v) {
-                c.insert(k, v);
+                c.insert(&k, &v);
             }
         }
         self.retain(|k, _| !c.contains(k));

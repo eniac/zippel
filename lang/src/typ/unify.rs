@@ -36,6 +36,12 @@ pub enum UnifyError {
     Container(#[from] BinopError<CTyp>),
 }
 
+impl UnifyError {
+    pub fn kind_not_found(id: &Tid) -> Self {
+        UnifyError::KindNotFound(id.clone())
+    }
+}
+
 /// Instances of this trait can be added, muliplied, divided, exp'd and dot product'd together, generating constraints and type errors
 pub trait Unify where Self: Sized {
     fn unify_equ(a: Self, b: Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError>;

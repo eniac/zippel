@@ -559,6 +559,15 @@ impl<N, A> AExps<N, A> {
     pub fn aexps_traverse<E, Z, T>(self, f: &mut dyn FnMut(AExp<N, A>) -> Result<AExp<Z, T>, E>) -> Result<AExps<Z, T>, E> {
         Ok(AExps(VecTraversal::traverse(self.0, f)?))
     }
+    pub fn iter(&self) -> std::slice::Iter<AExp<N, A>> {
+        self.0.iter()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl<N, T> IntoIterator for AExps<N, T> {
@@ -576,26 +585,26 @@ impl<N, T> FromIterator<AExp<N, T>> for AExps<N, T> {
 }
 
 impl TAExp {
-    pub fn typ(self) -> Typ<usize> {
+    pub fn typ(&self) -> Typ<usize> {
         match self {
-            AExp::Lit(_, a) => a,
-            AExp::Var(_, a) => a,
-            AExp::Coef(_, a) => a,
-            AExp::Mle(_, a) => a,
-            AExp::Vec(_, a) => a,
-            AExp::Bin(_, _, _, a) => a,
-            AExp::Map(_, _, _, a) => a,
-            AExp::Challenge(_, a) => a,
-            AExp::Random(_, a) => a,
-            AExp::Gen(_, a) => a,
-            AExp::Range(_, a) => a,
-            AExp::Interpolate(_, _, a) => a,
-            AExp::Ram(_, _, a) => a,
-            AExp::Let(_, _, a) => a,
-            AExp::Log(_, _, a) => a,
-            AExp::Assert(_, a) => a,
-            AExp::Verify(_, a) => a,
-            AExp::App(_, _, a) => a,
+            AExp::Lit(_, a) => a.clone(),
+            AExp::Var(_, a) => a.clone(),
+            AExp::Coef(_, a) => a.clone(),
+            AExp::Mle(_, a) => a.clone(),
+            AExp::Vec(_, a) => a.clone(),
+            AExp::Bin(_, _, _, a) => a.clone(),
+            AExp::Map(_, _, _, a) => a.clone(),
+            AExp::Challenge(_, a) => a.clone(),
+            AExp::Random(_, a) => a.clone(),
+            AExp::Gen(_, a) => a.clone(),
+            AExp::Range(_, a) => a.clone(),
+            AExp::Interpolate(_, _, a) => a.clone(),
+            AExp::Ram(_, _, a) => a.clone(),
+            AExp::Let(_, _, a) => a.clone(),
+            AExp::Log(_, _, a) => a.clone(),
+            AExp::Assert(_, a) => a.clone(),
+            AExp::Verify(_, a) => a.clone(),
+            AExp::App(_, _, a) => a.clone(),
         }
     }
 }

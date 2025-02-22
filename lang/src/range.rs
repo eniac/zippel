@@ -196,7 +196,7 @@ fn range_parser() {
 fn range_traversal() {
     let r = Range { start: Size::varstr("N"), step: Size::from(2), end: Size::from(10) };
     assert_eq!(
-        RangeTraversal::traverse(r, &mut |x| x.eval(&Ctx::singleton("N", 0))).unwrap(),
+        r.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 0))).unwrap(),
         Range { start: 0, step: 2, end: 10 }
     );
 }

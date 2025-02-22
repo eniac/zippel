@@ -11,7 +11,7 @@ use crate::typ::{Typ, EvalError, Nothing};
 
 /// Module is a collection of declarations with concrete sizes
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Module<T>(Ctx<(Fid, Args<usize>), Decl<usize, T>>);
+pub struct Module<T>(pub Ctx<(Fid, Args<usize>), Decl<usize, T>>);
 
 /// Module with no types
 pub type UModule = Module<Nothing>;
