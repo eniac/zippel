@@ -3,7 +3,7 @@ use thiserror::Error;
 use pest::iterators::Pair;
 
 use crate::id::Fid;
-use crate::range::{Range, RangeError};
+use crate::range::RangeError;
 use crate::parser::Rule;
 use crate::typ::{Size, EvalError};
 

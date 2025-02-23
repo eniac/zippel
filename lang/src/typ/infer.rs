@@ -9,10 +9,8 @@ use crate::typ::unify::{Unify, UnifyError};
 use crate::typ::sig::Sig;
 use crate::typ::AliasSubsts;
 use crate::range::{Range, RangeError};
-use crate::typ::{CTyp, Nothing, Kind};
+use crate::typ::{CTyp, Kind};
 use thiserror::Error;
-
-use std::fmt;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum TypeError {
@@ -200,7 +198,7 @@ impl Typeable for CAExp {
                 let mut t = ts.0[0].typ();
 
                 // Unify types of all elements in the vector to [t]
-                for tx in ts.iter() {
+                for tx in ts.0[1..].iter() {
                     t = CTyp::unify_equ(t.clone(), tx.typ(), kctx, subs)
                         .map_err(|e| TypeError::vec(kctx, vctx, tx, t, e.into()))?;
                 }

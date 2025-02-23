@@ -10,12 +10,11 @@ use crate::id::Tid;
 use crate::parser::*;
 use share::{Ctx, Set};
 use share::{Pretty, DocBuilder, DocAllocator, BoxAllocator};
-use share::Traversal;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Size {
-    Var(Tid),            // N
-    Lit(u32),            // 15
+    Var(Tid),                  // N
+    Lit(u32),                  // 15
     Add(Box<Size>, Box<Size>), // A + B
     Sub(Box<Size>, Box<Size>), // A - B
     Mul(Box<Size>, Box<Size>), // A * B
@@ -29,8 +28,6 @@ pub enum Size {
 pub enum EvalError {
     #[error("Division by zero: {0} / {1}")]
     DivisionByZero(Size, Size),
-    #[error("Negative exponentiation: {0} ^ {1}")]
-    NegativeExponentiation(Size, Size),
     #[error("Underflow by subtraction: {0} - {1}")]
     UnderflowBySubtraction(Size, Size),
     #[error("Negative variable value: {0}")]
@@ -118,11 +115,7 @@ impl Size {
             Size::Pow(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                if y >= 0 {
-                    Ok(x.pow(y as u32))
-                } else {
-                    Err(EvalError::NegativeExponentiation(a.clone(), b.clone()))
-                }
+                Ok(x.pow(y as u32))
             }
             Size::Max(box a, box b) => {
                 let x = a.eval(ctx)?;

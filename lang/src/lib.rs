@@ -15,4 +15,4 @@ pub use arg::Arg;
 pub use exp::{AExp, BExp, Exp, TExp, TAExp, TBExp};
 pub use decl::{Decl, TDecl, Decls, TDecls, UDecls};
 pub use module::{Module, UModule, ModuleError};
-pub use typ::Kind;
+pub use typ::{Typ, CTyp, Unify, AliasSubsts, Typeable, Kind, Size};

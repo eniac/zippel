@@ -9,7 +9,7 @@ use pest::pratt_parser::{Assoc, Op, PrattParser};
 use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2, VecTraversal};
 
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, CTyp, TypTraversal, Size, Nothing};
+use crate::typ::{Typ, Size, Nothing};
 use crate::exp::{BExp, UBExp, BExpTraversal};
 use crate::id::{Tid, Fid, Vid};
 use crate::range::{Range, RangeTraversal};

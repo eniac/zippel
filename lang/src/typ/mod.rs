@@ -16,8 +16,9 @@ pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 pub use unify::Unify;
+pub use infer::Typeable;
 pub use sig::Sig;
-pub use subst::{Substs, SizeSubsts, AliasSubsts};
+pub use subst::{SizeSubsts, AliasSubsts};
 
 use share::{Ctx, Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
@@ -95,11 +96,6 @@ impl<N> Typ<N> {
             _ => None
         }
     }
-}
-
-/// Traverse a structure with [Typ<N>] objects
-pub trait TypTraversal<N> : Sized {
-    fn typ_traverse<E>(self, f: &mut dyn FnMut(Typ<N>) -> Result<Typ<N>, E>) -> Result<Self, E>;
 }
 
 struct TypTraversal1<N>(std::marker::PhantomData<N>);

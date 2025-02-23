@@ -53,6 +53,10 @@ impl Range<usize> {
         }
     }
 
+    pub fn check(&self) -> Result<(), RangeError> {
+        Range::from_num(self.start, self.step, self.end).map(|_| ())
+    }
+
     /// Create a singleton range
     pub fn singleton(start: usize) -> Self {
         Range { start, step: 1, end: start + 1 }
