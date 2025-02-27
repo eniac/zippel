@@ -13,80 +13,73 @@ use crate::arg::Args;
 use crate::exp::{AExps, BExp};
 use crate::parser::*;
 
-/// Different kinds of declarations in zippel programming language.
-/// It is parametrized by `T` the type of annotations.
+
+/// Body of Zippel declarations (protocols and functions).
+/// Specs are given either by an explicit relation on inputs (precondition)
+/// or by the return type of the function.
+/// Parametrized by `N` the type of sizes and `T` the type of types.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum Decl<N, T> {
-    /// A protocol declaration.
+pub enum Body<N, T> {
+    /// A protocol body declaration
     ///
     /// # fields
-    /// - `name`: The name/identifier of the protocol.
-    /// - `typevars`: A vector of type variables
-    /// - `args`: A vector of arguments for the protocol.
-    /// - `body`: The body of the protocol, represented as a vector of statements
-    /// - `principal`: Who owns this protocol.
-    /// - `assert`: The final assertion of the protocol.
+    /// - `body`: The body of the protocol.
+    /// - `relation`: The relation describing the protocol.
     Proto {
-        name: Fid,
-        typevars: TypeVars,
-        args: Args<N>,
-        relation: BExp<N, T>,
         body: AExps<N, T>,
+        relation: BExp<N, T>,
     },
 
-    /// A function declaration.
+    /// A function body declaration
     ///
     /// # fields
-    /// - `name`: The name/identifier of the protocol.
-    /// - `typevars`: A vector of type variables
-    /// - `args`: A vector of arguments for the protocol.
-    /// - `body`: The body of the protocol, represented as a vector of statements
-    /// - `typ`: The return type of the function.
+    /// - `body`: The body of the function.
     Func {
-        name: Fid,
-        typevars: TypeVars,
-        args: Args<N>,
-        typ: Typ<N>,
-        body: AExps<N, T>,
+        body: AExps<N, T>
     },
 }
 
-/// Structures with declarations can be traversed
-pub trait DeclTraversal<N, T> {
-    type Output<Z>;
-    fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<N, T>) -> Result<Decl<N, Z>, E>) -> Result<Self::Output<Z>, E>;
+/// A zippel declaration is either a protocol or a function.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+pub struct Decl<N, T> {
+    pub name: Fid,
+    pub typevars: TypeVars,
+    pub args: Args<N>,
+    pub body: Body<N, T>,
 }
 
 /// A collection of declarations
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decls<N, T>(pub Vec<Decl<N, T>>);
 
-/// Untyped declaration with symbolic sizes
+/// Untyped body with symbolic sizes
+pub type UBody =  Body<Size, Nothing>;
+
+/// Concrete sized body
+pub type CBody = Body<usize, Nothing>;
+
+/// Typed body
+pub type TBody = Body<usize, Typ<usize>>;
+
+/// Untyped decl with symbolic sizes
 pub type UDecl =  Decl<Size, Nothing>;
 
-/// Concrete sized declaration
+/// Concrete sized decl
 pub type CDecl = Decl<usize, Nothing>;
 
-/// Typed declaration
+/// Typed decl
 pub type TDecl = Decl<usize, Typ<usize>>;
 
-/// Untyped declaration with symbolic sizes
+/// Untyped declarations with symbolic sizes
 pub type UDecls =  Decls<Size, Nothing>;
 
-/// Concrete sized declaration
+/// Concrete sized declarations
 pub type CDecls = Decls<usize, Nothing>;
 
-/// Typed declaration
+/// Typed declarations
 pub type TDecls = Decls<usize, Typ<usize>>;
 
-/// Parser for declarations using pest
-impl UDecl {
-    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
-        UDecl::from_pest(&mut pairs)
-    }
-}
-
+/// .zippel files get parses to [UDecls] that
+/// is the entry point to the zippel compiler
 impl UDecls {
     /// Parse a string into a Zippel declarations list
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
@@ -101,7 +94,6 @@ impl UDecls {
         Decls::from_str(stored_str)
     }
 }
-
 
 impl<N, T> IntoIterator for Decls<N, T> {
     type Item = Decl<N, T>;
@@ -118,33 +110,18 @@ impl<N, T> FromIterator<Decl<N, T>> for Decls<N, T> {
     }
 }
 
-impl<N, T> DeclTraversal<N, T> for Decls<N, T> {
-    type Output<Z> = Decls<N, Z>;
-    fn decl_traverse<E, Z>(self, f: &mut dyn FnMut(Decl<N,T>) -> Result<Decl<N, Z>, E>) -> Result<Self::Output<Z>, E> {
-        Ok(Decls(self.0.traverse1(&mut |x| f(x))?))
-    }
-}
-
-/// Traversable1 instance for Decl (N)
-struct DeclTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, Z, T> Traversal<N, Z> for DeclTraversal1<N, T> {
-    type Domain = Decl<N, T>;
-    type Codomain = Decl<Z, T>;
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Decl<Z, T>, E> {
-        match on {
-            Decl::Proto { name, typevars, args, relation, body } =>
-                Ok(Decl::Proto {
-                    name,
-                    typevars,
-                    args: args.traverse1(f)?,
+/// Traversable1 instance for Body (N)
+impl<N, T> ToTraversal1<N> for Body<N, T> {
+    type Output<Z> = Body<Z, T>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z, T>, E> {
+        match self {
+            Body::Proto { relation, body } =>
+                Ok(Body::Proto {
                     body: body.traverse1(f)?,
                     relation: relation.traverse1(f)?,
                 }),
-            Decl::Func { name, typevars, args, typ, body } =>
-                Ok(Decl::Func {
-                    name,
-                    typevars,
-                    args: args.traverse1(f)?,
+            Body::Func { typ, body } =>
+                Ok(Body::Func {
                     body: body.traverse1(f)?,
                     typ: typ.traverse1(f)?
                 }),
@@ -152,101 +129,40 @@ impl<N, Z, T> Traversal<N, Z> for DeclTraversal1<N, T> {
     }
 }
 
-struct DeclTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, Z, T> Traversal<T, Z> for DeclTraversal2<N, T> {
-    type Domain = Decl<N, T>;
-    type Codomain = Decl<N, Z>;
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Decl<N, Z>, E> {
-        match on {
-            Decl::Proto { name, typevars, args, relation, body } =>
-                Ok(Decl::Proto {
-                    name,
-                    typevars,
-                    args,
+/// Traversable2 instance for Body (T)
+impl<N, T> ToTraversal2<T> for Body<N, T> {
+    type Output<Z> = Body<N, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Body<N, Z>, E> {
+        match self {
+            Body::Proto { relation, body } =>
+                Ok(Body::Proto {
+                    body: body.traverse2(f)?,
                     relation: relation.traverse2(f)?,
-                    body: body.traverse2(f)?,
                 }),
-            Decl::Func { name, typevars, args, typ, body } =>
-                Ok(Decl::Func {
-                    name,
-                    typevars,
-                    args,
-                    typ,
+            Body::Func { typ, body } =>
+                Ok(Body::Func {
                     body: body.traverse2(f)?,
+                    typ: typ.traverse2(f)?
                 }),
         }
     }
 }
 
-impl TidTraversal for TDecl {
+impl TidTraversal for TBody {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         match self {
-            Decl::Proto { name, typevars, args, relation, body } =>
+            Body::Proto { relation, body } =>
                 Ok(Decl::Proto {
-                    name,
-                    typevars: typevars.tid_traverse(f)?,
-                    args: args.tid_traverse(f)?,
                     relation: relation.tid_traverse(f)?,
                     body: body.tid_traverse(f)?,
                 }),
-            Decl::Func { name, typevars, args, typ, body } =>
+            Body::Func { typ, body } =>
                 Ok(Decl::Func {
-                    name,
-                    typevars: typevars.tid_traverse(f)?,
-                    args: args.tid_traverse(f)?,
                     typ: typ.tid_traverse(f)?,
                     body: body.tid_traverse(f)?,
                 }),
         }
     }
-}
-impl<N, T> ToTraversal1<N> for Decl<N, T> {
-    type Output<Z> = Decl<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Decl<Z, T>, E> {
-        DeclTraversal1::traverse(self, f)
-    }
-}
-
-impl<N, T> ToTraversal2<T> for Decl<N, T> {
-    type Output<Z> = Decl<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Decl<N, Z>, E> {
-        DeclTraversal2::traverse(self, f)
-    }
-}
-
-/// Getters for Decl
-impl<N, T> Decl<N, T> {
-    pub fn typevars(&self) -> &TypeVars {
-        match self {
-            Decl::Proto { typevars, .. }
-            | Decl::Func { typevars, .. } => typevars
-        }
-    }
-    pub fn name(&self) -> &Fid {
-        match self {
-            Decl::Proto { name, .. }
-            | Decl::Func { name, .. } => name
-        }
-    }
-    pub fn args(&self) -> &Args<N> {
-         match self {
-            Decl::Proto { args, .. }
-            | Decl::Func { args, .. } => args
-         }
-    }
-    pub fn body(&self) -> &AExps<N, T> {
-        match self {
-            Decl::Proto { body, .. }
-            | Decl::Func { body, .. } => body
-        }
-    }
-    pub fn remove_typevar(&mut self, t: &Tid) {
-        match self {
-            Decl::Proto { typevars, .. }
-            | Decl::Func { typevars, .. } => typevars.remove(t)
-        }
-    }
-
 }
 
 impl<T> Decl<usize, T> {

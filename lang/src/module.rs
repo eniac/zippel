@@ -5,31 +5,47 @@ use crate::typ::SizeSubsts;
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::Fid;
-use crate::arg::Args;
-use crate::decl::{Decl, UDecls, DeclTraversal};
-use crate::typ::{Typ, EvalError, Nothing};
+use crate::arg::{Args, CArgs};
+use crate::decl::{Decl, UDecl, CDecl, UDecls, DeclTraversal};
+use crate::typ::{Size, Typ, TypeVars, EvalError, Nothing};
 
 /// Module is a collection of declarations with concrete sizes
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Module<T>(pub Ctx<(Fid, Args<usize>), Decl<usize, T>>);
+pub struct Module<N, T>(pub Ctx<(Fid, TypeVars, Args<N>), Decl<N, T>>);
 
-/// Module with no types
-pub type UModule = Module<Nothing>;
+/// Module with no types and symbolic sizes
+pub type UModule = Module<Size, Nothing>;
 
-/// Module with types
-pub type TModule = Module<Typ<usize>>;
+/// Module with no types and concrete sizes
+pub type CModule = Module<usize, Nothing>;
+
+/// Module with concrete sizes and types
+pub type TModule = Module<usize, Typ<usize>>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
-    #[error("Duplicate declarations: \n---------------------- \n{0} \n=====================\n{1}")]
-    DuplicateDeclaration(Decl<usize, Nothing>, Decl<usize, Nothing>),
+    #[error("Overlaping declarations: \n\n {0} \n\n {1}")]
+    OVerlapDeclaration(CDecl, CDecl),
+    #[error("Duplicate declaration: \n\n {0} \n\n {1}")]
+    DuplicateDeclaration(UDecl, UDecl),
     #[error("Error evaluating size type variables: \n-----------------------\n{0}")]
     EvalError(#[from] EvalError),
 }
+    /// Parse a string into a Zippel declarations list
+    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
+        let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
+        Decls::from_pest(&mut pairs)
+    }
 
+    /// Parse a file into a Zippel declarations list
+    pub fn from_file<'a>(file: &str, allocator: &'a Bump) -> Result<Self, ConversionError<InputError<'a>>> {
+        let input_str = std::fs::read_to_string(file).unwrap();
+        let stored_str = allocator.alloc_str(&input_str);
+        Decls::from_str(stored_str)
+    }
 impl UModule {
     /// Concretize sizes in all declarations to generate a module
-    pub fn from_decls(decls: UDecls) -> Result<UModule, ModuleError> {
+    pub fn concretize(self) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
         for decl in decls.into_iter() {
             // Generate all possible size substitutions for this declaration
@@ -43,6 +59,7 @@ impl UModule {
                 ctx.insert_with(
                     (
                         d.name().clone(),
+                        d.typevars().clone(),
                         d.args().clone(),
                     ),
                     d,
@@ -75,9 +92,9 @@ impl UModule {
     }
 }
 
-impl<T> IntoIterator for Module<T> {
-    type Item = ((Fid, Args<usize>), Decl<usize, T>);
-    type IntoIter = std::collections::btree_map::IntoIter<(Fid, Args<usize>), Decl<usize, T>>;
+impl<N, T> IntoIterator for Module<N, T> {
+    type Item = ((Fid, TypeVars, Args<N>), Decl<N, T>);
+    type IntoIter = std::collections::btree_map::IntoIter<(Fid, TypeVars, Args<N>), Decl<N, T>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
