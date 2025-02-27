@@ -15,6 +15,8 @@ pub enum UnifyError {
     KindNotFound(Tid),
     #[error("UnifyError: Type variable {0}: {1} does not match {2}: {3}")]
     KindMismatch(Tid, Kind, Tid, Kind),
+    #[error("UnifyError: Group types {0} ~ {1} cannot be unified as they belong in pairing friendly curve {2}")]
+    PairingMismatch(Tid, Tid, Tid),
     #[error("UnifyError: Type mismatch {0} ~ {1}")]
     TypMismatch(CTyp, CTyp),
 }
@@ -28,6 +30,9 @@ impl UnifyError {
     }
     pub fn kind_mismatch(a: &Tid, ka: &Kind, b: &Tid, kb: &Kind) -> Self {
         UnifyError::KindMismatch(a.clone(), ka.clone(), b.clone(), kb.clone())
+    }
+    pub fn pairing_mismatch(a: &Tid, b: &Tid, p: &Tid) -> Self {
+        UnifyError::PairingMismatch(a.clone(), b.clone(), p.clone())
     }
     pub fn typ_mismatch(a: &CTyp, b: &CTyp) -> Self {
         UnifyError::TypMismatch(a.clone(), b.clone())
@@ -63,7 +68,12 @@ impl Unify for Tid {
                 subs.add_equ(x, y);
                 Ok(subs.add_equ(&a, &b))
             },
-            (Kind::Group, Kind::Group) => Ok(subs.add_equ(&a, &b)),
+            (Kind::Group, Kind::Group) =>
+                if let Some((p, _)) = ctx.find(|_, k| k == &Kind::Pairing(a.clone(), b.clone())) {
+                    Err(UnifyError::pairing_mismatch(&a, &b, &p))
+                } else {
+                    Ok(subs.add_equ(&a, &b))
+                }
             (Kind::Pairing(k1, k2), Kind::Pairing(k3, k4)) => {
                 subs.add_equ(k1, k3);
                 subs.add_equ(k2, k4);
@@ -119,5 +129,34 @@ impl Unify for CTyp {
             (_, _) => Err(UnifyError::typ_mismatch(&x, &y))
         }
     }
+}
 
+#[cfg(test)] use share::Set;
+#[test]
+fn unify_typ() {
+    let f1 = Tid::from("F1");
+    let f2 = Tid::from("F2");
+    let g1 = Tid::from("G1");
+    let g2 = Tid::from("G2");
+    let p = Tid::from("P");
+
+    let ctx = Ctx::from([
+        (f1.clone(), Kind::Field),
+        (f2.clone(), Kind::Field),
+        (g1.clone(), Kind::Group),
+        (g2.clone(), Kind::Group),
+        (p.clone(), Kind::Pairing(g1.clone(), g2.clone()))
+    ]);
+
+    let mut subs = AliasSubsts::new();
+
+    let tf1 = CTyp::Base(f1.clone());
+    let tf2 = CTyp::Base(f2.clone());
+    let tg1 = CTyp::Base(g1.clone());
+    let tg2 = CTyp::Base(g2.clone());
+    let tp = CTyp::Base(p.clone());
+
+    assert_eq!(CTyp::unify(tf1.clone(), tf2.clone(), &ctx, &mut subs).unwrap(), CTyp::Base(f1.clone()));
+    assert_eq!(subs.get(&f1), Some(&Set::from([f1.clone(), f2.clone()])));
+    assert_eq!(subs.get(&f2), Some(&Set::from([f1.clone(), f2.clone()])));
 }

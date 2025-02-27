@@ -19,6 +19,9 @@ impl<T> Substs<T> {
     pub fn new() -> Self {
         Substs(Ctx::new())
     }
+    pub fn get(&self, tid: &Tid) -> Option<&T> {
+        self.0.get(tid)
+    }
 }
 
 impl<T> IntoIterator for Substs<T> {
