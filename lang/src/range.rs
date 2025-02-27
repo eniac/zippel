@@ -39,9 +39,11 @@ impl<N> ToTraversal1<N> for Range<N> {
     }
 }
 
-impl Copy for Range<usize> {}
+/// Concrete sized range of numbers
+pub type CRange = Range<usize>;
+impl Copy for CRange {}
 
-impl Range<usize> {
+impl CRange {
     /// Create a range from a start, step and end numbers, checking their order
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         // Check if the range is well formed
@@ -95,7 +97,7 @@ impl<A, B> Traversal<A, B> for RangeTraversal1<A> {
     }
 }
 
-impl Iterator for Range<usize> {
+impl Iterator for CRange {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -141,7 +143,7 @@ impl<'a, N> fmt::Display for Range<N> where N: Pretty<'a, BoxAllocator, ()> + Cl
     }
 }
 
-impl<'pest> FromPest<'pest> for Range<usize> {
+impl<'pest> FromPest<'pest> for CRange {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 

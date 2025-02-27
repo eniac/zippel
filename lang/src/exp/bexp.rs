@@ -9,7 +9,7 @@ use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size, Nothing};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
-use crate::id::Fid;
+use crate::id::{Tid, TidTraversal, Fid};
 use crate::range::{Range, RangeTraversal};
 
 /// Represents boolean expressions in the Zippel language.
@@ -37,12 +37,7 @@ pub enum BExp<N, T> {
     ///
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let a = (5 == 5);
-    ///     ```
-    ///
-    ///     **Rust Representation:**
-    ///     ```rust
-    ///     BExp::Equ(AExp::Lit(5), AExp::Lit(5))
+    ///     verify(5 == 5);
     ///     ```
     Equ(AExp<N, T>, AExp<N, T>),
 
@@ -50,12 +45,7 @@ pub enum BExp<N, T> {
     ///
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let a = (true && false);
-    ///     ```
-    ///
-    ///     **Rust Representation:**
-    ///     ```rust
-    ///     BExp::And(Box::new(BExp::TrueE), Box::new(BExp::FalseE))
+    ///     assert(true && false);
     ///     ```
     And(Box<BExp<N, T>>, Box<BExp<N, T>>),
 
@@ -63,14 +53,17 @@ pub enum BExp<N, T> {
     ///
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let a = (true || false);
-    ///     ```
-    ///
-    ///     **Rust Representation:**
-    ///     ```rust
-    ///     BExp::Or(Box::new(BExp::TrueE), Box::new(BExp::FalseE))
+    ///     verify(true || false);
     ///     ```
     Or(Box<BExp<N, T>>, Box<BExp<N, T>>),
+
+    ///     Represents the negation of a boolean expression.
+    ///
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     assert(!true);
+    ///     ```
+    Not(Box<BExp<N, T>>),
 }
 
 /// Typed AST node
@@ -108,7 +101,10 @@ impl<N, T> Traversal<BExp<N, T>> for BExpTraversalBExp<N, T> {
                 Ok(BExp::Or(
                     a.traverse1(&mut |x| f(x)?.bexp_traverse(f))?,
                     b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?
-                ))
+                )),
+            BExp::Not(a) =>
+                Ok(BExp::Not(Box::new(a.bexp_traverse(f)?))),
+
         }
     }
 }
@@ -137,6 +133,8 @@ impl<N, T> Traversal<AExp<N, T>> for BExpTraversalAExp<N, T> {
                     a.traverse1(&mut |x| x.aexp_traverse(f))?,
                     b.traverse1(&mut |x| x.aexp_traverse(f))?
                 )),
+            BExp::Not(a) =>
+                Ok(BExp::Not(Box::new(a.aexp_traverse(f)?))),
         }
     }
 }
@@ -159,6 +157,7 @@ impl<N, T, Z> Traversal<N, Z> for BExpTraversal1<N, T> {
                 Ok(BExp::And(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
             BExp::Or(a, b) =>
                 Ok(BExp::Or(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
+            BExp::Not(a) => Ok(BExp::Not(a.traverse1(&mut |x| x.traverse1(f))?)),
         }
     }
 }
@@ -187,7 +186,8 @@ impl<N, T, Z> Traversal<T, Z> for BExpTraversal2<N, T> {
                 Ok(BExp::Or(
                     a.traverse1(&mut |x| x.traverse2(f))?,
                     b.traverse1(&mut |x| x.traverse2(f))?,
-                ))
+                )),
+            BExp::Not(a) => Ok(BExp::Not(a.traverse1(&mut |x| x.traverse2(f))?)),
         }
     }
 }
@@ -201,6 +201,32 @@ impl Traversal<Range<Size>> for UBExpTraversalRange {
         f: &mut dyn FnMut(Range<Size>) -> Result<Range<Size>, E>,
     ) -> Result<Self::Codomain, E> {
         on.aexp_traverse(&mut |x| x.range_traverse(f))
+    }
+}
+
+/// Traverse [Tid] inside [TBExp]
+impl TidTraversal for TBExp {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        match self {
+            BExp::Equ(a, b) =>
+                Ok(BExp::Equ(a.tid_traverse(f)?, b.tid_traverse(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.tid_traverse(f)?)),
+            BExp::Contains(a, b) =>
+                Ok(BExp::Contains(a.tid_traverse(f)?, b.tid_traverse(f)?)),
+            BExp::And(a, b) =>
+                Ok(BExp::And(
+                    a.traverse1(&mut |x| x.tid_traverse(f))?,
+                    b.traverse1(&mut |x| x.tid_traverse(f))?
+                )),
+            BExp::Or(a, b) =>
+                Ok(BExp::Or(
+                    a.traverse1(&mut |x| x.tid_traverse(f))?,
+                    b.traverse1(&mut |x| x.tid_traverse(f))?
+                )),
+            BExp::Not(a) =>
+                Ok(BExp::Not(a.traverse1(&mut |x| x.tid_traverse(f))?)),
+        }
     }
 }
 
@@ -258,6 +284,9 @@ impl UBExp {
     pub fn contains(a: UAExp, b: UAExp) -> Self {
         BExp::Contains(a, b)
     }
+    pub fn not(a: Self) -> Self {
+        BExp::Not(Box::new(a))
+    }
 }
 
 /// Pretty printer instance
@@ -296,6 +325,10 @@ where
                 a.pretty(allocator),
                 allocator.text(" in "),
                 b.pretty(allocator),
+            ]),
+            BExp::Not(a) => allocator.concat([
+                allocator.text("!"),
+                (*a).pretty(allocator),
             ]),
         }
     }
@@ -351,6 +384,10 @@ impl<'pest> FromPest<'pest> for UBExp {
                         UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         UAExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
+                },
+                Rule::not_bexp => {
+                    let mut inner = pair.into_inner();
+                    Ok(BExp::not(UBExp::from_pest(&mut inner)?))
                 },
                 Rule::app_bexp => {
                     let mut inner = pair.into_inner();
@@ -467,5 +504,15 @@ fn parser_and_or2() {
                 UBExp::equ(UAExp::from(0), UAExp::from(0))
             )
         ))
+    )
+}
+
+#[test]
+fn parser_not() {
+    let ex = "!x == 0";
+    let mut pairs = ZippelParser::parse(Rule::bexp, ex).expect("Failure to parse");
+    assert_eq!(
+        UBExp::from_pest(&mut pairs),
+        Ok(UBExp::not(UBExp::equ(UAExp::varstr("x"), UAExp::lit(Size::from(0)))))
     )
 }

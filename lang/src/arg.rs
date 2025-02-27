@@ -4,7 +4,7 @@ use std::fmt;
 
 use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
-use crate::id::Vid;
+use crate::id::{Tid, Vid, TidTraversal};
 use crate::typ::{Size, Typ, Qualifier};
 use crate::parser::*;
 
@@ -27,6 +27,12 @@ pub struct Arg<N> {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Args<N>(pub Vec<Arg<N>>);
 
+/// Concrete sized arg
+pub type CArg = Arg<usize>;
+
+/// Concrete sized args
+pub type CArgs = Args<usize>;
+
 impl<N> Arg<N> {
     pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<N>) -> Self {
         Arg { qualifier, id: Vid::new(id), typ }
@@ -39,9 +45,9 @@ impl<N> Arg<N> {
     }
 }
 
-impl<N: Clone> Args<N> {
-    pub fn to_ctx(&self) -> share::Ctx<Vid, Typ<N>> {
-        self.0.iter().map(|arg| (arg.id.clone(), arg.typ.clone())).collect()
+impl<N> Args<N> {
+    pub fn iter(&self) -> std::slice::Iter<Arg<N>> {
+        self.0.iter()
     }
 }
 
@@ -83,6 +89,22 @@ impl<N, M> Traversal<N, M> for ArgsTraversal1<N> {
         f: &mut dyn FnMut(N) -> Result<M, E>,
     ) -> Result<Self::Codomain, E> {
         Ok(Args(on.0.traverse1(&mut |x| x.traverse1(f))?))
+    }
+}
+
+impl<N> TidTraversal for Arg<N> {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(Arg {
+            qualifier: self.qualifier,
+            id: self.id,
+            typ: self.typ.tid_traverse(f)?,
+        })
+    }
+}
+
+impl<N> TidTraversal for Args<N> {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(Args(self.0.into_iter().map(|arg| arg.tid_traverse(f)).collect::<Result<_, _>>()?))
     }
 }
 

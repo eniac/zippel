@@ -69,12 +69,12 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | positive
          | id
     }
-    gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                                   // Group generator
+    gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                                    // Group generator
     coef_exp      = { "coef" ~ aexp  }                                            // Create a univariate polynomial
     mle_exp       = { "mle"  ~ aexp  }                                            // Create a multilinear expression
     interp_exp    = { "interpolate" ~ "(" ~ aexp ~ "," ~ aexp ~ ")" }             // Interpolate (FFT) with domain and values
-    random_exp    = { "random" ~ "<" ~ typ ~ ">" }                                // Uniform random sampling (Prover)
-    challenge_exp = { "challenge" ~ "<" ~ typ ~ ">" }                             // Random oracle challenge (Verifier)
+    random_exp    = { "random" ~ "<" ~ id ~ ">" }                                 // Uniform random sampling (Prover)
+    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                              // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }               // Map comprehension
     vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }                          // vector of elements
     ram_exp       = { id ~ "[" ~ aexp ~ "]" }                                     // Randm access into a vector
@@ -90,9 +90,10 @@ aexps = { aexp ~ (("," | ";") ~ aexp)* }
 
 /// Binary expressions
 bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
-bexp_term = _{ "(" ~ bexp ~ ")" | app_bexp | eq_bexp | contains_bexp }
+bexp_term = _{ "(" ~ bexp ~ ")" | not_bexp | app_bexp | eq_bexp | contains_bexp }
     app_bexp = { id ~ "(" ~ aexps ~ ")" }
     eq_bexp  = { aexp ~ "==" ~ aexp  }
+    not_bexp = { "!" ~ bexp_term }
     contains_bexp = { aexp ~ "in" ~ aexp }
     bool_op  = _{ and_op | or_op }
 

@@ -11,7 +11,7 @@ use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2, VecTraversal};
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size, Nothing};
 use crate::exp::{BExp, UBExp, BExpTraversal};
-use crate::id::{Tid, Fid, Vid};
+use crate::id::{Tid, TidTraversal, Fid, Vid};
 use crate::range::{Range, RangeTraversal};
 
 /// Represents binary operations in the Zippel language.
@@ -147,14 +147,14 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     let r := random<F>();
     ///     ```
-    Random(Typ<N>, A),
+    Random(Tid, A),
 
     ///     Random oracle challenge.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F>();
     ///     ```
-    Challenge(Typ<N>, A),
+    Challenge(Tid, A),
 
     ///     Convert from evaluation domain to lagrange domain.
     ///     **Zippel Code:**
@@ -248,8 +248,8 @@ impl<N, T, Z> Traversal<N, Z> for AExpTraversal1<N, T> {
                 )),
             AExp::Map(box x, id, box r, a) =>
                 Ok(AExp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?), a)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(t.traverse1(f)?, a)),
-            AExp::Random(t, a) => Ok(AExp::Random(t.traverse1(f)?, a)),
+            AExp::Challenge(t, a) => Ok(AExp::Challenge(t, a)),
+            AExp::Random(t, a) => Ok(AExp::Random(t, a)),
             AExp::Gen(t, a) => Ok(AExp::Gen(t, a)),
             AExp::Range(r, a) => Ok(AExp::Range(r.traverse1(f)?, a)),
             AExp::Interpolate(box x, box y, a) =>
@@ -362,8 +362,8 @@ impl Traversal<Range<Size>> for UAExpTraversalRange {
             AExp::Lit(x, a) => Ok(AExp::Lit(x, a)),
             AExp::Var(v, a) => Ok(AExp::Var(v, a)),
             AExp::Gen(t, a) => Ok(AExp::Gen(t, a)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(t.range_traverse(f)?, a)),
-            AExp::Random(t, a) => Ok(AExp::Random(t.range_traverse(f)?, a)),
+            AExp::Challenge(t, a) => Ok(AExp::Challenge(t, a)),
+            AExp::Random(t, a) => Ok(AExp::Random(t, a)),
             AExp::Coef(p, a) => Ok(AExp::Coef(p.traverse1(
                         &mut |x| x.range_traverse(f))?, a)),
             AExp::Mle(p, a) => Ok(AExp::Mle(BoxTraversal::traverse(p,
@@ -504,6 +504,54 @@ impl<N, T> Traversal<BExp<N, T>> for AExpTraversalBExp<N, T> {
     }
 }
 
+/// Traverse [Tid] inside [TAExp]
+impl TidTraversal for TAExp {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        match self {
+            AExp::Lit(x, a) => Ok(AExp::Lit(x, a.tid_traverse(f)?)),
+            AExp::Var(v, a) => Ok(AExp::Var(v, a.tid_traverse(f)?)),
+            AExp::Coef(p, a) =>
+                Ok(AExp::Coef(p.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Mle(p, a) =>
+                Ok(AExp::Mle(p.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Vec(v, a) =>
+                Ok(AExp::Vec(v.aexps_traverse(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Bin(op, x, y, a) => Ok(AExp::Bin(op,
+                    x.traverse1(&mut |x| x.tid_traverse(f))?,
+                    y.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Map(x, id, r, a) => Ok(AExp::Map(
+                    x.traverse1(&mut |x| x.tid_traverse(f))?, id,
+                    r.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Challenge(t, a) => Ok(AExp::Challenge(f(t)?, a.tid_traverse(f)?)),
+            AExp::Random(t, a) => Ok(AExp::Random(f(t)?, a.tid_traverse(f)?)),
+            AExp::Gen(t, a) => Ok(AExp::Gen(f(t)?, a.tid_traverse(f)?)),
+            AExp::Range(r, a) => Ok(AExp::Range(r, a.tid_traverse(f)?)),
+            AExp::Interpolate(x, y, a) => Ok(AExp::Interpolate(
+                    x.traverse1(&mut |x| x.tid_traverse(f))?,
+                    y.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Ram(x, i, a) => Ok(AExp::Ram(
+                    x.traverse1(&mut |x| x.tid_traverse(f))?,
+                    i.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
+            AExp::Let(x, a, t) => Ok(AExp::Let(x,
+                    a.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
+            AExp::Log(x, a, t) => Ok(AExp::Log(x,
+                    a.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
+            AExp::Assert(x, t) => Ok(AExp::Assert(
+                    x.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
+            AExp::Verify(x, t) => Ok(AExp::Verify(
+                    x.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
+            AExp::App(x, ts, t) => Ok(AExp::App(x,
+                    ts.aexps_traverse(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?))
+        }
+    }
+}
+
+impl TidTraversal for TAExps {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(AExps(VecTraversal::traverse(self.0, &mut |x| x.tid_traverse(f))?))
+    }
+}
+
 /// How to traverse the first type parameter [N] for AExp<N, T>
 impl<N, T> ToTraversal1<N> for AExp<N, T> {
     type Output<Z> = AExp<Z, T>;
@@ -630,10 +678,10 @@ impl UAExp {
     pub fn interpolate(e: Self, d: Self) -> Self {
         AExp::Interpolate(Box::new(e), Box::new(d), Nothing)
     }
-    pub fn challenge(t: Typ<Size>) -> Self {
+    pub fn challenge(t: Tid) -> Self {
         AExp::Challenge(t, Nothing)
     }
-    pub fn random(t: Typ<Size>) -> Self {
+    pub fn random(t: Tid) -> Self {
         AExp::Random(t, Nothing)
     }
     pub fn vec(v: Vec<Self>) -> Self {
@@ -1062,9 +1110,9 @@ impl<'pest> FromPest<'pest> for UAExp {
                     ))
                 },
                 Rule::challenge_exp =>
-                    Ok(AExp::challenge(Typ::from_pest(&mut pair.into_inner())?)),
+                    Ok(AExp::challenge(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::random_exp =>
-                    Ok(AExp::random(Typ::from_pest(&mut pair.into_inner())?)),
+                    Ok(AExp::random(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::vec_exp => {
                     let inner = pair.into_inner();
                     let mut ve = Vec::new();
@@ -1273,11 +1321,11 @@ fn parser_for() {
 
 #[test]
 fn parser_random() {
-    let ex = "random<Uni<A, 2>>";
+    let ex = "random<A>";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UAExp::from_pest(&mut pairs),
-        Ok(AExp::random(Typ::uni(Tid::from("A"), Size::from(2))))
+        Ok(AExp::random(Tid::from("A")))
     );
 }
 
@@ -1285,7 +1333,7 @@ fn parser_random() {
 fn parser_challenge() {
     let ex = "challenge<F>";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
-    assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::challenge(Typ::varstr("F"))));
+    assert_eq!(UAExp::from_pest(&mut pairs), Ok(AExp::challenge(Tid::from("F"))));
 }
 
 #[test]

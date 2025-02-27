@@ -126,6 +126,9 @@ impl<K: Ord, V> Ctx<K, V> {
         self.0.len()
     }
 
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
     pub fn insert(&mut self, k: &K, v: &V) -> Option<V> where K: Clone, V: Clone {
         self.0.insert(k.clone(), v.clone())
     }

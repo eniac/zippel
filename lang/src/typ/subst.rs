@@ -95,15 +95,6 @@ impl AliasSubsts {
         eqclass.into_iter().min().unwrap()
     }
 
-    /// Union two equivalence classes
-    pub fn union_equ(&mut self, other: &mut Self) {
-        for (tid, set) in other.0.iter() {
-            for item in set.iter() {
-                self.add_equ(tid, item);
-            }
-        }
-    }
-
     /// Return the equivalence class of a type variable
     pub fn get_equivalents(&self, tid: &Tid) -> Set<Tid> {
         if let Some(x) = self.0.get(tid) {
@@ -116,6 +107,20 @@ impl AliasSubsts {
     /// Return the representative of the equivalence class of a type variable
     pub fn get_repr(&self, tid: &Tid) -> Option<Tid> {
         self.get_equivalents(tid).into_iter().min()
+    }
+
+    /// Check if a Tid is a representative of its equivalence class
+    pub fn is_repr(&self, tid: &Tid) -> bool {
+        self.get_repr(tid) == Some(tid.clone())
+    }
+
+    /// Check if a Tid is in the context
+    pub fn contains(&self, tid: &Tid) -> bool {
+        self.0.contains(tid)
+    }
+
+    pub fn keys(&self) -> Set<Tid> {
+        self.0.keys().cloned()
     }
 }
 

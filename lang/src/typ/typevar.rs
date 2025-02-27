@@ -1,10 +1,10 @@
-use crate::id::Tid;
+use crate::id::{Tid, TidTraversal};
 use crate::range::Range;
 use crate::typ::kind::Kind;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use share::{Ctx, Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
 /// A type variable with an associated kind
@@ -32,8 +32,12 @@ impl TypeVars {
         self.0.iter()
     }
 
-    pub fn to_ctx(&self) -> Ctx<Tid, Kind> {
-        self.0.iter().map(|tvar| (tvar.id.clone(), tvar.kind.clone())).collect()
+    pub fn ids(&self) -> Vec<Tid> {
+        self.0.iter().map(|tvar| tvar.id.clone()).collect()
+    }
+
+    pub fn contains(&self, id: &Tid) -> bool {
+        self.0.iter().any(|tvar| &tvar.id == id)
     }
 }
 
@@ -49,6 +53,18 @@ impl IntoIterator for TypeVars {
 impl FromIterator<TypeVar> for TypeVars {
     fn from_iter<I: IntoIterator<Item = TypeVar>>(iter: I) -> Self {
         TypeVars(iter.into_iter().collect())
+    }
+}
+
+impl TidTraversal for TypeVar {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(TypeVar { id: f(self.id)?, kind: self.kind })
+    }
+}
+
+impl TidTraversal for TypeVars {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(TypeVars(self.0.into_iter().map(|tvar| tvar.tid_traverse(f)).collect::<Result<_, _>>()?))
     }
 }
 

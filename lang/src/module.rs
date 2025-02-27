@@ -75,6 +75,21 @@ impl UModule {
     }
 }
 
+impl<T> IntoIterator for Module<T> {
+    type Item = ((Fid, Args<usize>), Decl<usize, T>);
+    type IntoIter = std::collections::btree_map::IntoIter<(Fid, Args<usize>), Decl<usize, T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<T> FromIterator<((Fid, Args<usize>), Decl<usize, T>)> for Module<T> {
+    fn from_iter<I: IntoIterator<Item = ((Fid, Args<usize>), Decl<usize, T>)>>(iter: I) -> Self {
+        Module(Ctx::from_iter(iter))
+    }
+}
+
 /// Traversable1 instance for Module (T)
 struct ModuleTraversal1<T>(std::marker::PhantomData<T>);
 impl<T, Z> Traversal<T, Z> for ModuleTraversal1<T> {

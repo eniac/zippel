@@ -14,6 +14,11 @@ pub trait Gen: Ord + Sized {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Tid(pub String);
 
+/// Traverse TIDs
+pub trait TidTraversal : Sized {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E>;
+}
+
 impl<'a, D, A> Pretty<'a, D, A> for Tid
 where
     D: DocAllocator<'a, A>,

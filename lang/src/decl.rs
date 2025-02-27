@@ -7,7 +7,7 @@ use bumpalo::Bump;
 use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::typ::TypeVars;
-use crate::id::{Tid, Fid};
+use crate::id::{Tid, TidTraversal, Fid};
 use crate::typ::{Typ, Size, Sig, Nothing};
 use crate::arg::Args;
 use crate::exp::{AExps, BExp};
@@ -178,6 +178,28 @@ impl<N, Z, T> Traversal<T, Z> for DeclTraversal2<N, T> {
     }
 }
 
+impl TidTraversal for TDecl {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        match self {
+            Decl::Proto { name, typevars, args, relation, body } =>
+                Ok(Decl::Proto {
+                    name,
+                    typevars: typevars.tid_traverse(f)?,
+                    args: args.tid_traverse(f)?,
+                    relation: relation.tid_traverse(f)?,
+                    body: body.tid_traverse(f)?,
+                }),
+            Decl::Func { name, typevars, args, typ, body } =>
+                Ok(Decl::Func {
+                    name,
+                    typevars: typevars.tid_traverse(f)?,
+                    args: args.tid_traverse(f)?,
+                    typ: typ.tid_traverse(f)?,
+                    body: body.tid_traverse(f)?,
+                }),
+        }
+    }
+}
 impl<N, T> ToTraversal1<N> for Decl<N, T> {
     type Output<Z> = Decl<Z, T>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Decl<Z, T>, E> {
@@ -231,9 +253,15 @@ impl<T> Decl<usize, T> {
     pub fn sig(&self) -> Sig {
         match self {
             Decl::Proto { args, .. } =>
-                Sig::proto(args.clone().into_iter().map(|a| a.typ).collect()),
+                Sig {
+                    args: args.clone().into_iter().map(|a| a.typ).collect(),
+                    ret: Typ::bool()
+                },
             Decl::Func { args, typ, .. } =>
-                Sig::func(args.clone().into_iter().map(|a| a.typ).collect(), typ.clone())
+                Sig {
+                    args: args.clone().into_iter().map(|a| a.typ).collect(),
+                    ret: typ.clone()
+                }
         }
     }
 }
@@ -524,7 +552,7 @@ fn fn_parser2() {
         body: AExps(vec![
             UAExp::letx(Vid::from("v"), UAExp::vec(vec![UAExp::from(1), UAExp::from(2), UAExp::from(3)])),
             UAExp::logx(Vid::from("p"), UAExp::interpolate(UAExp::varstr("v"), UAExp::vec(vec![UAExp::from(0), UAExp::from(1), UAExp::from(2)]))),
-            UAExp::logx(Vid::from("x"), UAExp::challenge(Typ::varstr("F"))),
+            UAExp::logx(Vid::from("x"), UAExp::challenge(Tid::from("F"))),
             UAExp::app(Fid::from("p"), AExps(vec![UAExp::varstr("x")])),
         ]),
     });

@@ -5,10 +5,11 @@ mod qualifier;
 mod nothing;
 mod infer;
 mod unify;
+mod lub;
 mod sig;
 mod subst;
 
-pub use crate::id::Tid;
+pub use crate::id::{Tid, TidTraversal};
 pub use crate::range::{Range, RangeTraversal};
 pub use kind::Kind;
 pub use size::{Size, EvalError};
@@ -44,11 +45,50 @@ pub enum Typ<N> {
     Bool
 }
 
-/// Sybolic size types
-pub type STyp = Typ<Size>;
+/// Many types
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+pub struct Typs<N>(pub Vec<Typ<N>>);
+
+impl<N> TidTraversal for Typ<N> {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        match self {
+            Typ::Uni(b, n) => Ok(Typ::Uni(f(b)?, n)),
+            Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
+            Typ::Base(b) => Ok(Typ::Base(f(b)?)),
+            Typ::Vec(box b, n) =>
+                Ok(Typ::Vec(Box::new(b.tid_traverse(f)?), n)),
+            Typ::Fin(r) => Ok(Typ::Fin(r)),
+            Typ::Bool => Ok(Typ::Bool)
+        }
+    }
+}
+
+impl<N> IntoIterator for Typs<N> {
+    type Item = Typ<N>;
+    type IntoIter = std::vec::IntoIter<Typ<N>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<N> FromIterator<Typ<N>> for Typs<N> {
+    fn from_iter<I: IntoIterator<Item=Typ<N>>>(iter: I) -> Self {
+        Typs(iter.into_iter().collect())
+    }
+}
+
+impl<N> TidTraversal for Typs<N> {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        Ok(Typs(self.0.into_iter().map(|t| t.tid_traverse(f)).collect::<Result<Vec<_>, _>>()?))
+    }
+}
+
+/// Concrete size type
+pub type CTyp = Typ<usize>;
 
 /// Concrete size types
-pub type CTyp = Typ<usize>;
+pub type CTyps = Typs<usize>;
 
 impl<N> Typ<N> {
     pub fn varstr<'a>(b: &'a str) -> Self {
@@ -95,6 +135,15 @@ impl<N> Typ<N> {
 
             _ => None
         }
+    }
+}
+
+impl<N> Typs<N> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn iter(&self) -> std::slice::Iter<Typ<N>> {
+        self.0.iter()
     }
 }
 
@@ -146,6 +195,19 @@ impl<N> RangeTraversal<N> for Typ<N> {
     }
 }
 
+impl<N> ToTraversal1<N> for Typs<N> {
+    type Output<Z> = Typs<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        Ok(Typs(self.0.into_iter().map(|t| t.traverse1(f)).collect::<Result<Vec<_>, _>>()?))
+    }
+}
+
+impl<N> RangeTraversal<N> for Typs<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        Ok(Typs(self.0.into_iter().map(|t| t.range_traverse(f)).collect::<Result<Vec<_>, _>>()?))
+    }
+}
+
 /// Pretty-printer for zippel types.
 impl<'a, D, A, N> Pretty<'a, D, A> for Typ<N>
 where
@@ -192,14 +254,39 @@ where
     }
 }
 
+impl<'a, D, A, N> Pretty<'a, D, A> for Typs<N>
+where
+    D: DocAllocator<'a, A>,
+    N: Pretty<'a, D, A>,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.intersperse(self.0.into_iter().map(|t| t.pretty(allocator)), ", ")
+    }
+
+    fn is_nil(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typ<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Typ<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Typ<N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typs<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Typs<N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+            .1
+            .render_fmt(100, f)
+    }
+}
+
+/// Parser for zippel types.
 impl<'pest> FromPest<'pest> for Typ<Size> {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
