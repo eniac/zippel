@@ -3,22 +3,19 @@ mod typevar;
 mod size;
 mod qualifier;
 mod nothing;
-mod infer;
-mod unify;
-mod lub;
-mod sig;
-mod subst;
+pub mod infer;
+pub mod unify;
+pub mod lub;
+pub mod subst;
 
-pub use crate::id::{Tid, TidTraversal};
-pub use crate::range::{Range, RangeTraversal};
+use crate::id::{Tid, TidTraversal};
+use crate::range::{Range, RangeTraversal};
+
 pub use kind::Kind;
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
-pub use unify::Unify;
-pub use infer::Typeable;
-pub use sig::Sig;
 pub use subst::{SizeSubsts, AliasSubsts};
 
 use share::{Ctx, Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
@@ -83,6 +80,12 @@ impl<N> TidTraversal for Typs<N> {
         Ok(Typs(self.0.into_iter().map(|t| t.tid_traverse(f)).collect::<Result<Vec<_>, _>>()?))
     }
 }
+
+/// Symbolically sized type
+pub type UTyp = Typ<Size>;
+
+/// Symbolically sized types
+pub type UTyps = Typ<Size>;
 
 /// Concrete size type
 pub type CTyp = Typ<usize>;

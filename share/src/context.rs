@@ -137,12 +137,11 @@ impl<K: Ord, V> Ctx<K, V> {
     where
         K: Clone,
         V: Clone,
-        FF: Fn(V, V) -> Result<V, E>
+        FF: Fn(&K,&V,&V) -> Result<K, E>
     {
         match self.0.get(&k) {
             Some(v1) => {
-                let v = f(v1.clone(), v)?;
-                // Warning: this could modify the whole dictionary recursively
+                let k = f(&k, &v, &v1)?;
                 self.insert_with(k, v, f)
             }
             None => {
@@ -152,42 +151,19 @@ impl<K: Ord, V> Ctx<K, V> {
         }
     }
 
-    pub fn union_with<FF>(&self, other: Self, f: &FF) -> Self
+    pub fn union_with<E, FF>(&self, other: Self, f: &FF) -> Result<Self, E>
     where
         K: Clone,
         V: Clone,
-        FF: Fn(V, V) -> Option<V>
+        FF: Fn(&K,&V,&V) -> Result<K, E>
     {
         let mut c = self.clone();
-        for (k, v2) in other.0.into_iter(){
-            if let Some(v1) = self.0.get(&k) {
-                if let Some(v) = f(v1.clone(), v2.clone()) {
-                    c.0.insert(k, v);
-                }
-            } else {
-                c.0.insert(k, v2);
-            }
+        for (k, v2) in other.0.into_iter() {
+            c.insert_with(k, v2, f)?;
         }
-        c
+        Ok(c)
     }
 
-    pub fn intersection_with<VV, FF>(&self, other: Self, f: &FF) -> Ctx<K, VV>
-    where
-        K: Clone,
-        V: Clone,
-        VV: Clone,
-        FF: Fn(V, V) -> Option<VV>
-    {
-        let mut diff = Ctx::new();
-        for (k, v1) in self.0.clone().into_iter() {
-            if let Some(v2) = other.0.get(&k) {
-                if let Some(v) = f(v1.clone(), v2.clone()) {
-                    diff.insert(&k, &v);
-                }
-            }
-        }
-        diff
-    }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }

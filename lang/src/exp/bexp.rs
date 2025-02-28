@@ -6,7 +6,7 @@ use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{ToTraversal1, ToTraversal2};
-use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
+use share::{BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size, Nothing};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
 use crate::id::{Tid, TidTraversal, Fid};
@@ -16,7 +16,6 @@ use crate::range::{Range, RangeTraversal};
 /// It is parameterized by the type `A` of annotations:
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum BExp<N, T> {
-
     ///     Represents an application of a protocol to a list of arguments.
     ///
     ///     **Zippel Code:**
@@ -75,82 +74,15 @@ pub type UBExp = BExp<Size, Nothing>;
 /// Untyped AST node with concrete sizes
 pub type CBExp = BExp<usize, Nothing>;
 
-/// How to traverse a structure containing [BExp]
-pub trait BExpTraversal<N, T>: Sized {
-    fn bexp_traverse<E>(self, f: &mut dyn FnMut(BExp<N, T>) -> Result<BExp<N, T>, E>) -> Result<Self, E>;
-}
-
-struct BExpTraversalBExp<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T> Traversal<BExp<N, T>> for BExpTraversalBExp<N, T> {
-    type Domain = BExp<N, T>;
-    type Codomain = BExp<N, T>;
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(BExp<N, T>) -> Result<BExp<N, T>, E>) -> Result<Self::Codomain, E> {
-        match on {
-            BExp::Equ(a, b) =>
-                Ok(BExp::Equ(a.bexp_traverse(f)?, b.bexp_traverse(f)?)),
-            BExp::App(id, v) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.bexp_traverse(f))?)),
-            BExp::Contains(a, b) =>
-                Ok(BExp::Contains(a.bexp_traverse(f)?, b.bexp_traverse(f)?)),
-            BExp::And(a, b) =>
-                Ok(BExp::And(
-                    a.traverse1(&mut |x| f(x)?.bexp_traverse(f))?,
-                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?
-                )),
-            BExp::Or(a, b) =>
-                Ok(BExp::Or(
-                    a.traverse1(&mut |x| f(x)?.bexp_traverse(f))?,
-                    b.traverse1(&mut |x| f(x)?.bexp_traverse(f))?
-                )),
-            BExp::Not(a) =>
-                Ok(BExp::Not(Box::new(a.bexp_traverse(f)?))),
-
-        }
-    }
-}
-
-/// Traverse [AExp] inside [BExp]
-struct BExpTraversalAExp<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T> Traversal<AExp<N, T>> for BExpTraversalAExp<N, T> {
-    type Domain = BExp<N, T>;
-    type Codomain = BExp<N, T>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(AExp<N, T>) -> Result<AExp<N, T>, E>) -> Result<Self::Codomain, E> {
-        match on {
-            BExp::Equ(a, b) =>
-                Ok(BExp::Equ(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?)),
-            BExp::App(id, v) =>
-                Ok(BExp::App(id, v.aexps_traverse(f)?)),
-            BExp::Contains(a, b) =>
-                Ok(BExp::Contains(f(a)?.aexp_traverse(f)?, f(b)?.aexp_traverse(f)?)),
-            BExp::And(a, b) =>
-                Ok(BExp::And(
-                    a.traverse1(&mut |x| x.aexp_traverse(f))?,
-                    b.traverse1(&mut |x| x.aexp_traverse(f))?
-                )),
-            BExp::Or(a, b) =>
-                Ok(BExp::Or(
-                    a.traverse1(&mut |x| x.aexp_traverse(f))?,
-                    b.traverse1(&mut |x| x.aexp_traverse(f))?
-                )),
-            BExp::Not(a) =>
-                Ok(BExp::Not(Box::new(a.aexp_traverse(f)?))),
-        }
-    }
-}
-
-/// Traverse type parameters inside BExp
-struct BExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T, Z> Traversal<N, Z> for BExpTraversal1<N, T> {
-    type Domain = BExp<N, T>;
-    type Codomain = BExp<Z, T>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Codomain, E> {
-        match on {
+/// Traverse parameter (N) inside BExp
+impl<N, T> ToTraversal1<N> for BExp<N, T> {
+    type Output<Z> = BExp<Z, T>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z, T>, E> {
+        match self {
             BExp::Equ(a, b) =>
                 Ok(BExp::Equ(a.traverse1(f)?, b.traverse1(f)?)),
             BExp::App(id, v) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse1(f))? )),
+                Ok(BExp::App(id, v.aexp_traverse(&mut |x| x.traverse1(f))? )),
             BExp::Contains(a, b) =>
                 Ok(BExp::Contains(a.traverse1(f)?, b.traverse1(f)?)),
             BExp::And(a, b) =>
@@ -162,16 +94,14 @@ impl<N, T, Z> Traversal<N, Z> for BExpTraversal1<N, T> {
     }
 }
 
-struct BExpTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T, Z> Traversal<T, Z> for BExpTraversal2<N, T> {
-    type Domain = BExp<N, T>;
-    type Codomain = BExp<N, Z>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
-        match on {
+/// Traverse the second type parameter (T) for a [BExp]
+impl<N, T> ToTraversal2<T> for BExp<N, T> {
+    type Output<Z> = BExp<N, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<BExp<N, Z>, E> {
+        match self {
             BExp::Equ(a, b) => Ok(BExp::Equ(a.traverse2(f)?, b.traverse2(f)?)),
             BExp::App(id, v) =>
-                Ok(BExp::App(id, v.aexps_traverse(&mut |x| x.traverse2(f))?)),
+                Ok(BExp::App(id, v.aexp_traverse(&mut |x| x.traverse2(f))?)),
             BExp::Contains(a, b) =>
                 Ok(BExp::Contains(
                     a.traverse2(f)?,
@@ -189,18 +119,6 @@ impl<N, T, Z> Traversal<T, Z> for BExpTraversal2<N, T> {
                 )),
             BExp::Not(a) => Ok(BExp::Not(a.traverse1(&mut |x| x.traverse2(f))?)),
         }
-    }
-}
-
-struct UBExpTraversalRange();
-impl Traversal<Range<Size>> for UBExpTraversalRange {
-    type Domain = UBExp;
-    type Codomain = UBExp;
-    fn traverse<E>(
-        on: Self::Domain,
-        f: &mut dyn FnMut(Range<Size>) -> Result<Range<Size>, E>,
-    ) -> Result<Self::Codomain, E> {
-        on.aexp_traverse(&mut |x| x.range_traverse(f))
     }
 }
 
@@ -230,40 +148,22 @@ impl TidTraversal for TBExp {
     }
 }
 
-/// Traverse the first type parameter for a [BExp]
-impl<N, T> ToTraversal1<N> for BExp<N, T> {
-    type Output<Z> = BExp<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z, T>, E> {
-        BExpTraversal1::traverse(self, f)
-    }
-}
-
-/// Traverse the second type parameter for a [BExp]
-impl<N, T> ToTraversal2<T> for BExp<N, T> {
-    type Output<Z> = BExp<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<BExp<N, Z>, E> {
-        BExpTraversal2::traverse(self, f)
-    }
-}
-
-/// Traverse the inner [BExp] of a [BExp]
-impl<N, T> BExpTraversal<N, T> for BExp<N, T> {
-    fn bexp_traverse<E>(self, f: &mut dyn FnMut(BExp<N, T>) -> Result<BExp<N, T>, E>) -> Result<Self, E> {
-        BExpTraversalBExp::traverse(self, f)
-    }
-}
-
-/// Traverse the inner [AExp] of a [BExp]
-impl<N, T> AExpTraversal<N, T> for BExp<N, T> {
-    fn aexp_traverse<E>(self, f: &mut dyn FnMut(AExp<N, T>) -> Result<AExp<N, T>, E>) -> Result<Self, E> {
-        BExpTraversalAExp::traverse(self, f)
-    }
-}
-
-/// Traverse the inner [Range] of a [BExp]
-impl RangeTraversal<Size> for UBExp {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<Size>) -> Result<Range<Size>, E>) -> Result<Self, E> {
-        UBExpTraversalRange::traverse(self, f)
+impl<N> RangeTraversal<N> for BExp<N, Typ<N>> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        match self {
+            BExp::Equ(a, b) =>
+                Ok(BExp::Equ(a.range_traverse(f)?, b.range_traverse(f)?)),
+            BExp::App(id, v) =>
+                Ok(BExp::App(id, v.range_traverse(f)?)),
+            BExp::Contains(a, b) =>
+                Ok(BExp::Contains(a.range_traverse(f)?, b.range_traverse(f)?)),
+            BExp::And(a, b) =>
+                Ok(BExp::And(a.traverse1(&mut |x| x.range_traverse(f))?, b.traverse1(&mut |x| x.range_traverse(f))?)),
+            BExp::Or(a, b) =>
+                Ok(BExp::Or(a.traverse1(&mut |x| x.range_traverse(f))?, b.traverse1(&mut |x| x.range_traverse(f))?)),
+            BExp::Not(a) =>
+                Ok(BExp::Not(a.traverse1(&mut |x| x.range_traverse(f))?)),
+        }
     }
 }
 

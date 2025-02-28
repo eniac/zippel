@@ -22,6 +22,12 @@ impl<T> Substs<T> {
     pub fn get(&self, tid: &Tid) -> Option<&T> {
         self.0.get(tid)
     }
+    pub fn contains(&self, tid: &Tid) -> bool {
+        self.0.contains(tid)
+    }
+    pub fn keys(&self) -> Set<Tid> {
+        self.0.keys().cloned()
+    }
 }
 
 impl<T> IntoIterator for Substs<T> {
@@ -54,6 +60,10 @@ impl SizeSubsts {
                         _ => None
                     }).collect();
 
+        // If there are no type variables, return the empty substitution
+        if typevar_ranges.is_empty() {
+            return Set::from(vec![SizeSubsts::new()]);
+        }
 
         // Take the multi_cartesian_product of all ranges to get all possible size
         // substitutions
@@ -117,14 +127,6 @@ impl AliasSubsts {
         self.get_repr(tid) == Some(tid.clone())
     }
 
-    /// Check if a Tid is in the context
-    pub fn contains(&self, tid: &Tid) -> bool {
-        self.0.contains(tid)
-    }
-
-    pub fn keys(&self) -> Set<Tid> {
-        self.0.keys().cloned()
-    }
 }
 
 impl<T> From<Vec<(Tid, T)>> for Substs<T> {
@@ -137,7 +139,7 @@ impl<T> From<Vec<(Tid, T)>> for Substs<T> {
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(decl.typevars()),
+    assert_eq!(SizeSubsts::from_typevars(&decl.typevars),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),

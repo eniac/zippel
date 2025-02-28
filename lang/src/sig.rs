@@ -1,7 +1,9 @@
-use crate::typ::{TypeVars, Size, Kind, CTyp, Typs, CTyps};
+use crate::typ::{Typ, Size, Kind, CTyp, Typs, CTyps};
 use crate::typ::subst::AliasSubsts;
+use crate::arg::{Arg, Args};
 use crate::typ::unify::{Unify, UnifyError};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
+use share::traversal::ToTraversal1;
 use crate::id::{Fid, Tid, TidTraversal};
 use std::fmt;
 use thiserror::Error;
@@ -11,15 +13,14 @@ pub enum SigError {
     #[error("SigError: Arity mismatch: expected {0} arguments, got {1}")]
     ArityMismatch(usize, usize),
     #[error("SigError: Unifying signatures {0} ~ {1}\n\n{2}")]
-    Unify(Sig, CTyps, UnifyError)
+    Unify(CSig, CTyps, UnifyError)
 }
 
 /// Function and protocol argument signatures
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Sig<N> {
     pub name: Fid,
-    pub typevars: TypeVars,
-    pub args: Typs<N>,
+    pub args: Args<N>,
     pub ret: Typ<N>
 }
 
@@ -30,31 +31,40 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify_args(self, typs: CTyps, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<CSig, SigError> {
-
+    pub fn unify(self, typs: CTyps, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<CSig, SigError> {
         if self.args.len() != typs.len() {
-            return Err(SigError::ArityMismatch(self, typs));
+            return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
         }
 
         let mut args = Vec::new();
         for (l, r) in self.args.iter().zip(typs.iter()) {
-            args.push(CTyp::unify(l.clone(), r.clone(), ctx, subs)
-                .map_err(|e| SigError::Unify(self.clone(), typs.clone(), e))?);
+            let typ = CTyp::unify(l.typ.clone(), r.clone(), ctx, subs)
+                    .map_err(|e| SigError::Unify(self.clone(), typs.clone(), e))?;
+            args.push(Arg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
         }
 
         // Substitute alias in the return type
         let ret = self.ret.tid_traverse(&mut |id| Ok(subs.get_repr(&id).unwrap_or(id)))?;
 
-        Ok(Sig { name: self.name, typevars: self.typevars, args: Typs(args), ret })
+        Ok(Sig { name: self.name, args: Args(args), ret })
+    }
+}
+
+/// Traversable1 instance for Sig (N)
+impl<N> ToTraversal1<N> for Sig<N> {
+    type Output<Z> = Sig<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
+        let Sig { name, args, ret } = self;
+        Ok(Sig { name, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
     }
 }
 
 /// Pretty-printer for function signature
-impl<'a, D, A> Pretty<'a, D, A, N> for Sig<N>
+impl<'a, D, A, N> Pretty<'a, D, A> for Sig<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
-    N: Pretty<'a, D, A> + Clone,
+    N: Pretty<'a, D, A> + Clone + 'a,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
@@ -71,9 +81,9 @@ where
     }
 }
 
-impl fmt::Display for Sig {
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Sig<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Sig as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Sig<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

@@ -3,14 +3,15 @@ use thiserror::Error;
 use pest::iterators::Pair;
 
 use crate::id::Fid;
+use crate::sig::USig;
 use crate::range::RangeError;
 use crate::parser::Rule;
 use crate::typ::{Size, EvalError};
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {
-    #[error("Duplicate declaration found {0}")]
-    DuplicateDecl(Fid),
+    #[error("Duplicate declaration found: {0}")]
+    DuplicateDecl(USig),
     #[error("Unexpected expression {0}")]
     UnexpectedExp(Pair<'pest, Rule>),
     #[error("Unsupported operation {0}")]

@@ -2,9 +2,9 @@ mod aexp;
 mod bexp;
 
 pub use aexp::{AExp, TAExp, UAExp, AExps, TAExps, UAExps, CAExp, CAExps, AExpTraversal, BinOp};
-pub use bexp::{BExp, TBExp, UBExp, CBExp, BExpTraversal};
+pub use bexp::{BExp, TBExp, UBExp, CBExp};
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Traversal};
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::{ToTraversal1, ToTraversal2};
 
 use crate::typ::{Nothing, Typ, Size};
@@ -50,38 +50,15 @@ impl<N: Clone, T: Clone> Into<Exp<N, T>> for &BExp<N, T> {
         Exp::B(self.clone())
     }
 }
-/// Modular get/set acccess to type parameters using [Traversal]
-struct ExpTraversal1<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T, Z> Traversal<N, Z> for ExpTraversal1<N, T> {
-    type Domain = Exp<N, T>;
-    type Codomain = Exp<Z, T>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Codomain, E> {
-        match on {
-            Exp::A(aexp) => aexp.traverse1(f).map(Exp::A),
-            Exp::B(bexp) => bexp.traverse1(f).map(Exp::B),
-        }
-    }
-}
-
-struct ExpTraversal2<N, T>(std::marker::PhantomData<(N, T)>);
-impl<N, T, Z> Traversal<T, Z> for ExpTraversal2<N, T> {
-    type Domain = Exp<N, T>;
-    type Codomain = Exp<N, Z>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Codomain, E> {
-        match on {
-            Exp::A(aexp) => aexp.traverse2(f).map(Exp::A),
-            Exp::B(bexp) => bexp.traverse2(f).map(Exp::B),
-        }
-    }
-}
 
 /// How to traverse the first type parameter [N]
 impl<N, T> ToTraversal1<N> for Exp<N, T> {
     type Output<Z> = Exp<Z, T>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z, T>, E> {
-        ExpTraversal1::traverse(self, f)
+        match self {
+            Exp::A(aexp) => aexp.traverse1(f).map(Exp::A),
+            Exp::B(bexp) => bexp.traverse1(f).map(Exp::B),
+        }
     }
 }
 
@@ -89,7 +66,10 @@ impl<N, T> ToTraversal1<N> for Exp<N, T> {
 impl<N, T> ToTraversal2<T> for Exp<N, T> {
     type Output<Z> = Exp<N, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Exp<N, Z>, E> {
-        ExpTraversal2::traverse(self, f)
+        match self {
+            Exp::A(aexp) => aexp.traverse2(f).map(Exp::A),
+            Exp::B(bexp) => bexp.traverse2(f).map(Exp::B),
+        }
     }
 }
 

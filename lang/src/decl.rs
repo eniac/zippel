@@ -4,13 +4,14 @@ use pest::iterators::Pairs;
 use pest::Parser;
 use bumpalo::Bump;
 
-use share::{Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::typ::TypeVars;
+use crate::sig::Sig;
 use crate::id::{Tid, TidTraversal, Fid};
-use crate::typ::{Typ, Size, Sig, Nothing};
+use crate::typ::{Typ, Size, Nothing};
 use crate::arg::Args;
-use crate::exp::{AExps, BExp};
+use crate::exp::{AExp, AExps, BExp};
 use crate::parser::*;
 
 
@@ -42,13 +43,47 @@ pub enum Body<N, T> {
 /// A zippel declaration is either a protocol or a function.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decl<N, T> {
-    pub name: Fid,
+    pub sig: Sig<N>,
     pub typevars: TypeVars,
-    pub args: Args<N>,
     pub body: Body<N, T>,
 }
 
+impl<N, T> Body<N, T> {
+    pub fn is_proto(&self) -> bool {
+        match self {
+            Body::Proto { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_func(&self) -> bool {
+        ! self.is_proto()
+    }
+    pub fn last(&self) -> Option<&AExp<N, T>> {
+        match self {
+            Body::Proto { body, .. } => body.0.last(),
+            Body::Func { body } => body.0.last(),
+        }
+    }
+}
+
+/// Useful constructors
+impl<N, T> Decl<N, T> {
+    pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: BExp<N, T>, body: AExps<N, T>) -> Self {
+        let sig = Sig { name, args, ret: Typ::bool() };
+        let body = Body::Proto { relation, body };
+        Decl { sig, typevars, body }
+    }
+
+    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: AExps<N, T>) -> Self {
+        let sig = Sig { name, args, ret };
+        let body = Body::Func { body };
+        Decl { sig, typevars, body }
+    }
+}
+
 /// A collection of declarations
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decls<N, T>(pub Vec<Decl<N, T>>);
 
 /// Untyped body with symbolic sizes
@@ -77,6 +112,13 @@ pub type CDecls = Decls<usize, Nothing>;
 
 /// Typed declarations
 pub type TDecls = Decls<usize, Typ<usize>>;
+
+impl UDecl {
+    pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
+        let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
+        UDecl::from_pest(&mut pairs)
+    }
+}
 
 /// .zippel files get parses to [UDecls] that
 /// is the entry point to the zippel compiler
@@ -120,10 +162,9 @@ impl<N, T> ToTraversal1<N> for Body<N, T> {
                     body: body.traverse1(f)?,
                     relation: relation.traverse1(f)?,
                 }),
-            Body::Func { typ, body } =>
+            Body::Func { body } =>
                 Ok(Body::Func {
                     body: body.traverse1(f)?,
-                    typ: typ.traverse1(f)?
                 }),
         }
     }
@@ -139,10 +180,9 @@ impl<N, T> ToTraversal2<T> for Body<N, T> {
                     body: body.traverse2(f)?,
                     relation: relation.traverse2(f)?,
                 }),
-            Body::Func { typ, body } =>
+            Body::Func { body } =>
                 Ok(Body::Func {
                     body: body.traverse2(f)?,
-                    typ: typ.traverse2(f)?
                 }),
         }
     }
@@ -152,33 +192,52 @@ impl TidTraversal for TBody {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         match self {
             Body::Proto { relation, body } =>
-                Ok(Decl::Proto {
+                Ok(TBody::Proto {
                     relation: relation.tid_traverse(f)?,
                     body: body.tid_traverse(f)?,
                 }),
-            Body::Func { typ, body } =>
-                Ok(Decl::Func {
-                    typ: typ.tid_traverse(f)?,
+            Body::Func { body } =>
+                Ok(TBody::Func {
                     body: body.tid_traverse(f)?,
                 }),
         }
     }
 }
 
-impl<T> Decl<usize, T> {
-    pub fn sig(&self) -> Sig {
+/// Pretty printer instance for Body
+impl<'a, D, N, A, T> Pretty<'a, D, A> for Body<N, T>
+where
+    T: Pretty<'a, D, A>,
+    D: DocAllocator<'a, A>,
+    N: Clone + Pretty<'a, D, A> + 'a,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Decl::Proto { args, .. } =>
-                Sig {
-                    args: args.clone().into_iter().map(|a| a.typ).collect(),
-                    ret: Typ::bool()
-                },
-            Decl::Func { args, typ, .. } =>
-                Sig {
-                    args: args.clone().into_iter().map(|a| a.typ).collect(),
-                    ret: typ.clone()
-                }
+            Body::Proto { relation, body } =>
+                allocator.concat([
+                    allocator.text("where ("),
+                    relation.pretty(allocator),
+                    allocator.text(") {"),
+                    allocator.line(),
+                    body.pretty(allocator).indent(2),
+                    allocator.line(),
+                    allocator.text("}"),
+                ]),
+            Body::Func { body } =>
+                allocator.concat([
+                    allocator.text("{"),
+                    allocator.line(),
+                    body.pretty(allocator).indent(2),
+                    allocator.line(),
+                    allocator.text("}"),
+                ]),
         }
+    }
+
+    fn is_nil(&self) -> bool {
+        false
     }
 }
 
@@ -192,63 +251,14 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Decl::Proto {
-                name,
-                typevars,
-                args,
-                relation,
-                body,
-            } => allocator.concat([
-                    allocator.text("proto "),
-                    name.pretty(allocator),
-                    if <TypeVars as Pretty<'a, D, A>>::is_nil(&typevars) {
-                        allocator.nil()
-                    } else {
-                        allocator.concat([
-                            allocator.text("<"),
-                            typevars.pretty(allocator),
-                            allocator.text(">")
-                        ])
-                    },
-                    args.pretty(allocator),
-                    allocator.text(") where ("),
-                    relation.pretty(allocator),
-                    allocator.text(") {"),
-                    allocator.line(),
-                    body.pretty(allocator).indent(2),
-                    allocator.line(),
-                    allocator.text("}")
-                ]),
-            Decl::Func {
-                name,
-                typevars,
-                args,
-                body,
-                typ
-            } => allocator.concat([
-                    allocator.text("fn "),
-                    name.pretty(allocator),
-                    if <TypeVars as Pretty<'a, D, A>>::is_nil(&typevars) {
-                        allocator.nil()
-                    } else {
-                        allocator.concat([
-                            allocator.text("<"),
-                            typevars.pretty(allocator),
-                            allocator.text(">")
-                        ])
-                    },
-                    allocator.text("("),
-                    args.pretty(allocator),
-                    allocator.text(") -> "),
-                    typ.pretty(allocator),
-                    allocator.text(" {"),
-                    allocator.line(),
-                    body.pretty(allocator).indent(2),
-                    allocator.line(),
-                    allocator.text("}")
-                ]),
-        }
+        let Decl { sig, typevars, body } = self;
+        allocator.concat([
+            if body.is_proto() { allocator.text("proto") } else { allocator.text("fn") },
+            allocator.space(),
+            typevars.pretty(allocator),
+            sig.pretty(allocator),
+            body.pretty(allocator)
+        ])
     }
 
     fn is_nil(&self) -> bool {
@@ -325,13 +335,8 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let relation = BExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Protocol's body
                 let body = AExps::from_pest(&mut inner)?;
-                Ok(Decl::Proto {
-                    name,
-                    typevars,
-                    args,
-                    relation,
-                    body,
-                })
+
+                Ok(Decl::proto(name, typevars, args, relation, body))
             },
             Rule::func_decl => {
                 let mut inner = pair.into_inner();
@@ -342,16 +347,11 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Function's arguments
                 let args = Args::from_pest(&mut inner)?;
                 // Function return type
-                let typ = Typ::from_pest(&mut inner)?;
+                let ret = Typ::from_pest(&mut inner)?;
                 // Function's body
                 let body = AExps::from_pest(&mut inner)?;
-                Ok(Decl::Func {
-                    name,
-                    typevars,
-                    args,
-                    typ,
-                    body,
-                })
+
+                Ok(Decl::func(name, typevars, args, ret, body))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
         }
@@ -400,8 +400,7 @@ fn proto_easy() {
         "proto test<F: Field>(public a: F) where a == a { verify(a == a) }";
 
     let pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    let decl = UDecl::from_pest(&mut pairs.into_iter()).unwrap();
-    println!("{}", decl);
+    UDecl::from_pest(&mut pairs.into_iter()).unwrap();
 }
 
 #[test]
@@ -413,16 +412,16 @@ fn proto_parser() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::Proto {
-        name: Fid::from("test"),
-        typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
-        relation: UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
-        body: AExps(vec![
+    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::proto(
+        Fid::from("test"),
+        TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+        Args(vec![Arg::public("a", Typ::varstr("F"))]),
+        UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
+        AExps(vec![
             UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::varstr("a")),
             UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
         ]),
-    });
+    ));
 }
 
 #[test]
@@ -434,19 +433,19 @@ fn fn_parser1() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::Func {
-        name: Fid::from("test"),
-        typevars: TypeVars(vec![
+    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
+        Fid::from("test"),
+        TypeVars(vec![
             TypeVar::new("F", Kind::Field),
             TypeVar::new("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
         ]),
-        args: Args(vec![Arg::private("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
-        typ: Typ::varstr("F"),
-        body: AExps(vec![
+        Args(vec![Arg::private("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+        Typ::varstr("F"),
+        AExps(vec![
             UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::ram(UAExp::from("a"), UAExp::from(0))),
             UAExp::varstr("x") + UAExp::varstr("x"),
         ]),
-    });
+    ));
 }
 
 #[test]
@@ -460,18 +459,18 @@ fn fn_parser2() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::Func {
-        name: Fid::from("test"),
-        typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
-        typ: Typ::varstr("F"),
-        body: AExps(vec![
+    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
+        Fid::from("test"),
+        TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+        Args(vec![Arg::public("a", Typ::varstr("F"))]),
+        Typ::varstr("F"),
+        AExps(vec![
             UAExp::letx(Vid::from("v"), UAExp::vec(vec![UAExp::from(1), UAExp::from(2), UAExp::from(3)])),
             UAExp::logx(Vid::from("p"), UAExp::interpolate(UAExp::varstr("v"), UAExp::vec(vec![UAExp::from(0), UAExp::from(1), UAExp::from(2)]))),
             UAExp::logx(Vid::from("x"), UAExp::challenge(Tid::from("F"))),
             UAExp::app(Fid::from("p"), AExps(vec![UAExp::varstr("x")])),
         ]),
-    });
+    ));
 }
 
 #[test]
@@ -488,28 +487,28 @@ fn decls_parser() {
     );
     let mut pairs = ZippelParser::parse(Rule::decls, ex).unwrap();
     assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), Decls(vec![
-        UDecl::Proto {
-            name: Fid::from("test"),
-            typevars: TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-            args: Args(vec![Arg::public("a", Typ::varstr("F"))]),
-            relation: UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
-            body: AExps(vec![
+        UDecl::proto(
+            Fid::from("test"),
+            TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+            Args(vec![Arg::public("a", Typ::varstr("F"))]),
+            UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
+            AExps(vec![
                 UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::varstr("a"))),
                 UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
             ]),
-        },
-        UDecl::Func {
-            name: Fid::from("test"),
-            typevars: TypeVars(vec![
+        ),
+        UDecl::func(
+            Fid::from("test"),
+            TypeVars(vec![
                 TypeVar::new("F", Kind::Field),
                 TypeVar::new("N", Kind::Range(Range { start:0, step:1, end: 10 })),
             ]),
-            args: Args(vec![Arg::public("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
-            typ: Typ::varstr("F"),
-            body: AExps(vec![
+            Args(vec![Arg::public("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+            Typ::varstr("F"),
+            AExps(vec![
                 UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::ram(UAExp::varstr("a"), UAExp::from(0)))),
                 UAExp::varstr("x") + UAExp::varstr("x"),
             ]),
-        },
+        ),
     ]));
 }

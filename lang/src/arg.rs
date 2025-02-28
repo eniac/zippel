@@ -49,6 +49,9 @@ impl<N> Args<N> {
     pub fn iter(&self) -> std::slice::Iter<Arg<N>> {
         self.0.iter()
     }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl<N> IntoIterator for Args<N> {
