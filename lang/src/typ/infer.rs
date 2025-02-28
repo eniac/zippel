@@ -1,7 +1,7 @@
 #![allow(refining_impl_trait)]
 use share::{Ctx, Set, log2};
-use share::traversal::ToTraversal1;
-use crate::id::{Fid, Tid, Gen, Vid};
+use share::traversal::{ToTraversal1, ToTraversal2};
+use crate::id::{Fid, Tid, Vid};
 use crate::exp::{BinOp, CAExp, CExp, CAExps, TAExp, TAExps, CBExp, TBExp, AExpTraversal};
 use crate::decl::{CBody, TBody};
 use crate::module::{TPolymod, CPolymod};
@@ -24,8 +24,11 @@ pub enum TypeError {
     #[error("TypeError: In declaration {0}:\n\n{1}")]
     Decl(Fid, Box<TypeError>),
 
-    #[error("TypeError: In expression {0}, {1} |- {2} \n\n{3}")]
-    Next(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Box<TypeError>),
+    #[error("{0}\n\n{1}")]
+    Next(Box<TypeError>, Box<TypeError>),
+
+    #[error("TypeError: In expression {0}")]
+    CExp(CExp),
 
     #[error("VecEmptyError: Cannot define empty vector {0}, {1} |- []")]
     VecEmpty(Ctx<Tid, Kind>, Ctx<Vid, CTyp>),
@@ -57,7 +60,7 @@ pub enum TypeError {
     #[error("ConcatenateError: Expects two vectors with the same element types {0}, {1} |- {2} ++ {3}")]
     Concat(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp),
 
-    #[error("InterpolateError: Expects two field vectors with the same size {0} |- interpolate ( {1}, {2} )")]
+    #[error("InterpolateError: Expects two field vectors with the same size \n{0}, {1} |- interpolate ( {2}, {3} )")]
     Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, TAExp, TAExp),
 
     #[error("RamError: Index must be a Fin type within the bounds of the vector {0}, {1} |- {2} [ {3} ]")]
@@ -83,14 +86,17 @@ impl<'a> TypeError {
     pub fn decl(id: &Fid, e: TypeError) -> Self {
         TypeError::Decl(id.clone(), Box::new(e))
     }
-    pub fn next(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, t: Self) -> Self {
-        TypeError::Next(kctx.clone(), vctx.clone(), e, Box::new(t))
+    pub fn next(a: Self, b: Self) -> Self {
+        TypeError::Next(Box::new(a), Box::new(b))
     }
-    pub fn unify(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, u: UnifyError) -> Self {
-        TypeError::next(kctx, vctx, e, TypeError::from(u))
+    pub fn unify(a: Self, u: UnifyError) -> Self {
+        TypeError::next(a, TypeError::from(u))
     }
-    pub fn lub(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, l: LubError) -> Self {
-        TypeError::next(kctx, vctx, e, TypeError::from(l))
+    pub fn lub(a: Self, l: LubError) -> Self {
+        TypeError::next(a, TypeError::from(l))
+    }
+    pub fn caexp(e: &CAExp) -> Self {
+        TypeError::CExp(e.into())
     }
     pub fn vec_empty(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>) -> Self {
         TypeError::VecEmpty(kctx.clone(), vctx.clone())
@@ -154,7 +160,7 @@ impl Typeable for CAExp {
                 // Infer the type of its argument
                 let tv : Box<TAExp> =
                     v.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
-                        .map_err(|e| TypeError::next(&kctx, &vctx, self.into(), e))?;
+                        .map_err(|e| TypeError::next(TypeError::caexp(self), e))?;
 
                 // It must be a vector of fields, or a vector of Fin
                 match tv.typ() {
@@ -211,8 +217,11 @@ impl Typeable for CAExp {
                         .map_err(|e| TypeError::vec(kctx, &vctx, tx, t, e.into()))?;
                 }
 
+                // Vector length
                 let n = ts.len();
-                Ok(TAExp::Vec(ts, CTyp::vec(t, n)))
+
+                // Generalize the type of the parameters
+                Ok(TAExp::Vec(ts.map2(&mut |_| t.clone()), CTyp::vec(t, n)))
             }
 
             // Handle +
@@ -400,6 +409,11 @@ impl Typeable for CAExp {
                 let tb =
                     b.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
                         .map_err(|e| TypeError::next(kctx, &vctx, self.into(), e))?;
+                // Must have a LUB
+                let t = CTyp::lub_equ(ta.typ(), tb.typ(), kctx)
+                    .map_err(|e|
+                        TypeError::lub(kctx, &vctx, self.into(), e))?;
+
                 // Only field vectors can be interpolated
                 match (ta.typ(), tb.typ()) {
                     (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
@@ -412,7 +426,8 @@ impl Typeable for CAExp {
                             // What kind if [t]?
                             let k = kctx.get(&a)
                                 .ok_or(TypeError::lub(kctx, &vctx, self.into(), LubError::kind_not_found(&a)))?;
-
+                            println!("Interpolating {}: {}", a, k);
+                            dbg!(k);
                             // Only interpolate elements of fields
                             if k.is_field() {
                                 Ok(TAExp::Interpolate(ta, tb, CTyp::Uni(a, n)))
@@ -668,5 +683,207 @@ impl Typeable for CPolymod {
             Ok(((typevars, s), b))
 
         }).collect::<Result<_, _>>()
+    }
+}
+
+/// Unit tests for type inference
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use share::{Ctx, Set};
+    use crate::id::{Fid, Tid, Vid};
+    use crate::exp::{BinOp, UAExp, CAExp, CBExp, CAExps};
+    use crate::typ::{CTyp, Kind};
+    use crate::sig::CSig;
+    use crate::arg::{Args, CArg};
+    use crate::range::Range;
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        static ref KIND_CTX: Ctx<Tid, Kind> = {
+            let mut kctx = Ctx::new();
+            // Add field type "F"
+            kctx.insert(&Tid::from("F"), &Kind::Field);
+            // Add group type "G"
+            kctx.insert(&Tid::from("G"), &Kind::Group);
+            kctx
+        };
+
+        static ref VAR_CTX: Ctx<Vid, CTyp> = {
+            let mut vctx = Ctx::new();
+            // Add variable "x" of type "F"
+            vctx.insert(&Vid::from("x"), &CTyp::Base(Tid::from("F")));
+            // Add variable "y" of type "F"
+            vctx.insert(&Vid::from("y"), &CTyp::Base(Tid::from("F")));
+            // Add vector variable "v" with element type "F" and length 5
+            vctx.insert(&Vid::from("v"), &CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 5));
+            vctx
+        };
+    }
+
+    // Tests for literals
+    #[test]
+    fn test_literal_inference() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create a literal expression "5"
+        let lit = CAExp::lit(5);
+
+        // Run type inference
+        let result = lit.infer(&KIND_CTX, &fctx, &mut vctx);
+
+        // Verify result
+        assert!(result.is_ok());
+        let typed_expr = result.unwrap();
+        match typed_expr {
+            TAExp::Lit(n, typ) => {
+                assert_eq!(n, 5);
+                assert_eq!(typ, CTyp::Fin(Range::singleton(5)));
+            },
+            _ => panic!("Expected a literal expression")
+        }
+    }
+
+    // Tests for binary operations
+    #[test]
+    fn test_binary_add_inference() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create expression x + y
+        let tadd = CAExp::bin(
+            BinOp::Add,
+            CAExp::varstr("x"),
+            CAExp::varstr("y"),
+        ).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        if let TAExp::Bin(op, box a, box b, typ) = tadd.unwrap() {
+            assert_eq!(op, BinOp::Add);
+            // Check both operands are field types
+            assert_eq!(a.typ(), CTyp::varstr("F"));
+            assert_eq!(b.typ(), CTyp::varstr("F"));
+            assert_eq!(typ, CTyp::varstr("F"));
+        } else {
+            panic!("Expected a binary addition expression")
+        }
+    }
+
+    // Test for vector creation
+    #[test]
+    fn test_vector_inference() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create a vector expression [1, 2, 3]
+        let tvec = CAExp::vec(
+            vec![
+                CAExp::lit(1),
+                CAExp::lit(2),
+                CAExp::lit(3),
+            ]).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        // Verify result
+        if let TAExp::Vec(ts, typ) = tvec.unwrap() {
+            assert_eq!(typ, CTyp::vec(CTyp::Fin(Range::new(1, 4)), 3));
+            for t in ts.0.iter() {
+                assert_eq!(t.typ(), CTyp::Fin(Range::new(1, 4)));
+            }
+        } else {
+            panic!("Expected a vector expression")
+        }
+    }
+
+    // Test for error: empty vector
+    #[test]
+    fn test_empty_vector_error() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create an empty vector expression []
+        let tresult =
+            CAExp::vec(vec![]).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        match tresult.unwrap_err() {
+            TypeError::VecEmpty(_, _) => {}, // This is correct
+            err => panic!("Expected VecEmpty error, got: \n\n\t{}", err)
+        }
+    }
+
+    // Test for error: vector with different types
+    #[test]
+    fn test_vector_type_error() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create a vector expression [1, 2, x]
+        let tresult =
+            CAExp::vec(vec![
+                CAExp::lit(1),
+                CAExp::lit(2),
+                CAExp::varstr("x"),
+            ]).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        match tresult.unwrap_err() {
+            TypeError::Vec(_, _, _, _, _) => {}, // This is correct
+            err => panic!("Expected Vec error, got: \n\n\t{}", err)
+        }
+    }
+
+    // Test interpolate
+    #[test]
+    fn test_interpolate_good() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create an interpolation expression interpolate([1, 2, 3], [1, 2, 3])
+        let tinterp = CAExp::interpolate(
+            CAExp::vec(vec![
+                CAExp::lit(1),
+                CAExp::lit(2),
+                CAExp::lit(3),
+            ]),
+            CAExp::vec(vec![
+                CAExp::lit(4),
+                CAExp::lit(5),
+                CAExp::lit(6),
+            ])).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        // Verify result
+        match tinterp {
+            Ok(TAExp::Interpolate(box a, box b, typ)) => {
+                assert_eq!(typ, CTyp::Uni(Tid::from("F"), 3));
+                assert_eq!(a.typ(), CTyp::vec(CTyp::Fin(Range::new(1, 4)), 3));
+                assert_eq!(b.typ(), CTyp::vec(CTyp::Fin(Range::new(4, 7)), 3));
+            },
+            Ok(e) => panic!("Expected an interpolation expression, got: \n\n{}", e),
+            Err(err) => panic!("Expected an interpolation expression, got error: \n\n{}", err),
+        }
+    }
+
+    // Test for error: interpolate with different types
+    #[test]
+    fn test_interpolate_type_error() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create an interpolation expression interpolate([1, 2, 3], [1, 2, x])
+        let tresult =
+            CAExp::interpolate(
+                CAExp::vec(vec![
+                    CAExp::lit(1),
+                    CAExp::lit(2),
+                    CAExp::lit(3),
+                ]),
+                CAExp::vec(vec![
+                    CAExp::lit(4),
+                    CAExp::lit(5),
+                    CAExp::varstr("x"),
+                ])).infer(&KIND_CTX, &fctx, &mut vctx);
+
+        match tresult.unwrap_err() {
+            TypeError::Interp(_, _, _, _) => {}, // This is correct
+            err => panic!("Expected Interp error, got: \n\n\t{}", err)
+        }
     }
 }

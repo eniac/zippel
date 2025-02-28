@@ -44,6 +44,9 @@ pub type CRange = Range<usize>;
 impl Copy for CRange {}
 
 impl CRange {
+    pub fn new(start: usize, end: usize) -> Self {
+        Range { start, step: 1, end }
+    }
     /// Create a range from a start, step and end numbers, checking their order
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         // Check if the range is well formed

@@ -127,6 +127,12 @@ impl<N> ToTraversal1<N> for Args<N> {
     }
 }
 
+impl<const L: usize, N: Clone> From<[Arg<N>; L]> for Args<N> {
+    fn from(args: [Arg<N>; L]) -> Self {
+        Args(args.to_vec())
+    }
+}
+
 /// Pretty printer instance
 impl<'a, D, N, A> Pretty<'a, D, A> for Arg<N>
 where

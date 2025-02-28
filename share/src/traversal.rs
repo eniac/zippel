@@ -12,13 +12,19 @@ pub trait Traversal<A, B=A> {
 }
 
 /// Acess the traversal for free type parameters (1, 2, 3)
-pub trait ToTraversal1<A> {
+pub trait ToTraversal1<A>: Sized {
     type Output<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+    fn map1<Z>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
+        self.traverse1::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
+    }
 }
-pub trait ToTraversal2<A> {
+pub trait ToTraversal2<A>: Sized {
     type Output<Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+    fn map2<Z>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
+        self.traverse2::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
+    }
 }
 pub trait ToTraversal3<A> {
     type Output<Z>;

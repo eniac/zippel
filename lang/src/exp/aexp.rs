@@ -493,10 +493,10 @@ impl TAExp {
     }
 }
 
-/// Construct untyped expressions and type infer later [types/infer.rs]
-impl UAExp {
+/// Construct untyped expressions
+impl<N> AExp<N, Nothing> {
     /// Annotated constructors
-    pub fn lit(v: Size) -> Self {
+    pub fn lit(v: N) -> Self {
         AExp::Lit(v, Nothing)
     }
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
@@ -529,7 +529,7 @@ impl UAExp {
     pub fn ram(v: Self, i: Self) -> Self {
         AExp::Ram(Box::new(v), Box::new(i), Nothing)
     }
-    pub fn range(r: Range<Size>) -> Self {
+    pub fn range(r: Range<N>) -> Self {
         AExp::Range(r, Nothing)
     }
     pub fn add(l: Self, r: Self) -> Self {
@@ -559,13 +559,13 @@ impl UAExp {
     pub fn varstr<'a>(x: &'a str) -> Self {
         AExp::var(Vid::from(x))
     }
-    pub fn app(e: Fid, d: UAExps) -> Self {
+    pub fn app(e: Fid, d: AExps<N, Nothing>) -> Self {
         AExp::App(e, d, Nothing)
     }
-    pub fn assert(b: UBExp) -> Self {
+    pub fn assert(b: BExp<N, Nothing>) -> Self {
         AExp::Assert(Box::new(b), Nothing)
     }
-    pub fn verify(b: UBExp) -> Self {
+    pub fn verify(b: BExp<N, Nothing>) -> Self {
         AExp::Verify(Box::new(b), Nothing)
     }
     pub fn letx(a: Vid, d: Self) -> Self {
