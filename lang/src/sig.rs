@@ -31,7 +31,7 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify(self, typs: CTyps, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<CSig, SigError> {
+    pub fn unify(self, typs: &CTyps, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<CSig, SigError> {
         if self.args.len() != typs.len() {
             return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
         }
