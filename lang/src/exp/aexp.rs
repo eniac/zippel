@@ -9,7 +9,7 @@ use pest::pratt_parser::{Assoc, Op, PrattParser};
 use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2};
 
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, Size, Nothing};
+use crate::typ::{Typ, Size};
 use crate::exp::{BExp, UBExp};
 use crate::id::{Tid, TidTraversal, Fid, Vid};
 use crate::range::{Range, RangeTraversal};
@@ -62,106 +62,105 @@ pub enum BinOp {
 }
 
 /// Represents arithmetic expressions in the Zippel language.
-/// It is parameterized by types `N` representing the sizes of ranges, indices etc, and
-/// `A` that represents the generic annotations that can be attached to expressions.
+/// It is parameterized by types `N` representing the sizes of ranges, indices etc
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-pub enum AExp<N, A> {
+pub enum AExp<N> {
     ///     Numeric literal
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let a = 5;
     ///     ```
-    Lit(N, A),
+    Lit(N),
 
     ///     Generator of a group [Tid]
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let g = gen<G>;
     ///     ```
-    Gen(Tid, A),
+    Gen(Tid),
 
     ///     Variable reference
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let b = a;
     ///     ```
-    Var(Vid, A),
+    Var(Vid),
 
     ///     Function application
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let result1 = f(x + 2, x)
     ///     ```
-    App(Fid, AExps<N,A>, A),
+    App(Fid, AExps<N>),
 
     ///     Coefficients of a univariate vector
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let v = coef [1,2,1]; // 1 + 2x + x^2
     ///     ```
-    Coef(Box<AExp<N, A>>, A),
+    Coef(Box<AExp<N>>),
 
     ///     Multilinear extension of a matrix, polynomial, etc.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let g = mle x;
     ///     ```
-    Mle(Box<AExp<N, A>>, A),
+    Mle(Box<AExp<N>>),
 
     ///     A vector of elements
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let v = [1, 2*x, x+y];
     ///     ```
-    Vec(AExps<N, A>, A),
+    Vec(AExps<N>),
 
     ///     Binary operation
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let sum = 2 + 3;
     ///     ```
-    Bin(BinOp, Box<AExp<N, A>>, Box<AExp<N, A>>, A),
+    Bin(BinOp, Box<AExp<N>>, Box<AExp<N>>),
 
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let r = 0..5;
     ///     ```
-    Range(Range<N>, A),
+    Range(Range<N>),
 
     ///     Map comprehension
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let squares = [x^2 for x in 0,2..10];
     ///     ```
-    Map(Box<AExp<N, A>>, Vid, Box<AExp<N, A>>, A),
+    Map(Box<AExp<N>>, Vid, Box<AExp<N>>),
 
     ///     Random access or slice a vector
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let first = v[0]
     ///     ```
-    Ram(Box<AExp<N, A>>, Box<AExp<N, A>>, A),
+    Ram(Box<AExp<N>>, Box<AExp<N>>),
 
     ///     Sample pseudo-random number generator
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let r := random<F>();
     ///     ```
-    Random(Tid, A),
+    Random(Tid),
 
     ///     Random oracle challenge.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F>();
     ///     ```
-    Challenge(Tid, A),
+    Challenge(Tid),
 
     ///     Convert from evaluation domain to lagrange domain.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let p = interpolate([1, 2], [0, 3]);
     ///     ```
-    Interpolate(Box<AExp<N, A>>, Box<AExp<N, A>>, A),
+    Interpolate(Box<AExp<N>>, Box<AExp<N>>),
 
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
@@ -169,7 +168,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     let x = 5 + 3;
     ///     ```
-    Let(Vid, Box<AExp<N, A>>, A),
+    Let(Vid, Box<AExp<N>>),
 
     ///     Represents a log-let expression with transcript dependency.
     ///     This variant is used to bind a value to an identifier while logging the operation.
@@ -177,7 +176,7 @@ pub enum AExp<N, A> {
     ///     ```zippel
     ///     p <- interpolate(v, [0,1,2])
     ///     ```
-    Log(Vid, Box<AExp<N, A>>, A),
+    Log(Vid, Box<AExp<N>>),
 
     ///     Prover assertion followed by expression.
     ///     **Zippel Code:**
@@ -185,7 +184,7 @@ pub enum AExp<N, A> {
     ///     assert(1 == 1);
     ///     ...
     ///     ```
-    Assert(Box<BExp<N, A>>, A),
+    Assert(Box<BExp<N>>),
 
     ///     Verifier check followed by expression.
     ///     **Zippel Code:**
@@ -193,257 +192,185 @@ pub enum AExp<N, A> {
     ///     verify(a == a);
     ///     ...
     ///     ```
-    Verify(Box<BExp<N, A>>, A)
+    Verify(Box<BExp<N>>)
 }
 
 /// Represents a sequence of arithmetic expressions in the Zippel language
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-pub struct AExps<N, A>(pub Vec<AExp<N, A>>);
+pub struct AExps<N>(pub Vec<AExp<N>>);
 
 /// How to traverse structures of arithmetic expressions (AExp)
-pub trait AExpTraversal<N, T>: Sized {
-    type Output<Z, X>;
-    fn aexp_traverse<E, Z, X>(self, f: &mut dyn FnMut(AExp<N, T>) -> Result<AExp<Z, X>, E>) -> Result<Self::Output<Z, X>, E>;
+pub trait AExpTraversal<N>: Sized {
+    type Output<Z>;
+    fn aexp_traverse<E, Z>(self, f: &mut dyn FnMut(AExp<N>) -> Result<AExp<Z>, E>) -> Result<Self::Output<Z>, E>;
 }
 
-impl<N, T> AExpTraversal<N, T> for AExps<N, T> {
-    type Output<Z, X> = AExps<Z, X>;
-    fn aexp_traverse<E, Z, X>(self, f: &mut dyn FnMut(AExp<N, T>) -> Result<AExp<Z, X>, E>) -> Result<AExps<Z, X>, E> {
+impl<N> AExpTraversal<N> for AExps<N> {
+    type Output<Z> = AExps<Z>;
+    fn aexp_traverse<E, Z>(self, f: &mut dyn FnMut(AExp<N>) -> Result<AExp<Z>, E>) -> Result<AExps<Z>, E> {
         self.0.into_iter().map(|x| f(x)).collect()
     }
 }
-/// Untyped AST node, as parsed from input
-pub type UAExp = AExp<Size, Nothing>;
+/// Symbolic sized AST node, as parsed from input
+pub type UAExp = AExp<Size>;
 
 /// Concrete size untyped AST node
-pub type CAExp = AExp<usize, Nothing>;
+pub type CAExp = AExp<usize>;
 
-/// Typed AST node
-pub type TAExp = AExp<usize, Typ<usize>>;
-
-/// Untyped AST sequence, as parsed from input
-pub type UAExps = AExps<Size, Nothing>;
+/// Symbolic sized AST sequence, as parsed from input
+pub type UAExps = AExps<Size>;
 
 /// Concrete size untyped AST node
-pub type CAExps = AExps<usize, Nothing>;
+pub type CAExps = AExps<usize>;
 
-/// Typed AST sequence
-pub type TAExps = AExps<usize, Typ<usize>>;
-
-/// How to traverse the first type parameter [N] for AExp<N, T>
-impl<N, T> ToTraversal1<N> for AExp<N, T> {
-    type Output<Z> = AExp<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z, T>, E> {
+/// How to traverse the first type parameter [N] for AExp<N>
+impl<N> ToTraversal1<N> for AExp<N> {
+    type Output<Z> = AExp<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExp<Z>, E> {
         match self {
-            AExp::Lit(x, a) => Ok(AExp::Lit(f(x)?, a)),
-            AExp::Var(v, a) => Ok(AExp::Var(v, a)),
-            AExp::Coef(box p, a) => Ok(AExp::Coef(Box::new(p.traverse1(f)?), a)),
-            AExp::Mle(box p, a) => Ok(AExp::Mle(Box::new(p.traverse1(f)?), a)),
-            AExp::Vec(v, a) =>
-                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.traverse1(f))?, a)),
-            AExp::App(x, ts, a) =>
-                Ok(AExp::App(x, ts.aexp_traverse(&mut |x| x.traverse1(f))?, a)),
-            AExp::Bin(op, box x, box y, a) =>
+            AExp::Lit(x) => Ok(AExp::Lit(f(x)?)),
+            AExp::Var(v) => Ok(AExp::Var(v)),
+            AExp::Coef(box p) => Ok(AExp::Coef(Box::new(p.traverse1(f)?))),
+            AExp::Mle(box p) => Ok(AExp::Mle(Box::new(p.traverse1(f)?))),
+            AExp::Vec(v) =>
+                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.traverse1(f))?)),
+            AExp::App(x, ts) =>
+                Ok(AExp::App(x, ts.aexp_traverse(&mut |x| x.traverse1(f))?)),
+            AExp::Bin(op, box x, box y) =>
                 Ok(AExp::Bin(
                     op,
                     Box::new(x.traverse1(f)?),
                     Box::new(y.traverse1(f)?),
-                    a
                 )),
-            AExp::Map(box x, id, box r, a) =>
-                Ok(AExp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?), a)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(t, a)),
-            AExp::Random(t, a) => Ok(AExp::Random(t, a)),
-            AExp::Gen(t, a) => Ok(AExp::Gen(t, a)),
-            AExp::Range(r, a) => Ok(AExp::Range(r.traverse1(f)?, a)),
-            AExp::Interpolate(box x, box y, a) =>
+            AExp::Map(box x, id, box r) =>
+                Ok(AExp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?))),
+            AExp::Challenge(t) => Ok(AExp::Challenge(t)),
+            AExp::Random(t) => Ok(AExp::Random(t)),
+            AExp::Gen(t) => Ok(AExp::Gen(t)),
+            AExp::Range(r) => Ok(AExp::Range(r.traverse1(f)?)),
+            AExp::Interpolate(box x, box y) =>
                 Ok(AExp::Interpolate(
                     Box::new(x.traverse1(f)?),
-                    Box::new(y.traverse1(f)?),
-                    a
+                    Box::new(y.traverse1(f)?)
                 )),
-            AExp::Ram(box x, box i, a) =>
+            AExp::Ram(box x, box i) =>
                 Ok(AExp::Ram(
                         Box::new(x.traverse1(f)?),
-                        Box::new(i.traverse1(f)?),
-                        a
+                        Box::new(i.traverse1(f)?)
                 )),
-            AExp::Let(x, box a, t) =>
-                Ok(AExp::Let(x, Box::new(a.traverse1(f)?), t)),
-            AExp::Log(x, box a, t) =>
-                Ok(AExp::Log(x, Box::new(a.traverse1(f)?), t)),
-            AExp::Assert(box x,  t) =>
-                Ok(AExp::Assert(Box::new(x.traverse1(f)?), t)),
-            AExp::Verify(box x, t) =>
-                Ok(AExp::Verify(Box::new(x.traverse1(f)?), t))
+            AExp::Let(x, box a) =>
+                Ok(AExp::Let(x, Box::new(a.traverse1(f)?))),
+            AExp::Log(x, box a) =>
+                Ok(AExp::Log(x, Box::new(a.traverse1(f)?))),
+            AExp::Assert(box x) =>
+                Ok(AExp::Assert(Box::new(x.traverse1(f)?))),
+            AExp::Verify(box x) =>
+                Ok(AExp::Verify(Box::new(x.traverse1(f)?)))
         }
     }
 }
 
-/// How to traverse the first type parameter [N] for AExps<N, T>
-impl<N, T> ToTraversal1<N> for AExps<N, T> {
-    type Output<Z> = AExps<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z, T>, E> {
+/// How to traverse the first type parameter [N] for AExps<N>
+impl<N> ToTraversal1<N> for AExps<N> {
+    type Output<Z> = AExps<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<AExps<Z>, E> {
         Ok(AExps(self.0.traverse1(&mut |x| x.traverse1(f))?))
     }
 }
 
-/// How to traverse the second type parameter [T] for AExp<N, T>
-impl<N, T> ToTraversal2<T> for AExp<N, T> {
-    type Output<Z> = AExp<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExp<N, Z>, E> {
-        match self {
-            AExp::Lit(x, a) => Ok(AExp::Lit(x, f(a)?)),
-            AExp::Var(v, a) => Ok(AExp::Var(v, f(a)?)),
-            AExp::Coef(box p, a) => Ok(AExp::Coef(Box::new(p.traverse2(f)?), f(a)?)),
-            AExp::Mle(box p, a) => Ok(AExp::Mle(Box::new(p.traverse2(f)?), f(a)?)),
-            AExp::Vec(v, a) =>
-                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.traverse2(f))?, f(a)?)),
-            AExp::App(x, ts, a) =>
-                Ok(AExp::App(x, ts.aexp_traverse(&mut |x| x.traverse2(f))?, f(a)?)),
-            AExp::Bin(op, box x, box y, a) =>
-                Ok(AExp::Bin(
-                    op,
-                    Box::new(x.traverse2(f)?),
-                    Box::new(y.traverse2(f)?),
-                    f(a)?
-                )),
-            AExp::Map(box x, id, box r, a) =>
-                Ok(AExp::Map(Box::new(x.traverse2(f)?), id, Box::new(r.traverse2(f)?), f(a)?)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(t, f(a)?)),
-            AExp::Random(t, a) => Ok(AExp::Random(t, f(a)?)),
-            AExp::Gen(t, a) => Ok(AExp::Gen(t, f(a)?)),
-            AExp::Range(r, a) => Ok(AExp::Range(r, f(a)?)),
-            AExp::Interpolate(box x, box y, a) =>
-                Ok(AExp::Interpolate(
-                    Box::new(x.traverse2(f)?),
-                    Box::new(y.traverse2(f)?),
-                    f(a)?
-                )),
-            AExp::Ram(box x, box i, a) =>
-                Ok(AExp::Ram(
-                        Box::new(x.traverse2(f)?),
-                        Box::new(i.traverse2(f)?),
-                        f(a)?
-                )),
-            AExp::Let(x, box a,t) =>
-                Ok(AExp::Let(x, Box::new(a.traverse2(f)?), f(t)?)),
-            AExp::Log(x, box a, t) =>
-                Ok(AExp::Log(x, Box::new(a.traverse2(f)?), f(t)?)),
-            AExp::Assert(box x, a) =>
-                Ok(AExp::Assert(Box::new(x.traverse2(f)?), f(a)?)),
-            AExp::Verify(box x, a) =>
-                Ok(AExp::Verify(Box::new(x.traverse2(f)?), f(a)?))
-        }
-    }
-}
-
-/// How to traverse the second type parameter [T] for AExps<N, T>
-impl<N, T> ToTraversal2<T> for AExps<N, T> {
-    type Output<Z> = AExps<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<AExps<N, Z>, E> {
-        Ok(AExps(self.0.traverse1(&mut |x| x.traverse2(f))?))
-    }
-}
-
 /// Traverse [Tid] inside [TAExp]
-impl TidTraversal for TAExp {
+impl TidTraversal for CAExp {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         match self {
-            AExp::Lit(x, a) => Ok(AExp::Lit(x, a.tid_traverse(f)?)),
-            AExp::Var(v, a) => Ok(AExp::Var(v, a.tid_traverse(f)?)),
-            AExp::Coef(p, a) =>
-                Ok(AExp::Coef(p.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Mle(p, a) =>
-                Ok(AExp::Mle(p.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Vec(v, a) =>
-                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Bin(op, x, y, a) => Ok(AExp::Bin(op,
+            AExp::Lit(x) => Ok(AExp::Lit(x)),
+            AExp::Var(v) => Ok(AExp::Var(v)),
+            AExp::Coef(p) =>
+                Ok(AExp::Coef(p.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Mle(p) =>
+                Ok(AExp::Mle(p.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Vec(v) =>
+                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.tid_traverse(f))?)),
+            AExp::Bin(op, x, y) => Ok(AExp::Bin(op,
                     x.traverse1(&mut |x| x.tid_traverse(f))?,
-                    y.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Map(x, id, r, a) => Ok(AExp::Map(
+                    y.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Map(x, id, r) => Ok(AExp::Map(
                     x.traverse1(&mut |x| x.tid_traverse(f))?, id,
-                    r.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(f(t)?, a.tid_traverse(f)?)),
-            AExp::Random(t, a) => Ok(AExp::Random(f(t)?, a.tid_traverse(f)?)),
-            AExp::Gen(t, a) => Ok(AExp::Gen(f(t)?, a.tid_traverse(f)?)),
-            AExp::Range(r, a) => Ok(AExp::Range(r, a.tid_traverse(f)?)),
-            AExp::Interpolate(x, y, a) => Ok(AExp::Interpolate(
+                    r.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Challenge(t) => Ok(AExp::Challenge(f(t)?)),
+            AExp::Random(t) => Ok(AExp::Random(f(t)?)),
+            AExp::Gen(t) => Ok(AExp::Gen(f(t)?)),
+            AExp::Range(r) => Ok(AExp::Range(r)),
+            AExp::Interpolate(x, y) => Ok(AExp::Interpolate(
                     x.traverse1(&mut |x| x.tid_traverse(f))?,
-                    y.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Ram(x, i, a) => Ok(AExp::Ram(
+                    y.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Ram(x, i) => Ok(AExp::Ram(
                     x.traverse1(&mut |x| x.tid_traverse(f))?,
-                    i.traverse1(&mut |x| x.tid_traverse(f))?, a.tid_traverse(f)?)),
-            AExp::Let(x, a, t) => Ok(AExp::Let(x,
-                    a.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
-            AExp::Log(x, a, t) => Ok(AExp::Log(x,
-                    a.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
-            AExp::Assert(x, t) => Ok(AExp::Assert(
-                    x.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
-            AExp::Verify(x, t) => Ok(AExp::Verify(
-                    x.traverse1(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?)),
-            AExp::App(x, ts, t) => Ok(AExp::App(x,
-                    ts.aexp_traverse(&mut |x| x.tid_traverse(f))?, t.tid_traverse(f)?))
+                    i.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Let(x, a) =>
+                Ok(AExp::Let(x, a.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Log(x, a) =>
+                Ok(AExp::Log(x, a.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Assert(x) =>
+                Ok(AExp::Assert(x.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::Verify(x) =>
+                Ok(AExp::Verify(x.traverse1(&mut |x| x.tid_traverse(f))?)),
+            AExp::App(x, ts) => Ok(AExp::App(x, ts.aexp_traverse(&mut |x| x.tid_traverse(f))?))
         }
     }
 }
 
-impl TidTraversal for TAExps {
+impl TidTraversal for CAExps {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         Ok(AExps(self.0.traverse1(&mut |x| x.tid_traverse(f))?))
     }
 }
 
 /// How to traverse [Range] inside an [AExp]
-impl<N> RangeTraversal<N> for AExp<N, Typ<N>> {
+impl<N> RangeTraversal<N> for AExp<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
-            AExp::Range(r, a) => Ok(AExp::Range(f(r)?, a.range_traverse(f)?)),
-            AExp::Lit(x, a) => Ok(AExp::Lit(x, a.range_traverse(f)?)),
-            AExp::Var(v, a) => Ok(AExp::Var(v, a.range_traverse(f)?)),
-            AExp::Gen(t, a) => Ok(AExp::Gen(t, a.range_traverse(f)?)),
-            AExp::Challenge(t, a) => Ok(AExp::Challenge(t, a.range_traverse(f)?)),
-            AExp::Random(t, a) => Ok(AExp::Random(t, a.range_traverse(f)?)),
-            AExp::Coef(p, a) => Ok(AExp::Coef(p.traverse1(
-                        &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Mle(p, a) => Ok(AExp::Mle(BoxTraversal::traverse(p,
-                        &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Vec(v, a) =>
-                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Bin(op, x, y, a) => Ok(AExp::Bin(op,
+            AExp::Range(r) => Ok(AExp::Range(f(r)?)),
+            AExp::Lit(x) => Ok(AExp::Lit(x)),
+            AExp::Var(v) => Ok(AExp::Var(v)),
+            AExp::Gen(t) => Ok(AExp::Gen(t)),
+            AExp::Challenge(t) => Ok(AExp::Challenge(t)),
+            AExp::Random(t) => Ok(AExp::Random(t)),
+            AExp::Coef(p) => Ok(AExp::Coef(p.traverse1(
+                        &mut |x| x.range_traverse(f))?)),
+            AExp::Mle(p) => Ok(AExp::Mle(BoxTraversal::traverse(p,
+                        &mut |x| x.range_traverse(f))?)),
+            AExp::Vec(v) =>
+                Ok(AExp::Vec(v.aexp_traverse(&mut |x| x.range_traverse(f))?)),
+            AExp::Bin(op, x, y) => Ok(AExp::Bin(op,
                     BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
-                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Map(x, id, r, a) => Ok(AExp::Map(
+                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?)),
+            AExp::Map(x, id, r) => Ok(AExp::Map(
                     BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?, id,
-                    BoxTraversal::traverse(r, &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Ram(x, i, a) => Ok(AExp::Ram(
+                    BoxTraversal::traverse(r, &mut |x| x.range_traverse(f))?)),
+            AExp::Ram(x, i) => Ok(AExp::Ram(
                     BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
-                    BoxTraversal::traverse(i, &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Interpolate(x, y, a) => Ok(AExp::Interpolate(
+                    BoxTraversal::traverse(i, &mut |x| x.range_traverse(f))?)),
+            AExp::Interpolate(x, y) => Ok(AExp::Interpolate(
                     BoxTraversal::traverse(x, &mut |x| x.range_traverse(f))?,
-                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?, a.range_traverse(f)?)),
-            AExp::Let(x, a, t) => Ok(AExp::Let(x,
-                    BoxTraversal::traverse(a, &mut |x| x.range_traverse(f))?, t.range_traverse(f)?)),
-            AExp::Log(x, a, t) => Ok(AExp::Log(x,
-                    BoxTraversal::traverse(a, &mut |x| x.range_traverse(f))?, t.range_traverse(f)?)),
-            AExp::Assert(x, t) => Ok(AExp::Assert(
-                    BoxTraversal::traverse(x,&mut |x| x.range_traverse(f))?, t.range_traverse(f)?)),
-            AExp::Verify(x, t) => Ok(AExp::Verify(
-                    BoxTraversal::traverse(x,&mut |x| x.range_traverse(f))?, t.range_traverse(f)?)),
-            AExp::App(x, ts, t) => Ok(AExp::App(x,
-                    ts.aexp_traverse(&mut |x| x.range_traverse(f))?, t.range_traverse(f)?))
+                    BoxTraversal::traverse(y, &mut |x| x.range_traverse(f))?)),
+            AExp::Let(x, t) => Ok(AExp::Let(x, t.traverse1(&mut |x| x.range_traverse(f))?)),
+            AExp::Log(x, t) => Ok(AExp::Log(x, t.traverse1(&mut |x| x.range_traverse(f))?)),
+            AExp::Assert(x) => Ok(AExp::Assert(x.traverse1(&mut |x| x.range_traverse(f))?)),
+            AExp::Verify(x) => Ok(AExp::Verify(x.traverse1(&mut |x| x.range_traverse(f))?)),
+            AExp::App(x, ts) => Ok(AExp::App(x,
+                    ts.aexp_traverse(&mut |x| x.range_traverse(f))?))
         }
     }
 }
 
-impl<N> RangeTraversal<N> for AExps<N, Typ<N>> {
+impl<N> RangeTraversal<N> for AExps<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(AExps(self.0.traverse1(&mut |x| x.range_traverse(f))?))
     }
 }
 
-impl<N, A> AExps<N, A> {
-    pub fn iter(&self) -> std::slice::Iter<AExp<N, A>> {
+impl<N> AExps<N> {
+    pub fn iter(&self) -> std::slice::Iter<AExp<N>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {
@@ -452,127 +379,106 @@ impl<N, A> AExps<N, A> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    // Parser guarantees that the vector is non-empty
+    pub fn last(&self) -> &AExp<N> {
+        self.0.last().unwrap()
+    }
 }
 
-impl<N, T> IntoIterator for AExps<N, T> {
-    type Item = AExp<N, T>;
-    type IntoIter = std::vec::IntoIter<AExp<N, T>>;
+impl<N> IntoIterator for AExps<N> {
+    type Item = AExp<N>;
+    type IntoIter = std::vec::IntoIter<AExp<N>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N, T> FromIterator<AExp<N, T>> for AExps<N, T> {
-    fn from_iter<I: IntoIterator<Item = AExp<N, T>>>(iter: I) -> Self {
+impl<N> FromIterator<AExp<N>> for AExps<N> {
+    fn from_iter<I: IntoIterator<Item = AExp<N>>>(iter: I) -> Self {
         AExps(iter.into_iter().collect())
     }
 }
 
-impl TAExp {
-    pub fn typ(&self) -> Typ<usize> {
-        match self {
-            AExp::Lit(_, a) => a.clone(),
-            AExp::Var(_, a) => a.clone(),
-            AExp::Coef(_, a) => a.clone(),
-            AExp::Mle(_, a) => a.clone(),
-            AExp::Vec(_, a) => a.clone(),
-            AExp::Bin(_, _, _, a) => a.clone(),
-            AExp::Map(_, _, _, a) => a.clone(),
-            AExp::Challenge(_, a) => a.clone(),
-            AExp::Random(_, a) => a.clone(),
-            AExp::Gen(_, a) => a.clone(),
-            AExp::Range(_, a) => a.clone(),
-            AExp::Interpolate(_, _, a) => a.clone(),
-            AExp::Ram(_, _, a) => a.clone(),
-            AExp::Let(_, _, a) => a.clone(),
-            AExp::Log(_, _, a) => a.clone(),
-            AExp::Assert(_, a) => a.clone(),
-            AExp::Verify(_, a) => a.clone(),
-            AExp::App(_, _, a) => a.clone(),
-        }
-    }
-}
-
 /// Construct untyped expressions
-impl<N> AExp<N, Nothing> {
+impl<N> AExp<N> {
     /// Annotated constructors
     pub fn lit(v: N) -> Self {
-        AExp::Lit(v, Nothing)
+        AExp::Lit(v)
     }
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
-        AExp::Bin(op, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(op, Box::new(l), Box::new(r))
     }
     pub fn gen(t: Tid) -> Self {
-        AExp::Gen(t, Nothing)
+        AExp::Gen(t)
     }
     pub fn coef(a: Self) -> Self {
-        AExp::Coef(Box::new(a), Nothing)
+        AExp::Coef(Box::new(a))
     }
     pub fn mle(a: Self) -> Self {
-        AExp::Mle(Box::new(a), Nothing)
+        AExp::Mle(Box::new(a))
     }
     pub fn interpolate(e: Self, d: Self) -> Self {
-        AExp::Interpolate(Box::new(e), Box::new(d), Nothing)
+        AExp::Interpolate(Box::new(e), Box::new(d))
     }
     pub fn challenge(t: Tid) -> Self {
-        AExp::Challenge(t, Nothing)
+        AExp::Challenge(t)
     }
     pub fn random(t: Tid) -> Self {
-        AExp::Random(t, Nothing)
+        AExp::Random(t)
     }
     pub fn vec(v: Vec<Self>) -> Self {
-        AExp::Vec(AExps(v), Nothing)
+        AExp::Vec(AExps(v))
     }
     pub fn map(l: Self, x: Vid, range: Self) -> Self {
-        AExp::Map(Box::new(l), x, Box::new(range), Nothing)
+        AExp::Map(Box::new(l), x, Box::new(range))
     }
     pub fn ram(v: Self, i: Self) -> Self {
-        AExp::Ram(Box::new(v), Box::new(i), Nothing)
+        AExp::Ram(Box::new(v), Box::new(i))
     }
     pub fn range(r: Range<N>) -> Self {
-        AExp::Range(r, Nothing)
+        AExp::Range(r)
     }
     pub fn add(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Add, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Add, Box::new(l), Box::new(r))
     }
     pub fn sub(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Sub, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Sub, Box::new(l), Box::new(r))
     }
     pub fn mul(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Mul, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Mul, Box::new(l), Box::new(r))
     }
     pub fn div(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Div, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Div, Box::new(l), Box::new(r))
     }
     pub fn pow(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Pow, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Pow, Box::new(l), Box::new(r))
     }
     pub fn dot(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Dot, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Dot, Box::new(l), Box::new(r))
     }
     pub fn concat(l: Self, r: Self) -> Self {
-        AExp::Bin(BinOp::Concat, Box::new(l), Box::new(r), Nothing)
+        AExp::Bin(BinOp::Concat, Box::new(l), Box::new(r))
     }
     pub fn var(x: Vid) -> Self {
-        AExp::Var(x, Nothing)
+        AExp::Var(x)
     }
     pub fn varstr<'a>(x: &'a str) -> Self {
         AExp::var(Vid::from(x))
     }
-    pub fn app(e: Fid, d: AExps<N, Nothing>) -> Self {
-        AExp::App(e, d, Nothing)
+    pub fn app(e: Fid, d: AExps<N>) -> Self {
+        AExp::App(e, d)
     }
-    pub fn assert(b: BExp<N, Nothing>) -> Self {
-        AExp::Assert(Box::new(b), Nothing)
+    pub fn assert(b: BExp<N>) -> Self {
+        AExp::Assert(Box::new(b))
     }
-    pub fn verify(b: BExp<N, Nothing>) -> Self {
-        AExp::Verify(Box::new(b), Nothing)
+    pub fn verify(b: BExp<N>) -> Self {
+        AExp::Verify(Box::new(b))
     }
     pub fn letx(a: Vid, d: Self) -> Self {
-        AExp::Let(a, Box::new(d), Nothing)
+        AExp::Let(a, Box::new(d))
     }
     pub fn logx(a: Vid, d: Self) -> Self {
-        AExp::Log(a, Box::new(d), Nothing)
+        AExp::Log(a, Box::new(d))
     }
 }
 
@@ -601,178 +507,101 @@ where
 }
 
 /// Pretty printer instance for typed AExp
-impl<'a, D, A, N, T> Pretty<'a, D, A> for AExp<N, T>
+impl<'a, D, A, N> Pretty<'a, D, A> for AExp<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
-    T: Pretty<'a, D, A>,
     N: Pretty<'a, D, A>,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            AExp::Lit(p, t) => allocator.concat([
-                p.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            AExp::Coef(p, t) => allocator.concat([
+            AExp::Lit(p) => p.pretty(allocator),
+            AExp::Coef(p) => allocator.concat([
                 allocator.text("coef "),
                 p.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            AExp::Mle(p, t) => allocator.concat([
+            ]),
+            AExp::Mle(p) => allocator.concat([
                 allocator.text("mle "),
                 p.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Vec(ts, t) => allocator.concat([
+            ]),
+            AExp::Vec(ts) => allocator.concat([
                 allocator.text("["),
                 allocator.intersperse(ts.into_iter().map(|x| x.pretty(allocator)), ", "),
                 allocator.text("]"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t.pretty(allocator))
-                }]),
-            AExp::Bin(op, a, b, t) => allocator.concat([
+            ]),
+            AExp::Bin(op, a, b) => allocator.concat([
                 (*a).pretty(allocator),
                 op.pretty(allocator),
                 (*b).pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Map(x, id, range, t) => allocator.concat([
+            ]),
+            AExp::Map(x, id, range) => allocator.concat([
                 allocator.text("["),
                 x.pretty(allocator),
                 allocator.text(format!(" for {} in ", id)),
                 range.pretty(allocator),
-                allocator.text("] ⇝ "),
-                t.pretty(allocator)
+                allocator.text("]"),
             ]),
-            AExp::Var(x, t) => allocator.concat([
+            AExp::Var(x) => allocator.concat([
                 x.pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Challenge(t, t2) => allocator.concat([
+            ]),
+            AExp::Challenge(t) => allocator.concat([
                 allocator.text("challenge<"),
                 t.pretty(allocator),
                 allocator.text(">"),
-                if t2.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t2.pretty(allocator))
-                }]),
-            AExp::Random(t, t2) => allocator.concat([
+            ]),
+            AExp::Random(t) => allocator.concat([
                 allocator.text("random<"),
                 t.pretty(allocator),
                 allocator.text(">"),
-                if t2.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t2.pretty(allocator))
-                }]),
-            AExp::Gen(t, t2) => allocator.concat([
+            ]),
+            AExp::Gen(t) => allocator.concat([
                 allocator.text("gen<"),
                 t.pretty(allocator),
                 allocator.text(">"),
-                if t2.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t2.pretty(allocator))
-                }]),
-            AExp::Range(r, t2) => allocator.concat([
+            ]),
+            AExp::Range(r) => allocator.concat([
                 r.pretty(allocator),
-                if t2.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text(" ⇝ ").append(t2.pretty(allocator))
-                }]),
-            AExp::App(x, d, t) => allocator.concat([
+            ]),
+            AExp::App(x, d) => allocator.concat([
                 x.pretty(allocator),
                 allocator.text("("),
                 d.pretty(allocator),
                 allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Interpolate(b, d, t) => allocator.concat([
+            ]),
+            AExp::Interpolate(b, d) => allocator.concat([
                 allocator.text("interpolate("),
                 (*b).pretty(allocator),
                 allocator.text(", "),
                 (*d).pretty(allocator),
-                allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Ram(x, i, t) => allocator.concat([
+                allocator.text(")")
+            ]),
+            AExp::Ram(x, i) => allocator.concat([
                 (*x).pretty(allocator),
                 allocator.text("["),
                 (*i).pretty(allocator),
                 allocator.text("]"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                }]),
-            AExp::Let(x, a, t) => allocator.concat([
+            ]),
+            AExp::Let(x, t) => allocator.concat([
                 allocator.text("let "),
                 x.pretty(allocator),
                 allocator.text(" = "),
-                (*a).pretty(allocator),
-                allocator.text(" in "),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                },
+                (*t).pretty(allocator),
             ]),
-            AExp::Log(x, a, t) => allocator.concat([
+            AExp::Log(x, t) => allocator.concat([
                 x.pretty(allocator),
                 allocator.text(" <- "),
-                (*a).pretty(allocator),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                },
+                (*t).pretty(allocator),
             ]),
-            AExp::Assert(c, t) => allocator.concat([
+            AExp::Assert(c) => allocator.concat([
                 allocator.text("assert("),
                 (*c).pretty(allocator),
                 allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                },
             ]),
-            AExp::Verify(c, t) => allocator.concat([
+            AExp::Verify(c) => allocator.concat([
                 allocator.text("verify("),
                 (*c).pretty(allocator),
                 allocator.text(")"),
-                if t.is_nil() {
-                    allocator.nil()
-                } else {
-                    allocator.text("⇝").append(t.pretty(allocator))
-                },
             ])
         }
     }
@@ -782,11 +611,10 @@ where
     }
 }
 
-impl<'a, D, A, N, T> Pretty<'a, D, A> for AExps<N, T>
+impl<'a, D, A, N> Pretty<'a, D, A> for AExps<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
-    T: Pretty<'a, D, A>,
     N: Pretty<'a, D, A>,
     A: 'a + Clone,
 {
@@ -866,25 +694,23 @@ impl fmt::Display for BinOp {
     }
 }
 
-impl<'a, N, T> fmt::Display for AExp<N, T>
+impl<'a, N> fmt::Display for AExp<N>
 where
-    T: Clone + Pretty<'a, BoxAllocator, ()>,
     N: Clone + Pretty<'a, BoxAllocator, ()>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <AExp<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <AExp<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
-impl<'a, N, T> fmt::Display for AExps<N, T>
+impl<'a, N> fmt::Display for AExps<N>
 where
-    T: Clone + Pretty<'a, BoxAllocator, ()>,
     N: Clone + Pretty<'a, BoxAllocator, ()>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <AExps<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <AExps<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

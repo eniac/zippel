@@ -97,8 +97,8 @@ impl<N> Typ<N> {
     pub fn varstr<'a>(b: &'a str) -> Self {
         Typ::Base(Tid::new(b))
     }
-    pub fn var(b: Tid) -> Self {
-        Typ::Base(b)
+    pub fn var(b: &Tid) -> Self {
+        Typ::Base(b.clone())
     }
     pub fn uni(b: Tid, n: N) -> Self {
         Typ::Uni(b, n)
@@ -125,7 +125,7 @@ impl<N> Typ<N> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(&b)?;
-                if k.is_field() {
+                if k == &Kind::Field {
                     Some(b)
                 } else {
                     None
@@ -133,7 +133,7 @@ impl<N> Typ<N> {
             },
             Typ::Fin(_) =>
                 // Find the first field and return It
-                ctx.iter().find(|(_, k)| k.is_field())
+                ctx.iter().find(|(_, k)| k == &&Kind::Field)
                     .map(|(b, _)| b.clone()),
 
             _ => None
@@ -150,6 +150,9 @@ impl<N> Typs<N> {
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+    pub fn last(&self) -> Option<&Typ<N>> {
+        self.0.last()
     }
 }
 

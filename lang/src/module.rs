@@ -9,19 +9,19 @@ use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
 use crate::sig::{CSig, Sig};
 use crate::decl::{Body, UDecls};
-use crate::typ::{Size, Typ, TypeVars, EvalError, Nothing};
+use crate::typ::{Size, TypeVars, EvalError};
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Polymod<N, T>(pub Ctx<(TypeVars, Sig<N>), Body<N, T>>);
+pub struct Polymod<N>(pub Ctx<(TypeVars, Sig<N>), Body<N>>);
 
 /// Monomorphic Module, a collection of declarations indexed by their signature
 /// and type variables pushed out, made global to the module
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Monomod<N, T> {
+pub struct Monomod<N> {
     pub typevars: TypeVars,
-    pub declarations: Ctx<Sig<N>, Body<N, T>>
+    pub declarations: Ctx<Sig<N>, Body<N>>
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -32,19 +32,16 @@ pub enum ModuleError {
     EvalError(#[from] EvalError),
 }
 
-/// Polymorphic, untyped module with symbolic sizes
-pub type UPolymod = Polymod<Size, Nothing>;
+/// Polymorphic module with symbolic sizes
+pub type UPolymod = Polymod<Size>;
 
-/// Polymorphic, untyped module with concrete sizes
-pub type CPolymod = Polymod<usize, Nothing>;
+/// Polymorphic module with concrete sizes
+pub type CPolymod = Polymod<usize>;
 
-/// Polymorphic, typed module with concrete sizes
-pub type TPolymod = Polymod<usize, Typ<usize>>;
+/// Monomorphic module with concrete sizes
+pub type CMonomod = Monomod<usize>;
 
-/// Monomorphic, typed module with concrete sizes
-pub type TMonomod = Monomod<usize, Typ<usize>>;
-
-impl<N: Ord, T> Polymod<N, T> {
+impl<N: Ord> Polymod<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -103,25 +100,24 @@ impl UPolymod {
     }
 }
 
-impl<N: Ord, T> IntoIterator for Polymod<N, T> {
-    type Item = ((TypeVars, Sig<N>), Body<N, T>);
-    type IntoIter = std::collections::btree_map::IntoIter<(TypeVars, Sig<N>), Body<N, T>>;
+impl<N: Ord> IntoIterator for Polymod<N> {
+    type Item = ((TypeVars, Sig<N>), Body<N>);
+    type IntoIter = std::collections::btree_map::IntoIter<(TypeVars, Sig<N>), Body<N>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N: Ord, T> FromIterator<((TypeVars, Sig<N>), Body<N, T>)> for Polymod<N, T> {
-    fn from_iter<I: IntoIterator<Item = ((TypeVars, Sig<N>), Body<N, T>)>>(iter: I) -> Self {
+impl<N: Ord> FromIterator<((TypeVars, Sig<N>), Body<N>)> for Polymod<N> {
+    fn from_iter<I: IntoIterator<Item = ((TypeVars, Sig<N>), Body<N>)>>(iter: I) -> Self {
         Polymod(iter.into_iter().collect())
     }
 }
 
 /// Pretty printer instance
-impl<'a, D, A, N, T> Pretty<'a, D, A> for Polymod<N, T>
+impl<'a, D, A, N> Pretty<'a, D, A> for Polymod<N>
 where
     N: Pretty<'a, D, A> + Ord + Clone + 'a,
-    T: Pretty<'a, D, A> + Clone,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -146,13 +142,12 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N, T> fmt::Display for Polymod<N, T>
+impl<'a, N> fmt::Display for Polymod<N>
 where
     N: Clone + Ord + Pretty<'a, BoxAllocator, ()> + 'a,
-    T: Clone + Pretty<'a, BoxAllocator, ()> ,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Polymod<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Polymod<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

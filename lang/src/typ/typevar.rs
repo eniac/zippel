@@ -3,6 +3,7 @@ use crate::range::Range;
 use crate::typ::kind::Kind;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
+use itertools::Itertools;
 use pest::iterators::Pairs;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
@@ -100,7 +101,48 @@ impl<'pest> FromPest<'pest> for TypeVars {
             Rule::tvars => {
                 let mut tvars = Vec::new();
                 for pair in pair.into_inner() {
-                    tvars.push(TypeVar::from_pest(&mut Pairs::single(pair))?);
+                    let tv = TypeVar::from_pest(&mut Pairs::single(pair))?;
+                    // No duplicate type variables
+                    if tvars.iter().any(|t: &TypeVar| t.id == tv.id) {
+                        return Err(ConversionError::Malformed(InputError::DuplicateTid(tv.id)));
+                    }
+                    // Check the kinds are correct
+                    match tv.kind.clone() {
+                        Kind::Pairing(g1, g2) => {
+                            // Is [g1] a group kind?
+                            let tv1 = tvars.iter().find(|tv| tv.id == g1)
+                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(g1.clone())))?;
+                            if !tv1.kind.is_group() {
+                                return Err(ConversionError::Malformed(InputError::PairingGroup(g1.clone(), g2, g1.clone(), tv1.kind.clone())));
+                            }
+                            // Is [g2] a group kind?
+                            let tv2 = tvars.iter().find(|tv| tv.id == g2)
+                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(g2.clone())))?;
+                            if !tv2.kind.is_group() {
+                                return Err(ConversionError::Malformed(InputError::PairingGroup(g1, g2.clone(), g2, tv2.kind.clone())));
+                            }
+                            tvars.push(tv);
+                        },
+                        Kind::Multiplicative(f) => {
+                            // Is [f] a field kind?
+                            let tvf = tvars.iter().find(|tv| tv.id == f)
+                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(f.clone())))?;
+                            if ! (tvf.kind == Kind::Field) {
+                                return Err(ConversionError::Malformed(InputError::MultiplicativeField(f.clone(), tvf.kind.clone())));
+                            }
+                            tvars.push(tv);
+                        },
+                        Kind::Scalar(g) => {
+                            // Is [g] a group kind?
+                            let tvs = tvars.iter().find(|tv| tv.id == g)
+                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(g.clone())))?;
+                            if !tvs.kind.is_group() {
+                                return Err(ConversionError::Malformed(InputError::ScalarGroup(g, tvs.kind.clone())));
+                            }
+                            tvars.push(tv);
+                        },
+                        _ => tvars.push(tv),
+                    }
                 }
                 Ok(TypeVars(tvars))
             },
@@ -164,17 +206,46 @@ impl fmt::Display for TypeVars {
 #[cfg(test)] use pest::Parser;
 #[test]
 fn typevars_parser() {
-    let ex = "A: Field, B: Group, C: Scalar<A>, D: Multiplicative<B>, E: Pairing<A, B>, F: 0..10";
+    let ex = "A: Field, B1: Group, B2: Group, C: Scalar<B1>, D: Multiplicative<A>, E: Pairing<B1, B2>, F: 0..10";
     let mut pairs = ZippelParser::parse(Rule::tvars, ex).unwrap();
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
         Ok(TypeVars(vec![
             TypeVar::new("A", Kind::Field),
-            TypeVar::new("B", Kind::Group),
-            TypeVar::new("C", Kind::scalar("A")),
-            TypeVar::new("D", Kind::multiplicative("B")),
-            TypeVar::new("E", Kind::pairing("A", "B")),
+            TypeVar::new("B1", Kind::Group),
+            TypeVar::new("B2", Kind::Group),
+            TypeVar::new("C", Kind::scalar("B1")),
+            TypeVar::new("D", Kind::multiplicative("A")),
+            TypeVar::new("E", Kind::pairing("B1", "B2")),
             TypeVar::new("F", Kind::range(0, 1, 10))
         ]))
+    );
+
+    let ex_bad_dup = "A: Field, A: Group";
+    let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_dup).unwrap();
+    assert_eq!(
+        TypeVars::from_pest(&mut pairs),
+        Err(ConversionError::Malformed(InputError::DuplicateTid(Tid::new("A"))))
+    );
+
+    let ex_bad_scalar = "A: Field, B: Group, C: Scalar<A>";
+    let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_scalar).unwrap();
+    assert_eq!(
+        TypeVars::from_pest(&mut pairs),
+        Err(ConversionError::Malformed(InputError::ScalarGroup(Tid::new("A"), Kind::Field)))
+    );
+
+    let ex_bad_multiplicative = "A: Field, B: Group, D: Multiplicative<B>";
+    let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_multiplicative).unwrap();
+    assert_eq!(
+        TypeVars::from_pest(&mut pairs),
+        Err(ConversionError::Malformed(InputError::MultiplicativeField(Tid::new("B"), Kind::Group)))
+    );
+
+    let ex_bad_pairing = "A: Field, B: Group, E: Pairing<A, B>";
+    let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_pairing).unwrap();
+    assert_eq!(
+        TypeVars::from_pest(&mut pairs),
+        Err(ConversionError::Malformed(InputError::PairingGroup(Tid::new("A"), Tid::new("B"), Tid::new("A"), Kind::Field)))
     );
 }

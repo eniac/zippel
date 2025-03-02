@@ -5,11 +5,11 @@ use pest::Parser;
 use bumpalo::Bump;
 
 use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use share::traversal::{ToTraversal1, ToTraversal2};
+use share::traversal::ToTraversal1;
 use crate::typ::TypeVars;
 use crate::sig::Sig;
 use crate::id::{Tid, TidTraversal, Fid};
-use crate::typ::{Typ, Size, Nothing};
+use crate::typ::{Typ, Size};
 use crate::arg::Args;
 use crate::exp::{AExp, AExps, BExp};
 use crate::parser::*;
@@ -20,15 +20,15 @@ use crate::parser::*;
 /// or by the return type of the function.
 /// Parametrized by `N` the type of sizes and `T` the type of types.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum Body<N, T> {
+pub enum Body<N> {
     /// A protocol body declaration
     ///
     /// # fields
     /// - `body`: The body of the protocol.
     /// - `relation`: The relation describing the protocol.
     Proto {
-        body: AExps<N, T>,
-        relation: BExp<N, T>,
+        body: AExps<N>,
+        relation: BExp<N>,
     },
 
     /// A function body declaration
@@ -36,19 +36,19 @@ pub enum Body<N, T> {
     /// # fields
     /// - `body`: The body of the function.
     Func {
-        body: AExps<N, T>
+        body: AExps<N>
     },
 }
 
 /// A zippel declaration is either a protocol or a function.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Decl<N, T> {
+pub struct Decl<N> {
     pub sig: Sig<N>,
     pub typevars: TypeVars,
-    pub body: Body<N, T>,
+    pub body: Body<N>,
 }
 
-impl<N, T> Body<N, T> {
+impl<N> Body<N> {
     pub fn is_proto(&self) -> bool {
         match self {
             Body::Proto { .. } => true,
@@ -59,7 +59,7 @@ impl<N, T> Body<N, T> {
     pub fn is_func(&self) -> bool {
         ! self.is_proto()
     }
-    pub fn last(&self) -> Option<&AExp<N, T>> {
+    pub fn last(&self) -> Option<&AExp<N>> {
         match self {
             Body::Proto { body, .. } => body.0.last(),
             Body::Func { body } => body.0.last(),
@@ -68,14 +68,14 @@ impl<N, T> Body<N, T> {
 }
 
 /// Useful constructors
-impl<N, T> Decl<N, T> {
-    pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: BExp<N, T>, body: AExps<N, T>) -> Self {
+impl<N> Decl<N> {
+    pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: BExp<N>, body: AExps<N>) -> Self {
         let sig = Sig { name, args, ret: Typ::bool() };
         let body = Body::Proto { relation, body };
         Decl { sig, typevars, body }
     }
 
-    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: AExps<N, T>) -> Self {
+    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: AExps<N>) -> Self {
         let sig = Sig { name, args, ret };
         let body = Body::Func { body };
         Decl { sig, typevars, body }
@@ -84,34 +84,26 @@ impl<N, T> Decl<N, T> {
 
 /// A collection of declarations
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Decls<N, T>(pub Vec<Decl<N, T>>);
+pub struct Decls<N>(pub Vec<Decl<N>>);
 
 /// Untyped body with symbolic sizes
-pub type UBody =  Body<Size, Nothing>;
+pub type UBody =  Body<Size>;
 
 /// Concrete sized body
-pub type CBody = Body<usize, Nothing>;
-
-/// Typed body
-pub type TBody = Body<usize, Typ<usize>>;
+pub type CBody = Body<usize>;
 
 /// Untyped decl with symbolic sizes
-pub type UDecl =  Decl<Size, Nothing>;
+pub type UDecl =  Decl<Size>;
 
 /// Concrete sized decl
-pub type CDecl = Decl<usize, Nothing>;
-
-/// Typed decl
-pub type TDecl = Decl<usize, Typ<usize>>;
+pub type CDecl = Decl<usize>;
 
 /// Untyped declarations with symbolic sizes
-pub type UDecls =  Decls<Size, Nothing>;
+pub type UDecls =  Decls<Size>;
 
 /// Concrete sized declarations
-pub type CDecls = Decls<usize, Nothing>;
+pub type CDecls = Decls<usize>;
 
-/// Typed declarations
-pub type TDecls = Decls<usize, Typ<usize>>;
 
 impl UDecl {
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
@@ -137,25 +129,25 @@ impl UDecls {
     }
 }
 
-impl<N, T> IntoIterator for Decls<N, T> {
-    type Item = Decl<N, T>;
-    type IntoIter = std::vec::IntoIter<Decl<N, T>>;
+impl<N> IntoIterator for Decls<N> {
+    type Item = Decl<N>;
+    type IntoIter = std::vec::IntoIter<Decl<N>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N, T> FromIterator<Decl<N, T>> for Decls<N, T> {
-    fn from_iter<I: IntoIterator<Item = Decl<N, T>>>(iter: I) -> Self {
+impl<N> FromIterator<Decl<N>> for Decls<N> {
+    fn from_iter<I: IntoIterator<Item = Decl<N>>>(iter: I) -> Self {
         Decls(iter.into_iter().collect())
     }
 }
 
 /// Traversable1 instance for Body (N)
-impl<N, T> ToTraversal1<N> for Body<N, T> {
-    type Output<Z> = Body<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z, T>, E> {
+impl<N> ToTraversal1<N> for Body<N> {
+    type Output<Z> = Body<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
         match self {
             Body::Proto { relation, body } =>
                 Ok(Body::Proto {
@@ -170,34 +162,16 @@ impl<N, T> ToTraversal1<N> for Body<N, T> {
     }
 }
 
-/// Traversable2 instance for Body (T)
-impl<N, T> ToTraversal2<T> for Body<N, T> {
-    type Output<Z> = Body<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Body<N, Z>, E> {
-        match self {
-            Body::Proto { relation, body } =>
-                Ok(Body::Proto {
-                    body: body.traverse2(f)?,
-                    relation: relation.traverse2(f)?,
-                }),
-            Body::Func { body } =>
-                Ok(Body::Func {
-                    body: body.traverse2(f)?,
-                }),
-        }
-    }
-}
-
-impl TidTraversal for TBody {
+impl TidTraversal for CBody {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         match self {
             Body::Proto { relation, body } =>
-                Ok(TBody::Proto {
+                Ok(Body::Proto {
                     relation: relation.tid_traverse(f)?,
                     body: body.tid_traverse(f)?,
                 }),
             Body::Func { body } =>
-                Ok(TBody::Func {
+                Ok(Body::Func {
                     body: body.tid_traverse(f)?,
                 }),
         }
@@ -205,9 +179,8 @@ impl TidTraversal for TBody {
 }
 
 /// Pretty printer instance for Body
-impl<'a, D, N, A, T> Pretty<'a, D, A> for Body<N, T>
+impl<'a, D, N, A> Pretty<'a, D, A> for Body<N>
 where
-    T: Pretty<'a, D, A>,
     D: DocAllocator<'a, A>,
     N: Clone + Pretty<'a, D, A> + 'a,
     D::Doc: Clone,
@@ -242,9 +215,8 @@ where
 }
 
 /// Pretty printer instance
-impl<'a, D, N, A, T> Pretty<'a, D, A> for Decl<N, T>
+impl<'a, D, N, A> Pretty<'a, D, A> for Decl<N>
 where
-    T: Pretty<'a, D, A>,
     D: DocAllocator<'a, A>,
     N: Clone + Pretty<'a, D, A> + 'a,
     D::Doc: Clone,
@@ -267,21 +239,19 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N, T> fmt::Display for Decl<N, T>
+impl<'a, N> fmt::Display for Decl<N>
 where
-    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
     N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Decl<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Decl<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 /// Pretty instance for decls
-impl <'a, D, N, A, T> Pretty<'a, D, A> for Decls<N, T>
+impl <'a, D, N, A> Pretty<'a, D, A> for Decls<N>
 where
-    T: Pretty<'a, D, A>,
     D: DocAllocator<'a, A>,
     N: Clone + Pretty<'a, D, A> + 'a,
     D::Doc: Clone,
@@ -300,13 +270,12 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N, T> fmt::Display for Decls<N, T>
+impl<'a, N> fmt::Display for Decls<N>
 where
-    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
     N: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Decls<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Decls<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

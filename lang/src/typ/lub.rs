@@ -358,23 +358,66 @@ impl Lub for Tid {
                     LubError::tid_equ(&a, &b),
                     LubError::kind_not_found(&b)))?;
 
-        if a == b {
-            Ok(a)
-        } else {
-            Err(LubError::tv_equ(&a, &ka, &b, &kb))
+        match (ka, kb) {
+            (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Group, Kind::Group) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
+            (Kind::Scalar(g1), Kind::Group) if g1 == &b => Ok(b),
+            (Kind::Group, Kind::Scalar(g2)) if g2 == &a => Ok(a),
+            (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
+            (Kind::Multiplicative(f), Kind::Field) if f == &b => Ok(b),
+            (Kind::Field, Kind::Multiplicative(f)) if f == &a => Ok(a),
+            (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
+            // Range kinds should be substituted at this point
+            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (_, _) => Err(LubError::tv_equ(&a, ka, &b, kb))
         }
     }
 
     /// Least-upper-bound for addition of different kinds
     fn lub_add(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
-        Self::lub_equ(a.clone(), b.clone(), ctx)
-            .map_err(|e| LubError::next(LubError::tid_add(&a, &b), e))
+        let ka = ctx.get(&a)
+            .ok_or(LubError::next(
+                    LubError::tid_equ(&a, &b),
+                    LubError::kind_not_found(&a)))?;
+
+        let kb = ctx.get(&b)
+            .ok_or(LubError::next(
+                    LubError::tid_equ(&a, &b),
+                    LubError::kind_not_found(&b)))?;
+
+        match (ka, kb) {
+            (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
+            (Kind::Group, Kind::Group) if a == b => Ok(a),
+            (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
+            // Range kinds should be substituted at this point
+            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (_, _) => Err(LubError::tv_add(&a, ka, &b, kb))
+        }
     }
 
     /// Least-upper-bound for subtraction same as addition
     fn lub_sub(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
-        Self::lub_equ(a.clone(), b.clone(), ctx)
-            .map_err(|e| LubError::next(LubError::tid_sub(&a, &b), e))
+        let ka = ctx.get(&a)
+            .ok_or(LubError::next(
+                    LubError::tid_equ(&a, &b),
+                    LubError::kind_not_found(&a)))?;
+
+        let kb = ctx.get(&b)
+            .ok_or(LubError::next(
+                    LubError::tid_equ(&a, &b),
+                    LubError::kind_not_found(&b)))?;
+
+        match (ka, kb) {
+            (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
+            (Kind::Group, Kind::Group) if a == b => Ok(a),
+            (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
+            // Range kinds should be substituted at this point
+            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (_, _) => Err(LubError::tv_sub(&a, ka, &b, kb))
+        }
     }
 
     /// Least-upper-bound for multiplication of different kinds
@@ -390,8 +433,7 @@ impl Lub for Tid {
             // Scalar multiplication: Scalar * Group = Group
             (Kind::Scalar(g1), Kind::Group) if g1 == &b => Ok(b),
             (Kind::Group, Kind::Scalar(g2)) if g2 == &a => Ok(a),
-            (Kind::Multiplicative(f1), Kind::Field) if f1 == &b => Ok(b),
-            (Kind::Field, Kind::Multiplicative(f2)) if f2 == &a => Ok(a),
+            (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             // Group multiplication is only allowed for pairing friendly curves
@@ -419,7 +461,7 @@ impl Lub for Tid {
             (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
             // Group / Scalar = Group
             (Kind::Group, Kind::Scalar(g)) if g == &a => Ok(a),
-            (Kind::Multiplicative(f), Kind::Field) if f == &b => Ok(b),
+            (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(b),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) => Err(LubError::tv_div(&a, ka, &b, kb))
@@ -436,6 +478,7 @@ impl Lub for Tid {
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 && a == b => Ok(a),
+            (Kind::Multiplicative(_), Kind::Field) => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) => Err(LubError::tv_pow(&a, ka, &b, kb))
@@ -483,7 +526,7 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::typ_equ(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_equ(&x, &y))
@@ -510,9 +553,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Mle(Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?, n.max(m))),
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                Ok(CTyp::vec(CTyp::lub_add(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?, n)),
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_add(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_add(&x, &y))
+                },
             // Uni<A> + c = Uni<                },A> if c is a finite field
             (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
                 let t = CTyp::lub_add(a.clone(), CTyp::Base(b), ctx)
@@ -538,7 +585,7 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::typ_add(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_add(&x, &y))
@@ -565,10 +612,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Mle(Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_sub(&x, &y), e))?, n.max(m))),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                Ok(CTyp::vec(CTyp::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_sub(&x, &y), e))?, n)),
-
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_sub(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_sub(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_sub(&x, &y))
+                },
             // Uni<A> - c = Uni<A> if c is a finite field
             (CTyp::Uni(b, n), a) => {
                 let t = CTyp::lub_sub(CTyp::Base(b), a.clone(), ctx)
@@ -594,7 +644,7 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::typ_sub(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_sub(&x, &y))
@@ -617,10 +667,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Uni(Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_mul(&x, &y), e))?, n + m)),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                Ok(CTyp::vec(CTyp::lub_mul(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_mul(&x, &y), e))?, n)),
-
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_mul(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_mul(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_mul(&x, &y))
+                },
             // Vec<A> * c = Vec<A>
             (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
                 Ok(CTyp::vec(CTyp::lub_mul(a, b, ctx)
@@ -649,7 +702,7 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::typ_mul(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_mul(&x, &y))
@@ -672,9 +725,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Uni(Tid::lub_div(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_div(&x, &y), e))?, n - m)),
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                Ok(CTyp::vec(CTyp::lub_div(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_div(&x, &y), e))?, n)),
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_div(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_div(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_div(&x, &y))
+                },
             // Vec<A> / c = Vec<A>
             (CTyp::Vec(box b, n), a) =>
                 Ok(CTyp::vec(CTyp::lub_div(a, b, ctx)
@@ -706,7 +763,7 @@ impl Lub for CTyp {
                     .ok_or(LubError::next(
                             LubError::typ_div(&x, &y),
                             LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_div(&x, &y))
@@ -721,18 +778,29 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_pow(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_pow(&x, &y), e))?)),
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::lub_pow(a, b, &Nothing)
+                    .map_err(|e| LubError::next(LubError::typ_pow(&x, &y), e))?)),
+            (CTyp::Base(a), CTyp::Fin(_)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(
                             LubError::typ_pow(&x, &y),
                             LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka.is_multiplicative() {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_pow(&x, &y))
                 }
             },
 
+            // Vec<A> ^ Vec<B> = Vec<C>
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_pow(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_pow(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_pow(&x, &y))
+                },
             // Vec<B> ^ A = Vec<B>
             (CTyp::Vec(box a, n), b) =>
                 Ok(CTyp::vec(CTyp::lub_pow(a, b, ctx)
@@ -760,10 +828,13 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?, n + m)),
 
             // Vec<A> * Vec<B> = C
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                CTyp::lub_dot(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e)),
-
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    CTyp::lub_dot(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))
+                } else {
+                    Err(LubError::typ_dot(&x, &y))
+                },
             // Vec<A> * c = Vec<A>
             (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
                 Ok(CTyp::vec(CTyp::lub_dot(a, b, ctx)
@@ -793,7 +864,7 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::typ_dot(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka.is_multiplicative() {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(LubError::typ_dot(&x, &y))

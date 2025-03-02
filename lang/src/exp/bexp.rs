@@ -7,7 +7,7 @@ use pest::pratt_parser::{Assoc, Op, PrattParser};
 
 use share::traversal::{ToTraversal1, ToTraversal2};
 use share::{BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, Size, Nothing};
+use crate::typ::{Typ, Size};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
 use crate::id::{Tid, TidTraversal, Fid};
 use crate::range::{Range, RangeTraversal};
@@ -15,14 +15,14 @@ use crate::range::{Range, RangeTraversal};
 /// Represents boolean expressions in the Zippel language.
 /// It is parameterized by the type `A` of annotations:
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-pub enum BExp<N, T> {
+pub enum BExp<N> {
     ///     Represents an application of a protocol to a list of arguments.
     ///
     ///     **Zippel Code:**
     ///     ```zippel
     ///     assert(sumcheck(a, b, c));
     ///     ```
-    App(Fid, AExps<N, T>),
+    App(Fid, AExps<N>),
 
     ///     Represents inclusion of an element in a vector
     ///
@@ -30,7 +30,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(x in v);
     ///     ```
-    Contains(AExp<N, T>, AExp<N, T>),
+    Contains(AExp<N>, AExp<N>),
 
     ///     Represents the equality comparison between two arithmetic expressions.
     ///
@@ -38,7 +38,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     verify(5 == 5);
     ///     ```
-    Equ(AExp<N, T>, AExp<N, T>),
+    Equ(AExp<N>, AExp<N>),
 
     ///     Represents the logical AND of two boolean expressions.
     ///
@@ -46,7 +46,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(true && false);
     ///     ```
-    And(Box<BExp<N, T>>, Box<BExp<N, T>>),
+    And(Box<BExp<N>>, Box<BExp<N>>),
 
     ///     Represents the logical OR of two boolean expressions.
     ///
@@ -54,7 +54,7 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     verify(true || false);
     ///     ```
-    Or(Box<BExp<N, T>>, Box<BExp<N, T>>),
+    Or(Box<BExp<N>>, Box<BExp<N>>),
 
     ///     Represents the negation of a boolean expression.
     ///
@@ -62,22 +62,19 @@ pub enum BExp<N, T> {
     ///     ```zippel
     ///     assert(!true);
     ///     ```
-    Not(Box<BExp<N, T>>),
+    Not(Box<BExp<N>>),
 }
 
-/// Typed AST node
-pub type TBExp = BExp<usize, Typ<usize>>;
-
 /// Untyped AST node with symbolic sizes
-pub type UBExp = BExp<Size, Nothing>;
+pub type UBExp = BExp<Size>;
 
 /// Untyped AST node with concrete sizes
-pub type CBExp = BExp<usize, Nothing>;
+pub type CBExp = BExp<usize>;
 
 /// Traverse parameter (N) inside BExp
-impl<N, T> ToTraversal1<N> for BExp<N, T> {
-    type Output<Z> = BExp<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z, T>, E> {
+impl<N> ToTraversal1<N> for BExp<N> {
+    type Output<Z> = BExp<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<BExp<Z>, E> {
         match self {
             BExp::Equ(a, b) =>
                 Ok(BExp::Equ(a.traverse1(f)?, b.traverse1(f)?)),
@@ -94,36 +91,8 @@ impl<N, T> ToTraversal1<N> for BExp<N, T> {
     }
 }
 
-/// Traverse the second type parameter (T) for a [BExp]
-impl<N, T> ToTraversal2<T> for BExp<N, T> {
-    type Output<Z> = BExp<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<BExp<N, Z>, E> {
-        match self {
-            BExp::Equ(a, b) => Ok(BExp::Equ(a.traverse2(f)?, b.traverse2(f)?)),
-            BExp::App(id, v) =>
-                Ok(BExp::App(id, v.aexp_traverse(&mut |x| x.traverse2(f))?)),
-            BExp::Contains(a, b) =>
-                Ok(BExp::Contains(
-                    a.traverse2(f)?,
-                    b.traverse2(f)?,
-                )),
-            BExp::And(a, b) =>
-                Ok(BExp::And(
-                    a.traverse1(&mut |x| x.traverse2(f))?,
-                    b.traverse1(&mut |x| x.traverse2(f))?,
-                )),
-            BExp::Or(a, b) =>
-                Ok(BExp::Or(
-                    a.traverse1(&mut |x| x.traverse2(f))?,
-                    b.traverse1(&mut |x| x.traverse2(f))?,
-                )),
-            BExp::Not(a) => Ok(BExp::Not(a.traverse1(&mut |x| x.traverse2(f))?)),
-        }
-    }
-}
-
 /// Traverse [Tid] inside [TBExp]
-impl TidTraversal for TBExp {
+impl TidTraversal for CBExp {
     fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
         match self {
             BExp::Equ(a, b) =>
@@ -148,7 +117,7 @@ impl TidTraversal for TBExp {
     }
 }
 
-impl<N> RangeTraversal<N> for BExp<N, Typ<N>> {
+impl<N> RangeTraversal<N> for BExp<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             BExp::Equ(a, b) =>
@@ -168,20 +137,20 @@ impl<N> RangeTraversal<N> for BExp<N, Typ<N>> {
 }
 
 /// Constructor for BExp
-impl UBExp {
+impl<N> BExp<N> {
     pub fn and(l: Self, r: Self) -> Self {
         BExp::And(Box::new(l), Box::new(r))
     }
     pub fn or(l: Self, r: Self) -> Self {
         BExp::Or(Box::new(l), Box::new(r))
     }
-    pub fn equ(l: UAExp, r: UAExp) -> Self {
+    pub fn equ(l: AExp<N>, r: AExp<N>) -> Self {
         BExp::Equ(l, r)
     }
-    pub fn app(id: Fid, args: UAExps) -> Self {
+    pub fn app(id: Fid, args: AExps<N>) -> Self {
         BExp::App(id, args)
     }
-    pub fn contains(a: UAExp, b: UAExp) -> Self {
+    pub fn contains(a: AExp<N>, b: AExp<N>) -> Self {
         BExp::Contains(a, b)
     }
     pub fn not(a: Self) -> Self {
@@ -190,9 +159,8 @@ impl UBExp {
 }
 
 /// Pretty printer instance
-impl<'a, D, A, N, T> Pretty<'a, D, A> for BExp<N, T>
+impl<'a, D, A, N> Pretty<'a, D, A> for BExp<N>
 where
-    T: Pretty<'a, D, A>,
     N: Pretty<'a, D, A>,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
@@ -239,13 +207,12 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N, T> fmt::Display for BExp<N, T>
+impl<'a, N> fmt::Display for BExp<N>
 where
     N: Clone + Pretty<'a, BoxAllocator, ()>,
-    T: Clone + Pretty<'a, BoxAllocator, ()>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <BExp<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <BExp<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

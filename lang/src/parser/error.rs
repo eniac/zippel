@@ -2,11 +2,11 @@ use from_pest::ConversionError;
 use thiserror::Error;
 use pest::iterators::Pair;
 
-use crate::id::Fid;
+use crate::id::Tid;
 use crate::sig::USig;
 use crate::range::RangeError;
 use crate::parser::Rule;
-use crate::typ::{Size, EvalError};
+use crate::typ::{Size, Kind, EvalError};
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {
@@ -28,6 +28,16 @@ pub enum InputError<'pest> {
     VidCapitalize(Pair<'pest, Rule>),
     #[error("Error statically evaluating range expression {0}")]
     RangeError(#[from] EvalError),
+    #[error("KindError: Duplicate type variable {0}")]
+    DuplicateTid(Tid),
+    #[error("KindError: Type variable not found {0}")]
+    KindNotFound(Tid),
+    #[error("KindError: Pairing<{0},{1}> requires {2}: {3} to be a Group")]
+    PairingGroup(Tid, Tid, Tid, Kind),
+    #[error("KindError: Multiplicative<{0}> requires {0}: {1} to be a Field")]
+    MultiplicativeField(Tid, Kind),
+    #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
+    ScalarGroup(Tid, Kind),
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {

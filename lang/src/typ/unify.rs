@@ -120,7 +120,7 @@ impl Unify for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(UnifyError::typ(&x, &y, UnifyError::kind_not_found(&a)))?;
-                if ka.is_field() {
+                if ka == &Kind::Field {
                     Ok(CTyp::Base(a))
                 } else {
                     Err(UnifyError::typ_mismatch(&x, &y))

@@ -1,60 +1,57 @@
 mod aexp;
 mod bexp;
 
-pub use aexp::{AExp, TAExp, UAExp, AExps, TAExps, UAExps, CAExp, CAExps, AExpTraversal, BinOp};
-pub use bexp::{BExp, TBExp, UBExp, CBExp};
+pub use aexp::{AExp, UAExp, AExps, UAExps, CAExp, CAExps, AExpTraversal, BinOp};
+pub use bexp::{BExp, UBExp, CBExp};
 
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
-use share::traversal::{ToTraversal1, ToTraversal2};
+use share::traversal::ToTraversal1;
 
-use crate::typ::{Nothing, Typ, Size};
+use crate::typ::{Typ, Size};
 use std::fmt;
 
 /// Combine BExp and AExp into one sum type for graph traversal
 #[derive(Eq, PartialEq, Clone, PartialOrd, Ord, Debug)]
-pub enum Exp<N, T> {
-    A(AExp<N, T>),
-    B(BExp<N, T>),
+pub enum Exp<N> {
+    A(AExp<N>),
+    B(BExp<N>),
 }
 
-/// Typed AST node
-pub type TExp = Exp<usize, Typ<usize>>;
-
 /// Untyped AST node with symbolic sizes
-pub type UExp = Exp<Size, Nothing>;
+pub type UExp = Exp<Size>;
 
 /// Concrete size AST node
-pub type CExp = Exp<usize, Nothing>;
+pub type CExp = Exp<usize>;
 
 /// Cast [AExp], [BExp] to [Exp]
-impl<N, T> Into<Exp<N, T>> for AExp<N, T> {
-    fn into(self) -> Exp<N, T> {
+impl<N> Into<Exp<N>> for AExp<N> {
+    fn into(self) -> Exp<N> {
         Exp::A(self)
     }
 }
 
-impl<N, T> Into<Exp<N, T>> for BExp<N, T> {
-    fn into(self) -> Exp<N, T> {
+impl<N> Into<Exp<N>> for BExp<N> {
+    fn into(self) -> Exp<N> {
         Exp::B(self)
     }
 }
 
-impl<N: Clone, T: Clone> Into<Exp<N, T>> for &AExp<N, T> {
-    fn into(self) -> Exp<N, T> {
+impl<N: Clone> Into<Exp<N>> for &AExp<N> {
+    fn into(self) -> Exp<N> {
         Exp::A(self.clone())
     }
 }
 
-impl<N: Clone, T: Clone> Into<Exp<N, T>> for &BExp<N, T> {
-    fn into(self) -> Exp<N, T> {
+impl<N: Clone> Into<Exp<N>> for &BExp<N> {
+    fn into(self) -> Exp<N> {
         Exp::B(self.clone())
     }
 }
 
 /// How to traverse the first type parameter [N]
-impl<N, T> ToTraversal1<N> for Exp<N, T> {
-    type Output<Z> = Exp<Z, T>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z, T>, E> {
+impl<N> ToTraversal1<N> for Exp<N> {
+    type Output<Z> = Exp<Z>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
         match self {
             Exp::A(aexp) => aexp.traverse1(f).map(Exp::A),
             Exp::B(bexp) => bexp.traverse1(f).map(Exp::B),
@@ -62,22 +59,10 @@ impl<N, T> ToTraversal1<N> for Exp<N, T> {
     }
 }
 
-/// How to traverse the second type parameter [T]
-impl<N, T> ToTraversal2<T> for Exp<N, T> {
-    type Output<Z> = Exp<N, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Exp<N, Z>, E> {
-        match self {
-            Exp::A(aexp) => aexp.traverse2(f).map(Exp::A),
-            Exp::B(bexp) => bexp.traverse2(f).map(Exp::B),
-        }
-    }
-}
-
 /// Pretty printer instance for Exp
-impl<'a, D, A, N, T> Pretty<'a, D, A> for Exp<N, T>
+impl<'a, D, A, N> Pretty<'a, D, A> for Exp<N>
 where
     N: Pretty<'a, D, A> + Clone,
-    T: Pretty<'a, D, A> + Clone,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -95,13 +80,12 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N, T> fmt::Display for Exp<N, T>
+impl<'a, N> fmt::Display for Exp<N>
 where
     N: Clone + Pretty<'a, BoxAllocator, ()>,
-    T: Clone + Pretty<'a, BoxAllocator, ()>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Exp<N, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Exp<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(30, f)
     }
