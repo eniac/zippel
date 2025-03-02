@@ -606,8 +606,6 @@ mod tests {
             kctx.insert(&Tid::from("G"), &Kind::Group);
             // Add multiplicative group type "M"
             kctx.insert(&Tid::from("M"), &Kind::Multiplicative("F".into()));
-            // Add scalar field type "S"
-            kctx.insert(&Tid::from("S"), &Kind::Scalar("G".into()));
             kctx
         };
 
@@ -629,10 +627,6 @@ mod tests {
             vctx.insert(&Vid::from("m1"), &CTyp::Base(Tid::from("M")));
             // Add variable "m2" of type "M"
             vctx.insert(&Vid::from("m2"), &CTyp::Base(Tid::from("M")));
-            // Add variable "s1" of type "S"
-            vctx.insert(&Vid::from("s1"), &CTyp::Base(Tid::from("S")));
-            // Add variable "s2" of type "S"
-            vctx.insert(&Vid::from("s2"), &CTyp::Base(Tid::from("S")));
             vctx
         };
     }
@@ -675,12 +669,6 @@ mod tests {
             CAExp::add(CAExp::varstr("m1"), CAExp::varstr("m2"));
         assert!(mult_group_add.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
-        // Create expression s1 + s2
-        let scalar_add =
-            CAExp::add(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_add.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
-
         // Create expression v1 + v1
         let vec_add1 =
             CAExp::add(CAExp::varstr("v1"), CAExp::varstr("v1"));
@@ -716,12 +704,6 @@ mod tests {
         let mult_group_sub =
             CAExp::sub(CAExp::varstr("m1"), CAExp::varstr("m2"));
         assert!(mult_group_sub.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
-
-        // Create expression s1 - s2
-        let scalar_sub =
-            CAExp::sub(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_sub.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 - v1
         let vec_sub1 =
@@ -759,12 +741,6 @@ mod tests {
         assert_eq!(mult_group_mul.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("M"))));
 
-        // Create expression s1 * s2
-        let scalar_mul =
-            CAExp::mul(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_mul.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
-
         // Create expression v1 * v1
         let vec_mul1 =
             CAExp::mul(CAExp::varstr("v1"), CAExp::varstr("v1"));
@@ -800,12 +776,6 @@ mod tests {
             CAExp::div(CAExp::varstr("m1"), CAExp::varstr("m2"));
         assert_eq!(mult_group_div.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("M"))));
-
-        // Create expression s1 / s2
-        let scalar_div =
-            CAExp::div(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_div.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 / v1
         let vec_div1 =
@@ -848,12 +818,6 @@ mod tests {
         assert_eq!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("M"))));
 
-        // Create expression s1 ^ s2
-        let scalar_pow =
-            CAExp::pow(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_pow.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
-
         // Create expression v1 ^ v1
         let vec_pow1 =
             CAExp::pow(CAExp::varstr("v1"), CAExp::varstr("v1"));
@@ -889,12 +853,6 @@ mod tests {
             CAExp::dot(CAExp::varstr("m1"), CAExp::varstr("m2"));
         assert_eq!(mult_group_dot.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("M"))));
-
-        // Create expression s1 . s2
-        let scalar_dot =
-            CAExp::dot(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_dot.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 . v1
         let vec_dot1 =
@@ -932,15 +890,6 @@ mod tests {
         let mult_group_equ2 =
             CBExp::equ(CAExp::varstr("m1"), CAExp::varstr("f1"));
         assert_eq!(mult_group_equ2.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
-
-        // Create expression s1 == s2
-        let scalar_equ =
-            CBExp::equ(CAExp::varstr("s1"), CAExp::varstr("s2"));
-        assert_eq!(scalar_equ.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
-
-        let scalar_equ2 =
-            CBExp::equ(CAExp::varstr("s1"), CAExp::varstr("g1"));
-        assert_eq!(scalar_equ2.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
 
         // Create expression v1 == v1
         let vec_equ1 =

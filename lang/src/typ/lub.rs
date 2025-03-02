@@ -361,9 +361,6 @@ impl Lub for Tid {
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
             (Kind::Group, Kind::Group) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
-            (Kind::Scalar(g1), Kind::Group) if g1 == &b => Ok(b),
-            (Kind::Group, Kind::Scalar(g2)) if g2 == &a => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
             (Kind::Multiplicative(f), Kind::Field) if f == &b => Ok(b),
             (Kind::Field, Kind::Multiplicative(f)) if f == &a => Ok(a),
@@ -388,7 +385,6 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
             (Kind::Group, Kind::Group) if a == b => Ok(a),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
             // Range kinds should be substituted at this point
@@ -411,7 +407,6 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
             (Kind::Group, Kind::Group) if a == b => Ok(a),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
             // Range kinds should be substituted at this point
@@ -429,10 +424,9 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
-            // Scalar multiplication: Scalar * Group = Group
-            (Kind::Scalar(g1), Kind::Group) if g1 == &b => Ok(b),
-            (Kind::Group, Kind::Scalar(g2)) if g2 == &a => Ok(a),
+            // Scalar multiplication: Scalar * Group = Group * Scalar = Group
+            (Kind::Field, Kind::Group) => Ok(b),
+            (Kind::Group, Kind::Field) => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -458,9 +452,6 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if a == b && g1 == g2 => Ok(a),
-            // Group / Scalar = Group
-            (Kind::Group, Kind::Scalar(g)) if g == &a => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(b),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -477,7 +468,6 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
-            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 && a == b => Ok(a),
             (Kind::Multiplicative(_), Kind::Field) => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -515,24 +505,24 @@ impl Lub for CTyp {
                 Ok(CTyp::vec(CTyp::lub_equ(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n)),
             // Finite fields can act like 0 degree polynomals
-            (CTyp::Uni(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Uni(a, n)) =>
-                Ok(CTyp::Uni(Tid::lub_equ(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n)),
-            // Finite fields can act like 0 variable MLEs
-            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) =>
-                Ok(CTyp::Mle(Tid::lub_equ(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n)),
-            // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a)
-                    .ok_or(LubError::next(LubError::typ_equ(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka == &Kind::Field {
-                    Ok(CTyp::Base(a))
-                } else {
-                    Err(LubError::typ_equ(&x, &y))
-                }
+            (CTyp::Uni(a, n), b) | (b, CTyp::Uni(a, n)) => {
+                let t = b.to_field(ctx).ok_or(LubError::typ_equ(&x, &y))?;
+                Ok(CTyp::Uni(Tid::lub_equ(a, t, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n))
             },
-            (_, _) => Err(LubError::typ_equ(&x, &y))
+            // Finite fields can act like 0 variable MLEs
+            (CTyp::Mle(a, n), b) | (b, CTyp::Mle(a, n)) => {
+                let t = b.to_field(ctx).ok_or(LubError::typ_equ(&x, &y))?;
+                Ok(CTyp::Mle(Tid::lub_equ(a, t, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n))
+            },
+            // Indices can act like finite fields
+            (a, b) => {
+                let ta = a.to_field(ctx).ok_or(LubError::typ_equ(&x, &y))?;
+                let tb = b.to_field(ctx).ok_or(LubError::typ_equ(&x, &y))?;
+                Ok(CTyp::Base(Tid::lub_equ(ta, tb, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?))
+            }
         }
     }
 
@@ -893,21 +883,19 @@ fn lub_tid() {
     let g1 = Tid::from("G1");
     let g2 = Tid::from("G2");
     let m = Tid::from("M");
-    let s = Tid::from("S");
     let p = Tid::from("P");
     let ctx = Ctx::from([
         (f.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
         (m.clone(), Kind::Multiplicative(f.clone())),
-        (s.clone(), Kind::Scalar(g1.clone())),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
     ]);
 
     assert_eq!(Tid::lub_equ(f.clone(), f.clone(), &ctx), Ok(f.clone()));
     assert_eq!(Tid::lub_equ(g1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
     assert!(Tid::lub_equ(g1.clone(), g2.clone(), &ctx).is_err());
-    assert!(Tid::lub_equ(m.clone(), f.clone(), &ctx).is_err());
+    assert_eq!(Tid::lub_equ(m.clone(), f.clone(), &ctx), Ok(f.clone()));
 
     assert_eq!(Tid::lub_add(f.clone(), f.clone(), &ctx), Ok(f.clone()));
     assert_eq!(Tid::lub_add(g1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
@@ -933,14 +921,12 @@ fn lub_typ() {
     let g1 = Tid::from("G1");
     let g2 = Tid::from("G2");
     let m = Tid::from("M");
-    let s = Tid::from("S");
     let p = Tid::from("P");
     let ctx = Ctx::from([
         (f.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
         (m.clone(), Kind::Multiplicative(f.clone())),
-        (s.clone(), Kind::Scalar(g1.clone())),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
     ]);
 
@@ -948,17 +934,34 @@ fn lub_typ() {
     let tg1 = CTyp::Base(g1.clone());
     let tg2 = CTyp::Base(g2.clone());
     let tm = CTyp::Base(m.clone());
-    let ts = CTyp::Base(s.clone());
     let tp = CTyp::Base(p.clone());
 
     assert_eq!(CTyp::lub_equ(tf.clone(), tf.clone(), &ctx), Ok(tf.clone()));
     assert_eq!(CTyp::lub_equ(tg1.clone(), tg1.clone(), &ctx), Ok(tg1.clone()));
     assert!(CTyp::lub_equ(tg1.clone(), tg2.clone(), &ctx).is_err());
-    assert!(CTyp::lub_equ(tm.clone(), tf.clone(), &ctx).is_err());
+    assert_eq!(CTyp::lub_equ(tm.clone(), tf.clone(), &ctx), Ok(tf.clone()));
+
     assert_eq!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 10), &ctx), Ok(CTyp::vec(tf.clone(), 10)));
     assert!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 11), &ctx).is_err());
     assert!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tg1.clone(), 10), &ctx).is_err());
     assert_eq!(CTyp::lub_equ(CTyp::uni(f.clone(), 10), CTyp::uni(f.clone(), 11), &ctx), Ok(CTyp::uni(f.clone(), 11)));
+    assert_eq!(CTyp::lub_equ(CTyp::mle(m.clone(), 10), CTyp::mle(f.clone(), 11), &ctx), Ok(CTyp::mle(f.clone(), 11)));
+
+    assert_eq!(CTyp::lub_add(tf.clone(), tf.clone(), &ctx), Ok(tf.clone()));
+    assert_eq!(CTyp::lub_add(tg1.clone(), tg1.clone(), &ctx), Ok(tg1.clone()));
+    assert!(CTyp::lub_add(tg1.clone(), tg2.clone(), &ctx).is_err());
+    assert!(CTyp::lub_add(tm.clone(), tf.clone(), &ctx).is_err());
+    assert_eq!(CTyp::lub_add(tp.clone(), tp.clone(), &ctx), Ok(tp.clone()));
+    assert!(CTyp::lub_add(tp.clone(), tg1.clone(), &ctx).is_err());
+    assert!(CTyp::lub_add(tm.clone(), tf.clone(), &ctx).is_err());
+    assert!(CTyp::lub_add(tm.clone(), tm.clone(), &ctx).is_err());
+    assert!(CTyp::lub_add(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 11), &ctx).is_err());
+    assert_eq!(CTyp::lub_add(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 10), &ctx), Ok(CTyp::vec(tf.clone(), 10)));
+    assert_eq!(CTyp::lub_add(CTyp::uni(f.clone(), 10), CTyp::uni(f.clone(), 11), &ctx), Ok(CTyp::uni(f.clone(), 11)));
+    assert_eq!(CTyp::lub_add(CTyp::mle(f.clone(), 10), CTyp::mle(f.clone(), 11), &ctx), Ok(CTyp::mle(f.clone(), 11)));
+    assert_eq!(CTyp::lub_add(CTyp::vec(tg1.clone(), 10), CTyp::vec(tg1.clone(), 10), &ctx), Ok(CTyp::vec(tg1.clone(), 10)));
+    assert_eq!(CTyp::lub_add(CTyp::uni(f.clone(), 10), tf.clone(), &ctx), Ok(CTyp::uni(f.clone(), 10)));
+    assert_eq!(CTyp::lub_add(CTyp::mle(f.clone(), 10), tf.clone(), &ctx), Ok(CTyp::mle(f.clone(), 10)));
 }
 
 
