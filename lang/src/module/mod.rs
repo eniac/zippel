@@ -1,3 +1,10 @@
+pub mod decl;
+pub mod sig;
+pub mod arg;
+
+pub use arg::{Arg, Args};
+pub use sig::Sig;
+
 use std::fmt;
 use thiserror::Error;
 use bumpalo::Bump;
@@ -7,29 +14,23 @@ use pest::Parser;
 use crate::typ::SizeSubsts;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
-use crate::sig::{CSig, Sig};
-use crate::decl::{Body, UDecls};
-use crate::typ::{Size, TypeVars, EvalError};
+use sig::CSig;
+use decl::{Body, UDecls};
+use crate::typ::{Size, TypeVars, EvalError, RangeError, RangeTraversal};
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Polymod<N>(pub Ctx<(TypeVars, Sig<N>), Body<N>>);
 
-/// Monomorphic Module, a collection of declarations indexed by their signature
-/// and type variables pushed out, made global to the module
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Monomod<N> {
-    pub typevars: TypeVars,
-    pub declarations: Ctx<Sig<N>, Body<N>>
-}
-
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
     #[error("Overlaping declarations: {0}")]
     OverlapDeclaration(CSig),
-    #[error("Error evaluating size type variables: \n\n{0}")]
+    #[error("ModuleError: Error evaluating size type variables: \n\n{0}")]
     EvalError(#[from] EvalError),
+    #[error("ModuleError: Invalid ranges in declaration {0}: \n\n{1}")]
+    InvalidRange(CSig, RangeError),
 }
 
 /// Polymorphic module with symbolic sizes
@@ -38,15 +39,11 @@ pub type UPolymod = Polymod<Size>;
 /// Polymorphic module with concrete sizes
 pub type CPolymod = Polymod<usize>;
 
-/// Monomorphic module with concrete sizes
-pub type CMonomod = Monomod<usize>;
-
-impl<N: Ord> Polymod<N> {
+impl<N> Polymod<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
 }
-
 /// Entry point to the zippel compiler.
 /// Parse a Zippel declarations list into a polymorphic,
 /// untyped module, with symbolic sizes.
@@ -70,7 +67,6 @@ impl UPolymod {
         Self::from_str(stored_str)
     }
 
-
     /// Concretize sizes in all declarations to generate a CPolymod
     pub fn concretize(self) -> Result<CPolymod, ModuleError> {
         let mut ctx = Ctx::new();
@@ -87,6 +83,12 @@ impl UPolymod {
                 // Evaluate all sizes in the signature
                 let s = sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
+                // Check the ranges
+                b.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+                    .map_err(|e| ModuleError::InvalidRange(s.clone(), e))?;
+                s.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+                    .map_err(|e| ModuleError::InvalidRange(s.clone(), e))?;
+
                 // Remove typevars substituted
                 let tv = typevars.clone().into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
 
@@ -98,6 +100,7 @@ impl UPolymod {
         // Return the concretized module
         Ok(Polymod(ctx))
     }
+
 }
 
 impl<N: Ord> IntoIterator for Polymod<N> {

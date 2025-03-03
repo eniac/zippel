@@ -1,5 +1,5 @@
 use crate::typ::{Kind, Nothing, CTyp, TypeVar};
-use crate::range::{Range, RangeError};
+use crate::typ::range::{Range, RangeError};
 use crate::id::Tid;
 use share::Ctx;
 
@@ -940,7 +940,6 @@ fn lub_typ() {
     assert_eq!(CTyp::lub_equ(tg1.clone(), tg1.clone(), &ctx), Ok(tg1.clone()));
     assert!(CTyp::lub_equ(tg1.clone(), tg2.clone(), &ctx).is_err());
     assert_eq!(CTyp::lub_equ(tm.clone(), tf.clone(), &ctx), Ok(tf.clone()));
-
     assert_eq!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 10), &ctx), Ok(CTyp::vec(tf.clone(), 10)));
     assert!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tf.clone(), 11), &ctx).is_err());
     assert!(CTyp::lub_equ(CTyp::vec(tf.clone(), 10), CTyp::vec(tg1.clone(), 10), &ctx).is_err());

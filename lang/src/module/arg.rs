@@ -5,7 +5,7 @@ use std::fmt;
 use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
 use crate::id::{Tid, Vid, TidTraversal};
-use crate::typ::{Size, Typ, Qualifier};
+use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
 use crate::parser::*;
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
@@ -127,6 +127,17 @@ impl<N> ToTraversal1<N> for Args<N> {
     }
 }
 
+impl<N> RangeTraversal<N> for Arg<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        Ok(Arg { qualifier: self.qualifier, id: self.id, typ: self.typ.range_traverse(f)? })
+    }
+}
+
+impl<N> RangeTraversal<N> for Args<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        Ok(Args(self.0.into_iter().map(|arg| arg.range_traverse(f)).collect::<Result<_, _>>()?))
+    }
+}
 impl<const L: usize, N: Clone> From<[Arg<N>; L]> for Args<N> {
     fn from(args: [Arg<N>; L]) -> Self {
         Args(args.to_vec())
@@ -260,7 +271,6 @@ fn arg_parser() {
     assert!(ZippelParser::parse(Rule::arg, ex3).is_err());
 }
 
-#[cfg(test)] use crate::range::Range;
 #[cfg(test)] use share::Ctx;
 #[test]
 fn arg_traversal() {

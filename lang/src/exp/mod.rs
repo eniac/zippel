@@ -7,7 +7,8 @@ pub use bexp::{BExp, UBExp, CBExp};
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
 
-use crate::typ::{Typ, Size};
+use crate::typ::{Size, Range, RangeTraversal};
+use crate::id::{Tid, TidTraversal};
 use std::fmt;
 
 /// Combine BExp and AExp into one sum type for graph traversal
@@ -55,6 +56,26 @@ impl<N> ToTraversal1<N> for Exp<N> {
         match self {
             Exp::A(aexp) => aexp.traverse1(f).map(Exp::A),
             Exp::B(bexp) => bexp.traverse1(f).map(Exp::B),
+        }
+    }
+}
+
+/// Traverse [Tid] inside [CExp]
+impl TidTraversal for CExp {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        match self {
+            Exp::A(aexp) => aexp.tid_traverse(f).map(Exp::A),
+            Exp::B(bexp) => bexp.tid_traverse(f).map(Exp::B),
+        }
+    }
+}
+
+/// Traverse [Range<N>] inside [Exp<N>]
+impl<N> RangeTraversal<N> for Exp<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        match self {
+            Exp::A(aexp) => aexp.range_traverse(f).map(Exp::A),
+            Exp::B(bexp) => bexp.range_traverse(f).map(Exp::B),
         }
     }
 }

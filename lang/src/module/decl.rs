@@ -6,11 +6,9 @@ use bumpalo::Bump;
 
 use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::typ::TypeVars;
-use crate::sig::Sig;
+use crate::module::{Sig, Args};
 use crate::id::{Tid, TidTraversal, Fid};
-use crate::typ::{Typ, Size};
-use crate::arg::Args;
+use crate::typ::{Typ, Range, Size, TypeVars, RangeTraversal};
 use crate::exp::{AExp, AExps, BExp};
 use crate::parser::*;
 
@@ -173,6 +171,22 @@ impl TidTraversal for CBody {
             Body::Func { body } =>
                 Ok(Body::Func {
                     body: body.tid_traverse(f)?,
+                }),
+        }
+    }
+}
+
+impl<N> RangeTraversal<N> for Body<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        match self {
+            Body::Proto { relation, body } =>
+                Ok(Body::Proto {
+                    relation: relation.range_traverse(f)?,
+                    body: body.range_traverse(f)?,
+                }),
+            Body::Func { body } =>
+                Ok(Body::Func {
+                    body: body.range_traverse(f)?,
                 }),
         }
     }
@@ -356,9 +370,8 @@ impl<'pest> FromPest<'pest> for UDecls {
 }
 
 #[cfg(test)] use crate::{
-        arg::Arg,
+        module::Arg,
         id::Vid,
-        range::Range,
         exp::{UAExp, UBExp},
         typ::{Kind, TypeVar}
 };

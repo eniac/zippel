@@ -5,12 +5,11 @@ use lazy_static::lazy_static;
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
-use share::traversal::{ToTraversal1, ToTraversal2};
+use share::traversal::ToTraversal1;
 use share::{BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, Size};
+use crate::typ::{Size, Range, RangeTraversal};
 use crate::exp::{AExp, UAExp, AExps, UAExps, AExpTraversal};
 use crate::id::{Tid, TidTraversal, Fid};
-use crate::range::{Range, RangeTraversal};
 
 /// Represents boolean expressions in the Zippel language.
 /// It is parameterized by the type `A` of annotations:

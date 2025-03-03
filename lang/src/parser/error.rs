@@ -3,10 +3,10 @@ use thiserror::Error;
 use pest::iterators::Pair;
 
 use crate::id::Tid;
-use crate::sig::USig;
-use crate::range::RangeError;
+use crate::module::sig::USig;
 use crate::parser::Rule;
 use crate::typ::{Size, Kind, EvalError};
+use crate::typ::range::RangeError;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {

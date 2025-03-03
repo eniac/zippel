@@ -3,7 +3,7 @@ use itertools::Itertools;
 use share::{Ctx, Set};
 use crate::id::Tid;
 use crate::typ::{Kind, TypeVars};
-use crate::range::Range;
+use crate::typ::range::Range;
 
 /// Represents a possible valuation of sized type variables
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -127,6 +127,12 @@ impl AliasSubsts {
         self.get_repr(tid) == Some(tid.clone())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
 }
 
 impl<T> From<Vec<(Tid, T)>> for Substs<T> {
@@ -135,7 +141,7 @@ impl<T> From<Vec<(Tid, T)>> for Substs<T> {
     }
 }
 
-#[cfg(test)] use crate::decl::Decl;
+#[cfg(test)] use crate::module::decl::Decl;
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();

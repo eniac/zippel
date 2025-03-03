@@ -1,7 +1,7 @@
-use crate::typ::{Typ, Size, Kind, CTyp, Typs, CTyps};
+use crate::typ::{Typ, Size, Kind, CTyp, Typs, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
-use crate::arg::{Arg, Args};
 use crate::typ::unify::{Unify, UnifyError};
+use crate::module::{Arg, Args};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
 use crate::id::{Fid, Tid, TidTraversal};
@@ -56,6 +56,12 @@ impl<N> ToTraversal1<N> for Sig<N> {
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
         let Sig { name, args, ret } = self;
         Ok(Sig { name, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
+    }
+}
+
+impl<N> RangeTraversal<N> for Sig<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        Ok(Sig { name: self.name, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
     }
 }
 

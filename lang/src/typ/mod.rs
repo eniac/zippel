@@ -6,10 +6,10 @@ mod nothing;
 pub mod infer;
 pub mod unify;
 pub mod lub;
+pub mod range;
 pub mod subst;
 
 use crate::id::{Tid, TidTraversal};
-use crate::range::{Range, RangeTraversal};
 
 pub use kind::Kind;
 pub use size::{Size, EvalError};
@@ -17,6 +17,7 @@ pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 pub use subst::{SizeSubsts, AliasSubsts};
+pub use range::{Range, RangeError, RangeTraversal};
 
 use share::{Ctx, Pretty, Traversal, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;

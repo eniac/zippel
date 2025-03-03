@@ -106,12 +106,12 @@ where
 }
 
 /// Special and wrapper methods for Ctx
-impl<K: Ord, V> Ctx<K, V> {
-    pub fn new() -> Self {
+impl<K, V> Ctx<K, V> {
+    pub fn new() -> Self where K: Ord {
         Ctx(BTreeMap::new())
     }
 
-    pub fn singleton(k: K, v: V) -> Self {
+    pub fn singleton(k: K, v: V) -> Self where K: Ord {
         Ctx(BTreeMap::from([(k, v)]))
     }
 
@@ -129,13 +129,13 @@ impl<K: Ord, V> Ctx<K, V> {
     pub fn clear(&mut self) {
         self.0.clear();
     }
-    pub fn insert(&mut self, k: &K, v: &V) -> Option<V> where K: Clone, V: Clone {
+    pub fn insert(&mut self, k: &K, v: &V) -> Option<V> where K: Ord + Clone, V: Clone {
         self.0.insert(k.clone(), v.clone())
     }
 
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
     where
-        K: Clone,
+        K: Ord + Clone,
         V: Clone,
         FF: Fn(&K,&V,&V) -> Result<K, E>
     {
@@ -151,43 +151,32 @@ impl<K: Ord, V> Ctx<K, V> {
         }
     }
 
-    pub fn union_with<E, FF>(&self, other: Self, f: &FF) -> Result<Self, E>
-    where
-        K: Clone,
-        V: Clone,
-        FF: Fn(&K,&V,&V) -> Result<K, E>
-    {
-        let mut c = self.clone();
-        for (k, v2) in other.0.into_iter() {
-            c.insert_with(k, v2, f)?;
-        }
-        Ok(c)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn get(&self, k: &K) -> Option<&V> {
+    pub fn get(&self, k: &K) -> Option<&V> where K: Ord {
         self.0.get(k)
     }
 
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
+    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> where K: Ord {
         self.0.get_mut(k)
     }
 
     pub fn remove(&mut self, k: &K) -> Option<V>
     where
+        K: Ord,
         V: Clone,
     {
         self.0.remove(k)
     }
-    pub fn keys(&self) -> Set<&K> {
+
+    pub fn keys(&self) -> Set<&K> where K: Ord {
         Set(self.0.keys().collect::<BTreeSet<_>>())
     }
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.0.values()
     }
-    pub fn contains(&self, k: &K) -> bool {
+    pub fn contains(&self, k: &K) -> bool where K: Ord {
         self.0.contains_key(k)
     }
     pub fn iter(&self) -> CtxIterator<K, V> {
@@ -206,16 +195,16 @@ impl<K: Ord, V> Ctx<K, V> {
             f(k, v);
         }
     }
-    pub fn retain(&mut self, f: impl Fn(&K, &mut V) -> bool) {
+    pub fn retain(&mut self, f: impl Fn(&K, &mut V) -> bool) where K: Ord {
         self.0.retain(f);
     }
 
-    pub fn entry(&mut self, k: K) -> std::collections::btree_map::Entry<K, V> {
+    pub fn entry(&mut self, k: K) -> std::collections::btree_map::Entry<K, V> where K: Ord {
         self.0.entry(k)
     }
     pub fn extract_if(&mut self, f: impl Fn(&K, &V) -> bool) -> Ctx<K, V>
     where
-        K: Clone,
+        K: Ord + Clone,
         V: Clone,
     {
         let mut c = Ctx::new();
@@ -441,28 +430,6 @@ impl<V: Ord + Clone> Set<&V> {
     pub fn cloned(self) -> Set<V> {
         Set(self.0.into_iter().cloned().collect())
     }
-}
-
-#[test]
-fn ctx_union_with() {
-    let c = Ctx::from([("a", 1), ("b", 2), ("c", 3)]);
-    let c2 = Ctx::from([("a", 2), ("b", 3), ("d", 4)]);
-    let c3 = c.union_with(c2, &|v1, v2| Some(v1 + v2));
-    assert_eq!(c3.get(&"a"), Some(&3));
-    assert_eq!(c3.get(&"b"), Some(&5));
-    assert_eq!(c3.get(&"c"), Some(&3));
-    assert_eq!(c3.get(&"d"), Some(&4));
-}
-
-#[test]
-fn ctx_intersection_with() {
-    let c : Ctx<&str, i8> = Ctx::from([("a", 1), ("b", 2), ("c", 3)]);
-    let c2 = Ctx::from([("a", 2), ("b", 3), ("d", 4)]);
-    let c3 = c.intersection_with(c2, &|v1, v2| Some(v1 * v2));
-    assert_eq!(c3.get(&"a"), Some(&2));
-    assert_eq!(c3.get(&"b"), Some(&6));
-    assert_eq!(c3.get(&"c"), None);
-    assert_eq!(c3.get(&"d"), None);
 }
 
 #[test]

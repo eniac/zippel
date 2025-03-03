@@ -3,12 +3,12 @@ use share::{Ctx, Set, log2};
 use share::traversal::ToTraversal1;
 use crate::id::{Fid, Tid, Vid};
 use crate::exp::{BinOp, CAExp, CExp, CAExps, CBExp};
-use crate::decl::CBody;
+use crate::module::decl::CBody;
 use crate::typ::unify::UnifyError;
 use crate::typ::lub::{Lub, LubError};
-use crate::sig::CSig;
+use crate::module::sig::CSig;
 use crate::typ::AliasSubsts;
-use crate::range::{Range, RangeError};
+use crate::typ::range::{Range, RangeError};
 use crate::typ::{CTyp, CTyps, Kind};
 use thiserror::Error;
 
@@ -491,7 +491,7 @@ impl Typeable for CBExp {
                 CTyp::lub_equ(ta, tb, kctx)
                     .map_err(|e| TypeError::lub(TypeError::bexp(kctx, vctx, self), e))?;
                 Ok(CTyp::bool())
-}
+            }
             CBExp::Contains(a, b) => {
                 let ta = a.infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::bexp(kctx, vctx, self), e))?;
@@ -592,9 +592,9 @@ mod tests {
     use crate::exp::{BinOp, AExp, BExp, UAExp, CAExp, CBExp, CAExps};
     use crate::typ::{TypeVar, CTyp, Kind};
     use crate::typ::lub::{Lub, LubError, BinopError};
-    use crate::sig::CSig;
-    use crate::arg::{Args, CArg};
-    use crate::range::Range;
+    use crate::module::sig::CSig;
+    use crate::module::arg::{Args, CArg};
+    use crate::typ::range::Range;
     use lazy_static::lazy_static;
 
     lazy_static! {

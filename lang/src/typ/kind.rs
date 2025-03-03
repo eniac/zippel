@@ -2,7 +2,7 @@ use crate::id::Tid;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
-pub use crate::range::Range;
+use crate::typ::range::Range;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;

@@ -1,5 +1,4 @@
 use crate::id::{Tid, TidTraversal};
-use crate::range::Range;
 use crate::typ::kind::Kind;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};

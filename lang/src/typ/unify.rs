@@ -1,6 +1,6 @@
 use crate::typ::{Nothing, Kind, CTyp, AliasSubsts};
 use crate::typ::lub::{Lub, LubError};
-use crate::range::Range;
+use crate::typ::range::Range;
 use crate::id::Tid;
 use share::Ctx;
 use thiserror::Error;
@@ -93,9 +93,13 @@ impl Unify for CTyp {
                 Ok(CTyp::Mle(Tid::unify(a, b, ctx, subs)
                     .map_err(|e| UnifyError::typ(&x, &y, e))?, n.max(m))),
             // [A; N] == [B; M]
-            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
-                Ok(CTyp::vec(CTyp::unify(a, b, ctx, subs)
-                    .map_err(|e| UnifyError::typ(&x, &y, e))?, n)),
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::unify(a, b, ctx, subs)
+                        .map_err(|e| UnifyError::typ(&x, &y, e))?, n))
+                } else {
+                    Err(UnifyError::typ_mismatch(&x, &y))
+                },
             // Finite fields can act like 0 degree polynomals
             (CTyp::Uni(a, n), b) | (b, CTyp::Uni(a, n)) => {
                 let t = b.to_field(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
@@ -126,6 +130,7 @@ fn unify_typ() {
     let f2 = Tid::from("F2");
     let g1 = Tid::from("G1");
     let g2 = Tid::from("G2");
+    let m1 = Tid::from("M1");
     let p = Tid::from("P");
 
     let ctx = Ctx::from([
@@ -133,6 +138,7 @@ fn unify_typ() {
         (f2.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
+        (m1.clone(), Kind::Multiplicative(f1.clone())),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone()))
     ]);
 
@@ -142,9 +148,38 @@ fn unify_typ() {
     let tf2 = CTyp::Base(f2.clone());
     let tg1 = CTyp::Base(g1.clone());
     let tg2 = CTyp::Base(g2.clone());
+    let tm1 = CTyp::Base(m1.clone());
     let tp = CTyp::Base(p.clone());
 
-    assert_eq!(CTyp::unify(tf1.clone(), tf2.clone(), &ctx, &mut subs).unwrap(), CTyp::Base(f1.clone()));
+    // Unify base types
+    assert_eq!(CTyp::unify(tg1.clone(), tg1.clone(), &ctx, &mut subs), Ok(tg1.clone()));
+    assert_eq!(CTyp::unify(tm1.clone(), tf1.clone(), &ctx, &mut subs), Ok(tf1.clone()));
+    assert!(subs.is_empty()); // same field M ~ F and group G1 ~ G2 no substitution needed
+
+    assert_eq!(CTyp::unify(tf1.clone(), tf2.clone(), &ctx, &mut subs), Ok(tf1.clone()));
     assert_eq!(subs.get(&f1), Some(&Set::from([f1.clone(), f2.clone()])));
     assert_eq!(subs.get(&f2), Some(&Set::from([f1.clone(), f2.clone()])));
+    subs.clear();            // different fields, unify them
+
+    assert_eq!(CTyp::unify(CTyp::vec(tf1.clone(), 10), CTyp::vec(tf1.clone(), 10), &ctx, &mut subs), Ok(CTyp::vec(tf1.clone(), 10)));
+    assert!(subs.is_empty()); // same field M ~ F and group G1 ~ G2 no substitution needed
+
+    // Different sizes and base fields do not unify
+    assert!(CTyp::unify(CTyp::vec(tf1.clone(), 10), CTyp::vec(tf1.clone(), 11), &ctx, &mut subs).is_err());
+    assert!(CTyp::unify(CTyp::vec(tf1.clone(), 10), CTyp::vec(tg1.clone(), 10), &ctx, &mut subs).is_err());
+    assert!(subs.is_empty());
+
+    // Univariate polynomial unification
+    assert_eq!(CTyp::unify(CTyp::uni(f1.clone(), 10), CTyp::uni(f2.clone(), 11), &ctx, &mut subs), Ok(CTyp::uni(f1.clone(), 11)));
+    assert_eq!(subs.get(&f1), Some(&Set::from([f1.clone(), f2.clone()])));
+    assert_eq!(subs.get(&f2), Some(&Set::from([f1.clone(), f2.clone()])));
+    subs.clear();
+
+    // Multivariate polynomial unification
+    assert_eq!(CTyp::unify(CTyp::mle(m1.clone(), 10), CTyp::mle(f1.clone(), 11), &ctx, &mut subs), Ok(CTyp::mle(f1.clone(), 11)));
+    assert!(subs.is_empty()); // same field M ~ F no substitution needed
+
+    // Fin type unification
+    assert_eq!(CTyp::unify(CTyp::fin(Range::new(0, 2)), CTyp::fin(Range::new(1, 10)), &ctx, &mut subs), Ok(CTyp::fin(Range::new(0, 10))));
+    assert!(subs.is_empty()); // no substitution needed
 }

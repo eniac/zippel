@@ -1,4 +1,3 @@
-#![feature(extract_if)]
 #![feature(btree_extract_if)]
 mod context;
 mod pretty;

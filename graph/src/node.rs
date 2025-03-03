@@ -1,8 +1,8 @@
-use lang::exp::BinOp;
+use lang::exp::{CExp, BinOp};
 use lang::typ::CTyp;
 use lang::arg::CArgs;
-use lang::id::{Fid, Tid};
-use lang::range::CRange;
+use lang::id::{Fid, Tid, TidTraversal};
+use lang::range::{CRange, RangeTraversal};
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 
@@ -12,7 +12,7 @@ use std::fmt;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Op {
     /// Initial nodes in the graph, public or private inputs
-    In { name: Fid, args: CArgs },
+    In(Fid, CArgs),
 
     /// Binary operation
     Bin(BinOp),
@@ -67,6 +67,7 @@ pub enum Op {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Node<A> {
     pub op: Op,
+    pub exp: CExp,
     pub typ: CTyp,
     pub principal: Principal,
     pub ann: A
@@ -75,7 +76,7 @@ pub struct Node<A> {
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Op::Inputs(p, args) => write!(f, "In<{}>: {}", p, args),
+            Op::In(p, args) => write!(f, "In<{}>: {}", p, args),
             Op::Bin(op) => write!(f, "{}", op),
             Op::Lit(x) => write!(f, "Lit({})", x),
             Op::Gen(tid) => write!(f, "Gen<{}>", tid),
@@ -130,22 +131,31 @@ where
     }
 }
 
-struct NodeTraversal1<N>(std::marker::PhantomData<N>);
-impl<N, Z> Traversal<N, Z> for NodeTraversal1<N> {
-    type Domain = Node<N>;
-    type Codomain = Node<Z>;
-
-    fn traverse<E>(on: Self::Domain, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Codomain, E> {
-        let Node { op, typ, principal, ann } = on;
-        let ann = f(ann)?;
-        Ok(Node { op, typ, principal, ann })
-    }
-}
-
 impl<N> ToTraversal1<N> for Node<N> {
     type Output<Z> = Node<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Node<Z>, E> {
-        NodeTraversal1::traverse(self, f)
+        let Node { op, exp, typ, principal, ann } = self;
+        let ann = f(ann)?;
+        Ok(Node { op, exp, typ, principal, ann })
     }
 }
+
+impl<N> TidTraversal for Node<N> {
+    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+        let Node { op, exp, typ, principal, ann } = self;
+        let exp = exp.tid_traverse(f)?;
+        Ok(Node { op, exp, typ, principal, ann })
+    }
+}
+
+impl<N> RangeTraversal<usize> for Node<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(CRange) -> Result<CRange, E>) -> Result<Self, E> {
+        let Node { op, exp, typ, principal, ann } = self;
+        let exp = exp.range_traverse(f)?;
+        let typ = typ.range_traverse(f)?;
+        Ok(Node { op, exp, typ, principal, ann })
+    }
+}
+
+
 

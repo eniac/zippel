@@ -10,9 +10,9 @@ use share::traversal::{BoxTraversal, ToTraversal1, ToTraversal2};
 
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::{Typ, Size};
+use crate::typ::range::{Range, RangeTraversal};
 use crate::exp::{BExp, UBExp};
 use crate::id::{Tid, TidTraversal, Fid, Vid};
-use crate::range::{Range, RangeTraversal};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
