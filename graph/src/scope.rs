@@ -1,7 +1,7 @@
 use lang::exp::{CExp, BinOp};
 use lang::typ::CTyp;
 use lang::module::CSig;
-use lang::id::{Fid, Vid, Tid, TidTraversal};
+use lang::id::{Fid, Vid, Tid, TidSubst};
 use lang::typ::range::{CRange, RangeTraversal};
 use share::{Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
@@ -9,40 +9,27 @@ use share::traversal::ToTraversal1;
 use crate::principal::Principal;
 use std::fmt;
 
-/// Represents a scope, either by function call or iteration
+/// Represents a scope by calling a function with signature [CSig].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Scope {
-    Sig(CSig),
-    Iter(usize)
+pub struct Scope(pub Vec<CSig>);
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub struct ScopedVar {
+    pub scope: Scope,
+    pub var: Vid
 }
-
-/// Represents a series of Scopes
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Scopes(pub Vec<Scope>);
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct ScopedVar(pub Scopes, pub Vid);
 
 impl Scope {
-    pub fn sig(sig: &CSig) -> Self {
-        Scope::Sig(sig.clone())
-    }
-
-    pub fn iter(i: usize) -> Self {
-        Scope::Iter(i)
-    }
-}
-
-impl Scopes {
     pub fn new() -> Self {
         Scopes(Vec::new())
     }
 
-    pub fn var(&self, v: &Vid) -> ScopedVar {
-        ScopedVar(self.clone(), v.clone())
+    pub fn singleton(sig: CSig) -> Self {
+        Scopes(vec![sig])
     }
-    pub fn push(&mut self, scope: Scope) {
-        self.0.push(scope)
+
+    pub fn push(&mut self, sig: CSig) {
+        self.0.push(sig)
     }
 
     pub fn len(&self) -> usize {
@@ -58,82 +45,55 @@ impl Scopes {
 }
 
 impl ScopedVar {
-    pub fn new(scopes: Scopes, vid: Vid) -> Self {
-        ScopedVar(scopes, vid)
+    pub fn new(scope: Scope, vid: &Vid) -> Self {
+        ScopedVar { scope, var: vid.clone() }
     }
 
-    pub fn singleton(sig: CSig, vid: Vid) -> Self {
-        ScopedVar(Scopes::from([Scope::Sig(sig)]), vid)
+    pub fn singleton(sig: CSig, vid: &Vid) -> Self {
+        ScopedVar::new(Scope::singleton(sig), vid)
     }
 }
-impl IntoIterator for Scopes {
-    type Item = Scope;
-    type IntoIter = std::vec::IntoIter<Scope>;
+
+impl IntoIterator for Scope {
+    type Item = CSig;
+    type IntoIter = std::vec::IntoIter<CSig>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let Scopes(scopes) = self;
-        scopes.into_iter()
+        self.0.into_iter()
     }
 }
 
-impl FromIterator<Scope> for Scopes {
-    fn from_iter<I: IntoIterator<Item = Scope>>(iter: I) -> Self {
-        Scopes(iter.into_iter().collect())
+impl FromIterator<CSig> for Scope {
+    fn from_iter<I: IntoIterator<Item=CSig>>(iter: I) -> Self {
+        Scope(iter.into_iter().collect())
     }
 }
 
-impl<const N: usize> From<[Scope; N]> for Scopes {
-    fn from(scopes: [Scope; N]) -> Self {
-        Scopes(scopes.to_vec())
+impl<const N: usize> From<[CSig; N]> for Scope {
+    fn from(scopes: [CSig; N]) -> Self {
+        Scope(scopes.to_vec())
     }
 }
 
-impl TidTraversal for Scope {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        match self {
-            Scope::Sig(sig) => Ok(Scope::Sig(sig.tid_traverse(f)?)),
-            Scope::Iter(i) => Ok(Scope::Iter(i))
-        }
-    }
-}
-
-impl TidTraversal for Scopes {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        self.into_iter().map(|scope| scope.tid_traverse(f)).collect::<Result<Vec<Scope>, E>>().map(Scopes)
+impl TidSubst for Scope {
+    fn tid_subst(&mut self, from: Tid, to: Tid) {
+        self.0.iter_mut().for_each(|sig| sig.tid_subst(from, to))
     }
 }
 
 impl RangeTraversal<usize> for Scope {
     fn range_traverse<E>(self, f: &mut dyn FnMut(CRange) -> Result<CRange, E>) -> Result<Self, E> {
-        match self {
-            Scope::Sig(sig) => Ok(Scope::Sig(sig.range_traverse(f)?)),
-            Scope::Iter(i) => Ok(Scope::Iter(i))
-        }
-    }
-}
-
-impl RangeTraversal<usize> for Scopes {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(CRange) -> Result<CRange, E>) -> Result<Self, E> {
-        self.into_iter().map(|scope| scope.range_traverse(f)).collect::<Result<Vec<Scope>, E>>().map(Scopes)
+        self.into_iter().map(|sig| sig.range_traverse(f)).collect::<Result<Vec<CSig>, E>>().map(Scopes)
     }
 }
 
 impl fmt::Display for Scope {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Scope::Sig(sig) => write!(f, "{}", sig),
-            Scope::Iter(i) => write!(f, "{}", i)
-        }
-    }
-}
-
-impl fmt::Display for Scopes {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut iter = self.0.iter();
-        if let Some(scope) = iter.next() {
-            write!(f, "{}", scope)?;
-            for scope in iter {
-                write!(f, "::{}", scope)?;
+        if let Some(sig) = iter.next() {
+            write!(f, "{}", sig)?;
+            for sig in iter {
+                write!(f, "::{}", sig)?;
             }
         }
         Ok(())
@@ -142,7 +102,6 @@ impl fmt::Display for Scopes {
 
 impl fmt::Display for ScopedVar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let ScopedVar(scopes, vid) = self;
-        write!(f, "{}::{}", scopes, vid)
+        write!(f, "{}::{}", self.scope, scope.var)
     }
 }

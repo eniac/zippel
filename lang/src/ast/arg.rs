@@ -5,6 +5,7 @@ use std::fmt;
 use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
 use crate::id::{Tid, Vid, TidSubst};
+use crate::eval::Eval;
 use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
 use crate::parser::*;
 

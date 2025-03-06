@@ -7,6 +7,7 @@ use lazy_static::lazy_static;
 use thiserror::Error;
 
 use crate::id::Tid;
+use crate::eval::Eval;
 use crate::parser::*;
 use share::{Ctx, Set};
 use share::{Pretty, DocBuilder, DocAllocator, BoxAllocator};
@@ -78,11 +79,17 @@ impl Size {
             Size::Min(a, b) => a.free_vars().union(b.free_vars()),
         }
     }
+}
 
-    pub fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
+impl Eval for Size {
+    type Value = usize;
+    type Id = Tid;
+    type Error = EvalError;
+    fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
         match self {
             Size::Var(id) =>
-                ctx.get(id).map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x as usize)),
+                ctx.get(id)
+                .map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x)),
             Size::Lit(i) => Ok(*i as usize),
             Size::Add(box a, box b) => {
                 let x = a.eval(ctx)?;

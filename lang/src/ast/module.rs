@@ -10,7 +10,8 @@ use pest::Parser;
 use crate::typ::SizeSubsts;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
-use crate::typ::{Size, TypeVars, EvalError, RangeError, RangeTraversal};
+use crate::eval::Eval;
+use crate::typ::{Size, EvalError, RangeError, RangeTraversal};
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature

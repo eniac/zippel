@@ -2,11 +2,13 @@
 mod node;
 mod scope;
 mod edge;
+mod value;
 mod principal;
 
-pub use node::{Op, Node, UNode, Value};
+pub use value::Value;
+pub use node::{Op, Node, UNode};
 pub use edge::{Dependency, Edge};
-pub use scope::{Scope, Scopes, ScopedVar};
+pub use scope::{Scope, ScopedVar};
 
 use share::Ctx;
 use lang::ast::{CExp, Arg, CSig, CBody};
@@ -27,7 +29,7 @@ pub struct DagBuilder<A> {
     g: Graph<Node<A>, Edge>,
     transcr: NodeIndex,
     it: NodeIndex,
-    scope: Scopes,
+    scope: Scope,
     vctx: Ctx<Vid, CTyp>,
     vars: Ctx<ScopedVar, NodeIndex>
 }
@@ -37,8 +39,6 @@ pub struct DagBuilder<A> {
 pub enum GraphError {
     #[error("Variable not found {0}")]
     VarNotFound(Vid),
-    #[error("GraphError: Internal error, could not bind value {0} to node {1}")]
-    BindValue(Value, UNode),
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
@@ -60,11 +60,6 @@ impl GraphError {
 /// Unannotated graph
 pub type UDagBuilder = DagBuilder<Nothing>;
 
-/// Create a graph
-pub trait ToGraph {
-    fn to_graph(&self, g: &mut UDagBuilder, kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError>;
-}
-
 impl UDagBuilder {
     /// Create a new graph
     pub fn new(sig: CSig) -> Self {
@@ -77,11 +72,11 @@ impl UDagBuilder {
         let it = g.add_node(Node::inp(sig));
         // Add arguments to [vctx]
         for Arg { qualifier, id, typ } in sig.args {
-            vars.insert(&ScopedVar::singleton(sig, id), &it);
+            vars.insert(&ScopedVar::singleton(sig, &id), &it);
             vctx.insert(&id, &typ);
         }
         // New scope
-        let scope = Scopes::from([Scope::Sig(sig)]);
+        let scope = Scope::singleton(sig);
         // Add empty transcript
         let transcr = g.add_node(Node::empty_transcript());
         DagBuilder { g, transcr, it, scope, vars, vctx }
@@ -149,14 +144,11 @@ impl<A> DagBuilder<A> {
         // Type inference for [self]
         let typ = self.infer(kctx, &fctx.keys(), &mut self.vctx)?;
         match exp.clone() {
-            // Literals get appended to the last node [it]
+            // Literals get appended to the last node [self.it]
             CExp::Lit(n) => {
-                let node = self.get_it();
-                if node.bind_value(Value::Lit(n)) {
-                    Ok(())
-                } else {
-                    Err(GraphError::bind_value(&Value::Lit(n), &node))
-                }
+                let node_it = self.get_it();
+                node_it.push_value(Value::Lit(n));
+                Ok(())
             },
 
             // Variables are edges, no new nodes are added
@@ -170,9 +162,9 @@ impl<A> DagBuilder<A> {
             // Create a new [coef] node
             CExp::Coef(box v) => {
                 // Add new node
-                let ncoef = self.g.add_node(Node::coef(Value::Underscore, typ));
+                let ncoef = self.g.add_node(Node::coef(typ));
                 // Add edge from [it] to [ncoef]
-                self.g.add_edge(self.it, ncoef, Edge::data());
+                self.g.add_edge(self.it, ncoef, Edge::Data);
                 self.g.it = ncoef;
                 self.add_exp(*v, kctx, fctx)
             },
@@ -180,49 +172,122 @@ impl<A> DagBuilder<A> {
             // Create a new [mle] Node
             CExp::Mle(box v) => {
                 // Add new node
-                let nmle = self.g.add_node(Node::mle(Value::Underscore, typ));
+                let nmle = self.g.add_node(Node::mle(typ));
                 // Add edge from [it] to [nmle]
-                self.g.add_edge(self.it, nmle, Edge::data());
+                self.g.add_edge(self.it, nmle, Edge::Data);
                 self.g.it = nmle;
                 self.add_exp(*v, kctx, fctx)
             },
 
-            // Create a new [vec] node
+            // Create a new [vec] node, unless its all literals
             CExp::Vec(box vs) => {
-                // Add new node
-                let nvec = self.g.add_node(Node::vec(vs.iter().map(|v| Value::Underscore).collect(), typ));
-                // Add edge from [it] to [nvec]
-                self.g.add_edge(self.it, nvec, Edge::data());
-                self.g.it = nvec;
-                for v in vs {
-                    self.add_exp(v, kctx, fctx)?
+                // Look at the type to get the size of the vector
+                if let CTyp::Vec(inner, size) = typ {
+                    // Is it all literals? Then its a vector value
+                    let mut vals = Vec::new();
+                    for v in vs {
+                        if let CExp::Lit(n) = v {
+                            vals.push(n);
+                        }
+                    }
+                    // If all values are literals
+                    if vals.len() == vs.len() {
+                        let node_it = selt.get_it();
+                        node_it.push_value(Value::Vec(vals));
+                        Ok(())
+                    } else {
+                        // Otherwise add new node
+                        let nvec = self.g.add_node(Node::vec(inner, size));
+                        // Add edge from [it] to [nvec]
+                        self.g.add_edge(self.it, nvec, Edge::Data);
+                        self.g.it = nvec;
+                        for v in vs {
+                            self.add_exp(v, kctx, fctx)?
+                        }
+                        Ok(())
+                    }
+                } else {
+                    panic!("Expected vector type for {}, got {}", self, typ)
                 }
-                Ok(())
             },
 
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
                 // Add new node
-                let nbin = self.g.add_node(Node::bin(op, Value::Underscore, Value::Underscore, typ));
+                let nbin = self.g.add_node(Node::bin(op, typ));
                 // Add edge from [it] to [nbin]
                 self.g.add_edge(self.it, nbin, Edge::data());
                 self.g.it = nbin;
                 self.add_exp(*a, kctx, fctx)?;
-                self.add_exp(*b, kctx, fctx)?;
-            }
+                self.add_exp(*b, kctx, fctx)
+            },
 
             // Create a new [range] node, no new nodes added
             CExp::Range(r) => {
-                let node = self.get_it();
-                if node.bind_value(Value::Range(r)) {
-                    Ok(())
-                } else {
-                    Err(GraphError::bind_value(&Value::Range(r), &node))
-                }
+                let node_it = self.get_it();
+                node_it.push_value(Value::Range(r));
+                Ok(())
             }
 
             // Create a new [map] node, with a vector of values
             CExp::Map(box l, x, box CExp::Vec(box vs)) => {
+                let vars = self.vctx.keys();
+                let mut substituted = Vec::new();
+                for v in vs {
+                    substituted.push(l.clone().vid_subst(&x, v, &vars));
+                }
+                self.add_exp(CExp::Vec(substituted), kctx, fctx)
+            },
+            // [Range(r) = [r.start, r.start + r.step, ...., r.end - r.step]
+            CExp::Map(box l, x, box CExp::Range(r)) =>
+                self.add_exp(CExp::map(l, x, CExp::vec(r.into_iter().collect()))),
+
+            // [x for x in (a + b)] = [(a + b)[0], (a + b)[1], ...]
+            CExp::Map(box l, x, box r) => {
+                let vars = self.vctx.keys();
+                let mut substituted = Vec::new();
+                // Get the size from the type
+                let tr = r.infer(kctx, &fctx.keys(), &mut self.vctx)?;
+                if let CTyp(_, size) = tr {
+                    for v in 0..size {
+                        substituted.push(l.clone().vid_subst(&x, CExp::ram(r, CExp::Lit(v)), &vars));
+                    }
+                    self.add_exp(CExp::Vec(substituted), kctx, fctx)
+                } else {
+                    panic!("Expected vector type for {}, got {}", r, tr)
+                }
+            }
+
+            // [a_0, ..., a_n][i] = a_i
+            CExp::Ram(box CExp::Vec(vs), box CExp::Lit(i)) =>
+                self.add_exp(vs[i], kctx, fctx),
+            // [a + b][i] = a[i] + b[i]
+            CExp::Ram(box CExp::Bin(BinOp::Add, box a, box b), box i) =>
+                self.add_exp(CExp::add(CExp::ram(a, i), CExp::ram(b, i)), kctx, fctx),
+            // [a - b][i] = a[i] - b[i]
+            CExp::Ram(box CExp::Bin(BinOp::Sub, box a, box b), box i) =>
+                self.add_exp(CExp::sub(CExp::ram(a, i), CExp::ram(b, i)), kctx, fctx),
+            // [a * b][i] = a[i] * b[i]
+            CExp::Ram(box CExp::Bin(BinOp::Mul, box a, box b), box i) =>
+                self.add_exp(CExp::mul(CExp::ram(a, i), CExp::ram(b, i)), kctx, fctx),
+            // [a / b][i] = a[i] / b[i]
+            CExp::Ram(box CExp::Bin(BinOp::Div, box a, box b), box i) =>
+                self.add_exp(CExp::div(CExp::ram(a, i), CExp::ram(b, i)), kctx, fctx),
+            // [a ^ b][i] = a[i] ^ b[i]
+            CExp::Ram(box CExp::Bin(BinOp::Pow, box a, box b), box i) =>
+                self.add_exp(CExp::pow(CExp::ram(a, i), CExp::ram(b, i)), kctx, fctx),
+            CExp::Ram(box CExp::Var(v), box i) =>
+
+
+
+
+
+                let node_it = self.get_it();
+                node_it.push_value(Value::Ram(a, b));
+                Ok(())
+            }
+            CExp::Map(box l, x, box v) => {
+
                 // Need smart constructors here, to simplify a[r1][r2] etc.
 
             }

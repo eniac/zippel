@@ -3,4 +3,5 @@
 pub mod id;
 pub mod ast;
 pub mod typ;
+pub mod eval;
 mod parser;
