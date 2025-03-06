@@ -26,7 +26,7 @@ impl<T> Substs<T> {
         self.0.contains(tid)
     }
     pub fn keys(&self) -> Set<Tid> {
-        self.0.keys().cloned()
+        self.0.keys()
     }
 }
 
@@ -127,6 +127,10 @@ impl AliasSubsts {
         self.get_repr(tid) == Some(tid.clone())
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&Tid, &Tid)> {
+        self.0.iter().map(|(k, v)| (k, v.iter().min().unwrap()))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -141,11 +145,11 @@ impl<T> From<Vec<(Tid, T)>> for Substs<T> {
     }
 }
 
-#[cfg(test)] use crate::module::decl::Decl;
+#[cfg(test)] use crate::ast::decl::Decl;
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(&decl.typevars),
+    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),

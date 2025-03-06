@@ -9,7 +9,7 @@ pub mod lub;
 pub mod range;
 pub mod subst;
 
-use crate::id::{Tid, TidTraversal};
+use crate::id::{Tid, TidSubst};
 
 pub use kind::Kind;
 pub use size::{Size, EvalError};
@@ -47,16 +47,15 @@ pub enum Typ<N> {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Typs<N>(pub Vec<Typ<N>>);
 
-impl<N> TidTraversal for Typ<N> {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+impl<N> TidSubst for Typ<N> {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
-            Typ::Uni(b, n) => Ok(Typ::Uni(f(b)?, n)),
-            Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
-            Typ::Base(b) => Ok(Typ::Base(f(b)?)),
-            Typ::Vec(box b, n) =>
-                Ok(Typ::Vec(Box::new(b.tid_traverse(f)?), n)),
-            Typ::Fin(r) => Ok(Typ::Fin(r)),
-            Typ::Bool => Ok(Typ::Bool)
+            Typ::Uni(b, _)
+            | Typ::Mle(b, _)
+            | Typ::Base(b) if b == from => *b = to.clone(),
+            Typ::Vec(b, _) => b.tid_subst(from, to),
+            Typ::Fin(_) | Typ::Bool | Typ::Base(_)
+            | Typ::Uni(_, _) | Typ::Mle(_, _) => {}
         }
     }
 }
@@ -76,9 +75,9 @@ impl<N> FromIterator<Typ<N>> for Typs<N> {
     }
 }
 
-impl<N> TidTraversal for Typs<N> {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        Ok(Typs(self.0.into_iter().map(|t| t.tid_traverse(f)).collect::<Result<Vec<_>, _>>()?))
+impl<N> TidSubst for Typs<N> {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        self.0.iter_mut().for_each(|t| t.tid_subst(from, to))
     }
 }
 
@@ -322,6 +321,7 @@ impl<'pest> FromPest<'pest> for Typ<Size> {
             }
             Rule::fin_ty =>
                 Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
+            Rule::bool_ty => Ok(Typ::Bool),
             Rule::vec_ty => {
                 let mut inner = pair.into_inner();
                 let id = Typ::from_pest(&mut inner)?;
@@ -351,4 +351,7 @@ fn typ_parser() {
 
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
+
+    pairs = ZippelParser::parse(Rule::typ, "Bool").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::Bool);
 }

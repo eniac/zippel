@@ -1,10 +1,9 @@
-use crate::id::{Tid, TidTraversal};
+use crate::id::{Tid, TidSubst};
 use crate::typ::kind::Kind;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
-use itertools::Itertools;
 use pest::iterators::Pairs;
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
 /// A type variable with an associated kind
@@ -35,6 +34,9 @@ impl TypeVars {
     pub fn contains(&self, id: &Tid) -> bool {
         self.0.iter().any(|tvar| &tvar.id == id)
     }
+    pub fn to_ctx(&self) -> Ctx<Tid, Kind> {
+        self.0.iter().map(|tvar| (tvar.id.clone(), tvar.kind.clone())).collect()
+    }
 }
 
 impl IntoIterator for TypeVars {
@@ -52,15 +54,23 @@ impl FromIterator<TypeVar> for TypeVars {
     }
 }
 
-impl TidTraversal for TypeVar {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        Ok(TypeVar { id: f(self.id)?, kind: self.kind })
+impl<const L: usize> From<[TypeVar; L]> for TypeVars {
+    fn from(arr: [TypeVar; L]) -> Self {
+        TypeVars(arr.to_vec())
     }
 }
 
-impl TidTraversal for TypeVars {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        Ok(TypeVars(self.0.into_iter().map(|tvar| tvar.tid_traverse(f)).collect::<Result<_, _>>()?))
+impl TidSubst for TypeVar {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        if &self.id == from {
+            self.id = to.clone();
+        }
+    }
+}
+
+impl TidSubst for TypeVars {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        self.0.iter_mut().for_each(|tvar| tvar.tid_subst(from, to));
     }
 }
 
@@ -76,6 +86,9 @@ impl<'pest> FromPest<'pest> for TypeVar {
             Rule::tvar => {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                if id == Tid::new("Bool") {
+                    return Err(ConversionError::Malformed(InputError::ReservedType));
+                }
                 let kind = Kind::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(TypeVar { id, kind })
             },
@@ -196,7 +209,7 @@ fn typevars_parser() {
     let mut pairs = ZippelParser::parse(Rule::tvars, ex).unwrap();
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
-        Ok(TypeVars(vec![
+        Ok(TypeVars::from([
             TypeVar::new("A", Kind::Field),
             TypeVar::new("B1", Kind::Group),
             TypeVar::new("B2", Kind::Group),
@@ -225,5 +238,12 @@ fn typevars_parser() {
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
         Err(ConversionError::Malformed(InputError::PairingGroup(Tid::new("A"), Tid::new("B"), Tid::new("A"), Kind::Field)))
+    );
+
+    let ex_reserved = "Bool: Field";
+    let mut pairs = ZippelParser::parse(Rule::tvars, ex_reserved).unwrap();
+    assert_eq!(
+        TypeVars::from_pest(&mut pairs),
+        Err(ConversionError::Malformed(InputError::ReservedType))
     );
 }

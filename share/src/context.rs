@@ -151,6 +151,20 @@ impl<K, V> Ctx<K, V> {
         }
     }
 
+    pub fn append(&mut self, other: &Ctx<K, V>) where K: Ord + Clone, V: Clone {
+        self.0.append(&mut other.0.clone());
+    }
+    pub fn union(&self, other: &Ctx<K, V>) -> Ctx<K, V>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
+        let mut c = self.0.clone();
+        let mut o = other.0.clone();
+        c.append(&mut o);
+        Ctx(c)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -170,8 +184,8 @@ impl<K, V> Ctx<K, V> {
         self.0.remove(k)
     }
 
-    pub fn keys(&self) -> Set<&K> where K: Ord {
-        Set(self.0.keys().collect::<BTreeSet<_>>())
+    pub fn keys(&self) -> Set<K> where K: Ord + Clone {
+        Set(self.0.keys().map(|x| x.clone()).collect::<BTreeSet<_>>())
     }
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.0.values()

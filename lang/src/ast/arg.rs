@@ -4,7 +4,7 @@ use std::fmt;
 
 use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
-use crate::id::{Tid, Vid, TidTraversal};
+use crate::id::{Tid, Vid, TidSubst};
 use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
 use crate::parser::*;
 
@@ -26,6 +26,12 @@ pub struct Arg<N> {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Args<N>(pub Vec<Arg<N>>);
+
+/// Symbolically sized arg
+pub type UArg = Arg<Size>;
+
+/// Symbolically sized args
+pub type UArgs = Args<Size>;
 
 /// Concrete sized arg
 pub type CArg = Arg<usize>;
@@ -95,19 +101,15 @@ impl<N, M> Traversal<N, M> for ArgsTraversal1<N> {
     }
 }
 
-impl<N> TidTraversal for Arg<N> {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        Ok(Arg {
-            qualifier: self.qualifier,
-            id: self.id,
-            typ: self.typ.tid_traverse(f)?,
-        })
+impl<N> TidSubst for Arg<N> {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        self.typ.tid_subst(from, to)
     }
 }
 
-impl<N> TidTraversal for Args<N> {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        Ok(Args(self.0.into_iter().map(|arg| arg.tid_traverse(f)).collect::<Result<_, _>>()?))
+impl<N> TidSubst for Args<N> {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        self.0.iter_mut().for_each(|arg| arg.tid_subst(from, to))
     }
 }
 

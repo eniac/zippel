@@ -2,10 +2,11 @@ use from_pest::ConversionError;
 use thiserror::Error;
 use pest::iterators::Pair;
 
-use crate::id::Tid;
-use crate::module::sig::USig;
+use crate::id::{Fid, Tid};
+use crate::ast::sig::USig;
+use crate::ast::arg::UArgs;
 use crate::parser::Rule;
-use crate::typ::{Size, Kind, EvalError};
+use crate::typ::{Size, Kind, EvalError, TypeVars};
 use crate::typ::range::RangeError;
 
 #[derive(Error, PartialEq, Debug)]
@@ -38,6 +39,10 @@ pub enum InputError<'pest> {
     MultiplicativeField(Tid, Kind),
     #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
     ScalarGroup(Tid, Kind),
+    #[error("ReservedType: Bool is a reserved type")]
+    ReservedType,
+    #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
+    EmptyDecl(Fid, TypeVars, UArgs)
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {

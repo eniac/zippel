@@ -18,9 +18,9 @@ and_op = @{ "&&" }
 or_op  = @{ "||" }
 in_op  = @{ "in" }
 
-/// Identifiers for functions, variables
-id   = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_" | "'" )* }
-
+/// Identifiers for functions, variables, type variables
+keyword = {"let" | "fn" | "proto" }
+id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 
 /// Ranges appear in types and expressions
 range = { size_ty ~ ("," ~ size_ty)? ~ ".." ~ size_ty }
@@ -39,12 +39,13 @@ kind_ty = { field_ty | group_ty | range_ty | pairing_ty | multiplicative_ty }
     multiplicative_ty = { "Multiplicative" ~ "<" ~ id ~ ">" }
     range_ty          = { range }
 
-typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | base_ty }
-    base_ty = { id }                                                 // Base type variable
-    uni_ty = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }              // Univariate polynomial
-    mle_ty = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }              // Multilinear expression
-    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }                          // Index type
-    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                     // Vector type
+typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
+    base_ty = { id }                                     // Base type variable
+    uni_ty = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Univariate polynomial
+    mle_ty = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Multilinear expression
+    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }              // Index type
+    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }         // Vector type
+    bool_ty = { "Bool" }                                 // Boolean type
 
 /// Arithmetic expression language of Zippel
 aexp       = { aexp_term ~ (bin_op ~ aexp_term)* }
@@ -60,7 +61,6 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | ram_exp
          | range_exp
          | app_exp
-         | reduce_exp
          | assert_exp
          | verify_exp
          | let_exp
@@ -68,24 +68,24 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | positive
          | id
     }
-    gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                                    // Group generator
-    coef_exp      = { "coef" ~ aexp  }                                            // Create a univariate polynomial
-    mle_exp       = { "mle"  ~ aexp  }                                            // Create a multilinear expression
-    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ "," ~ aexp ~ ")" }             // Interpolate (FFT) with domain and values
-    random_exp    = { "random" ~ "<" ~ id ~ ">" }                                 // Uniform random sampling (Prover)
-    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                              // Random oracle challenge (Verifier)
-    map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }               // Map comprehension
-    vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }                          // vector of elements
-    ram_exp       = { id ~ "[" ~ aexp ~ "]" }                                     // Randm access into a vector
-    range_exp     = { range }                                                     // Range expression
-    app_exp       = { id ~ "(" ~ aexps ~ ")" }                                    // Function application
-    reduce_exp    = { "reduce" ~ "(" ~ bin_op ~ "," ~ aexp }                      // Fold over vector with binary operator
-    assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" }                               // Assertion (Prover) expression
-    verify_exp    = { "verify" ~ "(" ~ bexp ~ ")"  }                              // Assertion (Verifier) expression
-    let_exp       = { "let" ~ id ~ "=" ~ aexp }                                   // Let expression
-    log_exp       = { id ~ "<-" ~ aexp }                                          // Transcript log expression
+    gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                         // Group generator
+    coef_exp      = { "coef" ~ aexp  }                                 // Create a univariate polynomial
+    mle_exp       = { "mle"  ~ aexp  }                                 // Create a multilinear expression
+    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ "," ~ aexp ~ ")" }  // Interpolate (FFT) with domain and values
+    random_exp    = { "random" ~ "<" ~ id ~ ">" }                      // Uniform random sampling (Prover)
+    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                   // Random oracle challenge (Verifier)
+    map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }    // Map comprehension
+    vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }               // vector of elements
+    ram_exp       = { id ~ "[" ~ aexp ~ "]" }                          // Randm access into a vector
+    range_exp     = { range }                                          // Range expression
+    app_exp       = { id ~ "(" ~ aexps ~ ")" }                         // Function application
+    assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" }                    // Assertion (Prover) expression
+    verify_exp    = { "verify" ~ "(" ~ bexp ~ ")"  }                   // Assertion (Verifier) expression
+    let_exp       = { "let" ~ id ~ "=" ~ aexp ~ ";" ~ aexp }           // Let expression
+    log_exp       = { id ~ "<-" ~ aexp ~ ";" ~ aexp }                  // Transcript log expression
     bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op }
-aexps = { aexp ~ (("," | ";") ~ aexp)* }
+aexps = { aexp ~ ("," ~ aexp)* }
+stmts   = { aexp ~ (";" ~ aexp)* ~ ";"? }
 
 /// Binary expressions
 bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
@@ -107,8 +107,8 @@ args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols] or [functions]. Protocols end with a [verify] and functions end with an [AExp]
 decl = { proto_decl | func_decl }
-    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ bexp ~ "{" ~ aexps ~ "}" }
-    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ aexps ~ "}" }
+    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ bexp ~ "{" ~ stmts ~ "}" }
+    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }
 
 /// Top-level module
 decls = { SOI ~ decl* ~ EOI }

@@ -1,10 +1,10 @@
-use crate::typ::{Typ, Size, Kind, CTyp, Typs, CTyps, Range, RangeTraversal};
+use crate::typ::{Typ, Size, Kind, CTyp, TypeVars, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
-use crate::module::{Arg, Args};
+use crate::ast::{Arg, Args};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
-use crate::id::{Fid, Tid, TidTraversal};
+use crate::id::{Gen, Fid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
 
@@ -20,6 +20,7 @@ pub enum SigError {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Sig<N> {
     pub name: Fid,
+    pub typevars: TypeVars,
     pub args: Args<N>,
     pub ret: Typ<N>
 }
@@ -31,22 +32,38 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify(self, typs: &CTyps, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<CSig, SigError> {
+    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, Kind>) -> Result<CSig, SigError> {
+        // Check arity first
         if self.args.len() != typs.len() {
             return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
         }
 
+        // New substitutions context
+        let mut subs = AliasSubsts::new();
+
+        // If any type vars are captured by [kctx], shift them
+        let keys = kctx.keys();
+        let mut shifted = self.clone();
+        for id in kctx.keys() {
+            shifted.tid_subst(&id, &Tid::gen(&id, &keys));
+        }
+
+        // New kind context for type vars, after shifting we know there will be no conflicts
+        let kind_ctx = shifted.typevars.to_ctx().union(&kctx);
+
+        // Unification of arguments and parameters
         let mut args = Vec::new();
-        for (l, r) in self.args.iter().zip(typs.iter()) {
-            let typ = CTyp::unify(l.typ.clone(), r.clone(), ctx, subs)
-                    .map_err(|e| SigError::Unify(self.clone(), typs.clone(), e))?;
+        for (l, r) in shifted.args.iter().zip(typs.iter()) {
+            let typ = CTyp::unify(l.typ.clone(), r.clone(), &kind_ctx, &mut subs)
+                    .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
             args.push(Arg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
         }
 
-        // Substitute alias in the return type
-        let ret = self.ret.tid_traverse(&mut |id| Ok(subs.get_repr(&id).unwrap_or(id)))?;
-
-        Ok(Sig { name: self.name, args: Args(args), ret })
+        // Substitute alias in the return type and typevars
+        for (id, repr) in subs.iter() {
+            shifted.tid_subst(&id, &repr);
+        }
+        Ok(shifted)
     }
 }
 
@@ -54,14 +71,22 @@ impl CSig {
 impl<N> ToTraversal1<N> for Sig<N> {
     type Output<Z> = Sig<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
-        let Sig { name, args, ret } = self;
-        Ok(Sig { name, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
+        let Sig { name, typevars, args, ret } = self;
+        Ok(Sig { name, typevars, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
+    }
+}
+
+impl<N> TidSubst for Sig<N> {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
+        self.typevars.tid_subst(from, to);
+        self.args.tid_subst(from, to);
+        self.ret.tid_subst(from, to);
     }
 }
 
 impl<N> RangeTraversal<N> for Sig<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(Sig { name: self.name, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
+        Ok(Sig { name: self.name, typevars: self.typevars, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
     }
 }
 
@@ -75,8 +100,12 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
+            self.name.pretty(allocator),
+            allocator.text("<"),
+            self.typevars.pretty(allocator),
+            allocator.text(">"),
             allocator.text("("),
-            allocator.intersperse(self.args.iter().map(|a| a.clone().pretty(allocator)),", "),
+            self.args.pretty(allocator),
             allocator.text(") -> "),
             self.ret.pretty(allocator)
         ])

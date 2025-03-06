@@ -1,9 +1,5 @@
-pub mod decl;
-pub mod sig;
-pub mod arg;
-
-pub use arg::{Arg, Args};
-pub use sig::Sig;
+use crate::ast::{Arg, Args, Sig, Body, CBody, CSig};
+use crate::ast::decl::UDecls;
 
 use std::fmt;
 use thiserror::Error;
@@ -14,14 +10,12 @@ use pest::Parser;
 use crate::typ::SizeSubsts;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
-use sig::CSig;
-use decl::{Body, UDecls};
 use crate::typ::{Size, TypeVars, EvalError, RangeError, RangeTraversal};
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Polymod<N>(pub Ctx<(TypeVars, Sig<N>), Body<N>>);
+pub struct Module<N>(pub Ctx<Sig<N>, Body<N>>);
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
@@ -34,12 +28,12 @@ pub enum ModuleError {
 }
 
 /// Polymorphic module with symbolic sizes
-pub type UPolymod = Polymod<Size>;
+pub type UModule = Module<Size>;
 
 /// Polymorphic module with concrete sizes
-pub type CPolymod = Polymod<usize>;
+pub type CModule = Module<usize>;
 
-impl<N> Polymod<N> {
+impl<N> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -47,17 +41,17 @@ impl<N> Polymod<N> {
 /// Entry point to the zippel compiler.
 /// Parse a Zippel declarations list into a polymorphic,
 /// untyped module, with symbolic sizes.
-impl UPolymod {
+impl UModule {
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         let decls = UDecls::from_pest(&mut pairs)?;
         // Catch duplicate declarations here
         let mut m = Ctx::new();
         for d in decls.into_iter() {
-            m.insert_with((d.typevars, d.sig), d.body,
-                &|(_, sig), _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
+            m.insert_with(d.sig, d.body,
+                &|sig, _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
         }
-        Ok(Polymod(m))
+        Ok(Module(m))
     }
 
     /// Parse a file into a Zippel declarations list
@@ -67,13 +61,13 @@ impl UPolymod {
         Self::from_str(stored_str)
     }
 
-    /// Concretize sizes in all declarations to generate a CPolymod
-    pub fn concretize(self) -> Result<CPolymod, ModuleError> {
+    /// Concretize sizes in all declarations to generate a CModule
+    pub fn concretize(self) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
-        for ((typevars, sig), body) in self.into_iter() {
+        for (sig, body) in self.into_iter() {
 
             // Generate all possible size substitutions for this declaration (guaranteed non-empty)
-            let all_substs = SizeSubsts::from_typevars(&typevars);
+            let all_substs = SizeSubsts::from_typevars(&sig.typevars);
 
             // For each size substitution, evaluate the sizes
             for substs in all_substs.into_iter() {
@@ -81,7 +75,10 @@ impl UPolymod {
                 let b = body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
                 // Evaluate all sizes in the signature
-                let s = sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+                let mut s = sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+
+                // Remove typevars substituted
+                s.typevars = s.typevars.into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
 
                 // Check the ranges
                 b.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
@@ -89,36 +86,33 @@ impl UPolymod {
                 s.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
                     .map_err(|e| ModuleError::InvalidRange(s.clone(), e))?;
 
-                // Remove typevars substituted
-                let tv = typevars.clone().into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
-
                 // No size substitutions, just add the declaration with concrete sizes
-                ctx.insert_with((tv, s), b,
-                    &|(_, sig), _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
+                ctx.insert_with(s, b,
+                    &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
             }
         }
         // Return the concretized module
-        Ok(Polymod(ctx))
+        Ok(Module(ctx))
     }
 
 }
 
-impl<N: Ord> IntoIterator for Polymod<N> {
-    type Item = ((TypeVars, Sig<N>), Body<N>);
-    type IntoIter = std::collections::btree_map::IntoIter<(TypeVars, Sig<N>), Body<N>>;
+impl<N: Ord> IntoIterator for Module<N> {
+    type Item = (Sig<N>, Body<N>);
+    type IntoIter = std::collections::btree_map::IntoIter<Sig<N>, Body<N>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N: Ord> FromIterator<((TypeVars, Sig<N>), Body<N>)> for Polymod<N> {
-    fn from_iter<I: IntoIterator<Item = ((TypeVars, Sig<N>), Body<N>)>>(iter: I) -> Self {
-        Polymod(iter.into_iter().collect())
+impl<N: Ord> FromIterator<(Sig<N>, Body<N>)> for Module<N> {
+    fn from_iter<I: IntoIterator<Item = (Sig<N>, Body<N>)>>(iter: I) -> Self {
+        Module(iter.into_iter().collect())
     }
 }
 
 /// Pretty printer instance
-impl<'a, D, A, N> Pretty<'a, D, A> for Polymod<N>
+impl<'a, D, A, N> Pretty<'a, D, A> for Module<N>
 where
     N: Pretty<'a, D, A> + Ord + Clone + 'a,
     D: DocAllocator<'a, A>,
@@ -127,11 +121,10 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
        allocator.intersperse(
-            self.0.into_iter().map(|((tvs, sig), body)|
+            self.0.into_iter().map(|(sig, body)|
                     allocator.concat([
                         if body.is_proto() { allocator.text("proto") } else { allocator.text("fn") },
                         allocator.space(),
-                        tvs.pretty(allocator),
                         sig.pretty(allocator),
                         body.pretty(allocator),
                         allocator.hardline(),
@@ -145,12 +138,12 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Polymod<N>
+impl<'a, N> fmt::Display for Module<N>
 where
     N: Clone + Ord + Pretty<'a, BoxAllocator, ()> + 'a,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Polymod<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Module<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -165,7 +158,7 @@ fn from_decl_subst1() {
         "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
         "   a[0]\n",
         "}");
-    let umod = UPolymod::from_str(ex).unwrap();
+    let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 2);
     let cmod = umod.concretize().unwrap();
     assert_eq!(cmod.len(), 4);
@@ -180,7 +173,7 @@ fn from_decl_duplicate() {
         "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
         "   a[0]\n",
         "}");
-    assert!(UPolymod::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
 }
 
 #[test]
@@ -189,8 +182,9 @@ fn from_decl_underflow() {
         "fn sum<N: 0..3, F: Field>(public a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}");
-    assert!(UPolymod::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
 }
+
 #[test]
 fn from_decl_subst2() {
     let ex = concat!(
@@ -199,11 +193,11 @@ fn from_decl_subst2() {
         "}\n",
         "fn sum<F: Field>(public a: [F; 0]) -> F {\n",
         "   a[0]\n",
-        "}",
+        "}\n",
         "fn prod_sum<N: 0..4, M: 0..3, F: Field>(public a: [F; N], public b: [F; M]) -> F {\n",
         "   sum(a) * sum(b)\n",
-        "}");
-    let umod = UPolymod::from_str(ex).unwrap();
+        "}\n");
+    let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 3);
     let cmod = umod.concretize().unwrap();
     assert_eq!(cmod.len(), 16);

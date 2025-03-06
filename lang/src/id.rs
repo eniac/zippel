@@ -7,7 +7,7 @@ use crate::parser::*;
 
 /// Generate a new identifier not in the set
 pub trait Gen: Ord + Sized {
-    fn gen(s: &Set<Self>) -> Self;
+    fn gen(root: &Self, s: &Set<Self>) -> Self;
 }
 
 /// Type variable identifier
@@ -15,8 +15,14 @@ pub trait Gen: Ord + Sized {
 pub struct Tid(pub String);
 
 /// Traverse TIDs
-pub trait TidTraversal : Sized {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E>;
+pub trait TidSubst: Sized {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid);
+}
+
+/// Traverse VIDs
+pub trait VidSubst : Sized {
+    type Context;
+    fn vid_subst(&mut self, from: &Vid, to: &Vid, ctx: &mut Self::Context);
 }
 
 impl<'a, D, A> Pretty<'a, D, A> for Tid
@@ -58,19 +64,33 @@ impl Default for Tid {
     }
 }
 
+/// Fresh type variable generator
 impl Gen for Tid {
-    fn gen(s: &Set<Self>) -> Self {
-        let mut i = 0;
+    fn gen(root: &Self, s: &Set<Self>) -> Self {
+        let (root, mut i) = split_alphanumeric(&root.0);
         loop {
-            let id = Tid(format!("?T{}", i));
+            i += 1;
+            let id = Tid(format!("{}{}",root, i));
             if !s.contains(&id) {
                 return id;
             }
-            i += 1;
         }
     }
 }
 
+/// Fresh variable generator
+impl Gen for Vid {
+    fn gen(root: &Self, s: &Set<Self>) -> Self {
+        let (root, mut i) = split_alphanumeric(&root.0);
+        loop {
+            i += 1;
+            let id = Vid(format!("{}{}",root, i));
+            if !s.contains(&id) {
+                return id;
+            }
+        }
+    }
+}
 /// Arbitrary instance for Tid
 #[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
@@ -268,12 +288,87 @@ impl<'pest> FromPest<'pest> for Tid {
     }
 }
 
+fn split_alphanumeric(input: &str) -> (String, i32) {
+    // Find the last non-digit character
+    let chars: Vec<char> = input.chars().collect();
+    let last_non_digit_pos = chars.iter().rposition(|c| !c.is_numeric());
+
+    match last_non_digit_pos {
+        Some(pos) => {
+            // There is at least one non-digit, check if there are digits after it
+            if pos < input.len() - 1 {
+                // There are trailing digits after the last non-digit
+                let alpha_part = &input[..=pos];
+                let numeric_part = input[pos+1..].parse::<i32>().unwrap_or(0);
+                (alpha_part.to_string(), numeric_part)
+            } else {
+                // The string ends with a non-digit
+                (input.to_string(), 0)
+            }
+        },
+        None => {
+            // The entire string is digits
+            if !input.is_empty() {
+                ("".to_string(), input.parse::<i32>().unwrap_or(0))
+            } else {
+                ("".to_string(), 0)
+            }
+        }
+    }
+}
+
+#[test]
+fn test_simple_alphanumeric() {
+    assert_eq!(split_alphanumeric("a32"), ("a".to_string(), 32));
+}
+
+#[test]
+fn test_only_alpha() {
+    assert_eq!(split_alphanumeric("abc"), ("abc".to_string(), 0));
+}
+
+#[test]
+fn test_only_numeric() {
+    assert_eq!(split_alphanumeric("123"), ("".to_string(), 123));
+}
+
+#[test]
+fn test_alpha_numeric_alpha() {
+    assert_eq!(split_alphanumeric("a3a"), ("a3a".to_string(), 0));
+}
+
+#[test]
+fn test_complex_pattern() {
+    assert_eq!(split_alphanumeric("abc123def"), ("abc123def".to_string(), 0));
+}
+
+#[test]
+fn test_alpha_ending_with_numeric() {
+    assert_eq!(split_alphanumeric("abc123"), ("abc".to_string(), 123));
+}
+
+#[test]
+fn test_empty_string() {
+    assert_eq!(split_alphanumeric(""), ("".to_string(), 0));
+}
+
+#[test]
+fn test_special_characters_with_trailing_number() {
+    assert_eq!(split_alphanumeric("a-_!@#123"), ("a-_!@#".to_string(), 123));
+}
 
 #[test]
 fn tid_gen() {
-    let bound = Set::from(vec![Tid("?T0".to_string()), Tid("?T1".to_string())]);
-    let t = Tid::gen(&bound);
-    assert_eq!(t, Tid("?T2".to_string()));
+    let bound = Set::from(vec![Tid("T0".to_string()), Tid("T1".to_string())]);
+    let t = Tid::gen(&Tid::from("T"), &bound);
+    assert_eq!(t, Tid("T2".to_string()));
+}
+
+#[test]
+fn vid_gen() {
+    let bound = Set::from(vec![Tid("v".to_string()), Tid("v1".to_string())]);
+    let t = Tid::gen(&Tid::from("v"), &bound);
+    assert_eq!(t, Tid("v2".to_string()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////

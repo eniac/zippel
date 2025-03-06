@@ -6,10 +6,9 @@ use bumpalo::Bump;
 
 use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::module::{Sig, Args};
-use crate::id::{Tid, TidTraversal, Fid};
+use crate::ast::{Exp, Sig, Args};
+use crate::id::{Tid, TidSubst, Fid};
 use crate::typ::{Typ, Range, Size, TypeVars, RangeTraversal};
-use crate::exp::{AExp, AExps, BExp};
 use crate::parser::*;
 
 
@@ -25,8 +24,8 @@ pub enum Body<N> {
     /// - `body`: The body of the protocol.
     /// - `relation`: The relation describing the protocol.
     Proto {
-        body: AExps<N>,
-        relation: BExp<N>,
+        body: Exp<N>,
+        relation: Exp<N>,
     },
 
     /// A function body declaration
@@ -34,7 +33,7 @@ pub enum Body<N> {
     /// # fields
     /// - `body`: The body of the function.
     Func {
-        body: AExps<N>
+        body: Exp<N>
     },
 }
 
@@ -42,7 +41,6 @@ pub enum Body<N> {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Decl<N> {
     pub sig: Sig<N>,
-    pub typevars: TypeVars,
     pub body: Body<N>,
 }
 
@@ -57,26 +55,26 @@ impl<N> Body<N> {
     pub fn is_func(&self) -> bool {
         ! self.is_proto()
     }
-    pub fn last(&self) -> Option<&AExp<N>> {
+    pub fn body(&self) -> &Exp<N> {
         match self {
-            Body::Proto { body, .. } => body.0.last(),
-            Body::Func { body } => body.0.last(),
+            Body::Proto { body, .. } => body,
+            Body::Func { body } => body,
         }
     }
 }
 
 /// Useful constructors
 impl<N> Decl<N> {
-    pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: BExp<N>, body: AExps<N>) -> Self {
-        let sig = Sig { name, args, ret: Typ::bool() };
+    pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: Exp<N>, body: Exp<N>) -> Self {
+        let sig = Sig { name, typevars, args, ret: Typ::bool() };
         let body = Body::Proto { relation, body };
-        Decl { sig, typevars, body }
+        Decl { sig, body }
     }
 
-    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: AExps<N>) -> Self {
-        let sig = Sig { name, args, ret };
+    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: Exp<N>) -> Self {
+        let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
-        Decl { sig, typevars, body }
+        Decl { sig, body }
     }
 }
 
@@ -160,18 +158,14 @@ impl<N> ToTraversal1<N> for Body<N> {
     }
 }
 
-impl TidTraversal for CBody {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
+impl TidSubst for CBody {
+    fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
-            Body::Proto { relation, body } =>
-                Ok(Body::Proto {
-                    relation: relation.tid_traverse(f)?,
-                    body: body.tid_traverse(f)?,
-                }),
-            Body::Func { body } =>
-                Ok(Body::Func {
-                    body: body.tid_traverse(f)?,
-                }),
+            Body::Proto { relation, body } => {
+                relation.tid_subst(from, to);
+                body.tid_subst(from, to);
+            },
+            Body::Func { body } => body.tid_subst(from, to)
         }
     }
 }
@@ -237,12 +231,12 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let Decl { sig, typevars, body } = self;
+        let Decl { sig, body } = self;
         allocator.concat([
             if body.is_proto() { allocator.text("proto") } else { allocator.text("fn") },
             allocator.space(),
-            typevars.pretty(allocator),
             sig.pretty(allocator),
+            allocator.space(),
             body.pretty(allocator)
         ])
     }
@@ -315,10 +309,29 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Arguments
                 let args = Args::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // External relation
-                let relation = BExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let relation = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Protocol's body
-                let body = AExps::from_pest(&mut inner)?;
-
+                let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                let body =
+                    match next.as_rule() {
+                        Rule::stmts => {
+                            let mut aexps = Vec::new();
+                            for p in next.into_inner() {
+                                match p.as_rule() {
+                                    Rule::aexp => {
+                                        aexps.push(Exp::from_pest(&mut Pairs::single(p))?);
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            }
+                            match aexps.as_slice() {
+                                [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
+                                [body] => Ok(body.clone()),
+                                [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))
+                            }
+                        },
+                        _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(next)))
+                    }?;
                 Ok(Decl::proto(name, typevars, args, relation, body))
             },
             Rule::func_decl => {
@@ -332,8 +345,27 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Function return type
                 let ret = Typ::from_pest(&mut inner)?;
                 // Function's body
-                let body = AExps::from_pest(&mut inner)?;
-
+                let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                let body =
+                    match next.as_rule() {
+                        Rule::stmts => {
+                            let mut aexps = Vec::new();
+                            for p in next.into_inner() {
+                                match p.as_rule() {
+                                    Rule::aexp => {
+                                        aexps.push(Exp::from_pest(&mut Pairs::single(p))?);
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            }
+                            match aexps.as_slice() {
+                                [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
+                                [body] => Ok(body.clone()),
+                                [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))
+                            }
+                        },
+                        _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(next)))
+                    }?;
                 Ok(Decl::func(name, typevars, args, ret, body))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
@@ -370,9 +402,8 @@ impl<'pest> FromPest<'pest> for UDecls {
 }
 
 #[cfg(test)] use crate::{
-        module::Arg,
+        ast::{UExp, Exps, Arg},
         id::Vid,
-        exp::{UAExp, UBExp},
         typ::{Kind, TypeVar}
 };
 
@@ -398,11 +429,9 @@ fn proto_parser() {
         Fid::from("test"),
         TypeVars(vec![TypeVar::new("F", Kind::Field)]),
         Args(vec![Arg::public("a", Typ::varstr("F"))]),
-        UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
-        AExps(vec![
-            UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::varstr("a")),
-            UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
-        ]),
+        UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
+        UExp::letx(Vid::from("x"), UExp::from(3) * UExp::varstr("a"),
+            UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
     ));
 }
 
@@ -423,10 +452,8 @@ fn fn_parser1() {
         ]),
         Args(vec![Arg::private("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
         Typ::varstr("F"),
-        AExps(vec![
-            UAExp::letx(Vid::from("x"), UAExp::from(3) * UAExp::ram(UAExp::from("a"), UAExp::from(0))),
-            UAExp::varstr("x") + UAExp::varstr("x"),
-        ]),
+        UExp::letx(Vid::from("x"), UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
+            UExp::varstr("x") + UExp::varstr("x"))
     ));
 }
 
@@ -446,12 +473,10 @@ fn fn_parser2() {
         TypeVars(vec![TypeVar::new("F", Kind::Field)]),
         Args(vec![Arg::public("a", Typ::varstr("F"))]),
         Typ::varstr("F"),
-        AExps(vec![
-            UAExp::letx(Vid::from("v"), UAExp::vec(vec![UAExp::from(1), UAExp::from(2), UAExp::from(3)])),
-            UAExp::logx(Vid::from("p"), UAExp::interpolate(UAExp::varstr("v"), UAExp::vec(vec![UAExp::from(0), UAExp::from(1), UAExp::from(2)]))),
-            UAExp::logx(Vid::from("x"), UAExp::challenge(Tid::from("F"))),
-            UAExp::app(Fid::from("p"), AExps(vec![UAExp::varstr("x")])),
-        ]),
+        UExp::letx(Vid::from("v"), UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
+            UExp::logx(Vid::from("p"), UExp::interpolate(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)])),
+                UExp::logx(Vid::from("x"), UExp::challenge(Tid::from("F")),
+                    UExp::app(Fid::from("p"), Exps::from([UExp::varstr("x")])))))
     ));
 }
 
@@ -473,11 +498,9 @@ fn decls_parser() {
             Fid::from("test"),
             TypeVars(vec![TypeVar::new("F", Kind::Field)]),
             Args(vec![Arg::public("a", Typ::varstr("F"))]),
-            UBExp::equ(UAExp::varstr("a"), UAExp::varstr("a")),
-            AExps(vec![
-                UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::varstr("a"))),
-                UAExp::verify(UBExp::equ(UAExp::varstr("x"), UAExp::varstr("x"))),
-            ]),
+            UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
+            UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::varstr("a")),
+                UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
         ),
         UDecl::func(
             Fid::from("test"),
@@ -487,10 +510,8 @@ fn decls_parser() {
             ]),
             Args(vec![Arg::public("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
             Typ::varstr("F"),
-            AExps(vec![
-                UAExp::letx(Vid::from("x"), UAExp::mul(UAExp::from(3), UAExp::ram(UAExp::varstr("a"), UAExp::from(0)))),
-                UAExp::varstr("x") + UAExp::varstr("x"),
-            ]),
-        ),
+            UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
+                UExp::varstr("x") + UExp::varstr("x"))
+        )
     ]));
 }
