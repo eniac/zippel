@@ -9,13 +9,10 @@ pub use edge::{Dependency, Edge};
 pub use scope::{Scope, Scopes, ScopedVar};
 
 use share::Ctx;
-use lang::exp::{CAExp, CBExp, CExp};
+use lang::ast::{CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid, Fid};
 use lang::typ::{CTyp, Nothing, Kind};
 use lang::typ::infer::{Typeable, TypeError};
-use lang::module::arg::Arg;
-use lang::module::sig::CSig;
-use lang::module::decl::CBody;
 
 use thiserror::Error;
 use petgraph::{dot::Dot, graph::NodeIndex, Direction, Graph};
@@ -147,16 +144,14 @@ impl<A> DagBuilder<A> {
     pub fn get_it(&mut self) -> &mut Node<A> {
         &mut self.g[self.it]
     }
-}
 
-impl ToGraph for CAExp {
-    fn to_graph(&self, builder: &mut UDagBuilder, kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError> {
+    pub fn add_exp(&mut self, exp: CExp, kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError> {
         // Type inference for [self]
-        let typ = self.infer(kctx, &fctx.keys(), &mut builder.vctx)?;
-        match self.clone() {
+        let typ = self.infer(kctx, &fctx.keys(), &mut self.vctx)?;
+        match exp.clone() {
             // Literals get appended to the last node [it]
-            CAExp::Lit(n) => {
-                let node = builder.get_it();
+            CExp::Lit(n) => {
+                let node = self.get_it();
                 if node.bind_value(Value::Lit(n)) {
                     Ok(())
                 } else {
@@ -165,60 +160,60 @@ impl ToGraph for CAExp {
             },
 
             // Variables are edges, no new nodes are added
-            CAExp::Var(id) =>
-                if let Some(nvar) = builder.vars.get(&builder.scope.var(&id)) {
-                    builder.add_edge(*nvar, builder.it, Edge::data());
+            CExp::Var(id) =>
+                if let Some(nvar) = self.vars.get(&self.scope.var(&id)) {
+                    self.add_edge(*nvar, self.it, Edge::data());
                     Ok(())
                 } else {
                     Err(GraphError::var_not_found(&id))
                 },
             // Create a new [coef] node
-            CAExp::Coef(box v) => {
+            CExp::Coef(box v) => {
                 // Add new node
-                let ncoef = g.add_node(Node::coef(Value::Underscore, typ));
+                let ncoef = self.g.add_node(Node::coef(Value::Underscore, typ));
                 // Add edge from [it] to [ncoef]
-                g.add_edge(it, ncoef, Edge::data());
-                g.it = ncoef;
-                v.to_graph(g, kctx, fctx)
+                self.g.add_edge(self.it, ncoef, Edge::data());
+                self.g.it = ncoef;
+                self.add_exp(*v, kctx, fctx)
             },
 
             // Create a new [mle] Node
-            CAExp::Mle(box v) => {
+            CExp::Mle(box v) => {
                 // Add new node
-                let nmle = g.add_node(Node::mle(Value::Underscore, typ));
+                let nmle = self.g.add_node(Node::mle(Value::Underscore, typ));
                 // Add edge from [it] to [nmle]
-                g.add_edge(it, nmle, Edge::data());
-                g.it = nmle;
-                v.to_graph(g, kctx, fctx)
+                self.g.add_edge(self.it, nmle, Edge::data());
+                self.g.it = nmle;
+                self.add_exp(*v, kctx, fctx)
             },
 
             // Create a new [vec] node
-            CAExp::Vec(box vs) => {
+            CExp::Vec(box vs) => {
                 // Add new node
-                let nvec = g.add_node(Node::vec(vs.iter().map(|v| Value::Underscore).collect(), typ));
+                let nvec = self.g.add_node(Node::vec(vs.iter().map(|v| Value::Underscore).collect(), typ));
                 // Add edge from [it] to [nvec]
-                g.add_edge(it, nvec, Edge::data());
-                g.it = nvec;
+                self.g.add_edge(self.it, nvec, Edge::data());
+                self.g.it = nvec;
                 for v in vs {
-                    v.to_graph(g, kctx, fctx)?
+                    self.add_exp(v, kctx, fctx)?
                 }
                 Ok(())
             },
 
             // Create a new [bin] node
-            CAExp::Bin(op, box a, box b) => {
+            CExp::Bin(op, box a, box b) => {
                 // Add new node
-                let nbin = g.add_node(Node::bin(op, Value::Underscore, Value::Underscore, typ));
+                let nbin = self.g.add_node(Node::bin(op, Value::Underscore, Value::Underscore, typ));
                 // Add edge from [it] to [nbin]
-                g.add_edge(it, nbin, Edge::data());
-                g.it = nbin;
-                a.to_graph(g, kctx, fctx)?;
-                b.to_graph(g, kctx, fctx)
+                self.g.add_edge(self.it, nbin, Edge::data());
+                self.g.it = nbin;
+                self.add_exp(*a, kctx, fctx)?;
+                self.add_exp(*b, kctx, fctx)?;
             }
 
             // Create a new [range] node, no new nodes added
-            CAExp::Range(r) => {
-                let node = builder.get_it();
+            CExp::Range(r) => {
+                let node = self.get_it();
                 if node.bind_value(Value::Range(r)) {
                     Ok(())
                 } else {
@@ -227,7 +222,8 @@ impl ToGraph for CAExp {
             }
 
             // Create a new [map] node, with a vector of values
-            CAExp::Map(box l, x, box CAExp::Vec(box vs)) => {
+            CExp::Map(box l, x, box CExp::Vec(box vs)) => {
+                // Need smart constructors here, to simplify a[r1][r2] etc.
 
             }
         }

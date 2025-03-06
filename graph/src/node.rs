@@ -1,8 +1,7 @@
-use lang::exp::{CExp, BinOp};
+use lang::ast::{CSig, CExp, BinOp};
 use lang::typ::{CTyp, Nothing};
-use lang::module::sig::CSig;
-use lang::id::{Fid, Tid, Vid, TidTraversal};
-use lang::typ::range::{CRange, RangeTraversal};
+use lang::id::{Fid, Tid, Vid};
+use lang::typ::range::CRange;
 use share::traversal::ToTraversal1;
 
 use crate::principal::Principal;
@@ -272,84 +271,6 @@ impl<N> ToTraversal1<N> for Node<N> {
             Node::Ret(v) => Ok(Node::Ret(v)),
             Node::Op(op, typ, principal, ann) => {
                 let ann = f(ann)?;
-                Ok(Node::Op(op, typ, principal, ann))
-            }
-        }
-    }
-}
-
-impl TidTraversal for Value {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        match self {
-            Value::Gen(tid) => Ok(Value::Gen(f(tid)?)),
-            Value::Random(tid) => Ok(Value::Random(f(tid)?)),
-            _ => Ok(self)
-        }
-    }
-}
-
-impl TidTraversal for Values {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        self.into_iter().map(|v| v.tid_traverse(f)).collect()
-    }
-}
-
-impl TidTraversal for Op {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        match self {
-            Op::Hash(tid) => Ok(Op::Hash(f(tid)?)),
-            Op::Bin(op, a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Bin(op, a, b))
-            },
-            Op::Coef(v) => Ok(Op::Coef(v.tid_traverse(f)?)),
-            Op::Mle(v) => Ok(Op::Mle(v.tid_traverse(f)?)),
-            Op::Vec(vs) => Ok(Op::Vec(vs.tid_traverse(f)?)),
-            Op::Ram(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Ram(a, b))
-            },
-            Op::Interpolate(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Interpolate(a, b))
-            },
-            Op::Equ(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Equ(a, b))
-            },
-            Op::Contains(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Contains(a, b))
-            },
-            Op::And(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::And(a, b))
-            },
-            Op::Or(a, b) => {
-                let a = a.tid_traverse(f)?;
-                let b = b.tid_traverse(f)?;
-                Ok(Op::Or(a, b))
-            },
-            Op::Not(a) => Ok(Op::Not(a.tid_traverse(f)?)),
-        }
-    }
-}
-
-impl<N> TidTraversal for Node<N> {
-    fn tid_traverse<E>(self, f: &mut dyn FnMut(Tid) -> Result<Tid, E>) -> Result<Self, E> {
-        match self {
-            Node::Inp(sig) => Ok(Node::Inp(sig.tid_traverse(f)?)),
-            Node::EmptyTranscript => Ok(Node::EmptyTranscript),
-            Node::Ret(v) => Ok(Node::Ret(v.tid_traverse(f)?)),
-            Node::Op(op, typ, principal, ann) => {
-                let op = op.tid_traverse(f)?;
-                let typ = typ.tid_traverse(f)?;
                 Ok(Node::Op(op, typ, principal, ann))
             }
         }
