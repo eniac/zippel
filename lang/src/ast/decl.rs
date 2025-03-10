@@ -4,10 +4,10 @@ use pest::iterators::Pairs;
 use pest::Parser;
 use bumpalo::Bump;
 
-use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::ast::{Exp, Sig, Args};
-use crate::id::{Tid, TidSubst, Fid};
+use crate::ast::{Exp, ExpSubst, CExp, Sig, Args};
+use crate::id::{Tid, TidSubst, Fid, Vid};
 use crate::typ::{Typ, Range, Size, TypeVars, RangeTraversal};
 use crate::parser::*;
 
@@ -166,6 +166,25 @@ impl TidSubst for CBody {
                 body.tid_subst(from, to);
             },
             Body::Func { body } => body.tid_subst(from, to)
+        }
+    }
+}
+
+impl ExpSubst for CBody {
+    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
+        match self {
+            Body::Proto { relation, body } => {
+                relation.subst(from, to, ctx);
+                body.subst(from, to, ctx);
+            },
+            Body::Func { body } => body.subst(from, to, ctx)
+        }
+    }
+
+    fn freevars(&self) -> Set<Vid> {
+        match self {
+            Body::Proto { relation, body } => relation.freevars().union(body.freevars()),
+            Body::Func { body } => body.freevars()
         }
     }
 }
@@ -403,7 +422,6 @@ impl<'pest> FromPest<'pest> for UDecls {
 
 #[cfg(test)] use crate::{
         ast::{UExp, Exps, Arg},
-        id::Vid,
         typ::{Kind, TypeVar}
 };
 

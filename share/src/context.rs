@@ -187,8 +187,8 @@ impl<K, V> Ctx<K, V> {
     pub fn keys(&self) -> Set<K> where K: Ord + Clone {
         Set(self.0.keys().map(|x| x.clone()).collect::<BTreeSet<_>>())
     }
-    pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.0.values()
+    pub fn values(&self) -> Vec<V> where V: Clone {
+        self.0.values().cloned().collect()
     }
     pub fn contains(&self, k: &K) -> bool where K: Ord {
         self.0.contains_key(k)

@@ -19,12 +19,6 @@ pub trait TidSubst: Sized {
     fn tid_subst(&mut self, from: &Tid, to: &Tid);
 }
 
-/// Traverse VIDs
-pub trait VidSubst : Sized {
-    type Context;
-    fn vid_subst(&mut self, from: &Vid, to: &Vid, ctx: &mut Self::Context);
-}
-
 impl<'a, D, A> Pretty<'a, D, A> for Tid
 where
     D: DocAllocator<'a, A>,

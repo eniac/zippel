@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 use share::{Ctx, Set};
-use crate::id::Tid;
+use crate::id::{Tid, TidSubst};
 use crate::typ::{Kind, TypeVars};
 use crate::typ::range::Range;
 
@@ -137,6 +137,13 @@ impl AliasSubsts {
     pub fn clear(&mut self) {
         self.0.clear();
     }
+
+    pub fn tid_subst<T: TidSubst>(&self, on: &mut T) {
+        for k in self.0.keys() {
+            on.tid_subst(&k, &self.get_repr(&k).unwrap());
+        }
+    }
+
 }
 
 impl<T> From<Vec<(Tid, T)>> for Substs<T> {

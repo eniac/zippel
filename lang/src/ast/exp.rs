@@ -6,12 +6,12 @@ use std::fmt;
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
 
-use share::traversal::{BoxTraversal, ToTraversal1};
+use share::traversal::ToTraversal1;
 
-use share::{Set, Traversal, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::{Typ, Size};
+use share::{Set, BoxAllocator, Pretty, DocAllocator, DocBuilder};
+use crate::typ::Size;
 use crate::typ::range::{Range, RangeTraversal};
-use crate::id::{Gen, Tid, TidSubst, Fid, Vid, VidSubst};
+use crate::id::{Gen, Tid, TidSubst, Fid, Vid};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -235,6 +235,15 @@ pub enum Exp<N> {
     Verify(Box<Exp<N>>)
 }
 
+/// Traverse VIDs
+pub trait ExpSubst : Sized {
+    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>);
+    fn shift(&mut self, from: &Vid, ctx: &mut Set<Vid>) {
+        self.subst(from, &CExp::Var(Vid::gen(from, ctx)), ctx);
+    }
+    fn freevars(&self) -> Set<Vid>;
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub struct Exps<N>(pub Vec<Exp<N>>);
 
@@ -353,20 +362,38 @@ impl TidSubst for CExps {
     }
 }
 
-impl VidSubst for CExp {
-    type Context = Set<Vid>;
-    fn vid_subst(&mut self, from: &Vid, to: &Vid, ctx: &mut Self::Context) {
+impl ExpSubst for CExp {
+    fn freevars(&self) -> Set<Vid> {
         match self {
-            Exp::Var(id) if id == from => *id = to.clone(),
+            Exp::Var(id) => Set::singleton(id.clone()),
+            Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => Set::new(),
+            Exp::Coef(box p) | Exp::Mle(box p) | Exp::Assert(box p) | Exp::Verify(box p) | Exp::Not(box p) => p.freevars(),
+            Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
+            Exp::Bin(_, box a, box b)
+                | Exp::Interpolate(box a, box b)
+                | Exp::Ram(box a, box b)
+                | Exp::Equ(box a, box b)
+                | Exp::And(box a, box b)
+                | Exp::Or(box a, box b)
+                | Exp::Contains(box a, box b)
+                | Exp::Map(box a, _, box b)
+                | Exp::Let(_, box a, box b)
+                | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
+        }
+    }
+
+    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
+        match self {
+            Exp::Var(id) if id == from => *self = to.clone(),
             Exp::Var(_) | Exp::Challenge(_) | Exp::Random(_)
             | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => {},
             Exp::Coef(box p)
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
-            | Exp::Not(box p) => p.vid_subst(from, to, ctx),
+            | Exp::Not(box p) => p.subst(from, to, ctx),
             Exp::Vec(v)
-            | Exp::App(_, v) => v.vid_subst(from, to, ctx),
+            | Exp::App(_, v) => v.subst(from, to, ctx),
             Exp::Bin(_, box a, box b)
             | Exp::Interpolate(box a, box b)
             | Exp::Ram(box a, box b)
@@ -375,52 +402,54 @@ impl VidSubst for CExp {
             | Exp::Or(box a, box b)
             | Exp::Let(None, box a, box b)
             | Exp::Contains(box a, box b) => {
-                a.vid_subst(from, to, ctx);
-                b.vid_subst(from, to, ctx);
+                a.subst(from, to, ctx);
+                b.subst(from, to, ctx);
             },
             Exp::Map(box l, id, box r) =>
                 if id == from {
                     // Shadowing
-                    r.vid_subst(from, to, ctx);
-                } else if id == to {
+                    r.subst(from, to, ctx);
+                } else if to.freevars().contains(id) {
                     // Capturing, shift [id] in [l]
-                    r.vid_subst(from, to, ctx);
+                    r.subst(from, to, ctx);
                     let nid = Vid::gen(&id, ctx);
-                    l.vid_subst(&id, &nid, ctx);
+                    l.subst(&id, &CExp::var(&nid), ctx);
                     ctx.insert(nid.clone());
-                    l.vid_subst(from, to, ctx);
+                    l.subst(from, to, ctx);
                 } else {
                     // No shadowing or capturing
-                    r.vid_subst(from, to, ctx);
+                    r.subst(from, to, ctx);
                     ctx.insert(id.clone());
-                    l.vid_subst(from, to, ctx);
+                    l.subst(from, to, ctx);
                 }
             Exp::Let(Some(id), box a, box b)
             | Exp::Log(id, box a, box b) =>
                 if id == from {
                     // Shadowing
-                    a.vid_subst(from, to, ctx);
-                } else if id == to {
+                    a.subst(from, to, ctx);
+                } else if to.freevars().contains(id) {
                     // Capturing, shift [x] in [a]
-                    a.vid_subst(from, to, ctx);
+                    a.subst(from, to, ctx);
                     let nid = Vid::gen(&id, ctx);
-                    b.vid_subst(&id, &nid, ctx);
+                    b.subst(&id, &CExp::var(&nid), ctx);
                     ctx.insert(nid.clone());
-                    b.vid_subst(from, to, ctx);
+                    b.subst(from, to, ctx);
                 } else {
                     // No shadowing or capturing
-                    a.vid_subst(from, to, ctx);
+                    a.subst(from, to, ctx);
                     ctx.insert(id.clone());
-                    b.vid_subst(from, to, ctx);
+                    b.subst(from, to, ctx);
                 }
         }
     }
 }
 
-impl VidSubst for CExps {
-    type Context = Set<Vid>;
-    fn vid_subst(&mut self, from: &Vid, to: &Vid, ctx: &mut Self::Context) {
-        self.0.iter_mut().for_each(|x| x.vid_subst(from, to, ctx))
+impl ExpSubst for CExps {
+    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
+        self.0.iter_mut().for_each(|x| x.subst(from, to, ctx))
+    }
+    fn freevars(&self) -> Set<Vid> {
+        self.0.iter().map(|x| x.freevars()).fold(Set::new(), |acc, x| acc.union(x))
     }
 }
 
@@ -567,11 +596,11 @@ impl<N> Exp<N> {
     pub fn concat(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Concat, Box::new(l), Box::new(r))
     }
-    pub fn var(x: Vid) -> Self {
-        Exp::Var(x)
+    pub fn var(x: &Vid) -> Self {
+        Exp::Var(x.clone())
     }
     pub fn varstr<'a>(x: &'a str) -> Self {
-        Exp::var(Vid::from(x))
+        Exp::Var(Vid::from(x))
     }
     pub fn assert(b: Exp<N>) -> Self {
         Exp::Assert(Box::new(b))
@@ -834,7 +863,7 @@ impl From<u32> for UExp {
 
 impl From<Vid> for UExp {
     fn from(x: Vid) -> Self {
-        UExp::var(x)
+        UExp::Var(x)
     }
 }
 
@@ -899,7 +928,7 @@ impl<'pest> FromPest<'pest> for UExp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
-                Rule::id => Ok(Exp::var(Vid(pair.as_str().to_string()))),
+                Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
                 Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
@@ -935,7 +964,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::ram_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::ram(
-                        Exp::var(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
+                        Exp::Var(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },

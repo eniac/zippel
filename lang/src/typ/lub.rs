@@ -806,17 +806,6 @@ impl Lub for CTyp {
 
     fn lub_dot(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
         match (x.clone(), y.clone()) {
-            (CTyp::Base(a), CTyp::Base(b)) =>
-                Ok(CTyp::Base(Tid::lub_dot(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?)),
-            (CTyp::Fin(a), CTyp::Fin(b)) =>
-                Ok(CTyp::Fin(Range::lub_dot(a, b, &Nothing)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?)),
-            // Uni<A> * Uni<B> = Uni<A + B>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?, n + m)),
-
             // Vec<A> * Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -825,42 +814,8 @@ impl Lub for CTyp {
                 } else {
                     Err(LubError::typ_dot(&x, &y))
                 },
-            // Vec<A> * c = Vec<A>
-            (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
-                Ok(CTyp::vec(CTyp::lub_dot(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?, n)),
-
-            // Uni<A> * c = Uni<A> if c is a finite field
-            (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
-                let t = CTyp::lub_dot(a.clone(), CTyp::Base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Uni(c, n))
-                } else {
-                    Err(LubError::typ_dot(&x, &y))
-                }
-            }
-            // Mle<A> * c = Mle<A> if c is a finite field
-            (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) => {
-                let t = CTyp::lub_dot(a.clone(), CTyp::Base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Mle(c, n))
-                } else {
-                    Err(LubError::typ_dot(&x, &y))
-                }
-            }
-            // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a)
-                    .ok_or(LubError::next(LubError::typ_dot(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka.is_multiplicative() {
-                    Ok(CTyp::Base(a))
-                } else {
-                    Err(LubError::typ_dot(&x, &y))
-                }
-            },
-            (_, _) => Err(LubError::typ_dot(&x, &y))
+            (a, b) => CTyp::lub_mul(a, b, ctx)
+                .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))
         }
     }
 }

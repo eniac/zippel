@@ -6,14 +6,13 @@ use crate::ast::{BinOp, CExp, CBody};
 use crate::typ::unify::UnifyError;
 use crate::typ::lub::{Lub, LubError};
 use crate::ast::sig::CSig;
-use crate::typ::AliasSubsts;
 use crate::typ::range::{Range, RangeError};
 use crate::typ::{CTyp, CTyps, Kind};
 use thiserror::Error;
 
 pub trait Typeable {
     type Context;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &mut Self::Context) -> Result<CTyp, TypeError>;
+    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError>;
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -151,7 +150,7 @@ impl<'a> TypeError {
 /// Type inference for [CExp]
 impl Typeable for CExp {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &mut Self::Context) -> Result<CTyp, TypeError> {
+    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
         match self.clone() {
             // Infer the type of a literal [n] as a Fin<n> type
             CExp::Lit(n) => Ok(CTyp::fin(Range::singleton(n))),
@@ -421,7 +420,7 @@ impl Typeable for CExp {
                     // If the function name matches
                     if sig.name == id {
                         // The argument types must match the parameter types
-                        let vs = sig.clone()
+                        let (vs, _) = sig.clone()
                             .unify(&param_types, &kctx)
                             .ok()?;
                         // Return new signature
@@ -504,8 +503,9 @@ impl Typeable for CExp {
 
             CExp::Let(Some(var), box left, box right) | CExp::Log(var, box left, box right) => {
                 let tleft = left.infer(kctx, fctx, vctx)?;
+                let mut vctx = vctx.clone();
                 vctx.insert(&var, &tleft);
-                let tright = right.infer(kctx, fctx, vctx)?;
+                let tright = right.infer(kctx, fctx, &vctx)?;
                 Ok(tright)
             },
             CExp::Let(None, box left, box right) => {
@@ -519,7 +519,7 @@ impl Typeable for CExp {
 /// Type inference for [Body]
 impl Typeable for CBody {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &mut Self::Context) -> Result<CTyp, TypeError> {
+    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
         // Type inference for each statement in the Body
         match self {
             CBody::Proto { relation, body } => {

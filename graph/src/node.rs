@@ -1,7 +1,6 @@
-use lang::ast::{CSig, CExp, BinOp};
-use lang::typ::{CTyp, Nothing};
-use lang::id::{Fid, Tid, Vid};
-use lang::typ::range::CRange;
+use lang::ast::{CSig, BinOp};
+use lang::typ::CTyp;
+use lang::id::Tid;
 use share::traversal::ToTraversal1;
 
 use crate::principal::Principal;
@@ -11,24 +10,24 @@ use std::fmt;
 /// An operation [Op] is loosely a node in the graph,
 /// and it corresponds to one [lang::ast::Exp] in the AST.
 /// It is parameterized by some optional values.
-/// - When the value is [None], it is a placeholder for a graph edge (an underscore).
-/// - When the value is [Some v], it is a concrete, irreducible value.
+/// - When the value is [Value::Underscore], it is a placeholder for a graph edge (an underscore).
+/// - Otherwise, it is a concrete, irreducible value.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Op {
     /// Binary operation
-    Bin(BinOp, Option<Value>, Option<Value>),
+    Bin(BinOp, Value, Value),
 
     /// Coefficients of a univariate vector
-    Coef(Option<Value>),
+    Coef(Value),
 
     /// Multilinear extension of a 2^N vector of coefficients
-    Mle(Option<Value>),
+    Mle(Value),
 
     /// A vector of elements
-    Vec(Vec<Option<Value>>),
+    Vec(Vec<Value>),
 
     /// Random access or slice a vector
-    Ram(Option<Value>, Option<Value>),
+    Ram(Value, Value),
 
     /// Random oracle challenge
     Challenge(Tid),
@@ -43,22 +42,25 @@ pub enum Op {
     Hash(Tid),
 
     /// Convert from evaluation domain to lagrange domain.
-    Interpolate(Option<Value>, Option<Value>),
+    Interpolate(Value, Value),
 
     /// Equality check
-    Equ(Option<Value>, Option<Value>),
+    Equ(Value, Value),
 
     /// Vector containment check
-    Contains(Option<Value>, Option<Value>),
+    Contains(Value, Value),
 
     /// Logical and
-    And(Option<Value>, Option<Value>),
+    And(Value, Value),
 
     /// Logical or
-    Or(Option<Value>, Option<Value>),
+    Or(Value, Value),
 
     /// Logical not
-    Not(Option<Value>)
+    Not(Value),
+
+    /// Assertion or verification check
+    Check(Value)
 }
 
 /// A node in the DAG
@@ -69,27 +71,27 @@ pub enum Node<A> {
     /// Empty transcript node, corresponds to an entry point in the program
     EmptyTranscript,
     /// Operation node
-    Op(Op, CTyp, Principal, A)
+    Op(Op, CTyp, A)
 }
 
-/// Unannotated node
-pub type UNode = Node<Nothing>;
+/// Node annotated with a principal
+pub type PNode = Node<Principal>;
 
 impl Op {
     pub fn bin(op: BinOp) -> Self {
-        Op::Bin(op, None, None)
+        Op::Bin(op, Value::Underscore, Value::Underscore)
     }
     pub fn coef() -> Self {
-        Op::Coef(None)
+        Op::Coef(Value::Underscore)
     }
     pub fn mle() -> Self {
-        Op::Mle(None)
+        Op::Mle(Value::Underscore)
     }
     pub fn vec(size: usize) -> Self {
-        Op::Vec(vec![None; 10])
+        Op::Vec(vec![Value::Underscore; size])
     }
     pub fn ram() -> Self {
-        Op::Ram(None, None)
+        Op::Ram(Value::Underscore, Value::Underscore)
     }
     pub fn challenge(tid: Tid) -> Self {
         Op::Challenge(tid)
@@ -104,22 +106,25 @@ impl Op {
         Op::Hash(tid)
     }
     pub fn interpolate() -> Self {
-        Op::Interpolate(None, None)
+        Op::Interpolate(Value::Underscore, Value::Underscore)
     }
     pub fn equ() -> Self {
-        Op::Equ(None, None)
+        Op::Equ(Value::Underscore, Value::Underscore)
     }
     pub fn contains() -> Self {
-        Op::Contains(None, None)
+        Op::Contains(Value::Underscore, Value::Underscore)
     }
     pub fn and() -> Self {
-        Op::And(None, None)
+        Op::And(Value::Underscore, Value::Underscore)
     }
     pub fn or() -> Self {
-        Op::Or(None, None)
+        Op::Or(Value::Underscore, Value::Underscore)
     }
     pub fn not() -> Self {
-        Op::Not(None)
+        Op::Not(Value::Underscore)
+    }
+    pub fn check() -> Self {
+        Op::Check(Value::Underscore)
     }
 
     /// Replace one of the unbounded arguments in [Op] with a value,
@@ -133,33 +138,28 @@ impl Op {
             | Op::Contains(a, b)
             | Op::Interpolate(a, b)
             | Op::Ram(a, b) =>
-                if a.is_none() {
-                    *a = Some(v);
-                    true
-                } else if b.is_none() {
-                    *b = Some(v);
-                    true
-                } else {
-                    panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
+                match (&a, &b) {
+                    (Value::Underscore, _) => *a = v,
+                    (_, Value::Underscore) => *b = v,
+                    (_, _) => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
                 },
             Op::Mle(a)
             | Op::Coef(a)
+            | Op::Check(a)
             | Op::Not(a) =>
-                if a.is_none() {
-                    *a = Some(v);
-                    true
-                } else {
-                    panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
+                match a {
+                    Value::Underscore => *a = v,
+                    _ => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
                 },
             Op::Vec(vs) => {
-                for v in vs.iter_mut() {
-                    if v.is_none() {
-                        *v = Some(v);
-                        return true;
+                vs.iter_mut().for_each(|x| {
+                    if x.is_underscore() {
+                        *x = v.clone();
+                        return;
                     }
-                }
+                });
                 panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-            }
+            },
             Op::Hash(_) | Op::Random(_) | Op::Challenge(_) | Op::Generator(_) =>
                 panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
         }
@@ -167,7 +167,7 @@ impl Op {
 }
 
 
-impl UNode {
+impl PNode {
     pub fn inp(sig: CSig) -> Self {
         Node::Inp(sig)
     }
@@ -176,65 +176,76 @@ impl UNode {
         Node::EmptyTranscript
     }
 
-    pub fn ret() -> Self {
-        Node::Ret
-    }
-
     pub fn bin(op: BinOp, typ: CTyp) -> Self {
-        Node::Op(Op::bin(op), typ, Principal::Any, Nothing)
+        Node::Op(Op::bin(op), typ, Principal::Any)
     }
 
     pub fn coef(typ: CTyp) -> Self {
-        Node::Op(Op::coef(), typ, Principal::Any, Nothing)
+        Node::Op(Op::coef(), typ, Principal::Any)
     }
 
-    pub fn challenge(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::challenge(tid), typ, Principal::Any, Nothing)
-    }
     pub fn random(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::random(tid), typ, Principal::Any, Nothing)
+        Node::Op(Op::random(tid), typ, Principal::Any)
     }
     pub fn generator(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::generator(tid), typ, Principal::Any, Nothing)
+        Node::Op(Op::generator(tid), typ, Principal::Any)
     }
     pub fn mle(typ: CTyp) -> Self {
-        Node::Op(Op::mle(), typ, Principal::Any, Nothing)
+        Node::Op(Op::mle(), typ, Principal::Any)
     }
 
     pub fn vec(inner: CTyp, size: usize) -> Self {
-        Node::Op(Op::vec(*size), CTyp::vec(inner, size), Principal::Any, Nothing)
+        Node::Op(Op::vec(size), CTyp::vec(inner, size), Principal::Any)
     }
 
     pub fn ram(typ: CTyp) -> Self {
-        Node::Op(Op::ram(), typ, Principal::Any, Nothing)
+        Node::Op(Op::ram(), typ, Principal::Any)
     }
 
-    pub fn hash(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::hash(tid), typ, Principal::Any, Nothing)
+    pub fn challenge(tid: Tid, typ: CTyp) -> Self {
+        Node::Op(Op::hash(tid), typ, Principal::Verifier)
+    }
+
+    pub fn check(typ: CTyp) -> Self {
+        Node::Op(Op::check(), typ, Principal::Any)
     }
 
     pub fn interpolate(typ: CTyp) -> Self {
-        Node::Op(Op::interpolate(), typ, Principal::Any, Nothing)
+        Node::Op(Op::interpolate(), typ, Principal::Any)
     }
 
     pub fn equ(typ: CTyp) -> Self {
-        Node::Op(Op::equ(), typ, Principal::Any, Nothing)
+        Node::Op(Op::equ(), typ, Principal::Any)
     }
 
     pub fn and(typ: CTyp) -> Self {
-        Node::Op(Op::and(), typ, Principal::Any, Nothing)
+        Node::Op(Op::and(), typ, Principal::Any)
     }
 
     pub fn or(typ: CTyp) -> Self {
-        Node::Op(Op::or(), typ, Principal::Any, Nothing)
+        Node::Op(Op::or(), typ, Principal::Any)
     }
 
     pub fn contains(typ: CTyp) -> Self {
-        Node::Op(Op::contains(), typ, Principal::Any, Nothing)
+        Node::Op(Op::contains(), typ, Principal::Any)
     }
 
     pub fn not(typ: CTyp) -> Self {
-        Node::Op(Op::not(), typ, Principal::Any, Nothing)
+        Node::Op(Op::not(), typ, Principal::Any)
+    }
+
+    pub fn push_value(&mut self, v: Value) {
+        match self {
+            Node::Op(op, _, _) => op.push_value(v),
+            _ => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
+        }
+    }
+
+    pub fn set_principal(&mut self, ann: Principal) {
+        match self {
+            Node::Op(_, _, a) => *a = ann,
+            _ => panic!("UncaughtError: Failed to assign principal {} to node {}", ann, self)
+        }
     }
 }
 
@@ -244,7 +255,8 @@ impl fmt::Display for Op {
             Op::Bin(op, a, b) => write!(f, "{} {} {}", a, op, b),
             Op::Coef(v) => write!(f, "coef {}", v),
             Op::Mle(v) => write!(f, "mle {}", v),
-            Op::Vec(vs) => write!(f, "[ {} ]", vs),
+            Op::Vec(vs) =>
+                write!(f, "[ {} ]", vs.iter().map(|v| format!("{}", v)).collect::<Vec<String>>().join(", ")),
             Op::Ram(a, b) => write!(f, "{} [ {} ]", a, b),
             Op::Hash(tid) => write!(f, "hash<{}>", tid),
             Op::Interpolate(a, b) => write!(f, "interpolate {}, {}", a, b),
@@ -254,8 +266,9 @@ impl fmt::Display for Op {
             Op::Or(a, b) => write!(f, "{} || {}", a, b),
             Op::Not(a) => write!(f, "! {}", a),
             Op::Challenge(tid) => write!(f, "challenge<{}>", tid),
+            Op::Generator(tid) => write!(f, "generator<{}>", tid),
             Op::Random(tid) => write!(f, "random<{}>", tid),
-            Op::Generator(tid) => write!(f, "generator<{}>", tid)
+            Op::Check(a) => write!(f, "check {}", a)
         }
     }
 }
@@ -265,8 +278,8 @@ impl<A: fmt::Display> fmt::Display for Node<A> {
         match self {
             Node::Inp(sig) => write!(f, "{}", sig),
             Node::EmptyTranscript => write!(f, "EmptyTranscript"),
-            Node::Op(op, typ, principal, ann) =>
-                write!(f, "{} : {} by {} @ {}", op, typ, principal, ann)
+            Node::Op(op, typ, ann) =>
+                write!(f, "{} : {} @ {}", op, typ, ann)
         }
     }
 }
@@ -277,9 +290,9 @@ impl<N> ToTraversal1<N> for Node<N> {
         match self {
             Node::Inp(sig) => Ok(Node::Inp(sig)),
             Node::EmptyTranscript => Ok(Node::EmptyTranscript),
-            Node::Op(op, typ, principal, ann) => {
+            Node::Op(op, typ, ann) => {
                 let ann = f(ann)?;
-                Ok(Node::Op(op, typ, principal, ann))
+                Ok(Node::Op(op, typ, ann))
             }
         }
     }

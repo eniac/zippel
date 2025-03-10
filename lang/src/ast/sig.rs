@@ -32,7 +32,7 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, Kind>) -> Result<CSig, SigError> {
+    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, Kind>) -> Result<(CSig, AliasSubsts), SigError> {
         // Check arity first
         if self.args.len() != typs.len() {
             return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
@@ -60,10 +60,9 @@ impl CSig {
         }
 
         // Substitute alias in the return type and typevars
-        for (id, repr) in subs.iter() {
-            shifted.tid_subst(&id, &repr);
-        }
-        Ok(shifted)
+        subs.tid_subst(&mut shifted);
+
+        Ok((shifted, subs))
     }
 }
 
