@@ -1,20 +1,62 @@
 use lang::typ::range::CRange;
-
+use lang::ast::FreeVars;
 use std::fmt;
+use petgraph::graph::NodeIndex;
 
 /// Values are expressions which are (very close to) irreducible
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Value {
     Lit(usize),                      // Numeric literal
-    Range(CRange),                   // A range of a vector variable
-    Underscore,                      // An input edge with no variable name
+    Var(Vid),                        // Variable
+    Node(NodeIndex),                 // Input from a node
+    Slice(Box<Value>, CRange),       // A slice of a value
+    Ram(Box<Value>, usize),          // Random access memory into a value
+    Vec(Vec<Value>),                 // A vector of values
 }
 
 impl Value {
-    pub fn is_underscore(&self) -> bool {
+    pub fn ram(v: Value, i: usize) -> Value {
+        match v {
+            Value::Slice(box v, r) =>
+                Value::Ram(Box::new(v), r.compose_index(i).expect("InternalError: Invalid range")),
+            Value::Vec(vs) => vs[i].clone(),
+            v => Value::Ram(Box::new(v), i),
+        }
+    }
+    pub fn slice(v: Value, r: CRange) -> Value {
+        match v {
+            Value::Slice(box v, r0) =>
+                Value::Slice(Box::new(v), r.compose(&r0)),
+            Value::Vec(vs) => {
+                let mut res = Vec::new();
+                for i in r {
+                    res.push(vs[i].clone());
+                }
+                Value::Vec(res)
+            },
+            v => Value::Slice(Box::new(v), r),
+        }
+    }
+    pub fn vec(vs: Vec<Value>) -> Value {
+        Value::Vec(vs)
+    }
+    pub fn underscore() -> Value {
+        Value::Underscore
+    }
+    pub fn var(v: Vid, n: NodeIndex) -> Value {
+        Value::Var(v)
+    }
+    pub fn lit(n: usize) -> Value {
+        Value::Lit(n)
+    }
+
+    pub fn nodes(&self) -> Vec<NodeIndex> {
         match self {
-            Value::Underscore => true,
-            _ => false,
+            Value::Node(n) => vec![*n],
+            Value::Ram(box v, _) => v.nodes(),
+            Value::Slice(box v, _) => v.nodes(),
+            Value::Vec(vs) => vs.iter().fold(Vec::new(), |acc, v| acc.extend(v.nodes())),
+            _ => Vec::new(),
         }
     }
 }
@@ -23,8 +65,31 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Lit(x) => write!(f, "{}", x),
-            Value::Range(r) => write!(f, "{}", r),
+            Value::Var(v) => write!(f, "{}", v),
+            Value::Node(_) => write!(f, "_"),
+            Value::Ram(box v, r) => write!(f, "{}[{}]", v, r),
+            Value::Slice(box v, r) => write!(f, "{}[{}]", v, r),
+            Value::Vec(vs) => {
+                write!(f, "[")?;
+                for v in vs.iter() {
+                    write!(f, "{}, ", v)?;
+                }
+                write!(f, "]")
+            },
             Value::Underscore => write!(f, "_"),
+        }
+    }
+}
+
+impl FreeVars for Value {
+    fn freevars(&self) -> Set<Vid> {
+        match self {
+            Value::Lit(_) => Set::new(),
+            Value::Var(v) => Set::singleton(*v),
+            Value::Node(_) => Set::new(),
+            Value::Ram(box v, _) => v.freevars(),
+            Value::Slice(box v, _) => v.freevars(),
+            Value::Vec(vs) => vs.iter().fold(Set::new(), |acc, v| acc.union(&v.freevars())),
         }
     }
 }
@@ -40,3 +105,16 @@ impl From<CRange> for Value {
         Value::Range(r)
     }
 }
+
+impl From<Vid> for Value {
+    fn from(v: Vid) -> Self {
+        Value::Var(v)
+    }
+}
+
+impl From<NodeIndex> for Value {
+    fn from(n: NodeIndex) -> Self {
+        Value::Node(n)
+    }
+}
+

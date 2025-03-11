@@ -9,7 +9,7 @@ use std::fmt;
 
 /// An operation [Op] is loosely a node in the graph,
 /// and it corresponds to one [lang::ast::Exp] in the AST.
-/// It is parameterized by some optional values.
+/// It is parameterized by some values.
 /// - When the value is [Value::Underscore], it is a placeholder for a graph edge (an underscore).
 /// - Otherwise, it is a concrete, irreducible value.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -25,9 +25,6 @@ pub enum Op {
 
     /// A vector of elements
     Vec(Vec<Value>),
-
-    /// Random access or slice a vector
-    Ram(Value, Value),
 
     /// Random oracle challenge
     Challenge(Tid),
@@ -70,6 +67,8 @@ pub enum Node<A> {
     Inp(CSig),
     /// Empty transcript node, corresponds to an entry point in the program
     EmptyTranscript,
+    /// A side relation that must hold on input arguments for a function
+    Pre(CSig),
     /// Operation node
     Op(Op, CTyp, A)
 }
@@ -78,94 +77,19 @@ pub enum Node<A> {
 pub type PNode = Node<Principal>;
 
 impl Op {
-    pub fn bin(op: BinOp) -> Self {
-        Op::Bin(op, Value::Underscore, Value::Underscore)
+    pub fn bin(op: BinOp, l: Value, r: Value) -> Self {
+        Op::Bin(op, l, r)
     }
-    pub fn coef() -> Self {
-        Op::Coef(Value::Underscore)
+    pub fn coef(v: Value) -> Self {
+        Op::Coef(v)
     }
-    pub fn mle() -> Self {
-        Op::Mle(Value::Underscore)
+    pub fn mle(v: Value) -> Self {
+        Op::Mle(v)
     }
-    pub fn vec(size: usize) -> Self {
-        Op::Vec(vec![Value::Underscore; size])
-    }
-    pub fn ram() -> Self {
-        Op::Ram(Value::Underscore, Value::Underscore)
-    }
-    pub fn challenge(tid: Tid) -> Self {
-        Op::Challenge(tid)
-    }
-    pub fn random(tid: Tid) -> Self {
-        Op::Random(tid)
-    }
-    pub fn generator(tid: Tid) -> Self {
-        Op::Generator(tid)
-    }
-    pub fn hash(tid: Tid) -> Self {
-        Op::Hash(tid)
-    }
-    pub fn interpolate() -> Self {
-        Op::Interpolate(Value::Underscore, Value::Underscore)
-    }
-    pub fn equ() -> Self {
-        Op::Equ(Value::Underscore, Value::Underscore)
-    }
-    pub fn contains() -> Self {
-        Op::Contains(Value::Underscore, Value::Underscore)
-    }
-    pub fn and() -> Self {
-        Op::And(Value::Underscore, Value::Underscore)
-    }
-    pub fn or() -> Self {
-        Op::Or(Value::Underscore, Value::Underscore)
-    }
-    pub fn not() -> Self {
-        Op::Not(Value::Underscore)
-    }
-    pub fn check() -> Self {
-        Op::Check(Value::Underscore)
-    }
-
-    /// Replace one of the unbounded arguments in [Op] with a value,
-    /// return [true] if the value was successfully pushed, [false] otherwise.
-    pub fn push_value(&mut self, v: Value) {
-        match self {
-            Op::Bin(_, a, b)
-            | Op::And(a, b)
-            | Op::Or(a, b)
-            | Op::Equ(a, b)
-            | Op::Contains(a, b)
-            | Op::Interpolate(a, b)
-            | Op::Ram(a, b) =>
-                match (&a, &b) {
-                    (Value::Underscore, _) => *a = v,
-                    (_, Value::Underscore) => *b = v,
-                    (_, _) => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-                },
-            Op::Mle(a)
-            | Op::Coef(a)
-            | Op::Check(a)
-            | Op::Not(a) =>
-                match a {
-                    Value::Underscore => *a = v,
-                    _ => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-                },
-            Op::Vec(vs) => {
-                vs.iter_mut().for_each(|x| {
-                    if x.is_underscore() {
-                        *x = v.clone();
-                        return;
-                    }
-                });
-                panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-            },
-            Op::Hash(_) | Op::Random(_) | Op::Challenge(_) | Op::Generator(_) =>
-                panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-        }
+    pub fn vec(vals: Vec<Value>) -> Self {
+        Op::Vec(vals)
     }
 }
-
 
 impl PNode {
     pub fn inp(sig: CSig) -> Self {
@@ -176,69 +100,16 @@ impl PNode {
         Node::EmptyTranscript
     }
 
-    pub fn bin(op: BinOp, typ: CTyp) -> Self {
-        Node::Op(Op::bin(op), typ, Principal::Any)
+    pub fn pre(sig: CSig) -> Self {
+        Node::Pre(sig)
     }
 
-    pub fn coef(typ: CTyp) -> Self {
-        Node::Op(Op::coef(), typ, Principal::Any)
+    pub fn coef(v: Value, typ: CTyp) -> Self {
+        Node::Op(Op::Coef(v), typ, Principal::Prover)
     }
 
-    pub fn random(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::random(tid), typ, Principal::Any)
-    }
-    pub fn generator(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::generator(tid), typ, Principal::Any)
-    }
-    pub fn mle(typ: CTyp) -> Self {
-        Node::Op(Op::mle(), typ, Principal::Any)
-    }
-
-    pub fn vec(inner: CTyp, size: usize) -> Self {
-        Node::Op(Op::vec(size), CTyp::vec(inner, size), Principal::Any)
-    }
-
-    pub fn ram(typ: CTyp) -> Self {
-        Node::Op(Op::ram(), typ, Principal::Any)
-    }
-
-    pub fn challenge(tid: Tid, typ: CTyp) -> Self {
-        Node::Op(Op::hash(tid), typ, Principal::Verifier)
-    }
-
-    pub fn check(typ: CTyp) -> Self {
-        Node::Op(Op::check(), typ, Principal::Any)
-    }
-
-    pub fn interpolate(typ: CTyp) -> Self {
-        Node::Op(Op::interpolate(), typ, Principal::Any)
-    }
-
-    pub fn equ(typ: CTyp) -> Self {
-        Node::Op(Op::equ(), typ, Principal::Any)
-    }
-
-    pub fn and(typ: CTyp) -> Self {
-        Node::Op(Op::and(), typ, Principal::Any)
-    }
-
-    pub fn or(typ: CTyp) -> Self {
-        Node::Op(Op::or(), typ, Principal::Any)
-    }
-
-    pub fn contains(typ: CTyp) -> Self {
-        Node::Op(Op::contains(), typ, Principal::Any)
-    }
-
-    pub fn not(typ: CTyp) -> Self {
-        Node::Op(Op::not(), typ, Principal::Any)
-    }
-
-    pub fn push_value(&mut self, v: Value) {
-        match self {
-            Node::Op(op, _, _) => op.push_value(v),
-            _ => panic!("UncaughtError: Failed to bind value {} to node {}", v, self)
-        }
+    pub fn bin(op: BinOp, l: Value, r: Value, typ: CTyp) -> Self {
+        Node::Op(Op::Bin(op, l, r), typ, Principal::Prover)
     }
 
     pub fn set_principal(&mut self, ann: Principal) {
@@ -278,6 +149,7 @@ impl<A: fmt::Display> fmt::Display for Node<A> {
         match self {
             Node::Inp(sig) => write!(f, "{}", sig),
             Node::EmptyTranscript => write!(f, "EmptyTranscript"),
+            Node::Pre(sig) => write!(f, "Pre({}, {}, {})", sig.name, sig.typevars, sig.args),
             Node::Op(op, typ, ann) =>
                 write!(f, "{} : {} @ {}", op, typ, ann)
         }
@@ -289,6 +161,7 @@ impl<N> ToTraversal1<N> for Node<N> {
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Node<Z>, E> {
         match self {
             Node::Inp(sig) => Ok(Node::Inp(sig)),
+            Node::Pre(sig) => Ok(Node::Pre(sig)),
             Node::EmptyTranscript => Ok(Node::EmptyTranscript),
             Node::Op(op, typ, ann) => {
                 let ann = f(ann)?;

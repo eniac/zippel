@@ -61,6 +61,26 @@ impl<A> Dag<A> {
         self.0.update_edge(source, sink, edge);
     }
 
+    fn add_edges(&mut self, vars: &Ctx<Vid, NodeIndex>, source: NodeIndex, sink: Value) {
+        match sink {
+            Value::Lit(_) => (),
+            Value::Var(v) =>
+                self.add_edge(source, vars.get(&v).expect(&format!("Variable not found {}", v)),
+                    Edge::Var(v)),
+            Value::Node(n) => self.add_edge(source, n, Edge::Data),
+            Value::Vec(vs) => {
+                for v in vs {
+                    self.add_edges(vars, source, v);
+                }
+            }
+            Value::Ram(box v, _) => self.add_edges(vars, source, *v),
+            Value::Slice(box v, _) => self.add_edges(vars, source, *v),
+        }
+        for (vid, sink) in sinks {
+            self.add_edge(source, sink, Edge::Var(vid));
+        }
+    }
+
     /// Add a node to the graph (no deduplication)
     fn add_node(&mut self, node: Node<A>) -> NodeIndex {
         self.0.add_node(node)
@@ -82,17 +102,15 @@ impl<A> Dag<A> {
                 &self.0,
                 &[],
                 &|_, e|
-                        match e.weight().dep {
-                            Dependency::Data => "color = \"black\"",
-                            Dependency::Transcript => "color = \"red\"",
+                        match e.weight() {
+                            Edge::Var(_) | Edge::Data => "color = \"black\"",
+                            Edge::Transcript(_) => "color = \"red\"",
                         }.to_string(),
                 &|_, _| String::new()
             );
 
         // Write to file
         std::fs::write(fdot.clone(), graphviz.to_string())?;
-        let srcdir = PathBuf::from(fdot.clone());
-        println!("{:?}", std::fs::canonicalize(&srcdir));
 
         let fpdf: String = format!("{}.pdf", filename.to_string());
 
@@ -110,7 +128,7 @@ impl<A> Dag<A> {
         // std::fs::remove_file(fdot)?;
 
         // Print success
-        println!("Wrote {}.pdf", filename);
+        println!("Wrote {:?}", std::fs::canonicalize(PathBuf::from(fpdf.clone())));
         Ok(())
     }
 }
@@ -149,82 +167,76 @@ impl PDag {
     pub fn add_body(&mut self,
         body: CBody, transcr: NodeIndex, it: NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<NodeIndex, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Value, GraphError> {
         match body {
             CBody::Proto { relation, body } => {
-                self.add_exp(relation, transcr, it, kctx, fctx, vctx, vars)?;
-                self.add_exp(body, transcr, it, kctx, fctx, vctx, vars)
+                self.add_exp(relation, transcr, kctx, fctx, vctx, vars)?;
+                self.add_exp(body, transcr, kctx, fctx, vctx, vars)
             },
             CBody::Func { body } =>
-                self.add_exp(body, transcr, it, kctx, fctx, vctx, vars)
+                self.add_exp(body, transcr, kctx, fctx, vctx, vars)
         }
     }
 
     /// Add an expression [exp] to the graph
     pub fn add_exp(&mut self,
         exp: CExp,
-        transcr: NodeIndex, it: NodeIndex,
+        transcr: NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<NodeIndex, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Value, GraphError> {
         // Type inference for [self]
         let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
-        match exp.clone() {
+        let val = match exp.clone() {
             // Literals get appended to the last node [self.it]
             CExp::Lit(n) => {
-                let node_it = self.get_node(it);
-                node_it.push_value(Value::Lit(n));
-                Ok(it)
+                Ok(Value::Lit(n))
             },
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) =>
-                if let Some(nvar) = vars.get(&id) {
-                    self.add_edge(*nvar, it, Edge::data_var(&id));
-                    Ok(it)
-                } else {
-                    Err(GraphError::var_not_found(&id))
-                },
+            CExp::Var(id) => Ok(Value::Var(id)),
+
             // Create a new [coef] node
             CExp::Coef(box v) => {
+                // Add child first
+                let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ncoef = self.add_node(Node::coef(typ));
-                // Add edge from [it] to [ncoef]
-                self.add_edge(it, ncoef, Edge::data());
-                self.add_exp(v, transcr, ncoef, kctx, fctx, vctx, vars)?;
-                Ok(ncoef)
+                let ncoef = self.add_node(Node::coef(typ,  child));
+
+                // Add edge from [ncoef] to [child]
+                self.add_edges(ncoef, vars, child);
+                Ok(Value::Node(ncoef))
             },
+            // TODO
 
             // Create a new [mle] Node
             CExp::Mle(box v) => {
+                // Add child first
+                let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nmle = self.add_node(Node::mle(typ));
-                // Add edge from [it] to [nmle]
-                self.add_edge(it, nmle, Edge::data());
-                self.add_exp(v, transcr, nmle, kctx, fctx, vctx, vars)?;
-                Ok(nmle)
+                let nmle = self.add_node(Node::mle(typ, child));
+                // Add edge from [nmle] to [child]
+                self.add_edge(nmle, child, Edge::data(0));
+                Ok(Value::Node(None, nmle))
             },
 
-            // Create a new [vec] node
+            // Create a new [vec] value
             CExp::Vec(vs) => {
-                // Look at the type to get the size of the vector
-                if let CTyp::Vec(box inner, size) = typ {
-                    // Add new node
-                    let nvec = self.add_node(Node::vec(inner, size));
-                    // Add edge from [it] to [nvec]
-                    self.add_edge(it, nvec, Edge::data());
-                    for v in vs {
-                        self.add_exp(v, transcr, nvec, kctx, fctx, vctx, vars)?;
-                    }
-                    Ok(nvec)
-                } else {
-                    panic!("Expected vector type for {}, got {}", exp, typ)
+                let mut vals = Vec::new();
+                for v in vs {
+                    vals.push(self.add_exp(v, transcr, kctx, fctx, vctx, vars)?);
                 }
-            },
+                Ok(Value::vec(vals))
+            }
+
 
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nbin = self.add_node(Node::bin(op, typ));
+                let nbin = self.add_node(Node::bin(op, vl, vr, typ));
+                // Add edge from [nbin] to [vl]
                 // Add edge from [it] to [nbin]
                 self.add_edge(it, nbin, Edge::data());
                 self.add_exp(a, transcr, nbin, kctx, fctx, vctx, vars)?;

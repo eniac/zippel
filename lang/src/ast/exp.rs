@@ -235,13 +235,17 @@ pub enum Exp<N> {
     Verify(Box<Exp<N>>)
 }
 
+/// Free variables
+pub trait FreeVars {
+    fn freevars(&self) -> Set<Vid>;
+}
+
 /// Traverse VIDs
-pub trait ExpSubst : Sized {
+pub trait ExpSubst : FreeVars + Sized {
     fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>);
     fn shift(&mut self, from: &Vid, ctx: &mut Set<Vid>) {
         self.subst(from, &CExp::Var(Vid::gen(from, ctx)), ctx);
     }
-    fn freevars(&self) -> Set<Vid>;
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
@@ -362,7 +366,7 @@ impl TidSubst for CExps {
     }
 }
 
-impl ExpSubst for CExp {
+impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
@@ -381,7 +385,9 @@ impl ExpSubst for CExp {
                 | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
         }
     }
+}
 
+impl ExpSubst for CExp {
     fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
         match self {
             Exp::Var(id) if id == from => *self = to.clone(),
@@ -448,6 +454,9 @@ impl ExpSubst for CExps {
     fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
         self.0.iter_mut().for_each(|x| x.subst(from, to, ctx))
     }
+}
+
+impl FreeVars for CExps {
     fn freevars(&self) -> Set<Vid> {
         self.0.iter().map(|x| x.freevars()).fold(Set::new(), |acc, x| acc.union(x))
     }
