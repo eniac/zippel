@@ -10,7 +10,7 @@ pub use edge::{Dependency, Edge};
 pub use principal::Principal;
 
 use share::Ctx;
-use lang::ast::{CExp, ExpSubst, Arg, CSig, CBody};
+use lang::ast::{CModule, CExp, ExpSubst, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
 use lang::typ::{CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
@@ -19,6 +19,7 @@ use thiserror::Error;
 use petgraph::{dot::Dot, graph::NodeIndex, Direction, Graph};
 use std::process::Command;
 use std::fmt;
+use std::path::PathBuf;
 
 /// Represents graphs in the Zippel language
 /// graph intermediate representation (Graph IR)
@@ -82,14 +83,17 @@ impl<A> Dag<A> {
                 &[],
                 &|_, e|
                         match e.weight().dep {
-                            Dependency::Data => "[color = \"black\"]",
-                            Dependency::Transcript => "[color = \"red\"]",
+                            Dependency::Data => "color = \"black\"",
+                            Dependency::Transcript => "color = \"red\"",
                         }.to_string(),
                 &|_, _| String::new()
             );
 
         // Write to file
         std::fs::write(fdot.clone(), graphviz.to_string())?;
+        let srcdir = PathBuf::from(fdot.clone());
+        println!("{:?}", std::fs::canonicalize(&srcdir));
+
         let fpdf: String = format!("{}.pdf", filename.to_string());
 
         // Convert to pdf
@@ -103,7 +107,7 @@ impl<A> Dag<A> {
             .wait()?;
 
         // Remove DOT file
-        std::fs::remove_file(fdot)?;
+        // std::fs::remove_file(fdot)?;
 
         // Print success
         println!("Wrote {}.pdf", filename);
@@ -113,24 +117,28 @@ impl<A> Dag<A> {
 
 /// Constructors for graphs
 impl PDag {
-    fn new(sig: CSig, exp: CExp, fctx: Ctx<CSig, CBody>) -> Self {
+    fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut g = Dag(Graph::new());
-        // New variable context
-        let mut vars = Ctx::new();
-        let mut vctx = Ctx::new();
-        // Initial node is the function signature
-        let it = g.add_node(Node::inp(sig.clone()));
-        // Add arguments to [vctx]
-        for Arg { id, typ, .. } in sig.args {
-            vars.insert(&id, &it);
-            vctx.insert(&id, &typ);
-        }
         // Add empty transcript node
         let transcr = g.add_node(Node::empty_transcript());
-        // Kind context from typevars
-        let kctx = sig.typevars.to_ctx();
-        g.add_exp(exp, transcr, it, &kctx, &fctx, &vctx, &vars).unwrap();
-        g
+        // Build [fctx] from module
+        let fctx =
+            m.iter().map(|(sig, body)| (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
+        for (sig, body) in m.into_iter() {
+            // Initial node is the function signature
+            let it = g.add_node(Node::inp(sig.clone()));
+            // Add arguments to [vctx]
+            let mut vars = Ctx::new();
+            let mut vctx = Ctx::new();
+            for Arg { id, typ, .. } in sig.args {
+                vars.insert(&id, &it);
+                vctx.insert(&id, &typ);
+            }
+            // Kind context
+            let kctx = sig.typevars.to_ctx();
+            g.add_body(body, transcr, it, &kctx, &fctx, &vctx, &vars)?;
+        }
+        Ok(g)
     }
 
     /// Overwrite the principal in node [it]
@@ -182,7 +190,8 @@ impl PDag {
                 let ncoef = self.add_node(Node::coef(typ));
                 // Add edge from [it] to [ncoef]
                 self.add_edge(it, ncoef, Edge::data());
-                self.add_exp(v, transcr, ncoef, kctx, fctx, vctx, vars)
+                self.add_exp(v, transcr, ncoef, kctx, fctx, vctx, vars)?;
+                Ok(ncoef)
             },
 
             // Create a new [mle] Node
@@ -191,7 +200,8 @@ impl PDag {
                 let nmle = self.add_node(Node::mle(typ));
                 // Add edge from [it] to [nmle]
                 self.add_edge(it, nmle, Edge::data());
-                self.add_exp(v, transcr, nmle, kctx, fctx, vctx, vars)
+                self.add_exp(v, transcr, nmle, kctx, fctx, vctx, vars)?;
+                Ok(nmle)
             },
 
             // Create a new [vec] node
@@ -385,11 +395,7 @@ impl PDag {
                 // Substitute type variables in the body
                 subs.tid_subst(&mut body);
 
-                // Shift captured variables in the body
                 let mut vctx_keys = vctx.keys();
-                for id in vctx.keys() {
-                    body.shift(&id, &mut vctx_keys);
-                }
                 // Substitute parameters in the body
                 for (param, arg) in sig.args.iter().zip(params) {
                     body.subst(&param.id, &arg, &mut vctx_keys);
@@ -454,4 +460,43 @@ impl PDag {
     }
 }
 }
+
+#[cfg(test)]
+struct PrettyResult<A, E: fmt::Display>(Result<A, E>);
+
+#[cfg(test)]
+impl<A, E: fmt::Display> From<Result<A, E>> for PrettyResult<A, E> {
+    fn from(r: Result<A, E>) -> Self {
+        PrettyResult(r)
+    }
+}
+
+#[cfg(test)]
+impl<A, E: fmt::Display> PrettyResult<A, E> {
+    pub fn pretty_unwrap(self) -> A {
+        match self.0 {
+            Ok(a) => a,
+            Err(e) => panic!("Error: {}", e)
+        }
+    }
+}
+
+#[cfg(test)] use lang::ast::module::UModule;
+#[test]
+fn test_graph_from_module() {
+    let ex = concat!(
+        "fn sum<N: 1..4, F: Field>(public a: [F; 2^N]) -> F {\n",
+        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
+        "}\n",
+        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
+        "   a[0]\n",
+        "}");
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    assert_eq!(m.len(), 4);
+    println!("{}", m);
+    let g = PrettyResult(PDag::from_module(m)).pretty_unwrap();
+    g.write_pdf("test_graph_from_module").unwrap();
+}
+
+
 

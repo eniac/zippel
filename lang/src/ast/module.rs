@@ -38,6 +38,9 @@ impl<N> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn iter(&self) -> std::collections::btree_map::Iter<Sig<N>, Body<N>> {
+        self.0.iter()
+    }
 }
 /// Entry point to the zippel compiler.
 /// Parse a Zippel declarations list into a polymorphic,

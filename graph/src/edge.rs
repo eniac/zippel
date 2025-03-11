@@ -56,8 +56,8 @@ impl fmt::Display for Dependency {
 impl fmt::Display for Edge {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.var {
-            Some(var) => write!(f, "{}: {}", var, self.dep),
-            None => write!(f, "{}", self.dep),
+            Some(var) => write!(f, "{}", var),
+            None => Ok(()),
         }
     }
 }

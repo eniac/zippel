@@ -68,21 +68,6 @@ impl<K, V> IntoIterator for Ctx<K, V> {
     }
 }
 
-/// Iterator for borrowing key-value pairs
-#[derive(Debug, Clone)]
-pub struct CtxIterator<'a, K, V> {
-    iter: std::collections::btree_map::Iter<'a, K, V>,
-}
-
-/// Iterator instance for Ctx
-impl<'a, K, V> Iterator for CtxIterator<'a, K, V> {
-    type Item = (&'a K, &'a V);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next()
-    }
-}
-
 impl<K, V> FromIterator<(K, V)> for Ctx<K, V>
 where
     K: Ord
@@ -193,10 +178,8 @@ impl<K, V> Ctx<K, V> {
     pub fn contains(&self, k: &K) -> bool where K: Ord {
         self.0.contains_key(k)
     }
-    pub fn iter(&self) -> CtxIterator<K, V> {
-        CtxIterator {
-            iter: self.0.iter(),
-        }
+    pub fn iter(&self) -> std::collections::btree_map::Iter<K, V> {
+        self.0.iter()
     }
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut V)> {
         self.0.iter_mut()

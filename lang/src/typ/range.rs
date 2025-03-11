@@ -126,7 +126,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
             self.start.pretty(allocator),
-            allocator.text(", "),
+            allocator.text(","),
             self.step.pretty(allocator),
             allocator.text(".."),
             self.end.pretty(allocator),

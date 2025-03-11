@@ -59,7 +59,7 @@ pub enum TypeError {
     #[error("InterpolateError: Expects two field vectors with the same size:\n{0}, {1} |- interpolate ( {2}: {3}, {4}: {5} )")]
     Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
-    #[error("RamError: Index must be a Fin type within the bounds of the vector:\n{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
+    #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
     #[error("AppMultipleError: Function has multiple matching definitions in context\n{0} |- {1} ( {2} )")]
@@ -403,7 +403,18 @@ impl Typeable for CExp {
 
                 // Must be a vector and a Fin type
                 match (ta.clone(), tb.clone()) {
-                    (CTyp::Vec(box typ, n), CTyp::Fin(r)) if r.end < n => Ok(typ),
+                    (CTyp::Vec(box typ, n), CTyp::Fin(r)) =>
+                        if r.end <= n {
+                            Ok(typ)
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
+                    (CTyp::Vec(box typ, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
+                        if r.end <= n {
+                            Ok(CTyp::vec(typ, m))
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
                     (_,_) => Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
                 }
             }
