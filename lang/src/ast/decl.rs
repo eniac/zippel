@@ -6,7 +6,7 @@ use bumpalo::Bump;
 
 use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::ast::{Exp, ExpSubst, CExp, Sig, Args};
+use crate::ast::{Exp, ExpSubst, FreeVars, CExp, Sig, Args};
 use crate::id::{Tid, TidSubst, Fid, Vid};
 use crate::typ::{Typ, Range, Size, TypeVars, RangeTraversal};
 use crate::parser::*;
@@ -59,6 +59,15 @@ impl<N> Body<N> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
+        }
+    }
+}
+
+impl FreeVars for CBody {
+    fn freevars(&self) -> Set<Vid> {
+        match self {
+            Body::Proto { body, relation } => body.freevars().union(relation.freevars()),
+            Body::Func { body } => body.freevars()
         }
     }
 }
@@ -178,13 +187,6 @@ impl ExpSubst for CBody {
                 body.subst(from, to, ctx);
             },
             Body::Func { body } => body.subst(from, to, ctx)
-        }
-    }
-
-    fn freevars(&self) -> Set<Vid> {
-        match self {
-            Body::Proto { relation, body } => relation.freevars().union(body.freevars()),
-            Body::Func { body } => body.freevars()
         }
     }
 }
