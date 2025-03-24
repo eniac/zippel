@@ -1,4 +1,5 @@
 use lang::typ::range::CRange;
+use lang::id::Vid;
 use lang::ast::FreeVars;
 use std::fmt;
 use petgraph::graph::NodeIndex;
@@ -8,33 +9,34 @@ use petgraph::graph::NodeIndex;
 pub enum Value {
     Lit(usize),                      // Numeric literal
     Var(Vid),                        // Variable
+    Range(CRange),                   // Range of numbers
     Node(NodeIndex),                 // Input from a node
-    Slice(Box<Value>, CRange),       // A slice of a value
-    Ram(Box<Value>, usize),          // Random access memory into a value
+    Slice(Box<Value>, Box<Value>),       // A slice of a value
+    Ram(Box<Value>, Box<Value>),          // Random access memory into a value
     Vec(Vec<Value>),                 // A vector of values
 }
 
 impl Value {
-    pub fn ram(v: Value, i: usize) -> Value {
-        match v {
-            Value::Slice(box v, r) =>
+    pub fn ram(v: Value, i: Value) -> Value {
+        match (v, i) {
+            (Value::Slice(box v, r), Value::Lit(i)) =>
                 Value::Ram(Box::new(v), r.compose_index(i).expect("InternalError: Invalid range")),
-            Value::Vec(vs) => vs[i].clone(),
-            v => Value::Ram(Box::new(v), i),
+            (Value::Vec(vs), Value::Lit(i)) => vs[i].clone(),
+            (v, i) => Value::Ram(Box::new(v), Box::new(i)),
         }
     }
-    pub fn slice(v: Value, r: CRange) -> Value {
-        match v {
-            Value::Slice(box v, r0) =>
+    pub fn slice(v: Value, r: Value) -> Value {
+        match (v, r) {
+            (Value::Slice(box v, r0), Value::Range(r)) =>
                 Value::Slice(Box::new(v), r.compose(&r0)),
-            Value::Vec(vs) => {
+            (Value::Vec(vs), Value::Range(r)) => {
                 let mut res = Vec::new();
                 for i in r {
                     res.push(vs[i].clone());
                 }
                 Value::Vec(res)
             },
-            v => Value::Slice(Box::new(v), r),
+            (v, r) => Value::Slice(Box::new(v), Box::new(r)),
         }
     }
     pub fn vec(vs: Vec<Value>) -> Value {
@@ -49,7 +51,9 @@ impl Value {
     pub fn lit(n: usize) -> Value {
         Value::Lit(n)
     }
-
+    pub fn range(r: CRange) -> Value {
+        Value::Range(r)
+    }
     pub fn nodes(&self) -> Vec<NodeIndex> {
         match self {
             Value::Node(n) => vec![*n],

@@ -206,7 +206,6 @@ impl PDag {
                 self.add_edges(ncoef, vars, child);
                 Ok(Value::Node(ncoef))
             },
-            // TODO
 
             // Create a new [mle] Node
             CExp::Mle(box v) => {
@@ -215,8 +214,8 @@ impl PDag {
                 // Add new node
                 let nmle = self.add_node(Node::mle(typ, child));
                 // Add edge from [nmle] to [child]
-                self.add_edge(nmle, child, Edge::data(0));
-                Ok(Value::Node(None, nmle))
+                self.add_edges(nmle, vars, child);
+                Ok(Value::Node(nmle))
             },
 
             // Create a new [vec] value
@@ -236,80 +235,92 @@ impl PDag {
                 let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
                 let nbin = self.add_node(Node::bin(op, vl, vr, typ));
-                // Add edge from [nbin] to [vl]
-                // Add edge from [it] to [nbin]
-                self.add_edge(it, nbin, Edge::data());
-                self.add_exp(a, transcr, nbin, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, nbin, kctx, fctx, vctx, vars)?;
+
+                // Add edges from [nbin] to [vl] and [vr]
+                self.add_edges(nbin, vars, vl);
+                self.add_edges(nbin, vars, vr);
                 Ok(nbin)
             },
 
             // Create a new interpolation node
             CExp::Interpolate(box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ninterp = self.add_node(Node::interpolate(typ));
-                // Add edge from [it] to [ninterp]
-                self.add_edge(it, ninterp, Edge::data());
-                self.add_exp(a, transcr, ninterp, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, ninterp, kctx, fctx, vctx, vars)?;
-                Ok(ninterp)
+                let ninterpolate = self.add_node(Node::interpolate(typ, vl, vr));
+
+                // Add edges from [ninterpolate] to [vl] and [vr]
+                self.add_edges(ninterpolate, vars, vl);
+                self.add_edges(ninterpolate, vars, vr);
+                Ok(ninterpolate)
             },
 
             CExp::Contains(box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ncontains = self.add_node(Node::contains(typ));
-                // Add edge from [it] to [ncontains]
-                self.add_edge(it, ncontains, Edge::data());
-                self.add_exp(a, transcr, ncontains, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, ncontains, kctx, fctx, vctx, vars)?;
+                let ncontains = self.add_node(Node::contains(typ, vl, vr));
+
+                // Add edges from [ncontains] to [vl] and [vr]
+                self.add_edges(ncontains, vars, vl);
+                self.add_edges(ncontains, vars, vr);
                 Ok(ncontains)
             },
 
             CExp::Equ(box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nequ = self.add_node(Node::equ(typ));
-                // Add edge from [it] to [nequ]
-                self.add_edge(it, nequ, Edge::data());
-                self.add_exp(a, transcr, nequ, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, nequ, kctx, fctx, vctx, vars)?;
+                let nequ = self.add_node(Node::equ(typ, vl, vr));
+
+                // Add edges from [nequ] to [vl] and [vr]
+                self.add_edges(nequ, vars, vl);
+                self.add_edges(nequ, vars, vr);
                 Ok(nequ)
-            }
+            },
 
             CExp::And(box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nand = self.add_node(Node::and(typ));
-                // Add edge from [it] to [nand]
-                self.add_edge(it, nand, Edge::data());
-                self.add_exp(a, transcr, nand, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, nand, kctx, fctx, vctx, vars)?;
+                let nand = self.add_node(Node::and(typ, vl, vr));
+
+                // Add edges from [nand] to [vl] and [vr]
+                self.add_edges(nand, vars, vl);
+                self.add_edges(nand, vars, vr);
                 Ok(nand)
             },
 
             CExp::Or(box a, box b) => {
+                // Add children first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
+                let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nor = self.add_node(Node::or(typ));
-                // Add edge from [it] to [nor]
-                self.add_edge(it, nor, Edge::data());
-                self.add_exp(a, transcr, nor, kctx, fctx, vctx, vars)?;
-                self.add_exp(b, transcr, nor, kctx, fctx, vctx, vars)?;
+                let nor = self.add_node(Node::or(typ, vl, vr));
+
+                // Add edges from [nor] to [vl] and [vr]
+                self.add_edges(nor, vars, vl);
+                self.add_edges(nor, vars, vr);
                 Ok(nor)
             },
 
             CExp::Not(box a) => {
+                // Add child first
+                let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nnot = self.add_node(Node::not(typ));
-                // Add edge from [it] to [nnot]
-                self.add_edge(it, nnot, Edge::data());
-                self.add_exp(a, transcr, nnot, kctx, fctx, vctx, vars)?;
+                let nnot = self.add_node(Node::not(typ, vl));
+
+                // Add edge from [nnot] to [vl]
+                self.add_edges(nnot, vars, vl);
                 Ok(nnot)
             },
 
-            // Create a new [range] node, no new nodes added
-            CExp::Range(r) => {
-                let node_it = self.get_node(it);
-                node_it.push_value(Value::Range(r));
-                Ok(it)
-            }
+            // Create a [range] value, no new nodes added
+            CExp::Range(r) => Ok(Value::Range(r)),
 
             // Create a new [map] node, with a vector of values
             CExp::Map(box l, x, box CExp::Vec(vs)) => {
@@ -320,14 +331,14 @@ impl PDag {
                     e.subst(&x, &v, &mut vids);
                     substituted.push(e);
                 }
-                self.add_exp(CExp::vec(substituted), transcr, it, kctx, fctx, vctx, vars)
+                self.add_exp(CExp::vec(substituted), transcr, kctx, fctx, vctx, vars)
             },
             // [Range(r) = [r.start, r.start + r.step, ...., r.end - r.step]
             CExp::Map(box l, x, box CExp::Range(r)) =>
                 self.add_exp(CExp::map(l, x, CExp::vec(r.into_iter().map(|i| CExp::lit(i)).collect())),
-                    transcr, it, kctx, fctx, vctx, vars),
+                    transcr, kctx, fctx, vctx, vars),
 
-            // [p for x in e] = [p[x->0], [1], ...]
+            // [p for x in e] = [p for x in [e[0], e[1]..., e[n]]]
             CExp::Map(box l, x, box r) => {
                 // Get the size from the type
                 let tr = r.infer(kctx, &fctx.keys(), vctx)?;
@@ -335,15 +346,16 @@ impl PDag {
                     // Generate r[i] for i in [0, size]
                     let expanded = (0..size).into_iter().map(|i| CExp::ram(r.clone(), CExp::lit(i))).collect();
                     // Recurse on [p for x in [e[0]...[e[size]]]]
-                    self.add_exp(CExp::map(l, x, CExp::Vec(expanded)), transcr, it, kctx, fctx, vctx, vars)
+                    self.add_exp(CExp::map(l, x, CExp::Vec(expanded)), transcr, kctx, fctx, vctx, vars)
                 } else {
                     panic!("Expected vector type for {}, got {}", r, tr)
                 }
             }
 
+            // TODO
             // [a_0, ..., a_n][i] = a_i
             CExp::Ram(box CExp::Vec(vs), box CExp::Lit(i)) =>
-                self.add_exp(vs.0[i].clone(), transcr, it, kctx, fctx, vctx, vars),
+                self.add_exp(vs.0[i].clone(), transcr, kctx, fctx, vctx, vars),
             // [a + b][i] = a[i] + b[i]
             CExp::Ram(box CExp::Bin(op, box a, box b), box i) =>
                 self.add_exp(CExp::bin(op, CExp::ram(a, i.clone()),
