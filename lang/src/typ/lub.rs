@@ -201,16 +201,7 @@ impl Lub for Range<usize> {
                     LubError::range_add(&a, &b),
                     LubError::bad_range(&b, e)))?;
 
-        // Compute new start, end and step
-        let new_start = a.start + b.start;
-        let new_end = (a.end - a.step) + (b.end - b.step) + 1;
-        let new_step = num::integer::gcd(a.step, b.step);
-
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(a + b)
     }
 
     fn lub_sub(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -224,16 +215,7 @@ impl Lub for Range<usize> {
                     LubError::range_sub(&a, &b),
                     LubError::bad_range(&b, e)))?;
 
-        // Compute new start, end and step
-        let new_start = a.start.saturating_sub(b.end - b.step); // Use saturating_sub to avoid underflow
-        let new_end = (a.end - a.step) - b.start + 1;
-        let new_step = num::integer::gcd(a.step, b.step);
-
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(a - b)
     }
 
     fn lub_mul(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -247,29 +229,7 @@ impl Lub for Range<usize> {
                     LubError::range_mul(&a, &b),
                     LubError::bad_range(&b, e)))?;
 
-        let a_min = a.start;
-        let a_max = a.end - a.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute all possible products
-        let p1 = a_min * b_min;
-        let p2 = a_min * b_max;
-        let p3 = a_max * b_min;
-        let p4 = a_max * b_max;
-
-        // Compute new start and end
-        let new_start = p1.min(p2).min(p3).min(p4);
-        let new_end = p1.max(p2).max(p3).max(p4) + 1;
-
-        // Compute new step
-        let new_step = num::integer::gcd(a.step * b.step, num::integer::gcd(a.step * b.start, b.step * a.start));
-
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(a * b)
     }
 
     fn lub_div(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -288,23 +248,7 @@ impl Lub for Range<usize> {
             return Err(LubError::Range(BinopError::Div(a, b))); // Division by zero is undefined
         }
 
-        let a_min = a.start;
-        let a_max = a.end - a.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute new start and end
-        let new_start = a_min / b_max; // Smallest quotient
-        let new_end = a_max / b_min + 1; // Largest quotient + 1 (right-exclusive)
-
-        // Use a step of 1 for safe overapproximation
-        let new_step = 1;
-
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(a / b)
     }
 
     fn lub_pow(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -318,23 +262,7 @@ impl Lub for Range<usize> {
                     LubError::range_pow(&a, &b),
                     LubError::bad_range(&b, e)))?;
 
-        let a_min = a.start;
-        let a_max = a.end - a.step;
-        let b_min = b.start;
-        let b_max = b.end - b.step;
-
-        // Compute new start and end
-        let new_start = a_min.pow(b_min as u32); // Smallest power
-        let new_end = a_max.pow(b_max as u32) + 1; // Largest power + 1 (right-exclusive)
-
-        // Use a step of 1 for safe overapproximation
-        let new_step = 1;
-
-        Ok(Range {
-            start: new_start,
-            step: new_step,
-            end: new_end,
-        })
+        Ok(a ^ b)
     }
 
     fn lub_dot(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -809,7 +737,7 @@ impl Lub for CTyp {
             // Vec<A> * Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
-                    CTyp::lub_dot(a, b, ctx)
+                    CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::typ_dot(&x, &y), e))
                 } else {
                     Err(LubError::typ_dot(&x, &y))

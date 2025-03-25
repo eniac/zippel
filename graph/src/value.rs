@@ -1,34 +1,37 @@
-use lang::typ::range::CRange;
+use lang::range::CRange;
 use lang::id::Vid;
 use lang::ast::FreeVars;
+use lang::ast::BinOp;
 use std::fmt;
 use petgraph::graph::NodeIndex;
 
 /// Values are expressions which are (very close to) irreducible
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Value {
-    Lit(usize),                      // Numeric literal
-    Var(Vid),                        // Variable
-    Range(CRange),                   // Range of numbers
-    Node(NodeIndex),                 // Input from a node
-    Slice(Box<Value>, Box<Value>),       // A slice of a value
-    Ram(Box<Value>, Box<Value>),          // Random access memory into a value
-    Vec(Vec<Value>),                 // A vector of values
+    /// Numeric literal
+    Lit(usize),
+    /// Binary operation
+    Bin(BinOp, Box<Value>, Box<Value>),
+    /// Node input
+    Underscore(NodeIndex),
+    /// Coefficients of a univariate vector
+    Coef(Box<Value>),
+    /// Multilinear extension of a 2^N vector of coefficients
+    Mle(Box<Value>),
+    /// Range of numbers
+    Range(CRange),
+    /// Random access into a value
+    Ram(Box<Value>, Box<Value>),
+    /// Vector of values
+    Vec(Vec<Value>),
 }
 
 impl Value {
     pub fn ram(v: Value, i: Value) -> Value {
         match (v, i) {
-            (Value::Slice(box v, r), Value::Lit(i)) =>
+            (Value::Ram(box v, r), Value::Lit(i)) =>
                 Value::Ram(Box::new(v), r.compose_index(i).expect("InternalError: Invalid range")),
             (Value::Vec(vs), Value::Lit(i)) => vs[i].clone(),
-            (v, i) => Value::Ram(Box::new(v), Box::new(i)),
-        }
-    }
-    pub fn slice(v: Value, r: Value) -> Value {
-        match (v, r) {
-            (Value::Slice(box v, r0), Value::Range(r)) =>
-                Value::Slice(Box::new(v), r.compose(&r0)),
             (Value::Vec(vs), Value::Range(r)) => {
                 let mut res = Vec::new();
                 for i in r {
@@ -36,23 +39,148 @@ impl Value {
                 }
                 Value::Vec(res)
             },
-            (v, r) => Value::Slice(Box::new(v), Box::new(r)),
+            (Value::Range(r), Value::Lit(i)) => Value::Lit(r.start + i* r.step),
+            (v, i) => Value::Ram(Box::new(v), Box::new(i)),
         }
     }
+
+    pub fn concat(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(mut vs1), Value::Vec(vs2)) => {
+                vs1.extend(vs2);
+                Value::Vec(vs1)
+            },
+            (Value::Vec(mut vs), v) | (v, Value::Vec(mut vs)) => {
+                vs.push(v);
+                Value::Vec(vs)
+            },
+            (l, r) => Value::Bin(BinOp::Concat, Box::new(l), Box::new(r)),
+        }
+    }
+
+    pub fn add(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(l), Value::Vec(r)) => {
+                let mut res = Vec::new();
+                for (l, r) in l.iter().zip(r.iter()) {
+                    res.push(Value::add(l.clone(), r.clone()));
+                }
+                Value::Vec(res)
+            },
+            (Value::Vec(mut vs), v) | (v, Value::Vec(mut vs)) => {
+                vs.iter_mut().for_each(|l| *l = Value::add(l.clone(), v.clone()));
+                Value::Vec(vs)
+            },
+            (Value::Range(l), Value::Range(r)) => Value::Range(l + r),
+            (Value::Range(l), Value::Lit(r)) | (Value::Lit(r), Value::Range(l)) =>
+                Value::Range(l + CRange::singleton(r)),
+            (l, r) =>
+                Value::Bin(BinOp::Add, Box::new(l), Box::new(r)),
+        }
+    }
+
+    pub fn sub(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(l), Value::Vec(r)) => {
+                let mut res = Vec::new();
+                for (l, r) in l.iter().zip(r.iter()) {
+                    res.push(Value::sub(l.clone(), r.clone()));
+                }
+                Value::Vec(res)
+            },
+            (Value::Vec(mut vs), v) | (v, Value::Vec(mut vs)) => {
+                vs.iter_mut().for_each(|l| *l = Value::sub(l.clone(), v.clone()));
+                Value::Vec(vs)
+            },
+            (Value::Range(l), Value::Range(r)) => Value::Range(l - r),
+            (Value::Range(l), Value::Lit(r)) => Value::Range(l - CRange::singleton(r)),
+            (Value::Lit(l), Value::Range(r)) => Value::Range(CRange::singleton(l) - r),
+            (l, r) =>
+                Value::Bin(BinOp::Sub, Box::new(l), Box::new(r)),
+        }
+    }
+
+    pub fn mul(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(l), Value::Vec(r)) => {
+                let mut res = Vec::new();
+                for (l, r) in l.iter().zip(r.iter()) {
+                    res.push(Value::mul(l.clone(), r.clone()));
+                }
+                Value::Vec(res)
+            },
+            (Value::Vec(mut vs), v) | (v, Value::Vec(mut vs)) => {
+                vs.iter_mut().for_each(|l| *l = Value::mul(l.clone(), v.clone()));
+                Value::Vec(vs)
+            },
+            (Value::Range(l), Value::Range(r)) => Value::Range(l * r),
+            (Value::Range(l), Value::Lit(r)) | (Value::Lit(r), Value::Range(l)) =>
+                Value::Range(l * CRange::singleton(r)),
+            (l, r) =>
+                Value::Bin(BinOp::Mul, Box::new(l), Box::new(r)),
+        }
+    }
+
+    pub fn div(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(l), Value::Vec(r)) => {
+                let mut res = Vec::new();
+                for (l, r) in l.iter().zip(r.iter()) {
+                    res.push(Value::div(l.clone(), r.clone()));
+                }
+                Value::Vec(res)
+            },
+            (Value::Vec(mut vs), v) | (v, Value::Vec(mut vs)) => {
+                vs.iter_mut().for_each(|l| *l = Value::div(l.clone(), v.clone()));
+                Value::Vec(vs)
+            },
+            (Value::Range(l), Value::Range(r)) => Value::Range(l / r),
+            (Value::Range(l), Value::Lit(r)) => Value::Range(l / CRange::singleton(r)),
+            (Value::Lit(l), Value::Range(r)) => Value::Range(CRange::singleton(l) / r),
+            (l, r) =>
+                Value::Bin(BinOp::Div, Box::new(l), Box::new(r)),
+        }
+    }
+
+    pub fn dot(v1: Value, v2: Value) -> Value {
+        match (v1, v2) {
+            (Value::Vec(vs1), Value::Vec(vs2)) => {
+                let mut res = Vec::new();
+                for (l, r) in vs1.iter().zip(vs2.iter()) {
+                    res.push(Value::mul(l.clone(), r.clone()));
+                }
+                match res.as_slice() {
+                    [] => Value::Vec(vec![]),
+                    [v] => v.clone(),
+                    [h, ts @ ..] =>
+                        res.into_iter().fold(h, |acc, v| Value::add(acc, v))
+                },
+            },
+
+            (l, r) =>
+            (Value::Vec(vs),
+            (l, r) =>
+                Value::Bin(BinOp::Dot, Box::new(l), Box::new(r)),
+        }
+    }
+
     pub fn vec(vs: Vec<Value>) -> Value {
         Value::Vec(vs)
     }
     pub fn underscore() -> Value {
         Value::Underscore
     }
-    pub fn var(v: Vid, n: NodeIndex) -> Value {
-        Value::Var(v)
-    }
     pub fn lit(n: usize) -> Value {
         Value::Lit(n)
     }
     pub fn range(r: CRange) -> Value {
         Value::Range(r)
+    }
+    pub fn coef(v: Value) -> Value {
+        Value::Coef(Box::new(v))
+    }
+    pub fn mle(v: Value) -> Value {
+        Value::Mle(Box::new(v))
     }
     pub fn nodes(&self) -> Vec<NodeIndex> {
         match self {
@@ -80,7 +208,7 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             },
-            Value::Underscore => write!(f, "_"),
+            Value::Underscore(n) => write!(f, "_{}", n.index()),
         }
     }
 }

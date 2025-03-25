@@ -296,12 +296,19 @@ impl Typeable for CExp {
 
                 match (ta.clone(), tb.clone()) {
                     (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
-                        // Type [a] and [b] should be the same ([c])
+                        // Type [a] and [b] should be the same ([t])
                         let t = CTyp::lub_equ(a, b, kctx)
                             .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
 
                         // Add the sizes of the vectors
                         Ok(CTyp::vec(t, x + y))
+                    },
+                    (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
+                        // Type [a] and [b] should be the same ([t])
+                        let t = CTyp::lub_equ(a, b, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        // Add an element to the vector
+                        Ok(CTyp::vec(t, n + 1))
                     },
                     (_, _) => Err(TypeError::concat(kctx, vctx, &ta, &tb))
                 }
@@ -834,6 +841,33 @@ mod tests {
         let vec_dot2 =
             CExp::dot(CExp::varstr("v1"), CExp::varstr("v2"));
         assert!(vec_dot2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Test for concatenation
+    #[test]
+    fn test_binary_concat_inference() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create expression v1 ++ v2
+        let vec_concat =
+            CExp::concat(CExp::varstr("v1"), CExp::varstr("v2"));
+
+        assert_eq!(vec_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(CTyp::varstr("F"), 9)));
+
+        // Create expression v1 ++ f1
+        let fv1_concat =
+            CExp::concat(CExp::varstr("v1"), CExp::varstr("f1"));
+
+        assert_eq!(fv1_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(CTyp::varstr("F"), 6)));
+
+        // Create expression f2 ++ v1
+        let fv2_concat =
+            CExp::concat(CExp::varstr("f2"), CExp::varstr("v2"));
+        assert_eq!(fv2_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(CTyp::varstr("F"), 5)));
     }
 
     // Test for equality

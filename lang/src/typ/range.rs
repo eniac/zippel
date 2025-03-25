@@ -1,6 +1,8 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
+use std::ops::{Add, Sub, Mul, Div, BitXor};
+
 use thiserror::Error;
 
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
@@ -208,6 +210,108 @@ where
 
     fn is_nil(&self) -> bool {
         false
+    }
+}
+
+impl Add for CRange {
+    type Output = CRange;
+
+    fn add(self, b: CRange) -> CRange {
+        Range {
+            start: self.start + b.start,
+            step: num::integer::gcd(self.step, b.step),
+            end: (self.end - self.step) + (b.end - b.step) + 1
+        }
+    }
+}
+
+impl Sub for CRange {
+    type Output = CRange;
+
+    fn sub(self, b: CRange) -> CRange {
+        Range {
+            start: self.start.saturating_sub(b.end - b.step),
+            step: num::integer::gcd(self.step, b.step),
+            end: (self.end - self.step) - (b.start) + 1
+        }
+    }
+}
+
+impl Mul for CRange {
+    type Output = CRange;
+
+    fn mul(self, b: CRange) -> CRange {
+        let a_min = self.start;
+        let a_max = self.end - self.step;
+        let b_min = b.start;
+        let b_max = b.end - b.step;
+
+        // Compute all possible products
+        let p1 = a_min * b_min;
+        let p2 = a_min * b_max;
+        let p3 = a_max * b_min;
+        let p4 = a_max * b_max;
+
+        // Compute new start and end
+        let new_start = p1.min(p2).min(p3).min(p4);
+        let new_end = p1.max(p2).max(p3).max(p4) + 1;
+
+        // Compute new step
+        let new_step = num::integer::gcd(self.step * b.step, num::integer::gcd(self.step * b.start, b.step * self.start));
+
+        Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        }
+    }
+}
+
+impl Div for CRange {
+    type Output = CRange;
+
+    fn div(self, b: CRange) -> CRange {
+        let a_min = self.start;
+        let a_max = self.end - self.step;
+        let b_min = b.start;
+        let b_max = b.end - b.step;
+
+        // Compute new start and end
+        let new_start = a_min / b_max; // Smallest quotient
+        let new_end = a_max / b_min + 1; // Largest quotient + 1 (right-exclusive)
+
+        // Use a step of 1 for safe overapproximation
+        let new_step = 1;
+
+        Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        }
+    }
+}
+
+impl BitXor for CRange {
+    type Output = CRange;
+
+    fn bitxor(self, b: CRange) -> CRange {
+        let a_min = self.start;
+        let a_max = self.end - self.step;
+        let b_min = b.start;
+        let b_max = b.end - b.step;
+
+        // Compute new start and end
+        let new_start = a_min.pow(b_min as u32); // Smallest power
+        let new_end = a_max.pow(b_max as u32) + 1; // Largest power + 1 (right-exclusive)
+
+        // Use a step of 1 for safe overapproximation
+        let new_step = 1;
+
+        Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        }
     }
 }
 
