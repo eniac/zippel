@@ -1,0 +1,32 @@
+[package]
+name = "costs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ark-ff = "0.5.0"
+ark-std = "0.5.0"
+ark-serialize = "0.5.0"
+ark-ec = "0.5.0"
+thiserror = "2.0.11"
+
+rayon = "1.5.1"
+criterion = "^0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strum = "0.26"
+strum_macros = "0.26"
+walkdir = "2.3.1"
+
+# curves
+ark-bls12-377 = "0.5.0"
+ark-bls12-381 = "0.5.0"
+ark-bn254 = "0.5.0"
+ark-bw6-761 = "0.5.0"
+ark-bw6-767 = "0.5.0"
+ark-cp6-782 = "0.5.0"
+ark-mnt4-298 = "0.5.0"
+ark-mnt4-753 = "0.5.0"
+ark-mnt6-753 = "0.5.0"
+ark-mnt6-298 = "0.5.0"
+
