@@ -1,4 +1,4 @@
 [workspace]
 
-members = [ "graph","lang", "share"]
+members = [ "graph","lang", "runtime", "share"]
 resolver = "2"
