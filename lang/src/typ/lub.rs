@@ -291,6 +291,7 @@ impl Lub for Tid {
             (Kind::Group, Kind::Group) if a == b => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
             (Kind::Multiplicative(f), Kind::Field) if f == &b => Ok(b),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
             (Kind::Field, Kind::Multiplicative(f)) if f == &a => Ok(a),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
             // Range kinds should be substituted at this point
@@ -314,6 +315,7 @@ impl Lub for Tid {
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
             (Kind::Group, Kind::Group) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -335,6 +337,7 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
             (Kind::Group, Kind::Group) if a == b => Ok(a),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a),
             // Range kinds should be substituted at this point
@@ -352,9 +355,10 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
             // Scalar multiplication: Scalar * Group = Group * Scalar = Group
-            (Kind::Field, Kind::Group) => Ok(b),
-            (Kind::Group, Kind::Field) => Ok(a),
+            (Kind::Scalar(g), Kind::Group) if g == &b => Ok(b),
+            (Kind::Group, Kind::Scalar(g)) if g == &a => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -380,6 +384,8 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
+            (Kind::Group, Kind::Scalar(g)) if g == &a => Ok(a),
             (Kind::Multiplicative(f1), Kind::Multiplicative(f2)) if f1 == f2 => Ok(b),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -396,6 +402,7 @@ impl Lub for Tid {
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a),
+            (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a),
             (Kind::Multiplicative(_), Kind::Field) => Ok(a),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
@@ -767,26 +774,33 @@ fn lub_tid() {
     let g2 = Tid::from("G2");
     let m = Tid::from("M");
     let p = Tid::from("P");
+    let s1 = Tid::from("S1");
+    let s2 = Tid::from("S2");
     let ctx = Ctx::from([
         (f.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
         (m.clone(), Kind::Multiplicative(f.clone())),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
+        (s1.clone(), Kind::Scalar(g1.clone())),
+        (s2.clone(), Kind::Scalar(g2.clone())),
     ]);
 
     assert_eq!(Tid::lub_equ(f.clone(), f.clone(), &ctx), Ok(f.clone()));
     assert_eq!(Tid::lub_equ(g1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
+    assert_eq!(Tid::lub_equ(s1.clone(), s1.clone(), &ctx), Ok(s1.clone()));
     assert!(Tid::lub_equ(g1.clone(), g2.clone(), &ctx).is_err());
     assert_eq!(Tid::lub_equ(m.clone(), f.clone(), &ctx), Ok(f.clone()));
 
     assert_eq!(Tid::lub_add(f.clone(), f.clone(), &ctx), Ok(f.clone()));
+    assert_eq!(Tid::lub_add(s1.clone(), s1.clone(), &ctx), Ok(s1.clone()));
     assert_eq!(Tid::lub_add(g1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
     assert_eq!(Tid::lub_add(p.clone(), p.clone(), &ctx), Ok(p.clone()));
     assert!(Tid::lub_add(g1.clone(), g2.clone(), &ctx).is_err());
     assert!(Tid::lub_add(m.clone(), f.clone(), &ctx).is_err());
 
     assert_eq!(Tid::lub_sub(f.clone(), f.clone(), &ctx), Ok(f.clone()));
+    assert_eq!(Tid::lub_sub(s1.clone(), s1.clone(), &ctx), Ok(s1.clone()));
     assert_eq!(Tid::lub_sub(g1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
     assert_eq!(Tid::lub_sub(p.clone(), p.clone(), &ctx), Ok(p.clone()));
     assert!(Tid::lub_sub(g1.clone(), g2.clone(), &ctx).is_err());
@@ -794,8 +808,21 @@ fn lub_tid() {
 
     assert_eq!(Tid::lub_mul(f.clone(), f.clone(), &ctx), Ok(f.clone()));
     assert!(Tid::lub_mul(g1.clone(), g1.clone(), &ctx).is_err());
-    assert_eq!(Tid::lub_mul(g1.clone(), g2.clone(), &ctx), Ok(p.clone()));
-    assert_eq!(Tid::lub_mul(g2.clone(), g1.clone(), &ctx), Ok(p.clone()));
+    assert!(Tid::lub_mul(m.clone(), f.clone(), &ctx).is_err());
+    assert_eq!(Tid::lub_mul(m.clone(), m.clone(), &ctx), Ok(m.clone()));
+    assert!(Tid::lub_mul(s1.clone(), s2.clone(), &ctx).is_err());
+    assert_eq!(Tid::lub_mul(s1.clone(), s1.clone(), &ctx), Ok(s1.clone()));
+    assert_eq!(Tid::lub_mul(s1.clone(), g1.clone(), &ctx), Ok(g1.clone()));
+    assert_eq!(Tid::lub_mul(g2.clone(), s2.clone(), &ctx), Ok(g2.clone()));
+
+    assert_eq!(Tid::lub_div(f.clone(), f.clone(), &ctx), Ok(f.clone()));
+    assert_eq!(Tid::lub_div(s1.clone(), s1.clone(), &ctx), Ok(s1.clone()));
+    assert!(Tid::lub_div(s1.clone(), s2.clone(), &ctx).is_err());
+    assert!(Tid::lub_div(g1.clone(), g1.clone(), &ctx).is_err());
+    assert!(Tid::lub_div(g1.clone(), f.clone(), &ctx).is_err());
+    assert_eq!(Tid::lub_div(g1.clone(), s1.clone(), &ctx), Ok(g1.clone()));
+    assert_eq!(Tid::lub_div(g2.clone(), s2.clone(), &ctx), Ok(g2.clone()));
+    assert!(Tid::lub_div(g1.clone(), s2.clone(), &ctx).is_err());
 }
 
 #[test]

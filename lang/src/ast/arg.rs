@@ -2,11 +2,11 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::{Traversal, Pretty, DocAllocator, DocBuilder, BoxAllocator};
-use share::traversal::ToTraversal1;
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Tid, Vid, TidSubst};
 use crate::eval::Eval;
-use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
+use crate::typ::{Size, TTyp, Qualifier, Range, RangeTraversal};
 use crate::parser::*;
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
@@ -22,7 +22,7 @@ use crate::parser::*;
 pub struct Arg<N> {
     pub qualifier: Qualifier,
     pub id: Vid,
-    pub typ: Typ<N>,
+    pub typ: TTyp<N>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -41,13 +41,13 @@ pub type CArg = Arg<usize>;
 pub type CArgs = Args<usize>;
 
 impl<N> Arg<N> {
-    pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<N>) -> Self {
+    pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: TTyp<N>) -> Self {
         Arg { qualifier, id: Vid::new(id), typ }
     }
-    pub fn public<'a>(id: &'a str, typ: Typ<N>) -> Self {
+    pub fn public<'a>(id: &'a str, typ: TTyp<N>) -> Self {
         Arg { qualifier: Qualifier::Public, id: Vid::new(id), typ }
     }
-    pub fn private<'a>(id: &'a str, typ: Typ<N>) -> Self {
+    pub fn private<'a>(id: &'a str, typ: TTyp<N>) -> Self {
         Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
     }
 }
@@ -75,33 +75,6 @@ impl<N> FromIterator<Arg<N>> for Args<N> {
     }
 }
 
-/// Traversal instance for Arg
-pub struct ArgTraversal1<N>(std::marker::PhantomData<N>);
-impl<N, M> Traversal<N, M> for ArgTraversal1<N> {
-    type Domain = Arg<N>;
-    type Codomain = Arg<M>;
-    fn traverse<E>(
-        on: Self::Domain,
-        f: &mut dyn FnMut(N) -> Result<M, E>,
-    ) -> Result<Self::Codomain, E> {
-        let Arg { qualifier, id, typ } = on;
-        Ok(Arg { qualifier, id, typ: typ.traverse1(f)? })
-    }
-}
-
-/// Traversal instance for Args
-pub struct ArgsTraversal1<N>(std::marker::PhantomData<N>);
-impl<N, M> Traversal<N, M> for ArgsTraversal1<N> {
-    type Domain = Args<N>;
-    type Codomain = Args<M>;
-    fn traverse<E>(
-        on: Self::Domain,
-        f: &mut dyn FnMut(N) -> Result<M, E>,
-    ) -> Result<Self::Codomain, E> {
-        Ok(Args(on.0.traverse1(&mut |x| x.traverse1(f))?))
-    }
-}
-
 impl<N> TidSubst for Arg<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.typ.tid_subst(from, to)
@@ -118,7 +91,8 @@ impl<N> TidSubst for Args<N> {
 impl<N> ToTraversal1<N> for Arg<N> {
     type Output<Z> = Arg<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Arg<Z>, E> {
-        ArgTraversal1::traverse(self, f)
+        let Arg { qualifier, id, typ } = self;
+        Ok(Arg { qualifier, id, typ: typ.traverse2(f)? })
     }
 }
 
@@ -126,7 +100,7 @@ impl<N> ToTraversal1<N> for Arg<N> {
 impl<N> ToTraversal1<N> for Args<N> {
     type Output<Z> = Args<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Args<Z>, E> {
-        ArgsTraversal1::traverse(self, f)
+        Ok(Args(self.0.traverse1(&mut |x| x.traverse1(f))?))
     }
 }
 
@@ -227,7 +201,7 @@ impl<'pest> FromPest<'pest> for Arg<Size> {
                 let mut inner = pair.into_inner();
                 let qualifier = Qualifier::from_pest(&mut inner)?;
                 let id = Vid::from_pest(&mut inner)?;
-                let typ = Typ::from_pest(&mut inner)?;
+                let typ = TTyp::from_pest(&mut inner)?;
                 Ok(Arg { qualifier, id, typ })
             }
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
@@ -265,8 +239,8 @@ fn arg_parser() {
     assert_eq!(
         Args::from_pest(&mut pairs),
         Ok(Args(vec![
-            Arg::new(Qualifier::Public, "a", Typ::varstr("F")),
-            Arg::new(Qualifier::Private, "foo", Typ::varstr("X"))
+            Arg::new(Qualifier::Public, "a", TTyp::varstr("F")),
+            Arg::new(Qualifier::Private, "foo", TTyp::varstr("X"))
         ]))
     );
 
@@ -278,7 +252,7 @@ fn arg_parser() {
 #[test]
 fn arg_traversal() {
     let arg = Arg::new(Qualifier::Public, "a",
-        Typ::fin(Range { start: Size::varstr("N") / 2, step: Size::one(), end: Size::varstr("N")*2 }));
+        TTyp::fin(Range { start: Size::varstr("N") / 2, step: Size::one(), end: Size::varstr("N")*2 }));
     assert_eq!(arg.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 2))).unwrap(),
-       Arg::new(Qualifier::Public, "a", Typ::fin(Range { start: 1, step: 1, end: 4 })));
+       Arg::new(Qualifier::Public, "a", TTyp::fin(Range { start: 1, step: 1, end: 4 })));
 }

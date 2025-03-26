@@ -333,6 +333,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-vesta"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3a6d658e5e7380af710828550b2dc2c7b033c9f3103d2690711cb07d5a62df6"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-pallas",
+ "ark-std",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1151,6 +1163,8 @@ dependencies = [
  "ark-mnt4-753",
  "ark-pallas",
  "ark-secp256k1",
+ "ark-vesta",
+ "lang",
 ]
 
 [[package]]

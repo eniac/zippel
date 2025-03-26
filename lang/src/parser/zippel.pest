@@ -32,11 +32,12 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 
 /// Base kinds
-kind_ty = { field_ty | group_ty | range_ty | pairing_ty | multiplicative_ty }
+kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | multiplicative_ty }
     field_ty          = { "Field" }
     group_ty          = { "Group" }
     pairing_ty        = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
     multiplicative_ty = { "Multiplicative" ~ "<" ~ id ~ ">" }
+    scalar_ty         = { "Scalar" ~ "<" ~ id ~ ">" }
     range_ty          = { range }
 
 typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
