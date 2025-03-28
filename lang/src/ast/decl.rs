@@ -8,7 +8,7 @@ use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, ExpSubst, FreeVars, CExp, Sig, Args};
 use crate::id::{Tid, TidSubst, Fid, Vid};
-use crate::typ::{TTyp, Range, Size, TypeVars, RangeTraversal};
+use crate::typ::{Typ, Range, Size, TypeVars, RangeTraversal};
 use crate::parser::*;
 
 
@@ -75,12 +75,12 @@ impl FreeVars for CBody {
 /// Useful constructors
 impl<N> Decl<N> {
     pub fn proto(name: Fid, typevars: TypeVars, args: Args<N>, relation: Exp<N>, body: Exp<N>) -> Self {
-        let sig = Sig { name, typevars, args, ret: TTyp::bool() };
+        let sig = Sig { name, typevars, args, ret: Typ::bool() };
         let body = Body::Proto { relation, body };
         Decl { sig, body }
     }
 
-    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: TTyp<N>, body: Exp<N>) -> Self {
+    pub fn func(name: Fid, typevars: TypeVars, args: Args<N>, ret: Typ<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
@@ -364,7 +364,7 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Function's arguments
                 let args = Args::from_pest(&mut inner)?;
                 // Function return type
-                let ret = TTyp::from_pest(&mut inner)?;
+                let ret = Typ::from_pest(&mut inner)?;
                 // Function's body
                 let next = inner.next().ok_or(ConversionError::NoMatch)?;
                 let body =
@@ -448,7 +448,7 @@ fn proto_parser() {
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::proto(
         Fid::from("test"),
         TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        Args(vec![Arg::public("a", TTyp::varstr("F"))]),
+        Args(vec![Arg::public("a", Typ::varstr("F"))]),
         UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
         UExp::letx(Vid::from("x"), UExp::from(3) * UExp::varstr("a"),
             UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
@@ -470,8 +470,8 @@ fn fn_parser1() {
             TypeVar::new("F", Kind::Field),
             TypeVar::new("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
         ]),
-        Args(vec![Arg::private("a", TTyp::vec(TTyp::varstr("F"), Size::from("N")))]),
-        TTyp::varstr("F"),
+        Args(vec![Arg::private("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+        Typ::varstr("F"),
         UExp::letx(Vid::from("x"), UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
             UExp::varstr("x") + UExp::varstr("x"))
     ));
@@ -491,8 +491,8 @@ fn fn_parser2() {
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
         Fid::from("test"),
         TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-        Args(vec![Arg::public("a", TTyp::varstr("F"))]),
-        TTyp::varstr("F"),
+        Args(vec![Arg::public("a", Typ::varstr("F"))]),
+        Typ::varstr("F"),
         UExp::letx(Vid::from("v"), UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
             UExp::logx(Vid::from("p"), UExp::interpolate(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)])),
                 UExp::logx(Vid::from("x"), UExp::challenge(Tid::from("F")),
@@ -517,7 +517,7 @@ fn decls_parser() {
         UDecl::proto(
             Fid::from("test"),
             TypeVars(vec![TypeVar::new("F", Kind::Field)]),
-            Args(vec![Arg::public("a", TTyp::varstr("F"))]),
+            Args(vec![Arg::public("a", Typ::varstr("F"))]),
             UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
             UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::varstr("a")),
                 UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
@@ -528,8 +528,8 @@ fn decls_parser() {
                 TypeVar::new("F", Kind::Field),
                 TypeVar::new("N", Kind::Range(Range { start:0, step:1, end: 10 })),
             ]),
-            Args(vec![Arg::public("a", TTyp::vec(TTyp::varstr("F"), Size::from("N")))]),
-            TTyp::varstr("F"),
+            Args(vec![Arg::public("a", Typ::vec(Typ::varstr("F"), Size::from("N")))]),
+            Typ::varstr("F"),
             UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
                 UExp::varstr("x") + UExp::varstr("x"))
         )

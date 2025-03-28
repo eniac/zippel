@@ -61,6 +61,20 @@ pub struct BenchEntry {
     pub parameters: BenchParameters,
 }
 
+/*
+ *
+Replace BenchEntry with the following:
+
+type DynType = Typ<ZippelType, usize>;
+
+Map<(Op<DynType, ZippelType>, usize), f64> // Bench
+
+Map::from([
+    ((Op::Bin(BinOp::Add, Typ::Base(ZippelType::Curve25519_Field), Typ::Base(ZippelType::Curve25519_Field)), 1) -> 128.0),
+    ((Op::challenge(ZippelType::Curve25519_Field) -> 1.0),
+
+*/
+
 #[derive(EnumIter, EnumString, Debug, Clone, Copy, Hash, Eq, PartialEq, Display)]
 pub enum BenchedTask {
     FAddition,

@@ -1,11 +1,11 @@
 #![feature(box_patterns)]
 mod node;
 mod edge;
-mod value;
+mod op;
 mod principal;
 
-pub use value::Value;
-pub use node::{Op, Node, PNode};
+pub use op::{Operand, Op, TOp};
+pub use node::{Node, PNode};
 pub use edge::{Dependency, Edge};
 pub use principal::Principal;
 

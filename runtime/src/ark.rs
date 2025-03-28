@@ -1,0 +1,432 @@
+use rand::Rng;
+use std::hash::Hash;
+use std::marker::PhantomData;
+use core::hash::Hasher;
+use rayon::prelude::*;
+
+use ark_poly::{DenseMVPolynomial, DenseUVPolynomial, MultilinearExtension, Polynomial};
+use ark_poly::polynomial::univariate::DensePolynomial as Uni;
+use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
+use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension as Mle;
+use ark_ff::{Zero, One, Field, UniformRand};
+use ark_ec::AffineRepr;
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_ec::models::short_weierstrass::{Affine as SWAffine, Projective as SWProjective, SWCurveConfig};
+use ark_ec::models::twisted_edwards::{Affine as TEAffine, Projective as TEProjective, TECurveConfig};
+
+/// Represents a type instantiation of a zippel program in Arkworks
+pub trait ArkConfig {
+    type F: ark_ff::FftField;
+    type G1;
+    type G2;
+    type GT;
+
+    // Field constants
+    fn scalar_zero() -> Self::F {
+        Self::F::zero()
+    }
+    fn scalar_one() -> Self::F {
+        Self::F::one()
+    }
+    // Scalars
+    fn scalar_add(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Vec<Self::F> {
+        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a + *b).collect()
+    }
+    fn scalar_sub(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Vec<Self::F> {
+        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a - *b).collect()
+    }
+    fn scalar_mul(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Vec<Self::F> {
+        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a * *b).collect()
+    }
+    fn scalar_div(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Vec<Self::F> {
+        // TODO: batch inversion
+        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a / *b).collect()
+    }
+    fn scalar_pow(f1: Vec<Self::F>, i: Vec<u64>) -> Vec<Self::F> {
+        f1.par_iter().zip(i.par_iter()).map(|(a, b)| a.pow(&[*b])).collect()
+    }
+    fn scalar_dot(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Self::F {
+        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a * *b).sum()
+    }
+    // Univariates
+    fn uni_add(a: Uni<Self::F>, b: Uni<Self::F>) -> Uni<Self::F> {
+        a + b
+    }
+    fn uni_sub(a: Uni<Self::F>, b: Uni<Self::F>) -> Uni<Self::F> {
+        a - b
+    }
+    fn uni_mul(a: Uni<Self::F>, b: Uni<Self::F>) -> Uni<Self::F> {
+        a * b
+    }
+    fn uni_div(a: Uni<Self::F>, b: Uni<Self::F>) -> Uni<Self::F> {
+        a / b
+    }
+    fn uni_eval(a: Uni<Self::F>, b: Self::F) -> Self::F {
+        a.evaluate(&b)
+    }
+    fn uni_coeffs(a: Vec<Self::F>) -> Uni<Self::F> {
+        Uni::from_coefficients_vec(a)
+    }
+    fn uni_rand<R: Rng>(rng: &mut R, n: usize) -> Uni<Self::F> {
+        <Uni<Self::F> as DenseUVPolynomial<Self::F>>::rand(n, rng)
+    }
+    fn uni_interpolate(a: Vec<Self::F>) -> Uni<Self::F> {
+        let domain: GeneralEvaluationDomain<Self::F> = GeneralEvaluationDomain::new(a.len()).unwrap();
+        let mut a = a;
+        domain.ifft_in_place(&mut a);
+        Self::uni_coeffs(a)
+    }
+    // MLEs
+    fn mle_add(a: Mle<Self::F>, b: Mle<Self::F>) -> Mle<Self::F> {
+        a + b
+    }
+    fn mle_sub(a: Mle<Self::F>, b: Mle<Self::F>) -> Mle<Self::F> {
+        a - b
+    }
+    fn mle_mul(a: Mle<Self::F>, b: Self::F) -> Mle<Self::F> {
+        a * b
+    }
+    fn mle_eval(a: Mle<Self::F>, b: Vec<Self::F>) -> Self::F {
+        a.evaluate(&b)
+    }
+    fn mle_rand<R: Rng>(rng: &mut R, num_vars: usize) -> Mle<Self::F> {
+        <Mle<Self::F> as MultilinearExtension<Self::F>>::rand(num_vars, rng)
+    }
+    fn mle_evals(num_vars: usize, a: Vec<Self::F>) -> Mle<Self::F> {
+        Mle::from_evaluations_vec(num_vars, a)
+    }
+    // Random and hashing
+    fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> Self::F {
+        Self::F::rand(rng)
+    }
+    fn scalar_hash<H: Hasher>(f: Self::F, h: &mut H) {
+        f.hash(h)
+    }
+
+    // Group constants
+    fn group_zero1() -> Self::G1;
+    fn group_zero2() -> Self::G2;
+    fn group_zerot() -> Self::GT;
+
+    // Groups
+    fn group_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1>;
+    fn group_add2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2>;
+    fn group_addt(g1: Vec<Self::GT>, g2: Vec<Self::GT>) -> Vec<Self::GT>;
+    fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1>;
+    fn group_sub2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2>;
+    fn group_subt(g1: Vec<Self::GT>, g2: Vec<Self::GT>) -> Vec<Self::GT>;
+    fn scalar_group_mul1(g: Vec<Self::G1>, f: Vec<Self::F>) -> Self::G1;
+    fn scalar_group_mul2(g: Vec<Self::G2>, f: Vec<Self::F>) -> Self::G2;
+    fn scalar_group_mult(g: Vec<Self::GT>, f: Vec<Self::F>) -> Self::GT;
+    fn billinear_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT>;
+    fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1;
+    fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2;
+    fn group_randt<R: Rng + ?Sized>(rng: &mut R) -> Self::GT;
+    fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H);
+    fn group_hash2<H: Hasher>(g: Self::G2, h: &mut H);
+    fn group_hasht<H: Hasher>(g: Self::GT, h: &mut H);
+}
+
+/// Object representing a Zippel configuration for fields
+pub struct ArkField<F: ark_ff::FftField> {
+    _field: PhantomData<F>,
+}
+
+/// For a signle field <F>
+impl<F: ark_ff::FftField> ArkConfig for ArkField<F> {
+    type F = F;
+    type G1 = ();
+    type G2 = ();
+    type GT = ();
+
+    // Group constants
+    fn group_zero1() -> Self::G1 {
+        unimplemented!()
+    }
+    fn group_zero2() -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_zerot() -> Self::GT {
+        unimplemented!()
+    }
+    // Groups
+    fn group_add1(_: Vec<Self::G1>, _: Vec<Self::G1>) -> Vec<Self::G1> {
+        unimplemented!()
+    }
+    fn group_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_sub1(_: Vec<Self::G1>, _: Vec<Self::G1>) -> Vec<Self::G1> {
+        unimplemented!()
+    }
+    fn group_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul1(_: Vec<Self::G1>, _: Vec<Self::F>) -> Self::G1 {
+        unimplemented!()
+    }
+    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+        unimplemented!()
+    }
+    fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_rand1<R: Rng + ?Sized>(_: &mut R) -> Self::G1 {
+        unimplemented!()
+    }
+    fn group_rand2<R: Rng + ?Sized>(_: &mut R) -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_randt<R: Rng + ?Sized>(_: &mut R) -> Self::GT {
+        unimplemented!()
+    }
+    fn group_hash1<H: Hasher>(_: Self::G1, _: &mut H) {
+        unimplemented!()
+    }
+    fn group_hash2<H: Hasher>(_: Self::G2, _: &mut H) {
+        unimplemented!()
+    }
+    fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
+        unimplemented!()
+    }
+}
+
+
+/// Object representing a Zippel configuration for Short-Weierstrass curves
+pub struct ArkSWCurve<C: SWCurveConfig> {
+    _curve: PhantomData<C>,
+}
+
+impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
+    type F = C::ScalarField;
+    type G1 = SWAffine<C>;
+    type G2 = ();
+    type GT = ();
+
+    // Group constants
+    fn group_zero1() -> Self::G1 {
+        Self::G1::zero()
+    }
+    fn group_zero2() -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_zerot() -> Self::GT {
+        unimplemented!()
+    }
+    // Groups
+    fn group_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+        unimplemented!()
+    }
+    fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_rand2<R: Rng + ?Sized>(_: &mut R) -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_randt<R: Rng + ?Sized>(_: &mut R) -> Self::GT {
+        unimplemented!()
+    }
+    fn group_hash2<H: Hasher>(_: Self::G2, _: &mut H) {
+        unimplemented!()
+    }
+    fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
+        unimplemented!()
+    }
+    // Groups
+    fn group_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a + *b).into()).collect()
+    }
+    fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
+    }
+    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+        // TODO: What does Err<usize> mean here?
+        C::msm(&g1[..], &f1[..]).unwrap().into()
+    }
+    fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
+        Self::G1::rand(rng)
+    }
+    fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
+        g.hash(h)
+    }
+}
+
+/// TODO: Object representing a Zippel configuration for twisted edwards curves
+pub struct ArkTECurve<C: TECurveConfig> {
+    _curve: PhantomData<C>,
+}
+
+impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
+    type F = C::ScalarField;
+    type G1 = TEAffine<C>;
+    type G2 = ();
+    type GT = ();
+
+    // Group constants
+    fn group_zero1() -> Self::G1 {
+        Self::G1::zero()
+    }
+    fn group_zero2() -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_zerot() -> Self::GT {
+        unimplemented!()
+    }
+    // Groups
+    fn group_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
+        unimplemented!()
+    }
+    fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+        unimplemented!()
+    }
+    fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn group_rand2<R: Rng + ?Sized>(_: &mut R) -> Self::G2 {
+        unimplemented!()
+    }
+    fn group_randt<R: Rng + ?Sized>(_: &mut R) -> Self::GT {
+        unimplemented!()
+    }
+    fn group_hash2<H: Hasher>(_: Self::G2, _: &mut H) {
+        unimplemented!()
+    }
+    fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
+        unimplemented!()
+    }
+    // Groups
+    fn group_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a + *b).into()).collect()
+    }
+    fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
+    }
+    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+        // TODO: What does Err<usize> mean here?
+        C::msm(&g1[..], &f1[..]).unwrap().into()
+    }
+    fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
+        Self::G1::rand(rng)
+    }
+    fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
+        g.hash(h)
+    }
+}
+
+/// Object representing a Zippel configuration for pairing friendly curves
+pub struct ArkPairing<P: Pairing> {
+    _pairing: PhantomData<P>,
+}
+
+/// For pairing friendly curves
+impl<P: Pairing> ArkConfig for ArkPairing<P> {
+    type F = P::ScalarField;
+    type G1 = P::G1Affine;
+    type G2 = P::G2Affine;
+    type GT = PairingOutput<P>;
+
+    // Group constants
+    fn group_zero1() -> Self::G1 {
+        Self::G1::zero()
+    }
+    fn group_zero2() -> Self::G2 {
+        Self::G2::zero()
+    }
+    fn group_zerot() -> Self::GT {
+        Self::GT::zero()
+    }
+    // Groups
+    fn group_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a + *b).into()).collect()
+    }
+    fn group_add2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a + *b).into()).collect()
+    }
+    fn group_addt(gt1: Vec<Self::GT>, gt2: Vec<Self::GT>) -> Vec<Self::GT> {
+        gt1.par_iter().zip(gt2.par_iter()).map(|(a, b)| a + b).collect()
+    }
+    fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
+    }
+    fn group_sub2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2> {
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
+    }
+    fn group_subt(gt1: Vec<Self::GT>, gt2: Vec<Self::GT>) -> Vec<Self::GT> {
+        gt1.par_iter().zip(gt2.par_iter()).map(|(a, b)| a - b).collect()
+    }
+    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+        unimplemented!() // TODO: Where is this in arkworks?
+    }
+    fn scalar_group_mul2(g2: Vec<Self::G2>, f2: Vec<Self::F>) -> Self::G2 {
+        unimplemented!() // TODO: Where is this in arkworks?
+    }
+    fn scalar_group_mult(gt: Vec<Self::GT>, ft: Vec<Self::F>) -> Self::GT {
+        unimplemented!() // TODO: Where is this in arkworks?
+    }
+    fn billinear_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT> {
+        // Batch bilinear pairing?
+        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| P::pairing(a, b)).collect()
+    }
+    // Random and hashes
+    fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> Self::F {
+        Self::F::rand(rng)
+    }
+    fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
+        Self::G1::rand(rng)
+    }
+    fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2 {
+        Self::G2::rand(rng)
+    }
+    fn group_randt<R: Rng + ?Sized>(rng: &mut R) -> Self::GT {
+        Self::GT::rand(rng)
+    }
+    fn scalar_hash<H: Hasher>(f: Self::F, h: &mut H) {
+        f.hash(h)
+    }
+    fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
+        g.hash(h)
+    }
+    fn group_hash2<H: Hasher>(g: Self::G2, h: &mut H) {
+        g.hash(h)
+    }
+    fn group_hasht<H: Hasher>(g: Self::GT, h: &mut H) {
+        g.hash(h)
+    }
+}
+

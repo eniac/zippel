@@ -146,15 +146,15 @@ impl CRange {
     /// - j: an integer index
     ///
     /// Returns the effective index in the original array,
-    /// or None if the index is out of bounds
-    pub fn compose_index(&self, j: usize) -> Option<usize> {
+    /// panics if the index is out of bounds.
+    pub fn compose_index(&self, j: usize) -> usize {
         let computed_index = self.start + j * self.step;
 
         // Check if the computed index is within the bounds of the range
         if computed_index < self.end {
-            Some(computed_index)
+            computed_index
         } else {
-            None
+            panic!("Index out of bounds: {} not in range [{}, {})", computed_index, self.start, self.end);
         }
     }
 

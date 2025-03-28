@@ -155,6 +155,9 @@ impl Typeable for CExp {
             // Infer the type of a literal [n] as a Fin<n> type
             CExp::Lit(n) => Ok(CTyp::fin(Range::singleton(n))),
 
+            // Booleans
+            CExp::Bool(_) => Ok(CTyp::Bool),
+
             // Infer the type of a univariate polynomial from its coefficients' vector
             CExp::Coef(box v) => {
                 // Infer the type of its argument
@@ -313,6 +316,32 @@ impl Typeable for CExp {
                     (_, _) => Err(TypeError::concat(kctx, vctx, &ta, &tb))
                 }
             }
+            CExp::Bin(BinOp::Equ, a, b) => {
+                let ta = a.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = b.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                // Values are equal when their types are equal (with unification)
+                CTyp::lub_equ(ta, tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                Ok(CTyp::bool())
+            }
+
+            CExp::Bin(BinOp::And, a, b) | CExp::Bin(BinOp::Or, a, b) => {
+                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                // Types [ta] and [tb] must be equal and boolean
+                let t = CTyp::lub_equ(*ta, *tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                if t == CTyp::Bool {
+                    Ok(CTyp::bool())
+                } else {
+                    Err(TypeError::bool(kctx, vctx, &self))
+                }
+            }
 
             // Range expression
             CExp::Range(r) => {
@@ -459,17 +488,6 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Equ(a, b) => {
-                let ta = a.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // Values are equal when their types are equal (with unification)
-                CTyp::lub_equ(ta, tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                Ok(CTyp::bool())
-            }
             CExp::Contains(a, b) => {
                 let ta = a.infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
@@ -485,20 +503,7 @@ impl Typeable for CExp {
                     (ta, tb) => Err(TypeError::contains(kctx, &vctx, *a, ta, *b, tb))
                 }
             }
-            CExp::And(a, b) | CExp::Or(a, b) => {
-                let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                // Types [ta] and [tb] must be equal and boolean
-                let t = CTyp::lub_equ(*ta, *tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                if t == CTyp::Bool {
-                    Ok(CTyp::bool())
-                } else {
-                    Err(TypeError::bool(kctx, vctx, &self))
-                }
-            },
+
             CExp::Not(a) => {
                 let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx))
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;

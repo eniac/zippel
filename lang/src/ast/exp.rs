@@ -57,7 +57,31 @@ pub enum BinOp {
     ///     ```zippel
     ///     let inner: F = [1,2] ++ [2,4];
     ///     ```
-    Concat
+    Concat,
+
+    ///     Represents the equality comparison between two arithmetic expressions.
+    ///
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     verify(5 == 5);
+    ///     ```
+    Equ,
+
+    ///     Represents the logical AND of two boolean expressions.
+    ///
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     assert(true && false);
+    ///     ```
+    And,
+
+    ///     Represents the logical OR of two boolean expressions.
+    ///
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     verify(true || false);
+    ///     ```
+    Or,
 }
 
 /// Represents arithmetic expressions in the Zippel language.
@@ -70,6 +94,13 @@ pub enum Exp<N> {
     ///     let a = 5;
     ///     ```
     Lit(N),
+
+    ///     Boolean literal
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let b = true;
+    ///     ```
+    Bool(bool),
 
     ///     Generator of a group [Tid]
     ///     **Zippel Code:**
@@ -169,30 +200,6 @@ pub enum Exp<N> {
     ///     ```
     Contains(Box<Exp<N>>, Box<Exp<N>>),
 
-    ///     Represents the equality comparison between two arithmetic expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     verify(5 == 5);
-    ///     ```
-    Equ(Box<Exp<N>>, Box<Exp<N>>),
-
-    ///     Represents the logical AND of two boolean expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(true && false);
-    ///     ```
-    And(Box<Exp<N>>, Box<Exp<N>>),
-
-    ///     Represents the logical OR of two boolean expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     verify(true || false);
-    ///     ```
-    Or(Box<Exp<N>>, Box<Exp<N>>),
-
     ///     Represents the negation of a boolean expression.
     ///
     ///     **Zippel Code:**
@@ -269,6 +276,7 @@ impl<N> ToTraversal1<N> for Exp<N> {
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
         match self {
             Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
+            Exp::Bool(b) => Ok(Exp::Bool(b)),
             Exp::Var(v) => Ok(Exp::Var(v)),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
@@ -298,14 +306,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
                         Box::new(x.traverse1(f)?),
                         Box::new(i.traverse1(f)?)
                 )),
-            Exp::Equ(a, b) =>
-                Ok(Exp::Equ(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Contains(a, b) =>
                 Ok(Exp::Contains(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
-            Exp::And(a, b) =>
-                Ok(Exp::And(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
-            Exp::Or(a, b) =>
-                Ok(Exp::Or(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Not(a) => Ok(Exp::Not(a.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Let(x, box a, box b) =>
                 Ok(Exp::Let(x, Box::new(a.traverse1(f)?), Box::new(b.traverse1(f)?))),
@@ -345,16 +347,13 @@ impl TidSubst for CExp {
             | Exp::Map(box a, _, box b)
             | Exp::Interpolate(box a, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Equ(box a, box b)
-            | Exp::And(box a, box b)
-            | Exp::Or(box a, box b)
             | Exp::Contains(box a, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b) => {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
             },
-            Exp::Lit(_) | Exp::Var(_) | Exp::Range(_)
+            Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
             | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) => {}
         }
     }
@@ -370,15 +369,16 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => Set::new(),
-            Exp::Coef(box p) | Exp::Mle(box p) | Exp::Assert(box p) | Exp::Verify(box p) | Exp::Not(box p) => p.freevars(),
+            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => Set::new(),
+            Exp::Coef(box p)
+                | Exp::Mle(box p)
+                | Exp::Assert(box p)
+                | Exp::Verify(box p)
+                | Exp::Not(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
                 | Exp::Interpolate(box a, box b)
                 | Exp::Ram(box a, box b)
-                | Exp::Equ(box a, box b)
-                | Exp::And(box a, box b)
-                | Exp::Or(box a, box b)
                 | Exp::Contains(box a, box b)
                 | Exp::Map(box a, _, box b)
                 | Exp::Let(_, box a, box b)
@@ -391,7 +391,7 @@ impl ExpSubst for CExp {
     fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
         match self {
             Exp::Var(id) if id == from => *self = to.clone(),
-            Exp::Var(_) | Exp::Challenge(_) | Exp::Random(_)
+            Exp::Var(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Bool(_)
             | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => {},
             Exp::Coef(box p)
             | Exp::Mle(box p)
@@ -403,9 +403,6 @@ impl ExpSubst for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Interpolate(box a, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Equ(box a, box b)
-            | Exp::And(box a, box b)
-            | Exp::Or(box a, box b)
             | Exp::Let(None, box a, box b)
             | Exp::Contains(box a, box b) => {
                 a.subst(from, to, ctx);
@@ -479,14 +476,8 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
             Exp::Interpolate(box x, box y) =>
                 Ok(Exp::interpolate(x.range_traverse(f)?, y.range_traverse(f)?)),
-            Exp::Equ(box a, box b) =>
-                Ok(Exp::equ(a.range_traverse(f)?, b.range_traverse(f)?)),
             Exp::Contains(box a, box b) =>
                 Ok(Exp::contains(a.range_traverse(f)?, b.range_traverse(f)?)),
-            Exp::And(box a, box b) =>
-                Ok(Exp::and(a.range_traverse(f)?, b.range_traverse(f)?)),
-            Exp::Or(box a, box b) =>
-                Ok(Exp::or(a.range_traverse(f)?, b.range_traverse(f)?)),
             Exp::Not(box a) =>
                 Ok(Exp::not(a.range_traverse(f)?)),
             Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
@@ -550,6 +541,9 @@ impl<N> Exp<N> {
     /// Annotated constructors
     pub fn lit(v: N) -> Self {
         Exp::Lit(v)
+    }
+    pub fn bool(b: bool) -> Self {
+        Exp::Bool(b)
     }
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
         Exp::Bin(op, Box::new(l), Box::new(r))
@@ -627,13 +621,13 @@ impl<N> Exp<N> {
         Exp::Let(None, Box::new(a), Box::new(b))
     }
     pub fn and(l: Self, r: Self) -> Self {
-        Exp::And(Box::new(l), Box::new(r))
+        Exp::Bin(BinOp::And, Box::new(l), Box::new(r))
     }
     pub fn or(l: Self, r: Self) -> Self {
-        Exp::Or(Box::new(l), Box::new(r))
+        Exp::Bin(BinOp::Or, Box::new(l), Box::new(r))
     }
     pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
-        Exp::Equ(Box::new(l), Box::new(r))
+        Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
     pub fn app(id: Fid, args: Exps<N>) -> Self {
         Exp::App(id, args)
@@ -662,6 +656,9 @@ where
             BinOp::Pow => allocator.text(" ^ "),
             BinOp::Dot => allocator.text(" . "),
             BinOp::Concat => allocator.text(" ++ "),
+            BinOp::Equ => allocator.text(" == "),
+            BinOp::And => allocator.text(" && "),
+            BinOp::Or => allocator.text(" || "),
         }
     }
 
@@ -681,6 +678,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             Exp::Lit(p) => p.pretty(allocator),
+            Exp::Bool(b) => allocator.text(b.to_string()),
             Exp::Coef(p) => allocator.concat([
                 allocator.text("coef "),
                 p.pretty(allocator),
@@ -745,21 +743,6 @@ where
                 allocator.text("["),
                 (*i).pretty(allocator),
                 allocator.text("]"),
-            ]),
-            Exp::Equ(a, b) => allocator.concat([
-                a.pretty(allocator),
-                allocator.text(" == "),
-                b.pretty(allocator),
-            ]),
-            Exp::And(a, b) => allocator.concat([
-                (*a).pretty(allocator),
-                allocator.text(" && "),
-                (*b).pretty(allocator),
-            ]),
-            Exp::Or(a, b) => allocator.concat([
-                (*a).pretty(allocator),
-                allocator.text(" || "),
-                (*b).pretty(allocator),
             ]),
             Exp::Contains(a, b) => allocator.concat([
                 a.pretty(allocator),
@@ -882,6 +865,12 @@ impl From<&str> for UExp {
     }
 }
 
+impl From<bool> for UExp {
+    fn from(x: bool) -> Self {
+        UExp::Bool(x)
+    }
+}
+
 /// Display instance calls the pretty printer
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -919,8 +908,7 @@ lazy_static! {
         use Rule::*;
 
         PrattParser::new()
-            .op(Op::infix(and_op, Left))
-            .op(Op::infix(or_op, Left))
+            .op(Op::infix(and_op, Left) | Op::infix(or_op, Left))
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
             .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left))
             .op(Op::infix(concat_op, Left))
@@ -939,6 +927,7 @@ impl<'pest> FromPest<'pest> for UExp {
             .map_primary(|pair| match pair.as_rule() {
                 Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
+                Rule::lit_bexp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
@@ -985,18 +974,18 @@ impl<'pest> FromPest<'pest> for UExp {
                     let params = Exps::from_pest(&mut inner)?;
                     Ok(Exp::app(func, params))
                 },
-                Rule::eq_bexp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::equ(
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
-                    ))
-                },
                 Rule::contains_bexp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::contains(
                         UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                },
+                Rule::eq_bexp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::equ(
+                           UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                           UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
                 Rule::not_bexp => {
@@ -1243,24 +1232,28 @@ fn parser_log() {
 
 #[test]
 fn parser_assert() {
-    let ex = "assert(x == 2)";
+    let ex = "assert(x == 2 || false)";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::assert(
-            Exp::equ(Exp::varstr("x"), Exp::from(2)),
+            Exp::or(
+                Exp::equ(Exp::varstr("x"), Exp::from(2)),
+                Exp::bool(false))
         ))
     );
 }
 
 #[test]
 fn parser_verify() {
-    let ex = "verify(x == 2)";
+    let ex = "verify(x == 2 && 3 == 4)";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::verify(
-            Exp::equ(Exp::varstr("x"), Exp::from(2)),
+            Exp::and(
+                Exp::equ(Exp::varstr("x"), Exp::from(2)),
+                Exp::equ(Exp::from(3), Exp::from(4)))
         ))
     );
 }

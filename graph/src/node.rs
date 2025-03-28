@@ -7,59 +7,6 @@ use crate::principal::Principal;
 use crate::value::Value;
 use std::fmt;
 
-/// An operation [Op] is loosely a node in the graph,
-/// and it corresponds to one [lang::ast::Exp] in the AST.
-/// It is parameterized by some values.
-/// - When the value is [Value::Underscore], it is a placeholder for a graph edge (an underscore).
-/// - Otherwise, it is a concrete, irreducible value.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Op {
-    /// Binary operation
-    Bin(BinOp, Value, Value),
-
-    /// Coefficients of a univariate vector
-    Coef(Value),
-
-    /// Multilinear extension of a 2^N vector of coefficients
-    Mle(Value),
-
-    /// A vector of elements
-    Vec(Vec<Value>),
-
-    /// Random oracle challenge
-    Challenge(Tid),
-
-    /// Random number generator
-    Random(Tid),
-
-    /// Group generator
-    Generator(Tid),
-
-    /// Random oracle challenge as a hash
-    Hash(Tid),
-
-    /// Convert from evaluation domain to lagrange domain.
-    Interpolate(Value, Value),
-
-    /// Equality check
-    Equ(Value, Value),
-
-    /// Vector containment check
-    Contains(Value, Value),
-
-    /// Logical and
-    And(Value, Value),
-
-    /// Logical or
-    Or(Value, Value),
-
-    /// Logical not
-    Not(Value),
-
-    /// Assertion or verification check
-    Check(Value)
-}
-
 /// A node in the DAG
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Node<A> {

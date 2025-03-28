@@ -1,9 +1,9 @@
-use crate::typ::{TTyp, Size, Kind, CTyp, TypeVars, CTyps, Range, RangeTraversal};
+use crate::typ::{Typ, Size, Kind, CTyp, TypeVars, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
 use crate::ast::{Arg, Args, ExpSubst};
 use share::{Pretty, Set, Ctx, DocAllocator, DocBuilder, BoxAllocator};
-use share::traversal::{ToTraversal1, ToTraversal2};
+use share::traversal::ToTraversal1;
 use crate::id::{Gen, Vid, Fid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
@@ -22,7 +22,7 @@ pub struct Sig<N> {
     pub name: Fid,
     pub typevars: TypeVars,
     pub args: Args<N>,
-    pub ret: TTyp<N>
+    pub ret: Typ<N>
 }
 
 /// Symbolic sized signature
@@ -71,7 +71,7 @@ impl<N> ToTraversal1<N> for Sig<N> {
     type Output<Z> = Sig<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
         let Sig { name, typevars, args, ret } = self;
-        Ok(Sig { name, typevars, args: args.traverse1(f)?, ret: ret.traverse2(f)? })
+        Ok(Sig { name, typevars, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
     }
 }
 

@@ -16,3 +16,7 @@ ark-secp256k1 = { version = "0.5.0" }
 ark-curve25519 = { version = "0.5.0" }
 lang = { version = "0.1.0", path = "../lang" }
 ark-vesta = "0.5.0"
+ark-ff = "0.5.0"
+ark-poly = "0.5.0"
+rayon = "1.10.0"
+rand = { version = "0.8", features = ["std"]}
