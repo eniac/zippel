@@ -173,6 +173,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-ed25519"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f7bef34b937f049401e156e80efaefce8d30a896cd927b06f9b01cdb8d5de53"
+dependencies = [
+ "ark-curve25519",
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-ff"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1174,6 +1186,7 @@ dependencies = [
  "ark-curve25519",
  "ark-ec",
  "ark-ed-on-cp6-782",
+ "ark-ed25519",
  "ark-ff",
  "ark-mnt4-298",
  "ark-mnt4-753",

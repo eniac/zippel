@@ -9,6 +9,7 @@ use ark_poly::polynomial::univariate::DensePolynomial as Uni;
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension as Mle;
 use ark_ff::{Zero, One, Field, UniformRand};
+use ark_ff::{Fp64, MontBackend, MontConfig, FftField};
 use ark_ec::AffineRepr;
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::models::short_weierstrass::{Affine as SWAffine, Projective as SWProjective, SWCurveConfig};
@@ -16,7 +17,7 @@ use ark_ec::models::twisted_edwards::{Affine as TEAffine, Projective as TEProjec
 
 /// Represents a type instantiation of a zippel program in Arkworks
 pub trait ArkConfig {
-    type F: ark_ff::FftField;
+    type F: FftField;
     type G1;
     type G2;
     type GT;
@@ -128,12 +129,12 @@ pub trait ArkConfig {
 }
 
 /// Object representing a Zippel configuration for fields
-pub struct ArkField<F: ark_ff::FftField> {
+pub struct ArkField<F: FftField> {
     _field: PhantomData<F>,
 }
 
 /// For a signle field <F>
-impl<F: ark_ff::FftField> ArkConfig for ArkField<F> {
+impl<F: FftField> ArkConfig for ArkField<F> {
     type F = F;
     type G1 = ();
     type G2 = ();
@@ -429,4 +430,31 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
         g.hash(h)
     }
 }
+
+///Zippel arkworks configurations
+pub type ArkBls12_381 = ArkPairing<ark_bls12_381::Config>;
+pub type ArkCurve25519 = ArkTECurve<ark_curve25519::Curve25519Config>;
+pub type ArkBn254 = ArkPairing<ark_bn254::Config>;
+pub type ArkMNT4_298 = ArkPairing<ark_mnt4_298::Config>;
+pub type ArkSecp256k1 = ArkSWCurve<ark_secp256k1::Config>;
+pub type ArkPallas = ArkSWCurve<ark_pallas::PallasConfig>;
+pub type ArkVesta = ArkSWCurve<ark_vesta::VestaConfig>;
+pub type ArkEd25519 = ArkTECurve<ark_ed25519::EdwardsConfig>;
+
+/// Prime Fields for fun and debugging
+// Define the field configuration
+#[derive(MontConfig)]
+#[modulus = "17"]
+#[generator = "3"]
+pub struct F17Config;
+pub type F17 = Fp64<F17Config>;
+
+#[derive(MontConfig)]
+#[modulus = "65537"]
+#[generator = "3"]
+pub struct F65537Config;
+pub type F65537 = Fp64<F65537Config>;
+
+pub type ArkF17 = ArkField<F17>;
+pub type ArkF65537 = ArkField<F65537>;
 
