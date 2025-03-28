@@ -10,10 +10,11 @@ use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
 use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension as Mle;
 use ark_ff::{Zero, One, Field, UniformRand};
 use ark_ff::{Fp64, MontBackend, MontConfig, FftField};
-use ark_ec::AffineRepr;
+use ark_ec::scalar_mul::ScalarMul;
+use ark_ec::{VariableBaseMSM, AffineRepr};
 use ark_ec::pairing::{Pairing, PairingOutput};
-use ark_ec::models::short_weierstrass::{Affine as SWAffine, Projective as SWProjective, SWCurveConfig};
-use ark_ec::models::twisted_edwards::{Affine as TEAffine, Projective as TEProjective, TECurveConfig};
+use ark_ec::models::short_weierstrass::{Affine as SWAffine, SWCurveConfig};
+use ark_ec::models::twisted_edwards::{Affine as TEAffine, TECurveConfig};
 
 /// Represents a type instantiation of a zippel program in Arkworks
 pub trait ArkConfig {
@@ -40,7 +41,6 @@ pub trait ArkConfig {
         f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a * *b).collect()
     }
     fn scalar_div(f1: Vec<Self::F>, f2: Vec<Self::F>) -> Vec<Self::F> {
-        // TODO: batch inversion
         f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a / *b).collect()
     }
     fn scalar_pow(f1: Vec<Self::F>, i: Vec<u64>) -> Vec<Self::F> {
@@ -116,9 +116,12 @@ pub trait ArkConfig {
     fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1>;
     fn group_sub2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2>;
     fn group_subt(g1: Vec<Self::GT>, g2: Vec<Self::GT>) -> Vec<Self::GT>;
-    fn scalar_group_mul1(g: Vec<Self::G1>, f: Vec<Self::F>) -> Self::G1;
-    fn scalar_group_mul2(g: Vec<Self::G2>, f: Vec<Self::F>) -> Self::G2;
-    fn scalar_group_mult(g: Vec<Self::GT>, f: Vec<Self::F>) -> Self::GT;
+    fn scalar_group_mul1_fixed(g: Self::G1, f: Vec<Self::F>) -> Vec<Self::G1>;
+    fn scalar_group_mul2_fixed(g: Self::G2, f: Vec<Self::F>) -> Vec<Self::G2>;
+    fn scalar_group_mult_fixed(g: Self::GT, f: Vec<Self::F>) -> Vec<Self::GT>;
+    fn scalar_group_mul1_var(g: Vec<Self::G1>, f: Vec<Self::F>) -> Self::G1;
+    fn scalar_group_mul2_var(g: Vec<Self::G2>, f: Vec<Self::F>) -> Self::G2;
+    fn scalar_group_mult_var(g: Vec<Self::GT>, f: Vec<Self::F>) -> Self::GT;
     fn billinear_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT>;
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1;
     fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2;
@@ -169,13 +172,22 @@ impl<F: FftField> ArkConfig for ArkField<F> {
     fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
         unimplemented!()
     }
-    fn scalar_group_mul1(_: Vec<Self::G1>, _: Vec<Self::F>) -> Self::G1 {
+    fn scalar_group_mul1_fixed(_: Self::G1, _: Vec<Self::F>) -> Vec<Self::G1> {
         unimplemented!()
     }
-    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+    fn scalar_group_mul2_fixed(_: Self::G2, _: Vec<Self::F>) -> Vec<Self::G2> {
         unimplemented!()
     }
-    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+    fn scalar_group_mult_fixed(_: Self::GT, _: Vec<Self::F>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul1_var(_: Vec<Self::G1>, _: Vec<Self::F>) -> Self::G1 {
+        unimplemented!()
+    }
+    fn scalar_group_mul2_var(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult_var(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
         unimplemented!()
     }
     fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
@@ -236,10 +248,16 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
     fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
         unimplemented!()
     }
-    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+    fn scalar_group_mul2_fixed(_: Self::G2, _: Vec<Self::F>) -> Vec<Self::G2> {
         unimplemented!()
     }
-    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+    fn scalar_group_mult_fixed(_: Self::GT, _: Vec<Self::F>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul2_var(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult_var(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
         unimplemented!()
     }
     fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
@@ -264,7 +282,10 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
     fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
         g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
     }
-    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+    fn scalar_group_mul1_fixed(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
+        g1.into_group().batch_mul(&f1[..])
+    }
+    fn scalar_group_mul1_var(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
         // TODO: What does Err<usize> mean here?
         C::msm(&g1[..], &f1[..]).unwrap().into()
     }
@@ -310,10 +331,16 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     fn group_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
         unimplemented!()
     }
-    fn scalar_group_mul2(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+    fn scalar_group_mul2_fixed(_: Self::G2, _: Vec<Self::F>) -> Vec<Self::G2> {
         unimplemented!()
     }
-    fn scalar_group_mult(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
+    fn scalar_group_mult_fixed(_: Self::GT, _: Vec<Self::F>) -> Vec<Self::GT> {
+        unimplemented!()
+    }
+    fn scalar_group_mul2_var(_: Vec<Self::G2>, _: Vec<Self::F>) -> Self::G2 {
+        unimplemented!()
+    }
+    fn scalar_group_mult_var(_: Vec<Self::GT>, _: Vec<Self::F>) -> Self::GT {
         unimplemented!()
     }
     fn billinear_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
@@ -338,7 +365,10 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     fn group_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
         g1.par_iter().zip(g2.par_iter()).map(|(a, b)| (*a - *b).into()).collect()
     }
-    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+     fn scalar_group_mul1_fixed(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
+        g1.into_group().batch_mul(&f1[..])
+    }
+    fn scalar_group_mul1_var(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
         // TODO: What does Err<usize> mean here?
         C::msm(&g1[..], &f1[..]).unwrap().into()
     }
@@ -391,14 +421,23 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
     fn group_subt(gt1: Vec<Self::GT>, gt2: Vec<Self::GT>) -> Vec<Self::GT> {
         gt1.par_iter().zip(gt2.par_iter()).map(|(a, b)| a - b).collect()
     }
-    fn scalar_group_mul1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
-        unimplemented!() // TODO: Where is this in arkworks?
+    fn scalar_group_mul1_fixed(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
+        P::G1::batch_mul(g1.into(), &f1)
     }
-    fn scalar_group_mul2(g2: Vec<Self::G2>, f2: Vec<Self::F>) -> Self::G2 {
-        unimplemented!() // TODO: Where is this in arkworks?
+    fn scalar_group_mul2_fixed(g2: Self::G2, f2: Vec<Self::F>) -> Vec<Self::G2> {
+        P::G2::batch_mul(g2.into(), &f2)
     }
-    fn scalar_group_mult(gt: Vec<Self::GT>, ft: Vec<Self::F>) -> Self::GT {
-        unimplemented!() // TODO: Where is this in arkworks?
+    fn scalar_group_mul1_var(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
+        P::G1::msm(&g1[..], &f1[..]).unwrap().into()
+    }
+    fn scalar_group_mul2_var(g2: Vec<Self::G2>, f2: Vec<Self::F>) -> Self::G2 {
+        P::G2::msm(&g2[..], &f2[..]).unwrap().into()
+    }
+    fn scalar_group_mult_fixed(gt: Self::GT, ft: Vec<Self::F>) -> Vec<Self::GT> {
+        Self::GT::batch_mul(gt, &ft)
+    }
+    fn scalar_group_mult_var(gt: Vec<Self::GT>, ft: Vec<Self::F>) -> Self::GT {
+        Self::GT::msm(&gt[..], &ft[..]).unwrap()
     }
     fn billinear_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT> {
         // Batch bilinear pairing?
