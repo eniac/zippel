@@ -162,7 +162,7 @@ impl<C: ArkConfig + Clone> Value<C> {
     fn value_mul(&self, other: &mut Self) {
         match (self, &other) {
             // Scalar * Scalar = Scalar
-            (Value::Scalar(a), Value::Scalar(b)) =>
+            (Value::Scalar(a), Value::Scalar(_)) =>
                 C::scalar_mul(a, other.into_scalar_mut()),
 
             // Group1 * Group2 = GroupT
@@ -175,7 +175,7 @@ impl<C: ArkConfig + Clone> Value<C> {
                 *other = Value::Group1(group.remove(0));
             },
             // Scalar * Group1 multiplication
-            (Value::Scalar(b), Value::Group1(a)) => {
+            (Value::Scalar(b), Value::Group1(_)) => {
                 let a = other.into_group1_mut();
                 *a = C::scalar_group_mul1(*a, vec![*b])[0];
             },
@@ -185,7 +185,7 @@ impl<C: ArkConfig + Clone> Value<C> {
                 *other = Value::Group2(group.remove(0));
             },
             // Scalar * Group2 multiplication
-            (Value::Scalar(b), Value::Group2(a)) => {
+            (Value::Scalar(b), Value::Group2(_)) => {
                 let a = other.into_group2_mut();
                 *a = C::scalar_group_mul2(*a, vec![*b])[0];
             },
@@ -195,7 +195,7 @@ impl<C: ArkConfig + Clone> Value<C> {
                 *other = Value::GroupT(group.remove(0));
             },
             // Scalar * GroupT multiplication
-            (Value::Scalar(b), Value::GroupT(a)) => {
+            (Value::Scalar(b), Value::GroupT(_)) => {
                 let a = other.into_groupt_mut();
                 *a = C::scalar_group_mult(*a, vec![*b])[0];
             },
@@ -205,19 +205,15 @@ impl<C: ArkConfig + Clone> Value<C> {
                 .for_each(|(a, b)| a.value_mul(&mut *b)),
             // Vector<T> * T multiplication
             (Value::Vec(a), _) => {
-                let mut res = vec![];
-                for i in a {
-                    let mut b = i.clone();
-                    i.value_mul(&mut b);
-                    res.push(b);
-                }
-            }
+                let other = std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
+                Self::value_mul(self, &mut Value::Vec(other));
+            },
             // T * Vector<T> multiplication
             (_, Value::Vec(_)) =>
                 other.into_vec_mut().par_iter_mut().for_each(|b| self.value_mul(b)),
 
             // Uni * Uni
-            (Value::Uni(a), Value::Uni(b)) =>
+            (Value::Uni(a), Value::Uni(_)) =>
                 C::uni_mul(a, other.into_uni_mut()),
             // Uni * scalar
             (Value::Uni(a), Value::Scalar(b)) => {
@@ -226,17 +222,17 @@ impl<C: ArkConfig + Clone> Value<C> {
                 *other = Value::Uni(uni);
             },
             // Scalar * Uni
-            (Value::Scalar(b), Value::Uni(a)) =>
+            (Value::Scalar(b), Value::Uni(_)) =>
                 C::uni_mul(&C::into_uni(*b), other.into_uni_mut()),
 
             // Mle * scalar
-            (Value::Mle(a), Value::Scalar(b)) => {
+            (Value::Mle(_), Value::Scalar(b)) => {
                 let mut mle = C::into_mle(*b);
                 C::mle_mul(b, &mut mle);
                 *other = Value::Mle(mle);
             },
             // Scalar * Mle
-            (Value::Scalar(b), Value::Mle(a)) =>
+            (Value::Scalar(b), Value::Mle(_)) =>
                 C::mle_mul(b, other.into_mle_mut()),
             (a, b) => panic!("Mismatched values {} * {}", a, b)
         }
