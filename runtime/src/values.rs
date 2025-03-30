@@ -8,7 +8,7 @@ use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 use ark_poly::polynomial::univariate::DensePolynomial as Uni;
 use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension as Mle;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
     Scalar(C::F),
     Group1(C::G1),
@@ -16,7 +16,7 @@ pub enum Value<C: ArkConfig> {
     GroupT(C::GT),
     Uni(Uni<C::F>),
     Mle(Mle<C::F>),
-    Vec(Box<Value<C>>, Vec<Value<C>>),
+    Vec(Vec<Value<C>>),
 }
 
 impl<C: ArkConfig> Value<C> {
@@ -34,8 +34,46 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    pub fn scalar_vec_add(f1: &Vec<Self>, f2: &mut Vec<Self>) {
-        f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a += b);
+    pub fn into_uni_mut(&mut self) -> &mut Uni<C::F> {
+        match self {
+            Value::Uni(u) => u,
+            _ => panic!("Expected mut uni, found {}", self),
+        }
+    }
+
+    pub fn into_mle_mut(&mut self) -> &mut Mle<C::F> {
+        match self {
+            Value::Mle(m) => m,
+            _ => panic!("Expected mut mle, found {}", self),
+        }
+    }
+
+    pub fn into_group1_mut(&mut self) -> &mut C::G1 {
+        match self {
+            Value::Group1(g) => g,
+            _ => panic!("Expected mut group1, found {}", self),
+        }
+    }
+
+    pub fn into_group2_mut(&mut self) -> &mut C::G2 {
+        match self {
+            Value::Group2(g) => g,
+            _ => panic!("Expected mut group2, found {}", self),
+        }
+    }
+
+    pub fn into_groupt_mut(&mut self) -> &mut C::GT {
+        match self {
+            Value::GroupT(g) => g,
+            _ => panic!("Expected mut groupt, found {}", self),
+        }
+    }
+
+    pub fn into_vec_mut(&mut self) -> &mut Vec<Value<C>> {
+        match self {
+            Value::Vec(v) => v,
+            _ => panic!("Expected mut vec, found {}", self),
+        }
     }
 }
 
@@ -70,103 +108,138 @@ pub type ValueEd25519 = Value<ArkEd25519>;
 pub type ValueF17 = Value<ArkF17>;
 pub type ValueF65537 = Value<ArkF65537>;
 
-impl<C: ArkConfig> Value<C> {
-    /// Scalar addition, saves result in f2
-    fn value_add(f1: &Self, f2: &mut Self) {
-           match (self, other) {
+impl<C: ArkConfig + Clone> Value<C> {
+    /// Value addition, saves result in other
+    fn value_add(&self, other: &mut Self) {
+        match (self, other) {
             (Value::Scalar(a), Value::Scalar(b)) => C::scalar_add(a, b),
             (Value::Group1(a), Value::Group1(b)) => C::group_add1(a, b),
             (Value::Group2(a), Value::Group2(b)) => C::group_add2(a, b),
             (Value::GroupT(a), Value::GroupT(b)) => C::group_addt(a, b),
-            (Value::Vec(a), Value::Vec(b)) => Value::Vec(vec![]),
-
-                C::scalar_vec_add(a, b) f2),
-                for (a, b) in a.iter().zip(b.iter_mut()) {
-                    a.add(b);
-                }
-            },
-            (Value::Uni(a), Value::Uni(b)) => *a = C::uni_add(*a, *b),
-            (Value::Mle(a), Value::Mle(b)) => *a = C::mle_add(*a, *b),
-            (a, b) => panic!("Mismatched values")
-        }
-    }
-    fn add_assign(&mut self, other: Self) {
-        match (self, other) {
-            (Value::Scalar(a), Value::Scalar(b)) => a *= C::scalar_add(a, b),
-            (Value::Group1(a), Value::Group1(b)) => Value::Group1(C::group_add1(a, b)),
-            (Value::Group2(a), Value::Group2(b)) => Value::Group2(C::group_add2(a, b)),
-            (Value::GroupT(a), Value::GroupT(b)) => Value::GroupT(C::group_addt(a, b)),
-            (Value::Vec(a), Value::Vec(b)) => Value::Vec(C::vec_add(a, b)),
-            (Value::Uni(a), Value::Scalar(b))
-            | (Value::Scalar(b), Value::Uni(a)) => Value::Uni(C::uni_add(a, C::into_uni(b))),
-            (Value::Uni(a), Value::Uni(b)) => Value::Uni(C::uni_add(a, b)),
-            (Value::Mle(a), Value::Mle(b)) => Value::Mle(C::mle_add(a, b)),
-            (a, b) => panic!("Mismatched values")
-        }
-    }
-}
-
-impl<C: ArkConfig> Sub for Value<C> {
-    type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        match (self, other) {
-            (Value::Scalar(a), Value::Scalar(b)) => Value::Scalar(C::scalar_sub(a, b)),
-            (Value::Group1(a), Value::Group1(b)) => Value::Group1(C::group_sub1(a, b)),
-            (Value::Group2(a), Value::Group2(b)) => Value::Group2(C::group_sub2(a, b)),
-            (Value::GroupT(a), Value::GroupT(b)) => Value::GroupT(C::group_subt(a, b)),
             (Value::Vec(a), Value::Vec(b)) =>
-                a.par_iter().zip(b.par_iter()).map(|(a, b)| a - b).collect(),
-            (Value::Uni(a), Value::Uni(b)) => Value::Uni(C::uni_sub(a, b)),
-            (Value::Mle(a), Value::Mle(b)) => Value::Mle(C::mle_sub(a, b)),
-            (a, b) => panic!("Mismatched values")
+                a.par_iter().zip(b.par_iter_mut())
+                .for_each(|(a, b)| Self::value_add(a, &mut *b)),
+            (Value::Uni(a), Value::Uni(b)) => C::uni_add(a, b),
+            (Value::Uni(a), other) => {
+                let scalar = other.into_scalar();
+                let mut uni = C::into_uni(*scalar);
+                C::uni_add(&a, &mut uni);
+                *other = Value::Uni(uni);
+            },
+            (Value::Scalar(b), Value::Uni(a)) =>
+                C::uni_add(&C::into_uni(*b), a),
+            (Value::Mle(a), Value::Mle(b)) => C::mle_add(a, b),
+            (Value::Mle(a), other) => {
+                let scalar = other.into_scalar();
+                let mut mle = C::into_mle(*scalar);
+                C::mle_add(&a, &mut mle);
+                *other = Value::Mle(mle);
+            },
+            (Value::Scalar(b), Value::Mle(a)) => C::mle_add(&C::into_mle(*b), a),
+            (a, b) => panic!("Mismatched values {} + {}", a, b)
         }
     }
-}
 
-impl<C: ArkConfig + Sized> Mul for Value<C> {
-    type Output = Self;
-    fn mul(self, other: Self) -> Self {
-        match (self, other) {
-            (Value::Scalar(a), Value::Scalar(b)) => Value::Scalar(C::scalar_mul(a, b)),
-            (Value::Group1(a), Value::Scalar(b))
-            | (Value::Scalar(b), Value::Group1(a)) => C::scalar_group_mul1(a, vec![b])[0],
-            (Value::Group2(a), Value::Scalar(b))
-            | (Value::Scalar(b), Value::Group2(a)) => C::scalar_group_mul2(a, vec![b])[0],
-            (Value::GroupT(a), Value::Scalar(b))
-            | (Value::Scalar(b), Value::GroupT(a)) => C::scalar_group_mult(a, vec![b])[0],
-            (Value::Group1(a), Value::Group2(b))
-            | (Value::Group2(b), Value::Group1(a))  => Value::GroupT(C::billinear_map(a, b)),
-            // Empty vector
-            (Value::Vec(a), _) | (_, Value::Vec(a)) if a.is_empty() => Value::Vec(a),
-            // Vector<T> * scalar multiplication
-            (Value::Vec(a), Value::Scalar(b))
-            | (Value::Scalar(b), Value::Vec(a)) =>
-                Value::Vec(a.par_iter().map(|a| a * Value::Scalar(b)).collect()),
-            // Vector<scalar> * group1 multiplication
-            (Value::Vec(a), Value::Group1(b))
-            | (Value::Group1(b), Value::Vec(a)) if matches!(a[0], Value::Scalar(_)) =>
-                Value::Vec(C::scalar_group_mul1(b, a.iter().map(|a| a.into_scalar()).collect())),
-            // Vector<scalar> * group2 multiplication
-            (Value::Vec(a), Value::Group2(b))
-            | (Value::Group2(b), Value::Vec(a)) if matches!(a[0], Value::Scalar(_)) =>
-                Value::Vec(C::scalar_group_mul2(b, a.iter().map(|a| a.into_scalar()).collect())),
-            // Vector<scalar> * groupt multiplication
-            (Value::Vec(a), Value::GroupT(b))
-            | (Value::GroupT(b), Value::Vec(a)) if matches!(a[0], Value::Scalar(_)) =>
-                Value::Vec(C::scalar_group_mult(b, a.iter().map(|a| a.into_scalar()).collect())),
-            // Vector * Vector multiplication
-            (Value::Vec(a), Value::Vec(b)) => Value::Vec(a.par_iter().zip(b.par_iter()).map(|(a, b)| a * b).collect()),
+    /// Value negation in-place
+    fn value_neg(&mut self) {
+        match self {
+            Value::Scalar(a) => C::scalar_neg(a),
+            Value::Group1(a) => C::group_neg1(a),
+            Value::Group2(a) => C::group_neg2(a),
+            Value::GroupT(a) => C::group_negt(a),
+            Value::Vec(a) => a.par_iter_mut().for_each(|a| Self::value_neg(a)),
+            Value::Uni(a) => C::uni_neg(a),
+            Value::Mle(a) => C::mle_neg(a),
+        }
+    }
+
+    fn value_sub(&self, other: &mut Self) {
+        other.value_neg();
+        self.value_add(other);
+    }
+
+    /// Value multiplication, saves result in other
+    fn value_mul(&self, other: &mut Self) {
+        match (self, &other) {
+            // Scalar * Scalar = Scalar
+            (Value::Scalar(a), Value::Scalar(b)) =>
+                C::scalar_mul(a, other.into_scalar_mut()),
+
+            // Group1 * Group2 = GroupT
+            (Value::Group1(a), Value::Group2(b)) => {
+                *other = Value::GroupT(C::billinear_map(*a, *b));
+            },
+            // Group1 * scalar multiplication
+            (Value::Group1(a), Value::Scalar(b)) => {
+                let mut group = C::scalar_group_mul1(*a, vec![*b]);
+                *other = Value::Group1(group.remove(0));
+            },
+            // Scalar * Group1 multiplication
+            (Value::Scalar(b), Value::Group1(a)) => {
+                let a = other.into_group1_mut();
+                *a = C::scalar_group_mul1(*a, vec![*b])[0];
+            },
+            // Group2 * scalar multiplication
+            (Value::Group2(a), Value::Scalar(b)) => {
+                let mut group = C::scalar_group_mul2(*a, vec![*b]);
+                *other = Value::Group2(group.remove(0));
+            },
+            // Scalar * Group2 multiplication
+            (Value::Scalar(b), Value::Group2(a)) => {
+                let a = other.into_group2_mut();
+                *a = C::scalar_group_mul2(*a, vec![*b])[0];
+            },
+            // GroupT * scalar multiplication
+            (Value::GroupT(a), Value::Scalar(b)) => {
+                let mut group = C::scalar_group_mult(*a, vec![*b]);
+                *other = Value::GroupT(group.remove(0));
+            },
+            // Scalar * GroupT multiplication
+            (Value::Scalar(b), Value::GroupT(a)) => {
+                let a = other.into_groupt_mut();
+                *a = C::scalar_group_mult(*a, vec![*b])[0];
+            },
+            // Vector<T> * Vector<T> multiplication
+            (Value::Vec(a), Value::Vec(_)) =>
+                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_mul(&mut *b)),
+            // Vector<T> * T multiplication
+            (Value::Vec(a), _) => {
+                let mut res = vec![];
+                for i in a {
+                    let mut b = i.clone();
+                    i.value_mul(&mut b);
+                    res.push(b);
+                }
+            }
+            // T * Vector<T> multiplication
+            (_, Value::Vec(_)) =>
+                other.into_vec_mut().par_iter_mut().for_each(|b| self.value_mul(b)),
 
             // Uni * Uni
-            (Value::Uni(a), Value::Uni(b)) => Value::Uni(C::uni_mul(a, b)),
+            (Value::Uni(a), Value::Uni(b)) =>
+                C::uni_mul(a, other.into_uni_mut()),
             // Uni * scalar
-            (Value::Uni(a), Value::Scalar(b))
-            // TODO: Keep going
-            | (Value::Scalar(b), Value::Uni(a)) => Value::Uni(C::uni_scalar_mul(a, b)),
-            (Value::Mle(a), Value::Scalar(b)) => Value::Mle(C::mle_mul(a, b)),
-            (a, b) => panic!("Mismatched values")
+            (Value::Uni(a), Value::Scalar(b)) => {
+                let mut uni = C::into_uni(*b);
+                C::uni_mul(a, &mut uni);
+                *other = Value::Uni(uni);
+            },
+            // Scalar * Uni
+            (Value::Scalar(b), Value::Uni(a)) =>
+                C::uni_mul(&C::into_uni(*b), other.into_uni_mut()),
+
+            // Mle * scalar
+            (Value::Mle(a), Value::Scalar(b)) => {
+                let mut mle = C::into_mle(*b);
+                C::mle_mul(b, &mut mle);
+                *other = Value::Mle(mle);
+            },
+            // Scalar * Mle
+            (Value::Scalar(b), Value::Mle(a)) =>
+                C::mle_mul(b, other.into_mle_mut()),
+            (a, b) => panic!("Mismatched values {} * {}", a, b)
         }
     }
 }
-*/
 

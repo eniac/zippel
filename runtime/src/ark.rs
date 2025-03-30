@@ -1,6 +1,7 @@
 use rand::Rng;
 use std::hash::Hash;
 use std::fmt;
+use std::ops::{Add, Sub, Mul, Div, Neg};
 use std::marker::PhantomData;
 use core::hash::Hasher;
 use rayon::prelude::*;
@@ -18,38 +19,55 @@ use ark_ec::models::short_weierstrass::{Affine as SWAffine, SWCurveConfig};
 use ark_ec::models::twisted_edwards::{Affine as TEAffine, TECurveConfig};
 
 /// Represents a type instantiation of a zippel program in Arkworks
-pub trait ArkConfig  {
+pub trait ArkConfig {
     type F: FftField;
-    type G1;
-    type G2;
-    type GT;
+    type G1: Copy + Send + Sync;
+    type G2: Copy + Send + Sync;
+    type GT: Copy + Send + Sync;
 
     /// Field constants
+    #[inline]
     fn scalar_zero() -> Self::F {
         Self::F::zero()
     }
+    #[inline]
     fn scalar_one() -> Self::F {
         Self::F::one()
     }
     /// Scalar addition, saves result in f2
+    #[inline]
     fn scalar_add(f1: &Self::F, f2: &mut Self::F) {
         *f2 += f1
     }
+    /// Scalar negation in place
+    #[inline]
+    fn scalar_neg(f: &mut Self::F) {
+        f.neg_in_place();
+    }
     /// Scalar subtraction, saves result in f2
+    #[inline]
     fn scalar_sub(f1: &Self::F, f2: &mut Self::F) {
-        f2.neg_in_place();
-        *f2 += f1
+        Self::scalar_neg(f2);
+        Self::scalar_add(f1, f2);
     }
     /// Scalar multiplication, saves result in f2
+    #[inline]
     fn scalar_mul(f1: &Self::F, f2: &mut Self::F) {
         *f2 *= f1
     }
     /// Scalar division, saves result in f2
+    #[inline]
+    fn scalar_inv(f: &mut Self::F) {
+        f.inverse_in_place();
+    }
+    /// Scalar division, saves result in f2
+    #[inline]
     fn scalar_div(f1: &Self::F, f2: &mut Self::F) {
-        f2.inverse_in_place();
-        *f2 *= f1
+        Self::scalar_inv(f2);
+        Self::scalar_mul(f1, f2);
     }
     /// Scalar exponentiation, saves result in f1
+    #[inline]
     fn scalar_pow(f1: &mut Self::F, i: u64) {
         let mut i = i;
         while (i % 2) == 0 {
@@ -59,34 +77,21 @@ pub trait ArkConfig  {
         *f1 = f1.pow(&[i])
     }
     /// Random and hashing
+    #[inline]
     fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> Self::F {
         Self::F::rand(rng)
     }
+    #[inline]
     fn scalar_hash<H: Hasher>(f: Self::F, h: &mut H) {
         f.hash(h)
     }
-    /// Vector (pairwise) addition, saves result in f2
-    fn scalar_vec_add(f1: &Vec<Self::F>, f2: &mut Vec<Self::F>) {
-        f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a += b);
-    }
-    /// Vector (pairwise subtraction), saves result in f2
-    fn scalar_vec_sub(f1: &Vec<Self::F>, f2: &mut Vec<Self::F>) {
-        f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a -= b);
-    }
-    /// Scalar-vector multiplication, saves result in f2
-    fn scalar_vec_mul(f1: &Self::F, f2: &mut Vec<Self::F>) {
-        f2.par_iter_mut().for_each(|a| *a *= f1);
-    }
-    /// Hadamard product of two vectors, saves result in f2
-    fn scalar_vec_prod(f1: &Vec<Self::F>, f2: &mut Vec<Self::F>) {
-        f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a *= b);
-    }
-    /// Inner (dot) product of two vectors
-    fn scalar_vec_dot(f1: &Vec<Self::F>, f2: &Vec<Self::F>) -> Self::F {
-        f1.par_iter().zip(f2.par_iter()).map(|(a, b)| *a * *b).sum()
+    /// Vector batch inversion, saves result in f2
+    fn scalar_vec_inv(f: &mut Vec<Self::F>) {
+        ark_ff::fields::batch_inversion::<Self::F>(f);
     }
     /// Vector division by batch inversion, saves result in f2
     fn scalar_vec_div(f1: &Vec<Self::F>, f2: &mut Vec<Self::F>) {
+        Self::scalar_vec_inv(f2);
         ark_ff::fields::batch_inversion::<Self::F>(f2);
         f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a *= b);
     }
@@ -102,9 +107,13 @@ pub trait ArkConfig  {
     fn uni_add(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
         *b += a;
     }
+    /// Negate univariate polynomial in place
+    fn uni_neg(a: &mut Uni<Self::F>) {
+        a.par_iter_mut().for_each(|x| { x.neg_in_place(); });
+    }
     /// Subtract univariate polynomials, saves result in b
     fn uni_sub(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
-        b.par_iter_mut().for_each(|x| { x.neg_in_place(); });
+        Self::uni_neg(b);
         *b += a;
     }
     /// Multiply univariate polynomials, saves result in b
@@ -132,12 +141,6 @@ pub trait ArkConfig  {
         domain.ifft_in_place(&mut a);
         Self::uni_coeffs(a)
     }
-    fn scalar_uni_add(a: Self::F, b: &mut Uni<Self::F>) {
-        Self::uni_add(&Self::into_uni(a), b);
-    }
-    fn scalar_uni_sub(a: Self::F, b: &mut Uni<Self::F>) {
-        Self::uni_sub(&Self::into_uni(a), b);
-    }
 
     /// Convert a scalar to a multilinear extension with 0 variables
     fn into_mle(a: Self::F) -> Mle<Self::F> {
@@ -147,9 +150,13 @@ pub trait ArkConfig  {
     fn mle_add(a: &Mle<Self::F>, b: &mut Mle<Self::F>) {
         *b += a;
     }
+    /// Negate multilinear extension in-place
+    fn mle_neg(b: &mut Mle<Self::F>) {
+        b.iter_mut().par_bridge().for_each(|x| { x.neg_in_place(); });
+    }
     /// Subtract multilinear extensions, saves result in b
     fn mle_sub(a: &Mle<Self::F>, b: &mut Mle<Self::F>) {
-        b.iter_mut().par_bridge().for_each(|x| { x.neg_in_place(); });
+        Self::mle_neg(b);
         *b += a;
     }
     /// Multiply multilinear extension by scalar, saves result in b
@@ -229,12 +236,27 @@ pub trait ArkConfig  {
     fn group_zerot() -> Self::GT;
 
     /// Group operations
-    fn group_add1(g1: Self::G1, g2: Self::G1) -> Self::G1;
-    fn group_add2(g1: Self::G2, g2: Self::G2) -> Self::G2;
-    fn group_addt(g1: Self::GT, g2: Self::GT) -> Self::GT;
-    fn group_sub1(g1: Self::G1, g2: Self::G1) -> Self::G1;
-    fn group_sub2(g1: Self::G2, g2: Self::G2) -> Self::G2;
-    fn group_subt(g1: Self::GT, g2: Self::GT) -> Self::GT;
+    fn group_add1(g1: &Self::G1, g2: &mut Self::G1);
+    fn group_add2(g1: &Self::G2, g2: &mut Self::G2);
+    fn group_addt(g1: &Self::GT, g2: &mut Self::GT);
+    fn group_neg1(g: &mut Self::G1);
+    fn group_neg2(g: &mut Self::G2);
+    fn group_negt(g: &mut Self::GT);
+
+    fn group_sub1(g1: &Self::G1, g2: &mut Self::G1) {
+        Self::group_neg1(g2);
+        Self::group_add1(g1, g2);
+    }
+
+    fn group_sub2(g1: &Self::G2, g2: &mut Self::G2) {
+        Self::group_neg2(g2);
+        Self::group_add2(g1, g2);
+    }
+
+    fn group_subt(g1: &Self::GT, g2: &mut Self::GT) {
+        Self::group_negt(g2);
+        Self::group_addt(g1, g2);
+    }
     fn billinear_map(g1: Self::G1, g2: Self::G2) -> Self::GT;
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1;
     fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2;
@@ -244,19 +266,12 @@ pub trait ArkConfig  {
     fn group_hasht<H: Hasher>(g: Self::GT, h: &mut H);
 
     /// Group vec operations
-    fn group_vec_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1>;
-    fn group_vec_add2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2>;
-    fn group_vec_addt(g1: Vec<Self::GT>, g2: Vec<Self::GT>) -> Vec<Self::GT>;
-    fn group_vec_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1>;
-    fn group_vec_sub2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2>;
-    fn group_vec_subt(g1: Vec<Self::GT>, g2: Vec<Self::GT>) -> Vec<Self::GT>;
     fn scalar_group_mul1(g: Self::G1, f: Vec<Self::F>) -> Vec<Self::G1>;
     fn scalar_group_mul2(g: Self::G2, f: Vec<Self::F>) -> Vec<Self::G2>;
     fn scalar_group_mult(g: Self::GT, f: Vec<Self::F>) -> Vec<Self::GT>;
     fn scalar_group_dot1(g: Vec<Self::G1>, f: Vec<Self::F>) -> Self::G1;
     fn scalar_group_dot2(g: Vec<Self::G2>, f: Vec<Self::F>) -> Self::G2;
     fn scalar_group_dott(g: Vec<Self::GT>, f: Vec<Self::F>) -> Self::GT;
-    fn billinear_vec_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT>;
 
     /// Group printing
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result;
@@ -288,22 +303,22 @@ impl<F: FftField> ArkConfig for ArkField<F> {
         unimplemented!()
     }
     // Groups
-    fn group_add1(_: Self::G1, _: Self::G1) -> Self::G1 {
+    fn group_add1(_: &Self::G1, _: &mut Self::G1) -> Self::G1 {
         unimplemented!()
     }
-    fn group_add2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_add2(_: &Self::G2, _: &mut Self::G2) -> Self::G2 {
         unimplemented!()
     }
-    fn group_addt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_addt(_: &Self::GT, _: &mut Self::GT) -> Self::GT {
         unimplemented!()
     }
-    fn group_sub1(_: Self::G1, _: Self::G1) -> Self::G1 {
+    fn group_sub1(_: &Self::G1, _: &mut Self::G1) -> Self::G1 {
         unimplemented!()
     }
-    fn group_sub2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_sub2(_: &Self::G2, _: &mut Self::G2) -> Self::G2 {
         unimplemented!()
     }
-    fn group_subt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_subt(_: &Self::GT, _: &mut Self::GT) -> Self::GT {
         unimplemented!()
     }
     fn scalar_group_mul1(_: Self::G1, _: Vec<Self::F>) -> Vec<Self::G1> {
@@ -327,6 +342,15 @@ impl<F: FftField> ArkConfig for ArkField<F> {
     fn billinear_map(_: Self::G1, _: Self::G2) -> Self::GT {
         unimplemented!()
     }
+    fn group_neg1(_: &mut Self::G1) {
+        unimplemented!()
+    }
+    fn group_neg2(_: &mut Self::G2) {
+        unimplemented!()
+    }
+    fn group_negt(_: &mut Self::GT) {
+        unimplemented!()
+    }
     fn group_rand1<R: Rng + ?Sized>(_: &mut R) -> Self::G1 {
         unimplemented!()
     }
@@ -343,27 +367,6 @@ impl<F: FftField> ArkConfig for ArkField<F> {
         unimplemented!()
     }
     fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
-        unimplemented!()
-    }
-    fn group_vec_add1(_: Vec<Self::G1>, _: Vec<Self::G1>) -> Vec<Self::G1> {
-        unimplemented!()
-    }
-    fn group_vec_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn group_vec_sub1(_: Vec<Self::G1>, _: Vec<Self::G1>) -> Vec<Self::G1> {
-        unimplemented!()
-    }
-    fn group_vec_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn billinear_vec_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
         unimplemented!()
     }
     fn group_fmt1(_: &Self::G1, _: &mut fmt::Formatter) -> fmt::Result {
@@ -401,16 +404,16 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
         unimplemented!()
     }
     // Groups
-    fn group_add2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_add2(_: &Self::G2, _: &mut Self::G2) {
         unimplemented!()
     }
-    fn group_addt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_addt(_: &Self::GT, _: &mut Self::GT) {
         unimplemented!()
     }
-    fn group_sub2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_neg2(_: &mut Self::G2) {
         unimplemented!()
     }
-    fn group_subt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_negt(_: &mut Self::GT) {
         unimplemented!()
     }
     fn scalar_group_mul2(_: Self::G2, _: Vec<Self::F>) -> Vec<Self::G2> {
@@ -441,11 +444,11 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
         unimplemented!()
     }
     // Groups
-    fn group_add1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 + g2).into()
+    fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
+        *g2 = (*g1 + *g2).into();
     }
-    fn group_sub1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 - g2).into()
+    fn group_neg1(g: &mut Self::G1) {
+        *g = -(*g);
     }
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         g1.into_group().batch_mul(&f1[..])
@@ -459,27 +462,6 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
     }
     fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
         g.hash(h)
-    }
-    fn group_vec_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_add1(*a, *b)).collect()
-    }
-    fn group_vec_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_sub1(*a, *b)).collect()
-    }
-    fn group_vec_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn group_vec_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn billinear_vec_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
-        unimplemented!()
     }
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
@@ -515,16 +497,16 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
         unimplemented!()
     }
     // Groups
-    fn group_add2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_add2(_: &Self::G2, _: &mut Self::G2) {
         unimplemented!()
     }
-    fn group_addt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_addt(_: &Self::GT, _: &mut Self::GT) {
         unimplemented!()
     }
-    fn group_sub2(_: Self::G2, _: Self::G2) -> Self::G2 {
+    fn group_neg2(_: &mut Self::G2) {
         unimplemented!()
     }
-    fn group_subt(_: Self::GT, _: Self::GT) -> Self::GT {
+    fn group_negt(_: &mut Self::GT) {
         unimplemented!()
     }
     fn scalar_group_mul2(_: Self::G2, _: Vec<Self::F>) -> Vec<Self::G2> {
@@ -555,11 +537,11 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
         unimplemented!()
     }
     // Groups
-    fn group_add1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 + g2).into()
+    fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
+        *g2 = (*g1 + *g2).into();
     }
-    fn group_sub1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 - g2).into()
+    fn group_neg1(g: &mut Self::G1) {
+        *g = -(*g);
     }
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         g1.into_group().batch_mul(&f1[..])
@@ -573,27 +555,6 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     }
     fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
         g.hash(h)
-    }
-    fn group_vec_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_add1(*a, *b)).collect()
-    }
-    fn group_vec_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_sub1(*a, *b)).collect()
-    }
-    fn group_vec_add2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_addt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn group_vec_sub2(_: Vec<Self::G2>, _: Vec<Self::G2>) -> Vec<Self::G2> {
-        unimplemented!()
-    }
-    fn group_vec_subt(_: Vec<Self::GT>, _: Vec<Self::GT>) -> Vec<Self::GT> {
-        unimplemented!()
-    }
-    fn billinear_vec_map(_: Vec<Self::G1>, _: Vec<Self::G2>) -> Vec<Self::GT> {
-        unimplemented!()
     }
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
@@ -630,23 +591,23 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
         Self::GT::zero()
     }
     // Groups
-    fn group_add1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 + g2).into()
+    fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
+        *g2 = (*g1 + *g2).into();
     }
-    fn group_add2(g1: Self::G2, g2: Self::G2) -> Self::G2 {
-        (g1 + g2).into()
+    fn group_add2(g1: &Self::G2, g2: &mut Self::G2) {
+        *g2 = (*g1 + *g2).into();
     }
-    fn group_addt(gt1: Self::GT, gt2: Self::GT) -> Self::GT {
-        (gt1 + gt2).into()
+    fn group_addt(g1: &Self::GT, g2: &mut Self::GT) {
+        *g2 = (*g1 + *g2).into();
     }
-    fn group_sub1(g1: Self::G1, g2: Self::G1) -> Self::G1 {
-        (g1 - g2).into()
+    fn group_neg1(g: &mut Self::G1) {
+        *g = (Self::G1::zero() - *g).into();
     }
-    fn group_sub2(g1: Self::G2, g2: Self::G2) -> Self::G2 {
-        (g1 - g2).into()
+    fn group_neg2(g: &mut Self::G2) {
+        *g = (Self::G2::zero() - *g).into();
     }
-    fn group_subt(gt1: Self::GT, gt2: Self::GT) -> Self::GT {
-        (gt1 - gt2).into()
+    fn group_negt(g: &mut Self::GT) {
+        *g = -(*g);
     }
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         P::G1::batch_mul(g1.into(), &f1)
@@ -693,27 +654,6 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
     }
     fn group_hasht<H: Hasher>(g: Self::GT, h: &mut H) {
         g.hash(h)
-    }
-    fn group_vec_add1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_add1(*a, *b)).collect()
-    }
-    fn group_vec_sub1(g1: Vec<Self::G1>, g2: Vec<Self::G1>) -> Vec<Self::G1> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_sub1(*a, *b)).collect()
-    }
-    fn group_vec_add2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_add2(*a, *b)).collect()
-    }
-    fn group_vec_addt(gt1: Vec<Self::GT>, gt2: Vec<Self::GT>) -> Vec<Self::GT> {
-        gt1.par_iter().zip(gt2.par_iter()).map(|(a, b)| Self::group_addt(*a, *b)).collect()
-    }
-    fn group_vec_sub2(g1: Vec<Self::G2>, g2: Vec<Self::G2>) -> Vec<Self::G2> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::group_sub2(*a, *b)).collect()
-    }
-    fn group_vec_subt(gt1: Vec<Self::GT>, gt2: Vec<Self::GT>) -> Vec<Self::GT> {
-        gt1.par_iter().zip(gt2.par_iter()).map(|(a, b)| Self::group_subt(*a, *b)).collect()
-    }
-    fn billinear_vec_map(g1: Vec<Self::G1>, g2: Vec<Self::G2>) -> Vec<Self::GT> {
-        g1.par_iter().zip(g2.par_iter()).map(|(a, b)| Self::billinear_map(*a, *b)).collect()
     }
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
