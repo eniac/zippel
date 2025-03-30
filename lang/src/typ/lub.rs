@@ -485,7 +485,7 @@ impl Lub for CTyp {
                 } else {
                     Err(LubError::typ_add(&x, &y))
                 },
-            // Uni<A> + c = Uni<                },A> if c is a finite field
+            // Uni<A> + c = Uni<A> if c is a finite field
             (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
                 let t = CTyp::lub_add(a.clone(), CTyp::Base(b), ctx)
                     .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?;

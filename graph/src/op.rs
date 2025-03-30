@@ -4,34 +4,35 @@ use lang::ast::FreeVars;
 use lang::ast::BinOp;
 use std::fmt;
 use petgraph::graph::NodeIndex;
+use lang::id::Tid;
 
 use share::Set;
 
 /// Operands are expressions which are (very close to) irreducible
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Operand {
+pub enum Operand<T> {
     /// Numeric literal
     Lit(usize),
     /// Binary operation
-    Bin(BinOp, Box<Operand>, Box<Operand>),
-    /// Boolean and
-    And(Box<Operand>, Box<Operand>),
-    /// Boolean or
-    Or(Box<Operand>, Box<Operand>),
+    Bin(BinOp, Box<Operand<T>>, Box<Operand<T>>),
     /// Boolean not
-    Not(Box<Operand>),
+    Not(Box<Operand<T>>),
+    /// Generator for a group
+    Gen(T),
+    /// Random element
+    Rand(T),
     /// Node input
     Underscore(NodeIndex),
     /// Coefficients of a univariate vector
-    Coef(Box<Operand>),
+    Coef(Box<Operand<T>>),
     /// Multilinear extension of a 2^N vector of coefficients
-    Mle(Box<Operand>),
+    Mle(Box<Operand<T>>),
     /// Range of numbers
     Range(CRange),
     /// Random access into a value
-    Ram(Box<Operand>, Box<Operand>),
+    Ram(Box<Operand<T>>, Box<Operand<T>>),
     /// Vector of values
-    Vec(Vec<Operand>),
+    Vec(Vec<Operand<T>>),
 }
 
 /// An operation [Op] is loosely a node in the graph,
@@ -62,19 +63,20 @@ pub enum Op<T, V> {
 }
 
 /// A typed, operation is a computation on values
-pub type TOp = Op<Tid, (Value, CTyp)>;
-impl Operand {
-    pub fn ram(v: Operand, i: Operand) -> Operand {
+pub type Operation = Op<Tid, (Operand<Tid>, CTyp)>;
+
+impl<T> Operand<T> {
+    pub fn ram(v: Operand<T>, i: Operand<T>) -> Operand<T> {
         match (v, i) {
             (Operand::Ram(box v, box Operand::Range(l)), Operand::Range(r)) =>
                 Operand::ram(v, Operand::range(l.compose(&r))),
             (Operand::Ram(box v, box Operand::Range(r)), Operand::Lit(i)) =>
                 Operand::ram(v, Operand::lit(r.compose_index(i))),
-            (Operand::Vec(vs), Operand::Lit(i)) => vs[i].clone(),
+            (Operand::Vec(vs), Operand::Lit(i)) => vs[i],
             (Operand::Vec(vs), Operand::Range(r)) => {
                 let mut res = Vec::new();
                 for i in r {
-                    res.push(vs[i].clone());
+                    res.push(vs[i]);
                 }
                 Operand::Vec(res)
             },
@@ -83,7 +85,7 @@ impl Operand {
         }
     }
 
-    pub fn concat(v1: Operand, v2: Operand) -> Operand {
+    pub fn concat(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(mut vs1), Operand::Vec(vs2)) => {
                 vs1.extend(vs2);
@@ -97,7 +99,7 @@ impl Operand {
         }
     }
 
-    pub fn add(v1: Operand, v2: Operand) -> Operand {
+    pub fn add(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let mut res = Vec::new();
@@ -118,7 +120,7 @@ impl Operand {
         }
     }
 
-    pub fn sub(v1: Operand, v2: Operand) -> Operand {
+    pub fn sub(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let mut res = Vec::new();
@@ -139,7 +141,7 @@ impl Operand {
         }
     }
 
-    pub fn mul(v1: Operand, v2: Operand) -> Operand {
+    pub fn mul(v1: Operand, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let mut res = Vec::new();
@@ -160,7 +162,7 @@ impl Operand {
         }
     }
 
-    pub fn div(v1: Operand, v2: Operand) -> Operand {
+    pub fn div(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let mut res = Vec::new();
@@ -181,7 +183,7 @@ impl Operand {
         }
     }
 
-    pub fn dot(v1: Operand, v2: Operand) -> Operand {
+    pub fn dot(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
             (Operand::Vec(vs1), Operand::Vec(vs2)) => {
                 let mut res = Vec::new();
@@ -207,7 +209,7 @@ impl Operand {
         }
     }
 
-    pub fn vec(vs: Vec<Operand>) -> Operand {
+    pub fn vec(vs: Vec<Operand<T>>) -> Operand<T> {
         Operand::Vec(vs)
     }
     pub fn underscore(n: NodeIndex) -> Operand {
