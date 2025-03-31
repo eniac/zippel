@@ -17,73 +17,110 @@ pub enum Value<C: ArkConfig> {
     GroupT(C::GT),
     Uni(Uni<C::F>),
     Mle(Mle<C::F>),
-    Vec(Vec<Value<C>>),
+    VecIndex(Vec<u64>),
+    VecField(Vec<C::F>),
+    VecGroup1(Vec<C::G1>),
+    VecGroup2(Vec<C::G2>),
+    VecGroupT(Vec<C::GT>),
+    Vec(Vec<Value<C>>)
 }
 
 impl<C: ArkConfig> Value<C> {
-    pub fn into_scalar(&self) -> &C::F {
+    pub fn into_scalar(&self) -> C::F {
         match self {
-            Value::Scalar(f) => f,
+            Value::Scalar(f) => *f,
+            Value::Index(i) => (*i).into(),
             _ => panic!("Expected scalar, found {}", self),
         }
     }
-
+    pub fn into_group1(&self) -> &C::G1 {
+        match self {
+            Value::Group1(g) => g,
+            _ => panic!("Expected group1, found {}", self),
+        }
+    }
+    pub fn into_group2(&self) -> &C::G2 {
+        match self {
+            Value::Group2(g) => g,
+            _ => panic!("Expected group2, found {}", self),
+        }
+    }
+    pub fn into_groupt(&self) -> &C::GT {
+        match self {
+            Value::GroupT(g) => g,
+            _ => panic!("Expected groupt, found {}", self),
+        }
+    }
     pub fn into_scalar_mut(&mut self) -> &mut C::F {
         match self {
             Value::Scalar(f) => f,
+            Value::Index(i) => {
+                *self = Value::Scalar((*i).into());
+                self.into_scalar_mut()
+            },
             _ => panic!("Expected mut scalar, found {}", self),
         }
     }
-
     pub fn into_uni_mut(&mut self) -> &mut Uni<C::F> {
         match self {
             Value::Uni(u) => u,
             _ => panic!("Expected mut uni, found {}", self),
         }
     }
-
     pub fn into_mle_mut(&mut self) -> &mut Mle<C::F> {
         match self {
             Value::Mle(m) => m,
             _ => panic!("Expected mut mle, found {}", self),
         }
     }
-
     pub fn into_group1_mut(&mut self) -> &mut C::G1 {
         match self {
             Value::Group1(g) => g,
             _ => panic!("Expected mut group1, found {}", self),
         }
     }
-
     pub fn into_group2_mut(&mut self) -> &mut C::G2 {
         match self {
             Value::Group2(g) => g,
             _ => panic!("Expected mut group2, found {}", self),
         }
     }
-
     pub fn into_groupt_mut(&mut self) -> &mut C::GT {
         match self {
             Value::GroupT(g) => g,
             _ => panic!("Expected mut groupt, found {}", self),
         }
     }
-
-    pub fn into_vec_mut(&mut self) -> &mut Vec<Value<C>> {
+    pub fn into_vec_field_mut(&mut self) -> &mut Vec<C::F> {
         match self {
-            Value::Vec(v) => v,
-            _ => panic!("Expected mut vec, found {}", self),
+            Value::VecField(v) => v,
+            _ => panic!("Expected mut vec field, found {}", self),
         }
     }
-
+    pub fn into_vec_group1_mut(&mut self) -> &mut Vec<C::G1> {
+        match self {
+            Value::VecGroup1(v) => v,
+            _ => panic!("Expected mut vec group1, found {}", self),
+        }
+    }
+    pub fn into_vec_group2_mut(&mut self) -> &mut Vec<C::G2> {
+        match self {
+            Value::VecGroup2(v) => v,
+            _ => panic!("Expected mut vec group2, found {}", self),
+        }
+    }
+    pub fn into_vec_groupt_mut(&mut self) -> &mut Vec<C::GT> {
+        match self {
+            Value::VecGroupT(v) => v,
+            _ => panic!("Expected mut vec groupt, found {}", self),
+        }
+    }
     pub fn into_index(&self) -> u64 {
         match self {
             Value::Index(i) => *i,
             _ => panic!("Expected index, found {}", self),
         }
     }
-
     pub fn into_index_mut(&mut self) -> &mut u64 {
         match self {
             Value::Index(i) => i,
@@ -102,6 +139,44 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
             Value::GroupT(g) => C::group_fmtt(g, f),
             Value::Uni(u) => C::uni_fmt(u, f),
             Value::Mle(m) => C::mle_fmt(m, f),
+            Value::VecField(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroup1(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmt1(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroup2(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmt2(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroupT(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmtt(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecIndex(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
             Value::Vec(v) => {
                 write!(f, "[")?;
                 for i in v {
@@ -126,7 +201,7 @@ pub type ValueF65537 = Value<ArkF65537>;
 
 impl<C: ArkConfig + Clone> Value<C> {
     /// Value addition, saves result in other
-    fn value_add(&self, other: &mut Self) {
+    pub fn value_add(&self, other: &mut Self) {
         match (self, &other) {
             (Value::Index(a), Value::Index(_)) => {
                 *other.into_index_mut() += *a;
@@ -146,7 +221,8 @@ impl<C: ArkConfig + Clone> Value<C> {
             (Value::GroupT(a), Value::GroupT(_)) =>
                 C::group_addt(a, other.into_groupt_mut()),
             (Value::Vec(a), Value::Vec(_)) =>
-                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
+                a.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| Self::value_add(a, &mut *b)),
             (Value::Uni(a), Value::Uni(_)) =>
                 C::uni_add(a, other.into_uni_mut()),
@@ -173,26 +249,27 @@ impl<C: ArkConfig + Clone> Value<C> {
     }
 
     /// Value negation in-place
-    fn value_neg(&mut self) {
+    pub fn value_neg(&mut self) {
         match self {
             Value::Index(a) => Self::value_neg(&mut Value::Scalar((*a).into())),
             Value::Scalar(a) => C::scalar_neg(a),
             Value::Group1(a) => C::group_neg1(a),
             Value::Group2(a) => C::group_neg2(a),
             Value::GroupT(a) => C::group_negt(a),
-            Value::Vec(a) => a.par_iter_mut().for_each(|a| Self::value_neg(a)),
+            Value::Vec(a) =>
+                a.par_iter_mut().for_each(|a| Self::value_neg(a)),
             Value::Uni(a) => C::uni_neg(a),
             Value::Mle(a) => C::mle_neg(a),
         }
     }
 
-    fn value_sub(&self, other: &mut Self) {
+    pub fn value_sub(&self, other: &mut Self) {
         other.value_neg();
         self.value_add(other);
     }
 
     /// Value multiplication, saves result in other
-    fn value_mul(&self, other: &mut Self) {
+    pub fn value_mul(&self, other: &mut Self) {
         match (self, &other) {
             // Index * Index = Index
             (Value::Index(a), Value::Index(_)) => {
@@ -246,11 +323,13 @@ impl<C: ArkConfig + Clone> Value<C> {
             },
             // Vector<T> * Vector<T> multiplication
             (Value::Vec(a), Value::Vec(_)) =>
-                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
+                a.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_mul(&mut *b)),
             // Vector<T> * T multiplication
             (Value::Vec(a), _) => {
-                let other = std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
+                let other =
+                    std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
                 Self::value_mul(self, &mut Value::Vec(other));
             },
             // T * Vector<T> multiplication
@@ -284,7 +363,7 @@ impl<C: ArkConfig + Clone> Value<C> {
     }
 
     /// Value division, saves result in other
-    fn value_div(&self, other: &mut Self) {
+    pub fn value_div(&self, other: &mut Self) {
         match (self, &other) {
             // Index / Index = Index
             (Value::Index(a), Value::Index(_)) => {
@@ -325,11 +404,13 @@ impl<C: ArkConfig + Clone> Value<C> {
             },
             // Vector<T> / Vector<T> division
             (Value::Vec(a), Value::Vec(_)) =>
-                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
+                a.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_div(&mut *b)),
             // Vector<T> / T division
             (Value::Vec(a), _) => {
-                let other = std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
+                let other =
+                    std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
                 Self::value_div(self, &mut Value::Vec(other));
             },
             // T * Vector<T> multiplication
@@ -354,17 +435,104 @@ impl<C: ArkConfig + Clone> Value<C> {
             (a, b) => panic!("Mismatched values {} / {}", a, b)
         }
     }
-}
 
-/*
-fn process_trait_object(obj: &ArkConfiguration) {
-    println!("Processing trait object");
-}
+    /// Value exponentiation, saves result in other
+    pub fn value_pow(&self, other: &mut Self) {
+        match (self, &other) {
+            // Index ^ Index = Index
+            (Value::Index(a), Value::Index(i)) => {
+                let mut i = *i;
+                let mut exp = *a;
+                while i % 2 == 0 {
+                    exp *= exp;
+                    i /= 2;
+                }
+                while i > 1 {
+                    exp *= *a;
+                    i -= 1;
+                }
+                *other.into_index_mut() = exp;
+            },
+            // Scalar ^ Index
+            (Value::Scalar(a), Value::Index(i)) => {
+                let mut a = a.clone();
+                C::scalar_pow(&mut a, *i);
+                *other = Value::Scalar(a);
+            },
+            (Value::Vec(vs), Value::Index(i)) => {
+                let mut vs = vs.clone();
+                vs.par_iter_mut().for_each(|v| v.value_pow(&mut Value::Index(*i)));
+                *other = Value::Vec(vs);
+            },
+            (Value::Uni(u), Value::Index(i)) => {
+                let mut u = u.clone();
+                C::uni_pow(&mut u, *i);
+                *other = Value::Uni(u);
+            },
+            (a, b) => panic!("Mismatched values {} ^ {}", a, b)
+        }
+    }
 
-#[test]
-fn foo() {
-    let ark: ArkCurve25519  = ArkTECurve::new();
-    process_trait_object(&ArkConfiguration::Curve25519(ark));
-}
-*/
+    pub fn value_dot(&self, other: &mut Self) {
+        match (self, &other) {
+            (Value::Vec(a), Value::Vec(b)) =>
+                match (&a[0], &b[0]) {
+                    (Value::Index(_), Value::Index(_)) => {
+                        let sum =
+                            a.par_iter().zip(b.par_iter())
+                            .map(|(a, b)|a.into_index() * b.into_index())
+                            .sum();
+                        *other = Value::Index(sum);
+                    },
+                    (Value::Scalar(_), Value::Scalar(_)) => {
+                        let sum =
+                            a.par_iter().zip(b.par_iter_mut())
+                            .map(|(a, b)| {
+                                let mut bs = b.into_scalar_mut();
+                                C::scalar_mul(a.into_scalar(), &mut bs);
+                                bs
+                            }).sum();
+                        *other = Value::Scalar(sum);
+                    },
+                    (Value::Index(_), Value::Scalar(_)) => {
+                        let sum =
+                            a.par_iter().zip(b.par_iter_mut())
+                            .map(|(a, b)| {
+                                let mut bs = b.into_scalar_mut();
+                                C::scalar_mul(&a.into_index().into(), &mut bs);
+                                bs
+                            }).sum();
+                        *other = Value::Scalar(sum);
+                    },
+                    (Value::Scalar(_), Value::Index(_)) => {
+                        let sum =
+                            a.par_iter().zip(b.par_iter_mut())
+                            .map(|(a, b) | {
+                                let mut bs = b.into_scalar_mut();
+                                C::scalar_mul(&b.into_index().into(), &mut bs);
+                                bs
+                            });
+                        *other = Value::Scalar(sum);
+                    },
+                    (Value::Scalar(_), Value::Group1(_)) => {
+                        let a =
+                            a.iter().map(|a| a.into_scalar().clone()).collect::<Vec<_>>();
+                        let b =
+                            b.iter().map(|b| b.into_group1().clone()).collect::<Vec<_>>();
+                        *other = Value::Group1(C::scalar_group_dot1(b, a))
+                    },
+                    (Value::Group1(_), Value::Scalar(_)) => {
+                        let a =
+                            b.iter().map(|a| a.into_group1().clone()).collect::<Vec<_>>();
+                        let b =
+                            b.iter().map(|b| b.into_scalar().clone()).collect::<Vec<_>>();
+                        *other = Value::Group1(C::scalar_group_dot1(a, b))
+                    },
+                    (_, _) => panic!("TODO THE REST")
+                }
+                (_,_) => panic!("Mismatched values {} . {}", self, other)
+            }
+        }
+    }
+
 

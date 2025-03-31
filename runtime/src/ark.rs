@@ -33,42 +33,50 @@ pub trait ArkConfig {
     fn scalar_zero() -> Self::F {
         Self::F::zero()
     }
+
     #[inline]
     fn scalar_one() -> Self::F {
         Self::F::one()
     }
+
     /// Scalar addition, saves result in f2
     #[inline]
     fn scalar_add(f1: &Self::F, f2: &mut Self::F) {
         *f2 += f1
     }
+
     /// Scalar negation in place
     #[inline]
     fn scalar_neg(f: &mut Self::F) {
         f.neg_in_place();
     }
+
     /// Scalar subtraction, saves result in f2
     #[inline]
     fn scalar_sub(f1: &Self::F, f2: &mut Self::F) {
         Self::scalar_neg(f2);
         Self::scalar_add(f1, f2);
     }
+
     /// Scalar multiplication, saves result in f2
     #[inline]
     fn scalar_mul(f1: &Self::F, f2: &mut Self::F) {
         *f2 *= f1
     }
+
     /// Scalar division, saves result in f2
     #[inline]
     fn scalar_inv(f: &mut Self::F) {
         f.inverse_in_place();
     }
+
     /// Scalar division, saves result in f2
     #[inline]
     fn scalar_div(f1: &Self::F, f2: &mut Self::F) {
         Self::scalar_inv(f2);
         Self::scalar_mul(f1, f2);
     }
+
     /// Scalar exponentiation, saves result in f1
     #[inline]
     fn scalar_pow(f1: &mut Self::F, i: u64) {
@@ -77,67 +85,110 @@ pub trait ArkConfig {
             f1.square_in_place();
             i /= 2;
         }
-        *f1 = f1.pow(&[i])
+        *f1 = f1.pow(&[i as u64])
     }
+
     /// Random and hashing
     #[inline]
     fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> Self::F {
         Self::F::rand(rng)
     }
+
     #[inline]
     fn scalar_hash<H: Hasher>(f: Self::F, h: &mut H) {
         f.hash(h)
     }
+
     /// Vector batch inversion, saves result in f2
+    #[inline]
     fn scalar_vec_inv(f: &mut Vec<Self::F>) {
         ark_ff::fields::batch_inversion::<Self::F>(f);
     }
+
     /// Vector division by batch inversion, saves result in f2
+    #[inline]
     fn scalar_vec_div(f1: &Vec<Self::F>, f2: &mut Vec<Self::F>) {
         Self::scalar_vec_inv(f2);
         ark_ff::fields::batch_inversion::<Self::F>(f2);
-        f2.par_iter_mut().zip(f1.par_iter()).for_each(|(a, b)| *a *= b);
+        f2.par_iter_mut()
+        .zip(f1.par_iter())
+        .for_each(|(a, b)| *a *= b);
     }
+
     /// Convert a scalar to a univariate polynomial of degree 0
+    #[inline]
     fn into_uni(a: Self::F) -> Uni<Self::F> {
         Uni::from_coefficients_vec(vec![a])
     }
+
     /// Construct a univariate polynomial from its coefficients
+    #[inline]
     fn uni_coeffs(a: Vec<Self::F>) -> Uni<Self::F> {
         Uni::from_coefficients_vec(a)
     }
+
     /// Add univariate polynomials, saves result in b
+    #[inline]
     fn uni_add(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
         *b += a;
     }
+
     /// Negate univariate polynomial in place
+    #[inline]
     fn uni_neg(a: &mut Uni<Self::F>) {
         a.par_iter_mut().for_each(|x| { x.neg_in_place(); });
     }
+
     /// Subtract univariate polynomials, saves result in b
+    #[inline]
     fn uni_sub(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
         Self::uni_neg(b);
         *b += a;
     }
+
     /// Multiply univariate polynomials, saves result in b
+    #[inline]
     fn uni_mul(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
         // TODO: In place O(nlogn) multiplication for polynomials?
         *b = b.clone() * a;
     }
+
     /// Divide univariate polynomials, saves result in b
+    #[inline]
     fn uni_div(a: &Uni<Self::F>, b: &mut Uni<Self::F>) {
         // TODO: In place O(nlogn) division for polynomials?
         *b = a / b.clone();
     }
+
+    /// Exponentiate univariate polynomial, saves result in f1
+    #[inline]
+    fn uni_pow(f1: &mut Uni<Self::F>, i: u64) {
+        let mut i = i;
+        let uni = f1.clone();
+        while (i % 2) == 0 {
+            Self::uni_mul(&uni, f1);
+            i /= 2;
+        }
+        while i > 1 {
+            Self::uni_mul(&uni, f1);
+            i -= 1;
+        }
+    }
+
     /// Evaluate univariate polynomial at a point
+    #[inline]
     fn uni_eval(a: Uni<Self::F>, b: Self::F) -> Self::F {
         a.evaluate(&b)
     }
+
     /// Random univariate polynomial, of degree n
+    #[inline]
     fn uni_rand<R: Rng>(rng: &mut R, n: usize) -> Uni<Self::F> {
         <Uni<Self::F> as DenseUVPolynomial<Self::F>>::rand(n, rng)
     }
+
     /// Interpolate a vector of y-coefficients to a univariate polynomial
+    #[inline]
     fn uni_interpolate(a: Vec<Self::F>) -> Uni<Self::F> {
         let domain: GeneralEvaluationDomain<Self::F> = GeneralEvaluationDomain::new(a.len()).unwrap();
         let mut a = a;
@@ -146,44 +197,64 @@ pub trait ArkConfig {
     }
 
     /// Convert a scalar to a multilinear extension with 0 variables
+    #[inline]
     fn into_mle(a: Self::F) -> Mle<Self::F> {
         Mle::from_evaluations_vec(0, vec![a])
     }
+
     /// Add multilinear extensions, saves result in b
+    #[inline]
     fn mle_add(a: &Mle<Self::F>, b: &mut Mle<Self::F>) {
         *b += a;
     }
+
     /// Negate multilinear extension in-place
+    #[inline]
     fn mle_neg(b: &mut Mle<Self::F>) {
         b.iter_mut().par_bridge().for_each(|x| { x.neg_in_place(); });
     }
+
     /// Subtract multilinear extensions, saves result in b
+    #[inline]
     fn mle_sub(a: &Mle<Self::F>, b: &mut Mle<Self::F>) {
         Self::mle_neg(b);
         *b += a;
     }
+
     /// Multiply multilinear extension by scalar, saves result in b
+    #[inline]
     fn mle_mul(a: &Self::F, b: &mut Mle<Self::F>) {
         *b *= a
     }
+
     /// Divide multilinear extension by scalar, saves result in b
+    #[inline]
     fn mle_div(a: &Self::F, b: &mut Mle<Self::F>) {
         let mut a = a.clone();
         Self::scalar_inv(&mut a);
         Self::mle_mul(&a, b);
     }
+
     /// Divide multilinear extension by scalar, saves result in b
+    #[inline]
     fn mle_eval(a: Mle<Self::F>, b: Vec<Self::F>) -> Self::F {
         a.evaluate(&b)
     }
+
     /// Random multilinear extension, of degree n
+    #[inline]
     fn mle_rand<R: Rng>(rng: &mut R, num_vars: usize) -> Mle<Self::F> {
         <Mle<Self::F> as MultilinearExtension<Self::F>>::rand(num_vars, rng)
     }
+
     /// Evaluate multilinear extension at a point
+    #[inline]
     fn mle_evals(num_vars: usize, a: Vec<Self::F>) -> Mle<Self::F> {
         Mle::from_evaluations_vec(num_vars, a)
     }
+
+    /// Hash an MLE
+    #[inline]
     fn mle_hash<H: Hasher>(f: Mle<Self::F>, h: &mut H) {
         f.hash(h)
     }
@@ -192,6 +263,7 @@ pub trait ArkConfig {
     fn scalar_fmt(a: &Self::F, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", a)
     }
+
     fn uni_fmt(a: &Uni<Self::F>, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", a.coeffs[0])?;
         let mut i = 1;
@@ -252,20 +324,24 @@ pub trait ArkConfig {
     fn group_neg2(g: &mut Self::G2);
     fn group_negt(g: &mut Self::GT);
 
+    #[inline]
     fn group_sub1(g1: &Self::G1, g2: &mut Self::G1) {
         Self::group_neg1(g2);
         Self::group_add1(g1, g2);
     }
 
+    #[inline]
     fn group_sub2(g1: &Self::G2, g2: &mut Self::G2) {
         Self::group_neg2(g2);
         Self::group_add2(g1, g2);
     }
 
+    #[inline]
     fn group_subt(g1: &Self::GT, g2: &mut Self::GT) {
         Self::group_negt(g2);
         Self::group_addt(g1, g2);
     }
+
     fn billinear_map(g1: Self::G1, g2: Self::G2) -> Self::GT;
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1;
     fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2;
@@ -466,26 +542,32 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
     fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
         unimplemented!()
     }
-    // Groups
+    #[inline]
     fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
         *g2 = (*g1 + *g2).into();
     }
+    #[inline]
     fn group_neg1(g: &mut Self::G1) {
         *g = -(*g);
     }
+    #[inline]
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         g1.into_group().batch_mul(&f1[..])
     }
+    #[inline]
     fn scalar_group_dot1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
         // TODO: What does Err<usize> mean here?
         C::msm(&g1[..], &f1[..]).unwrap().into()
     }
+    #[inline]
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
         Self::G1::rand(rng)
     }
+    #[inline]
     fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
         g.hash(h)
     }
+
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
     }
@@ -516,7 +598,7 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     type G2 = ();
     type GT = ();
 
-    // Group constants
+    #[inline]
     fn group_zero1() -> Self::G1 {
         Self::G1::zero()
     }
@@ -526,7 +608,6 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     fn group_zerot() -> Self::GT {
         unimplemented!()
     }
-    // Groups
     fn group_add2(_: &Self::G2, _: &mut Self::G2) {
         unimplemented!()
     }
@@ -566,32 +647,40 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
     fn group_hasht<H: Hasher>(_: Self::GT, _: &mut H) {
         unimplemented!()
     }
-    // Groups
+    #[inline]
     fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
         *g2 = (*g1 + *g2).into();
     }
+    #[inline]
     fn group_neg1(g: &mut Self::G1) {
         *g = -(*g);
     }
+    #[inline]
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         g1.into_group().batch_mul(&f1[..])
     }
+    #[inline]
     fn scalar_group_dot1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
         // TODO: What does Err<usize> mean here?
         C::msm(&g1[..], &f1[..]).unwrap().into()
     }
+    #[inline]
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
         Self::G1::rand(rng)
     }
+    #[inline]
     fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
         g.hash(h)
     }
+    #[inline]
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
     }
+    #[inline]
     fn group_fmt2(_: &Self::G2, _: &mut fmt::Formatter) -> fmt::Result {
         unimplemented!()
     }
+    #[inline]
     fn group_fmtt(_: &Self::GT, _: &mut fmt::Formatter) -> fmt::Result {
         unimplemented!()
     }
@@ -617,104 +706,116 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
     type G2 = P::G2Affine;
     type GT = PairingOutput<P>;
 
-    // Group constants
+    #[inline]
     fn group_zero1() -> Self::G1 {
         Self::G1::zero()
     }
+    #[inline]
     fn group_zero2() -> Self::G2 {
         Self::G2::zero()
     }
+    #[inline]
     fn group_zerot() -> Self::GT {
         Self::GT::zero()
     }
-    // Groups
+    #[inline]
     fn group_add1(g1: &Self::G1, g2: &mut Self::G1) {
         *g2 = (*g1 + *g2).into();
     }
+    #[inline]
     fn group_add2(g1: &Self::G2, g2: &mut Self::G2) {
         *g2 = (*g1 + *g2).into();
     }
+    #[inline]
     fn group_addt(g1: &Self::GT, g2: &mut Self::GT) {
         *g2 = (*g1 + *g2).into();
     }
+    #[inline]
     fn group_neg1(g: &mut Self::G1) {
         *g = (Self::G1::zero() - *g).into();
     }
+    #[inline]
     fn group_neg2(g: &mut Self::G2) {
         *g = (Self::G2::zero() - *g).into();
     }
+    #[inline]
     fn group_negt(g: &mut Self::GT) {
         *g = -(*g);
     }
+    #[inline]
     fn scalar_group_mul1(g1: Self::G1, f1: Vec<Self::F>) -> Vec<Self::G1> {
         P::G1::batch_mul(g1.into(), &f1)
     }
+    #[inline]
     fn scalar_group_mul2(g2: Self::G2, f2: Vec<Self::F>) -> Vec<Self::G2> {
         P::G2::batch_mul(g2.into(), &f2)
     }
+    #[inline]
     fn scalar_group_dot1(g1: Vec<Self::G1>, f1: Vec<Self::F>) -> Self::G1 {
         P::G1::msm(&g1[..], &f1[..]).unwrap().into()
     }
+    #[inline]
     fn scalar_group_dot2(g2: Vec<Self::G2>, f2: Vec<Self::F>) -> Self::G2 {
         P::G2::msm(&g2[..], &f2[..]).unwrap().into()
     }
+    #[inline]
     fn scalar_group_mult(gt: Self::GT, ft: Vec<Self::F>) -> Vec<Self::GT> {
         Self::GT::batch_mul(gt, &ft)
     }
+    #[inline]
     fn scalar_group_dott(gt: Vec<Self::GT>, ft: Vec<Self::F>) -> Self::GT {
         Self::GT::msm(&gt[..], &ft[..]).unwrap()
     }
+    #[inline]
     fn billinear_map(g1: Self::G1, g2: Self::G2) -> Self::GT {
         P::pairing(g1, g2)
     }
-    // Random and hashes
+    #[inline]
     fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> Self::F {
         Self::F::rand(rng)
     }
+    #[inline]
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1 {
         Self::G1::rand(rng)
     }
+    #[inline]
     fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2 {
         Self::G2::rand(rng)
     }
+    #[inline]
     fn group_randt<R: Rng + ?Sized>(rng: &mut R) -> Self::GT {
         Self::GT::rand(rng)
     }
+    #[inline]
     fn scalar_hash<H: Hasher>(f: Self::F, h: &mut H) {
         f.hash(h)
     }
+    #[inline]
     fn group_hash1<H: Hasher>(g: Self::G1, h: &mut H) {
         g.hash(h)
     }
+    #[inline]
     fn group_hash2<H: Hasher>(g: Self::G2, h: &mut H) {
         g.hash(h)
     }
+    #[inline]
     fn group_hasht<H: Hasher>(g: Self::GT, h: &mut H) {
         g.hash(h)
     }
+    #[inline]
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
     }
+    #[inline]
     fn group_fmt2(g: &Self::G2, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
     }
+    #[inline]
     fn group_fmtt(g: &Self::GT, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "    );{}", g)
     }
 }
 
-///Zippel arkworks configurations
-pub type ArkBls12_381 = ArkPairing<Bls12<ark_bls12_381::Config>>;
-pub type ArkCurve25519 = ArkTECurve<ark_curve25519::Curve25519Config>;
-pub type ArkBn254 = ArkPairing<Bn<ark_bn254::Config>>;
-pub type ArkMNT4_298 = ArkPairing<MNT4<ark_mnt4_298::Config>>;
-pub type ArkSecp256k1 = ArkSWCurve<ark_secp256k1::Config>;
-pub type ArkPallas = ArkSWCurve<ark_pallas::PallasConfig>;
-pub type ArkVesta = ArkSWCurve<ark_vesta::VestaConfig>;
-pub type ArkEd25519 = ArkTECurve<ark_ed25519::EdwardsConfig>;
-
-/// Prime Fields for fun and debugging
-// Define the field configuration
 #[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
 #[modulus = "17"]
 #[generator = "3"]
@@ -727,20 +828,15 @@ pub type F17 = Fp64<F17Config>;
 pub struct F65537Config;
 pub type F65537 = Fp64<F65537Config>;
 
+/// Zippel arkworks configurations
+pub type ArkBls12_381 = ArkPairing<Bls12<ark_bls12_381::Config>>;
+pub type ArkCurve25519 = ArkTECurve<ark_curve25519::Curve25519Config>;
+pub type ArkBn254 = ArkPairing<Bn<ark_bn254::Config>>;
+pub type ArkMNT4_298 = ArkPairing<MNT4<ark_mnt4_298::Config>>;
+pub type ArkSecp256k1 = ArkSWCurve<ark_secp256k1::Config>;
+pub type ArkPallas = ArkSWCurve<ark_pallas::PallasConfig>;
+pub type ArkVesta = ArkSWCurve<ark_vesta::VestaConfig>;
+pub type ArkEd25519 = ArkTECurve<ark_ed25519::EdwardsConfig>;
 pub type ArkF17 = ArkField<F17>;
 pub type ArkF65537 = ArkField<F65537>;
-/*
-#[derive(Clone, Eq, PartialEq)]
-pub enum ArkConfiguration {
-    Bls12_381(ArkBls12_381),
-    Curve25519(ArkCurve25519),
-    Bn254(ArkBn254),
-    MNT4_298(ArkMNT4_298),
-    Secp256k1(ArkSecp256k1),
-    Pallas(ArkPallas),
-    Vesta(ArkVesta),
-    Ed25519(ArkEd25519),
-    F17(ArkF17),
-    F65537(ArkF65537),
-}
-*/
+
