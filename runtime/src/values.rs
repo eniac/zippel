@@ -10,6 +10,7 @@ use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
+    Index(u64),
     Scalar(C::F),
     Group1(C::G1),
     Group2(C::G2),
@@ -75,11 +76,26 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec, found {}", self),
         }
     }
+
+    pub fn into_index(&self) -> u64 {
+        match self {
+            Value::Index(i) => *i,
+            _ => panic!("Expected index, found {}", self),
+        }
+    }
+
+    pub fn into_index_mut(&mut self) -> &mut u64 {
+        match self {
+            Value::Index(i) => i,
+            _ => panic!("Expected mut index, found {}", self),
+        }
+    }
 }
 
 impl<C: ArkConfig> fmt::Display for Value<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Value::Index(i) => write!(f, "{}", i),
             Value::Scalar(a) => C::scalar_fmt(a, f),
             Value::Group1(a) => C::group_fmt1(a, f),
             Value::Group2(g) => C::group_fmt2(g, f),
@@ -111,31 +127,47 @@ pub type ValueF65537 = Value<ArkF65537>;
 impl<C: ArkConfig + Clone> Value<C> {
     /// Value addition, saves result in other
     fn value_add(&self, other: &mut Self) {
-        match (self, other) {
-            (Value::Scalar(a), Value::Scalar(b)) => C::scalar_add(a, b),
-            (Value::Group1(a), Value::Group1(b)) => C::group_add1(a, b),
-            (Value::Group2(a), Value::Group2(b)) => C::group_add2(a, b),
-            (Value::GroupT(a), Value::GroupT(b)) => C::group_addt(a, b),
-            (Value::Vec(a), Value::Vec(b)) =>
-                a.par_iter().zip(b.par_iter_mut())
+        match (self, &other) {
+            (Value::Index(a), Value::Index(_)) => {
+                *other.into_index_mut() += *a;
+            },
+            (Value::Index(a), _) =>
+                Self::value_add(&Value::Scalar((*a).into()), other),
+            (_, Value::Index(b)) => {
+                let mut bs = Value::Scalar((*b).into());
+                self.value_add(&mut bs);
+            },
+            (Value::Scalar(a), Value::Scalar(_)) =>
+                C::scalar_add(a, other.into_scalar_mut()),
+            (Value::Group1(a), Value::Group1(_)) =>
+                C::group_add1(a, other.into_group1_mut()),
+            (Value::Group2(a), Value::Group2(_)) =>
+                C::group_add2(a, other.into_group2_mut()),
+            (Value::GroupT(a), Value::GroupT(_)) =>
+                C::group_addt(a, other.into_groupt_mut()),
+            (Value::Vec(a), Value::Vec(_)) =>
+                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| Self::value_add(a, &mut *b)),
-            (Value::Uni(a), Value::Uni(b)) => C::uni_add(a, b),
-            (Value::Uni(a), other) => {
+            (Value::Uni(a), Value::Uni(_)) =>
+                C::uni_add(a, other.into_uni_mut()),
+            (Value::Uni(a), _) => {
                 let scalar = other.into_scalar();
                 let mut uni = C::into_uni(*scalar);
                 C::uni_add(&a, &mut uni);
                 *other = Value::Uni(uni);
             },
-            (Value::Scalar(b), Value::Uni(a)) =>
-                C::uni_add(&C::into_uni(*b), a),
-            (Value::Mle(a), Value::Mle(b)) => C::mle_add(a, b),
-            (Value::Mle(a), other) => {
+            (Value::Scalar(a), Value::Uni(_)) =>
+                C::uni_add(&C::into_uni(*a), other.into_uni_mut()),
+            (Value::Mle(a), Value::Mle(_)) =>
+                C::mle_add(a, other.into_mle_mut()),
+            (Value::Mle(a), _) => {
                 let scalar = other.into_scalar();
                 let mut mle = C::into_mle(*scalar);
                 C::mle_add(&a, &mut mle);
                 *other = Value::Mle(mle);
             },
-            (Value::Scalar(b), Value::Mle(a)) => C::mle_add(&C::into_mle(*b), a),
+            (Value::Scalar(a), Value::Mle(_)) =>
+                C::mle_add(&C::into_mle(*a), other.into_mle_mut()),
             (a, b) => panic!("Mismatched values {} + {}", a, b)
         }
     }
@@ -143,6 +175,7 @@ impl<C: ArkConfig + Clone> Value<C> {
     /// Value negation in-place
     fn value_neg(&mut self) {
         match self {
+            Value::Index(a) => Self::value_neg(&mut Value::Scalar((*a).into())),
             Value::Scalar(a) => C::scalar_neg(a),
             Value::Group1(a) => C::group_neg1(a),
             Value::Group2(a) => C::group_neg2(a),
@@ -161,6 +194,18 @@ impl<C: ArkConfig + Clone> Value<C> {
     /// Value multiplication, saves result in other
     fn value_mul(&self, other: &mut Self) {
         match (self, &other) {
+            // Index * Index = Index
+            (Value::Index(a), Value::Index(_)) => {
+                *other.into_index_mut() *= *a;
+            },
+            // Index * whatever, cast index to scalar
+            (Value::Index(a), _) =>
+                Self::value_mul(&Value::Scalar((*a).into()), other),
+            // whatever * Index, cast index to scalar
+            (_, Value::Index(b)) => {
+                let mut bs = Value::Scalar((*b).into());
+                self.value_mul(&mut bs);
+            },
             // Scalar * Scalar = Scalar
             (Value::Scalar(a), Value::Scalar(_)) =>
                 C::scalar_mul(a, other.into_scalar_mut()),
@@ -237,5 +282,89 @@ impl<C: ArkConfig + Clone> Value<C> {
             (a, b) => panic!("Mismatched values {} * {}", a, b)
         }
     }
+
+    /// Value division, saves result in other
+    fn value_div(&self, other: &mut Self) {
+        match (self, &other) {
+            // Index / Index = Index
+            (Value::Index(a), Value::Index(_)) => {
+                *other.into_index_mut() /= *a;
+            },
+            // Index / whatever, cast index to scalar
+            (Value::Index(a), _) =>
+                Self::value_div(&Value::Scalar((*a).into()), other),
+            // whatever / Index, cast index to scalar
+            (_, Value::Index(b)) => {
+                let mut bs = Value::Scalar((*b).into());
+                self.value_div(&mut bs);
+            },
+            // Scalar * Scalar = Scalar
+            (Value::Scalar(a), Value::Scalar(_)) =>
+                C::scalar_div(a, other.into_scalar_mut()),
+
+            // Group1 / scalar division
+            (Value::Group1(a), Value::Scalar(_)) => {
+                let scalar = other.into_scalar_mut();
+                C::scalar_inv(scalar);
+                let mut group = C::scalar_group_mul1(*a, vec![*scalar]);
+                *other = Value::Group1(group.remove(0));
+            },
+            // Group2 / scalar division
+            (Value::Group2(a), Value::Scalar(_)) => {
+                let scalar = other.into_scalar_mut();
+                C::scalar_inv(scalar);
+                let mut group = C::scalar_group_mul2(*a, vec![*scalar]);
+                *other = Value::Group2(group.remove(0));
+            },
+            // GroupT / scalar division
+            (Value::GroupT(a), Value::Scalar(_)) => {
+                let scalar = other.into_scalar_mut();
+                C::scalar_inv(scalar);
+                let mut group = C::scalar_group_mult(*a, vec![*scalar]);
+                *other = Value::GroupT(group.remove(0));
+            },
+            // Vector<T> / Vector<T> division
+            (Value::Vec(a), Value::Vec(_)) =>
+                a.par_iter().zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_div(&mut *b)),
+            // Vector<T> / T division
+            (Value::Vec(a), _) => {
+                let other = std::iter::repeat(other.clone()).take(a.len()).collect::<Vec<_>>();
+                Self::value_div(self, &mut Value::Vec(other));
+            },
+            // T * Vector<T> multiplication
+            (_, Value::Vec(_)) =>
+                other.into_vec_mut().par_iter_mut().for_each(|b| self.value_div(b)),
+            // Uni / Uni
+            (Value::Uni(a), Value::Uni(_)) =>
+                C::uni_div(a, other.into_uni_mut()),
+            // Uni / scalar
+            (Value::Uni(a), Value::Scalar(b)) => {
+                let mut uni = C::into_uni(*b);
+                C::uni_div(a, &mut uni);
+                *other = Value::Uni(uni);
+            },
+
+            // Mle / scalar
+            (Value::Mle(mle), Value::Scalar(a)) => {
+                let mut mle = mle.clone();
+                C::mle_div(a, &mut mle);
+                *other = Value::Mle(mle);
+            },
+            (a, b) => panic!("Mismatched values {} / {}", a, b)
+        }
+    }
 }
+
+/*
+fn process_trait_object(obj: &ArkConfiguration) {
+    println!("Processing trait object");
+}
+
+#[test]
+fn foo() {
+    let ark: ArkCurve25519  = ArkTECurve::new();
+    process_trait_object(&ArkConfiguration::Curve25519(ark));
+}
+*/
 

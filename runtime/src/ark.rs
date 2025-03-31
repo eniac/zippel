@@ -17,6 +17,9 @@ use ark_ec::{VariableBaseMSM, AffineRepr};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::models::short_weierstrass::{Affine as SWAffine, SWCurveConfig};
 use ark_ec::models::twisted_edwards::{Affine as TEAffine, TECurveConfig};
+use ark_ec::bls12::Bls12;
+use ark_ec::models::bn::Bn;
+use ark_ec::mnt4::MNT4;
 
 /// Represents a type instantiation of a zippel program in Arkworks
 pub trait ArkConfig {
@@ -164,6 +167,12 @@ pub trait ArkConfig {
         *b *= a
     }
     /// Divide multilinear extension by scalar, saves result in b
+    fn mle_div(a: &Self::F, b: &mut Mle<Self::F>) {
+        let mut a = a.clone();
+        Self::scalar_inv(&mut a);
+        Self::mle_mul(&a, b);
+    }
+    /// Divide multilinear extension by scalar, saves result in b
     fn mle_eval(a: Mle<Self::F>, b: Vec<Self::F>) -> Self::F {
         a.evaluate(&b)
     }
@@ -280,9 +289,16 @@ pub trait ArkConfig {
 }
 
 /// Object representing a Zippel configuration for fields
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ArkField<F: FftField> {
     _field: PhantomData<F>,
+}
+
+impl<F: FftField> ArkField<F> {
+    /// Create a new field configuration
+    pub fn new() -> Self {
+        Self { _field: PhantomData }
+    }
 }
 
 /// For a signle field <F>
@@ -382,9 +398,16 @@ impl<F: FftField> ArkConfig for ArkField<F> {
 
 
 /// Object representing a Zippel configuration for Short-Weierstrass curves
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ArkSWCurve<C: SWCurveConfig> {
     _curve: PhantomData<C>,
+}
+
+impl<C: SWCurveConfig> ArkSWCurve<C> {
+    /// Create a new short-weierstrass curve configuration
+    pub fn new() -> Self {
+        Self { _curve: PhantomData }
+    }
 }
 
 impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
@@ -475,9 +498,16 @@ impl<C: SWCurveConfig> ArkConfig for ArkSWCurve<C> {
 }
 
 /// Object representing a Zippel configuration for twisted edwards curves
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ArkTECurve<C: TECurveConfig> {
     _curve: PhantomData<C>,
+}
+
+impl<C: TECurveConfig> ArkTECurve<C> {
+    /// Create a new twisted edwards curve configuration
+    pub fn new() -> Self {
+        Self { _curve: PhantomData }
+    }
 }
 
 impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
@@ -568,9 +598,16 @@ impl<C: TECurveConfig> ArkConfig for ArkTECurve<C> {
 }
 
 /// Object representing a Zippel configuration for pairing friendly curves
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
 pub struct ArkPairing<P: Pairing> {
     _pairing: PhantomData<P>,
+}
+
+impl<P: Pairing> ArkPairing<P> {
+    /// Create a new pairing configuration
+    pub fn new() -> Self {
+        Self { _pairing: PhantomData }
+    }
 }
 
 /// For pairing friendly curves
@@ -662,15 +699,15 @@ impl<P: Pairing> ArkConfig for ArkPairing<P> {
         write!(f, "{}", g)
     }
     fn group_fmtt(g: &Self::GT, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", g)
+        write!(f, "    );{}", g)
     }
 }
 
 ///Zippel arkworks configurations
-pub type ArkBls12_381 = ArkPairing<ark_bls12_381::Config>;
+pub type ArkBls12_381 = ArkPairing<Bls12<ark_bls12_381::Config>>;
 pub type ArkCurve25519 = ArkTECurve<ark_curve25519::Curve25519Config>;
-pub type ArkBn254 = ArkPairing<ark_bn254::Config>;
-pub type ArkMNT4_298 = ArkPairing<ark_mnt4_298::Config>;
+pub type ArkBn254 = ArkPairing<Bn<ark_bn254::Config>>;
+pub type ArkMNT4_298 = ArkPairing<MNT4<ark_mnt4_298::Config>>;
 pub type ArkSecp256k1 = ArkSWCurve<ark_secp256k1::Config>;
 pub type ArkPallas = ArkSWCurve<ark_pallas::PallasConfig>;
 pub type ArkVesta = ArkSWCurve<ark_vesta::VestaConfig>;
@@ -678,13 +715,13 @@ pub type ArkEd25519 = ArkTECurve<ark_ed25519::EdwardsConfig>;
 
 /// Prime Fields for fun and debugging
 // Define the field configuration
-#[derive(MontConfig)]
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
 #[modulus = "17"]
 #[generator = "3"]
 pub struct F17Config;
 pub type F17 = Fp64<F17Config>;
 
-#[derive(MontConfig)]
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
 #[modulus = "65537"]
 #[generator = "3"]
 pub struct F65537Config;
@@ -692,4 +729,18 @@ pub type F65537 = Fp64<F65537Config>;
 
 pub type ArkF17 = ArkField<F17>;
 pub type ArkF65537 = ArkField<F65537>;
-
+/*
+#[derive(Clone, Eq, PartialEq)]
+pub enum ArkConfiguration {
+    Bls12_381(ArkBls12_381),
+    Curve25519(ArkCurve25519),
+    Bn254(ArkBn254),
+    MNT4_298(ArkMNT4_298),
+    Secp256k1(ArkSecp256k1),
+    Pallas(ArkPallas),
+    Vesta(ArkVesta),
+    Ed25519(ArkEd25519),
+    F17(ArkF17),
+    F65537(ArkF65537),
+}
+*/
