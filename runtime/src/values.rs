@@ -26,218 +26,6 @@ pub enum Value<C: ArkConfig> {
 }
 
 impl<C: ArkConfig> Value<C> {
-    pub fn into_scalar(&self) -> C::F {
-        match self {
-            Value::Scalar(f) => *f,
-            Value::Index(i) => (*i).into(),
-            _ => panic!("Expected scalar, found {}", self),
-        }
-    }
-    pub fn into_group1(&self) -> &C::G1 {
-        match self {
-            Value::Group1(g) => g,
-            _ => panic!("Expected group1, found {}", self),
-        }
-    }
-    pub fn into_group2(&self) -> &C::G2 {
-        match self {
-            Value::Group2(g) => g,
-            _ => panic!("Expected group2, found {}", self),
-        }
-    }
-    pub fn into_groupt(&self) -> &C::GT {
-        match self {
-            Value::GroupT(g) => g,
-            _ => panic!("Expected groupt, found {}", self),
-        }
-    }
-    pub fn into_scalar_mut(&mut self) -> &mut C::F {
-        match self {
-            Value::Scalar(f) => f,
-            Value::Index(i) => {
-                *self = Value::Scalar((*i).into());
-                self.into_scalar_mut()
-            },
-            _ => panic!("Expected mut scalar, found {}", self),
-        }
-    }
-    pub fn into_uni_mut(&mut self) -> &mut Uni<C::F> {
-        match self {
-            Value::Uni(u) => u,
-            Value::Scalar(s) => {
-                *self = Value::Uni(C::into_uni(*s));
-                self.into_uni_mut()
-            },
-            Value::Index(i) => {
-                *self = Value::Uni(C::into_uni((*i).into()));
-                self.into_uni_mut()
-            },
-            _ => panic!("Expected mut uni, found {}", self),
-        }
-    }
-    pub fn into_mle_mut(&mut self) -> &mut Mle<C::F> {
-        match self {
-            Value::Mle(m) => m,
-            Value::Scalar(s) => {
-                *self = Value::Mle(C::into_mle(*s));
-                self.into_mle_mut()
-            },
-            Value::Index(i) => {
-                *self = Value::Mle(C::into_mle((*i).into()));
-                self.into_mle_mut()
-            },
-            _ => panic!("Expected mut mle, found {}", self),
-        }
-    }
-    pub fn into_group1_mut(&mut self) -> &mut C::G1 {
-        match self {
-            Value::Group1(g) => g,
-            _ => panic!("Expected mut group1, found {}", self),
-        }
-    }
-    pub fn into_group2_mut(&mut self) -> &mut C::G2 {
-        match self {
-            Value::Group2(g) => g,
-            _ => panic!("Expected mut group2, found {}", self),
-        }
-    }
-    pub fn into_groupt_mut(&mut self) -> &mut C::GT {
-        match self {
-            Value::GroupT(g) => g,
-            _ => panic!("Expected mut groupt, found {}", self),
-        }
-    }
-
-    pub fn into_vec_scalar_mut(&mut self) -> &mut Vec<C::F> {
-        match self {
-            Value::VecScalar(v) => v,
-            Value::VecIndex(v) => {
-                *self = Value::VecScalar(v.iter().map(|i| (*i).into()).collect());
-                self.into_vec_scalar_mut()
-            },
-            _ => panic!("Expected mut vec scalar, found {}", self),
-        }
-    }
-    pub fn into_vec_group1(&self) -> &Vec<C::G1> {
-        match self {
-            Value::VecGroup1(v) => v,
-            _ => panic!("Expected vec group1, found {}", self),
-        }
-    }
-    pub fn into_vec_group2(&self) -> &Vec<C::G2> {
-        match self {
-            Value::VecGroup2(v) => v,
-            _ => panic!("Expected vec group2, found {}", self),
-        }
-    }
-    pub fn into_vec_group1_mut(&mut self) -> &mut Vec<C::G1> {
-        match self {
-            Value::VecGroup1(v) => v,
-            _ => panic!("Expected mut vec group1, found {}", self),
-        }
-    }
-    pub fn into_vec_group2_mut(&mut self) -> &mut Vec<C::G2> {
-        match self {
-            Value::VecGroup2(v) => v,
-            _ => panic!("Expected mut vec group2, found {}", self),
-        }
-    }
-    pub fn into_vec_groupt_mut(&mut self) -> &mut Vec<C::GT> {
-        match self {
-            Value::VecGroupT(v) => v,
-            _ => panic!("Expected mut vec groupt, found {}", self),
-        }
-    }
-    pub fn into_vec_index_mut(&mut self) -> &mut Vec<u64> {
-        match self {
-            Value::VecIndex(v) => v,
-            _ => panic!("Expected mut vec index, found {}", self),
-        }
-    }
-    pub fn into_vec_index(&self) -> &Vec<u64> {
-        match self {
-            Value::VecIndex(v) => v,
-            _ => panic!("Expected vec index, found {}", self),
-        }
-    }
-    pub fn into_index(&self) -> u64 {
-        match self {
-            Value::Index(i) => *i,
-            _ => panic!("Expected index, found {}", self),
-        }
-    }
-    pub fn into_index_mut(&mut self) -> &mut u64 {
-        match self {
-            Value::Index(i) => i,
-            _ => panic!("Expected mut index, found {}", self),
-        }
-    }
-}
-
-impl<C: ArkConfig> fmt::Display for Value<C> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Value::Index(i) => write!(f, "{}", i),
-            Value::Scalar(a) => C::scalar_fmt(a, f),
-            Value::Group1(a) => C::group_fmt1(a, f),
-            Value::Group2(g) => C::group_fmt2(g, f),
-            Value::GroupT(g) => C::group_fmtt(g, f),
-            Value::Uni(u) => C::uni_fmt(u, f),
-            Value::Mle(m) => C::mle_fmt(m, f),
-            Value::VecScalar(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    write!(f, "{}, ", i)?;
-                }
-                write!(f, "]")
-            },
-            Value::VecGroup1(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    C::group_fmt1(i, f)?;
-                    write!(f, ", ")?;
-                }
-                write!(f, "]")
-            },
-            Value::VecGroup2(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    C::group_fmt2(i, f)?;
-                    write!(f, ", ")?;
-                }
-                write!(f, "]")
-            },
-            Value::VecGroupT(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    C::group_fmtt(i, f)?;
-                    write!(f, ", ")?;
-                }
-                write!(f, "]")
-            },
-            Value::VecIndex(v) => {
-                write!(f, "[")?;
-                for i in v {
-                    write!(f, "{}, ", i)?;
-                }
-                write!(f, "]")
-            },
-        }
-    }
-}
-
-pub type ValueBls12_381 = Value<ArkBls12_381>;
-pub type ValueCurve25519 = Value<ArkCurve25519>;
-pub type ValueBn254 = Value<ArkBn254>;
-pub type ValueMNT4_298 = Value<ArkMNT4_298>;
-pub type ValueSecp256k1 = Value<ArkSecp256k1>;
-pub type ValuePallas = Value<ArkPallas>;
-pub type ValueVesta = Value<ArkVesta>;
-pub type ValueEd25519 = Value<ArkEd25519>;
-pub type ValueF17 = Value<ArkF17>;
-pub type ValueF65537 = Value<ArkF65537>;
-
-impl<C: ArkConfig + Clone> Value<C> {
     /// Value addition, saves result in other
     pub fn value_add(&self, other: &mut Self) {
         match self {
@@ -526,7 +314,9 @@ impl<C: ArkConfig + Clone> Value<C> {
                     // Vec<Index> * Scalar
                     Value::Scalar(_) => {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
-                        Self::value_mul(self, other);
+                        v.par_iter()
+                        .zip(other.into_vec_scalar_mut().par_iter_mut())
+                        .for_each(|(a, b)| C::scalar_mul(&(*a).into(), b))
                     },
                     // Vec<index> * Group1
                     Value::Group1(g) =>
@@ -569,7 +359,9 @@ impl<C: ArkConfig + Clone> Value<C> {
                     // Vec<Scalar> * Index
                     Value::Index(_) | Value::Scalar(_) => {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
-                        Self::value_mul(self, other);
+                        v.par_iter()
+                        .zip(other.into_vec_scalar_mut().par_iter_mut())
+                        .for_each(|(a, b)| C::scalar_mul(&(*a).into(), b))
                     }
                     // Vec<Scalar> * Group1
                     Value::Group1(g) =>
@@ -795,7 +587,9 @@ impl<C: ArkConfig + Clone> Value<C> {
                     // Vec<Index> / Scalar
                     Value::Scalar(_) => {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
-                        Self::value_div(self, other);
+                         v.par_iter()
+                        .zip(other.into_vec_scalar_mut().par_iter_mut())
+                        .for_each(|(a, b)| C::scalar_div(&(*a).into(), b));
                     },
                     // Vec<Index> / Vec<Index> = Vec<Index>
                     Value::VecIndex(_) =>
@@ -813,8 +607,14 @@ impl<C: ArkConfig + Clone> Value<C> {
                 match &other {
                     // Vec<Scalar> / Index
                     Value::Index(_) | Value::Scalar(_) => {
-                        *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
-                        Self::value_div(self, other);
+                        let f = other.into_scalar_mut();
+                        f.inverse()
+                            .expect(format!("Failed to invert scalar {}", f).as_str());
+                        let mut vr = std::iter::repeat(f.clone()).take(v.len()).collect::<Vec<_>>();
+                        v.par_iter()
+                        .zip(vr.par_iter_mut())
+                        .for_each(|(a, b)| C::scalar_mul(a, b));
+                        *other = Value::VecScalar(vr);
                     }
                     // Vec<Index> / Vec<Index> = Vec<Index>
                     Value::VecIndex(_) | Value::VecScalar(_) => {
@@ -1037,6 +837,259 @@ impl<C: ArkConfig + Clone> Value<C> {
             (a, b) => panic!("Mismatched values {} . {}", a, b)
         }
     }
+
+    /// Dynamic casts
+    pub fn into_scalar(&self) -> C::F {
+        match self {
+            Value::Scalar(f) => *f,
+            Value::Index(i) => (*i).into(),
+            _ => panic!("Expected scalar, found {}", self),
+        }
+    }
+    pub fn into_group1(&self) -> &C::G1 {
+        match self {
+            Value::Group1(g) => g,
+            _ => panic!("Expected group1, found {}", self),
+        }
+    }
+    pub fn into_group2(&self) -> &C::G2 {
+        match self {
+            Value::Group2(g) => g,
+            _ => panic!("Expected group2, found {}", self),
+        }
+    }
+    pub fn into_groupt(&self) -> &C::GT {
+        match self {
+            Value::GroupT(g) => g,
+            _ => panic!("Expected groupt, found {}", self),
+        }
+    }
+    pub fn into_scalar_mut(&mut self) -> &mut C::F {
+        match self {
+            Value::Scalar(f) => f,
+            Value::Index(i) => {
+                *self = Value::Scalar((*i).into());
+                self.into_scalar_mut()
+            },
+            _ => panic!("Expected mut scalar, found {}", self),
+        }
+    }
+    pub fn into_uni_mut(&mut self) -> &mut Uni<C::F> {
+        match self {
+            Value::Uni(u) => u,
+            Value::Scalar(s) => {
+                *self = Value::Uni(C::into_uni(*s));
+                self.into_uni_mut()
+            },
+            Value::Index(i) => {
+                *self = Value::Uni(C::into_uni((*i).into()));
+                self.into_uni_mut()
+            },
+            _ => panic!("Expected mut uni, found {}", self),
+        }
+    }
+    pub fn into_mle_mut(&mut self) -> &mut Mle<C::F> {
+        match self {
+            Value::Mle(m) => m,
+            Value::Scalar(s) => {
+                *self = Value::Mle(C::into_mle(*s));
+                self.into_mle_mut()
+            },
+            Value::Index(i) => {
+                *self = Value::Mle(C::into_mle((*i).into()));
+                self.into_mle_mut()
+            },
+            _ => panic!("Expected mut mle, found {}", self),
+        }
+    }
+    pub fn into_group1_mut(&mut self) -> &mut C::G1 {
+        match self {
+            Value::Group1(g) => g,
+            _ => panic!("Expected mut group1, found {}", self),
+        }
+    }
+    pub fn into_group2_mut(&mut self) -> &mut C::G2 {
+        match self {
+            Value::Group2(g) => g,
+            _ => panic!("Expected mut group2, found {}", self),
+        }
+    }
+    pub fn into_groupt_mut(&mut self) -> &mut C::GT {
+        match self {
+            Value::GroupT(g) => g,
+            _ => panic!("Expected mut groupt, found {}", self),
+        }
+    }
+
+    pub fn into_vec_scalar_mut(&mut self) -> &mut Vec<C::F> {
+        match self {
+            Value::VecScalar(v) => v,
+            Value::VecIndex(v) => {
+                *self = Value::VecScalar(v.iter().map(|i| (*i).into()).collect());
+                self.into_vec_scalar_mut()
+            },
+            _ => panic!("Expected mut vec scalar, found {}", self),
+        }
+    }
+    pub fn into_vec_group1(&self) -> &Vec<C::G1> {
+        match self {
+            Value::VecGroup1(v) => v,
+            _ => panic!("Expected vec group1, found {}", self),
+        }
+    }
+    pub fn into_vec_group2(&self) -> &Vec<C::G2> {
+        match self {
+            Value::VecGroup2(v) => v,
+            _ => panic!("Expected vec group2, found {}", self),
+        }
+    }
+    pub fn into_vec_group1_mut(&mut self) -> &mut Vec<C::G1> {
+        match self {
+            Value::VecGroup1(v) => v,
+            _ => panic!("Expected mut vec group1, found {}", self),
+        }
+    }
+    pub fn into_vec_group2_mut(&mut self) -> &mut Vec<C::G2> {
+        match self {
+            Value::VecGroup2(v) => v,
+            _ => panic!("Expected mut vec group2, found {}", self),
+        }
+    }
+    pub fn into_vec_groupt_mut(&mut self) -> &mut Vec<C::GT> {
+        match self {
+            Value::VecGroupT(v) => v,
+            _ => panic!("Expected mut vec groupt, found {}", self),
+        }
+    }
+    pub fn into_vec_index_mut(&mut self) -> &mut Vec<u64> {
+        match self {
+            Value::VecIndex(v) => v,
+            _ => panic!("Expected mut vec index, found {}", self),
+        }
+    }
+    pub fn into_vec_index(&self) -> &Vec<u64> {
+        match self {
+            Value::VecIndex(v) => v,
+            _ => panic!("Expected vec index, found {}", self),
+        }
+    }
+    pub fn into_index(&self) -> u64 {
+        match self {
+            Value::Index(i) => *i,
+            _ => panic!("Expected index, found {}", self),
+        }
+    }
+    pub fn into_index_mut(&mut self) -> &mut u64 {
+        match self {
+            Value::Index(i) => i,
+            _ => panic!("Expected mut index, found {}", self),
+        }
+    }
+
+    /// Generate a random value, given some parameters
+    /// value: Indicate if we want a 0: scalar, 1: group1, 2: group2, 3: groupt, 4: uni, 5: mle and _: index
+    /// e: size of the value, 0: element and _: sized value (vector, uni or mle)
+    pub fn generate_value<R: Rng + Sized>(rng: &mut R, value: usize, e: usize) -> Self {
+        if e == 0 {
+            match value {
+                0 => Value::Scalar(C::scalar_rand(rng)),
+                1 => Value::Group1(C::group_rand1(rng)),
+                2 => Value::Group2(C::group_rand2(rng)),
+                3 => Value::GroupT(C::group_randt(rng)),
+                _ => Value::Index(rng.next_u64()),
+            }
+        } else {
+            match value {
+                0 => Value::VecScalar(C::scalar_vec_rand(rng, e)),
+                1 => Value::VecGroup1(C::group_vec_rand1(rng, e)),
+                2 => Value::VecGroup2(C::group_vec_rand2(rng, e)),
+                3 => Value::VecGroupT(C::group_vec_randt(rng, e)),
+                4 => Value::Uni(C::uni_rand(rng, e)),
+                5 => Value::Mle(C::mle_rand(rng, e)),
+                _ => Value::VecIndex((0..e).map(|_| rng.next_u64()).collect()),
+            }
+        }
+    }
 }
 
+impl<C: ArkConfig> fmt::Display for Value<C> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::Index(i) => write!(f, "{}", i),
+            Value::Scalar(a) => C::scalar_fmt(a, f),
+            Value::Group1(a) => C::group_fmt1(a, f),
+            Value::Group2(g) => C::group_fmt2(g, f),
+            Value::GroupT(g) => C::group_fmtt(g, f),
+            Value::Uni(u) => C::uni_fmt(u, f),
+            Value::Mle(m) => C::mle_fmt(m, f),
+            Value::VecScalar(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroup1(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmt1(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroup2(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmt2(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecGroupT(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    C::group_fmtt(i, f)?;
+                    write!(f, ", ")?;
+                }
+                write!(f, "]")
+            },
+            Value::VecIndex(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
+        }
+    }
+}
 
+pub type ValueBls12_381 = Value<ArkBls12_381>;
+pub type ValueCurve25519 = Value<ArkCurve25519>;
+pub type ValueBn254 = Value<ArkBn254>;
+pub type ValueMNT4_298 = Value<ArkMNT4_298>;
+pub type ValueSecp256k1 = Value<ArkSecp256k1>;
+pub type ValuePallas = Value<ArkPallas>;
+pub type ValueVesta = Value<ArkVesta>;
+pub type ValueEd25519 = Value<ArkEd25519>;
+pub type ValueF17 = Value<ArkF17>;
+pub type ValueF65537 = Value<ArkF65537>;
+
+#[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
+#[cfg(test)] use ark_std::test_rng;
+#[cfg(test)]
+impl<'a> Arbitrary<'a> for ValueBls12_381 {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut rng = test_rng();
+        if u.arbitrary::<bool>()? {
+            // Generate elements (size = 0)
+            let value = u.int_in_range(0..=4)?;
+            Ok(Value::generate_value(&mut rng, value, 0))
+        } else {
+            // Generate vectors (size > 0)
+            let value = u.int_in_range(0..=6)?;
+            let e = (1 as usize) << u.int_in_range(1..=6)?;
+            Ok(Value::generate_value(&mut rng, value, e))
+        }
+    }
+}

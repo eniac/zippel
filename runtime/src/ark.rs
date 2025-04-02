@@ -115,6 +115,14 @@ pub trait ArkConfig {
         .for_each(|(a, b)| *a *= b);
     }
 
+    #[inline]
+    fn scalar_vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<Self::F> {
+        let mut v = vec![Self::scalar_zero(); n];
+        v.iter_mut()
+            .for_each(|x| *x = Self::scalar_rand(rng));
+        v
+    }
+
     /// Convert a scalar to a univariate polynomial of degree 0
     #[inline]
     fn into_uni(a: Self::F) -> Uni<Self::F> {
@@ -371,9 +379,35 @@ pub trait ArkConfig {
                     gt
                 })
     }
+
+    /// Random group elements and hashing
     fn group_rand1<R: Rng + ?Sized>(rng: &mut R) -> Self::G1;
     fn group_rand2<R: Rng + ?Sized>(rng: &mut R) -> Self::G2;
     fn group_randt<R: Rng + ?Sized>(rng: &mut R) -> Self::GT;
+
+    #[inline]
+    fn group_vec_rand1<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<Self::G1> {
+        let mut v = vec![Self::group_zero1(); n];
+        v.iter_mut()
+            .for_each(|x| *x = Self::group_rand1(rng));
+        v
+    }
+
+    #[inline]
+    fn group_vec_rand2<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<Self::G2> {
+        let mut v = vec![Self::group_zero2(); n];
+        v.iter_mut()
+            .for_each(|x| *x = Self::group_rand2(rng));
+        v
+    }
+
+    #[inline]
+    fn group_vec_randt<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<Self::GT> {
+        let mut v = vec![Self::group_zerot(); n];
+        v.iter_mut()
+            .for_each(|x| *x = Self::group_randt(rng));
+        v
+    }
     fn group_hash1<H: Hasher>(g: &Self::G1, h: &mut H);
     fn group_hash2<H: Hasher>(g: &Self::G2, h: &mut H);
     fn group_hasht<H: Hasher>(g: &Self::GT, h: &mut H);
@@ -390,6 +424,7 @@ pub trait ArkConfig {
     fn group_fmt1(g: &Self::G1, f: &mut fmt::Formatter) -> fmt::Result;
     fn group_fmt2(g: &Self::G2, f: &mut fmt::Formatter) -> fmt::Result;
     fn group_fmtt(g: &Self::GT, f: &mut fmt::Formatter) -> fmt::Result;
+
 }
 
 /// Object representing a Zippel configuration for fields
