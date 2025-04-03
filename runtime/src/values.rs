@@ -2,7 +2,7 @@ use crate::ark::*;
 use ark_ff::Field;
 use rayon::prelude::*;
 use rand::Rng;
-use std::fmt;
+use std::{fmt, hint::unreachable_unchecked};
 use core::hash::Hasher;
 use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
 
@@ -25,6 +25,7 @@ pub enum Value<C: ArkConfig> {
     VecGroupT(Vec<C::GT>),
 }
 
+use std::hint;
 impl<C: ArkConfig> Value<C> {
     /// Value addition, saves result in other
     pub fn value_add(&self, other: &mut Self) {
