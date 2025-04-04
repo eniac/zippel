@@ -6,29 +6,30 @@ use core::hash::Hasher;
 use rayon::prelude::*;
 
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
-use ark_ff::{Zero, FftField, PrimeField};
+use ark_ff::{Zero, FftField, PrimeField, AdditiveGroup};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::VariableBaseMSM;
 use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
 use ark_ec::bls12::Bls12;
 use ark_ec::models::bn::Bn;
 use ark_ec::mnt4::MNT4;
-use ark_ec::{CurveGroup, PrimeGroup};
-
+use ark_ec::{CurveGroup, AffineRepr, PrimeGroup};
+use ark_std::UniformRand;
 use crate::Nothing;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig {
     type F: FftField;
-    type G1: CurveGroup<ScalarField = Self::F>;
-    type G2: ArkGroup<ScalarField = Self::F>;
-    type GT: PrimeGroup<ScalarField = Self::F> + ScalarMul + VariableBaseMSM;
+    type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
+    type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
+    type G1Affine: AffineRepr<ScalarField = Self::F, Group = Self::G1>;
+    type G2Affine: AffineRepr<ScalarField = Self::F, Group = Self::G2>;
     type P: Pairing<ScalarField = Self::F, G1 = Self::G1, G2 = Self::G2>;
 
+    /// Operations on arkwork types
     type FOps : ArkScalarOps<Self::F>;
     type G1Ops : ArkGroupOps<Self::G1>;
     type G2Ops : ArkGroupOps<Self::G2>;
-    type GTOps : ArkGroupOps<Self::GT>;
     type POps : ArkPairingOps<Self::P>;
 }
 
@@ -36,56 +37,56 @@ pub trait ArkConfig {
 pub trait ArkScalarOps<F: FftField> {
     /// Field constants
     #[inline]
-    fn scalar_zero() -> F {
+    fn zero() -> F {
         F::zero()
     }
 
     #[inline]
-    fn scalar_one() -> F {
+    fn one() -> F {
         F::one()
     }
 
     /// Scalar addition, saves result in f2
     #[inline]
-    fn scalar_add(f1: &F, f2: &mut F) {
+    fn add(f1: &F, f2: &mut F) {
         *f2 += f1
     }
 
     /// Scalar negation in place
     #[inline]
-    fn scalar_neg(f: &mut F) {
+    fn neg(f: &mut F) {
         f.neg_in_place();
     }
 
     /// Scalar subtraction, saves result in f2
     #[inline]
-    fn scalar_sub(f1: &F, f2: &mut F) {
-        Self::scalar_neg(f2);
-        Self::scalar_add(f1, f2);
+    fn sub(f1: &F, f2: &mut F) {
+        Self::neg(f2);
+        Self::add(f1, f2);
     }
 
     /// Scalar multiplication, saves result in f2
     #[inline]
-    fn scalar_mul(f1: &F, f2: &mut F) {
+    fn mul(f1: &F, f2: &mut F) {
         *f2 *= f1
     }
 
     /// Scalar division, saves result in f2
     #[inline]
-    fn scalar_inv(f: &mut F) {
+    fn inv(f: &mut F) {
         f.inverse_in_place();
     }
 
     /// Scalar division, saves result in f2
     #[inline]
-    fn scalar_div(f1: &F, f2: &mut F) {
-        Self::scalar_inv(f2);
-        Self::scalar_mul(f1, f2);
+    fn div(f1: &F, f2: &mut F) {
+        Self::inv(f2);
+        Self::mul(f1, f2);
     }
 
     /// Scalar exponentiation, saves result in f1
     #[inline]
-    fn scalar_pow(f1: &mut F, i: u64) {
+    fn pow(f1: &mut F, i: u64) {
         let mut i = i;
         while (i % 2) == 0 {
             f1.square_in_place();
@@ -95,48 +96,48 @@ pub trait ArkScalarOps<F: FftField> {
     }
 
     #[inline]
-    fn scalar_vec_add(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_add(f1: &Vec<F>, f2: &mut Vec<F>) {
         f2.par_iter_mut()
             .zip(f1.par_iter())
             .for_each(|(a, b)| *a += b);
     }
 
     #[inline]
-    fn scalar_vec_neg(f: &mut Vec<F>) {
+    fn vec_neg(f: &mut Vec<F>) {
         f.par_iter_mut().for_each(|x| { x.neg_in_place(); });
     }
 
     #[inline]
-    fn scalar_vec_sub(f1: &Vec<F>, f2: &mut Vec<F>) {
-        Self::scalar_vec_neg(f2);
-        Self::scalar_vec_add(f1, f2);
+    fn vec_sub(f1: &Vec<F>, f2: &mut Vec<F>) {
+        Self::vec_neg(f2);
+        Self::vec_add(f1, f2);
     }
 
     #[inline]
-    fn scalar_vec_mul(f1: &Vec<F>, f2: &mut Vec<F>) {
+    fn vec_mul(f1: &Vec<F>, f2: &mut Vec<F>) {
         f2.par_iter_mut()
             .zip(f1.par_iter())
             .for_each(|(a, b)| *a *= b);
     }
 
     #[inline]
-    fn scalar_vec_dot(f1: &Vec<F>, f2: &Vec<F>) -> F {
+    fn vec_dot(f1: &Vec<F>, f2: &Vec<F>) -> F {
         f1.par_iter()
             .zip(f2.par_iter())
             .map(|(a, b)| *a * *b)
-            .reduce(|| Self::scalar_zero(), |acc, x| acc + x)
+            .reduce(|| Self::zero(), |acc, x| acc + x)
     }
 
     /// Vector batch inversion, saves result in f2
     #[inline]
-    fn scalar_vec_inv(f: &mut Vec<F>) {
+    fn vec_inv(f: &mut Vec<F>) {
         ark_ff::fields::batch_inversion::<F>(f);
     }
 
     /// Vector division by batch inversion, saves result in f2
     #[inline]
-    fn scalar_vec_div(f1: &Vec<F>, f2: &mut Vec<F>) {
-        Self::scalar_vec_inv(f2);
+    fn vec_div(f1: &Vec<F>, f2: &mut Vec<F>) {
+        Self::vec_inv(f2);
         ark_ff::fields::batch_inversion::<F>(f2);
         f2.par_iter_mut()
         .zip(f1.par_iter())
@@ -144,7 +145,7 @@ pub trait ArkScalarOps<F: FftField> {
     }
 
     #[inline]
-    fn scalar_vec_pow(f1: &mut Vec<F>, i: u64) {
+    fn vec_pow(f1: &mut Vec<F>, i: u64) {
         f1.par_iter_mut()
             .for_each(|x| {
                 let mut i = i;
@@ -158,46 +159,51 @@ pub trait ArkScalarOps<F: FftField> {
 
     /// FFT and IFFT
     #[inline]
-    fn scalar_vec_ifft(a: &mut Vec<F>) {
+    fn vec_ifft(a: &mut Vec<F>) {
         let domain: GeneralEvaluationDomain<F> = GeneralEvaluationDomain::new(a.len()).unwrap();
         domain.ifft_in_place(a);
     }
 
     #[inline]
-    fn scalar_vec_fft(a: &mut Vec<F>) {
+    fn vec_fft(a: &mut Vec<F>) {
         let domain: GeneralEvaluationDomain<F> = GeneralEvaluationDomain::new(a.len()).unwrap();
         domain.fft_in_place(a);
     }
 
     /// Random and hashing
     #[inline]
-    fn scalar_rand<R: Rng + ?Sized>(rng: &mut R) -> F {
+    fn rand<R: Rng + ?Sized>(rng: &mut R) -> F {
         F::rand(rng)
     }
 
     #[inline]
-    fn scalar_hash<H: Hasher>(f: F, h: &mut H) {
+    fn hash<H: Hasher>(f: &F, h: &mut H) {
         f.hash(h)
     }
 
     #[inline]
-    fn scalar_vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<F> {
-        let mut v = vec![Self::scalar_zero(); n];
+    fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<F> {
+        let mut v = vec![Self::zero(); n];
         v.iter_mut()
-            .for_each(|x| *x = Self::scalar_rand(rng));
+            .for_each(|x| *x = Self::rand(rng));
         v
     }
 
     #[inline]
-    fn scalar_vec_hash<H: Hasher>(f: Vec<F>, h: &mut H) {
+    fn vec_hash<H: Hasher>(f: &Vec<F>, h: &mut H) {
         f.hash(h)
+    }
+
+    #[inline]
+    fn write(f: &F, h: &mut fmt::Formatter) -> fmt::Result {
+        write!(h, "{}", f)
     }
 }
 
 /// Minimum API to implement both G1, G2, GT
 pub trait ArkGroup = PrimeGroup + ScalarMul + VariableBaseMSM;
 
-pub trait ArkGroupOps<G: ArkGroup> {
+pub trait ArkGroupOps<G: CurveGroup> {
     /// Group constants
     #[inline]
     fn zero() -> G {
@@ -209,7 +215,7 @@ pub trait ArkGroupOps<G: ArkGroup> {
     }
     /// Group operations
     #[inline]
-    fn add(g1: &G, g2: &mut G) {
+    fn add(g1: &G::Affine, g2: &mut G) {
         *g2 += g1;
     }
     #[inline]
@@ -217,7 +223,7 @@ pub trait ArkGroupOps<G: ArkGroup> {
         g.neg_in_place();
     }
     #[inline]
-    fn sub(g1: &G, g2: &mut G) {
+    fn sub(g1: &G::Affine, g2: &mut G) {
         Self::neg(g2);
         Self::add(g1, g2);
     }
@@ -241,7 +247,7 @@ pub trait ArkGroupOps<G: ArkGroup> {
         v
     }
     #[inline]
-    fn vec_hash<H: Hasher>(g: Vec<G>, h: &mut H) {
+    fn vec_hash<H: Hasher>(g: &Vec<G>, h: &mut H) {
         g.hash(h)
     }
     /// Group vec operations
@@ -255,12 +261,73 @@ pub trait ArkGroupOps<G: ArkGroup> {
         G::msm(&g[..], &f[..]).unwrap()
     }
     #[inline]
-    fn fmt(g: &G, f: &mut fmt::Formatter) -> fmt::Result {
+    fn write(g: &G, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", g)
     }
 }
 
 pub trait ArkPairingOps<P: Pairing> {
+    /// Group constants
+    #[inline]
+    fn zero() -> PairingOutput<P> {
+        PairingOutput::ZERO
+    }
+    #[inline]
+    fn generator() -> PairingOutput<P> {
+        PairingOutput::generator()
+    }
+    /// Group operations
+    #[inline]
+    fn add(g1: &PairingOutput<P>, g2: &mut PairingOutput<P>) {
+        *g2 += g1;
+    }
+    #[inline]
+    fn neg(g: &mut PairingOutput<P>) {
+        g.neg_in_place();
+    }
+    #[inline]
+    fn sub(g1: &PairingOutput<P>, g2: &mut PairingOutput<P>) {
+        Self::neg(g2);
+        Self::add(g1, g2);
+    }
+    #[inline]
+    fn mul(f: &<PairingOutput<P> as AdditiveGroup>::Scalar, g: &mut PairingOutput<P>) {
+        *g *= f;
+    }
+    #[inline]
+    fn rand<R: Rng + ?Sized>(rng: &mut R) -> PairingOutput<P> {
+        PairingOutput::rand(rng)
+    }
+    #[inline]
+    fn hash<H: Hasher>(g: &PairingOutput<P>, h: &mut H) {
+        g.hash(h)
+    }
+    #[inline]
+    fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<PairingOutput<P>> {
+        let mut v = vec![Self::zero(); n];
+        v.iter_mut()
+            .for_each(|x| *x = Self::rand(rng));
+        v
+    }
+    #[inline]
+    fn vec_hash<H: Hasher>(g: &Vec<PairingOutput<P>>, h: &mut H) {
+        g.hash(h)
+    }
+    /// Group vec operations
+    #[inline]
+    fn vec_mul(g: &PairingOutput<P>, f: &Vec<P::ScalarField>) -> Vec<PairingOutput<P>> {
+        g.batch_mul(&f[..])
+    }
+    #[inline]
+    fn vec_dot(g: &Vec<PairingOutput<P>>, f: &Vec<P::ScalarField>) -> PairingOutput<P> {
+        // TODO: What does Err<usize> mean here?
+        <PairingOutput<P> as VariableBaseMSM>::msm(&g[..], &f[..]).unwrap()
+    }
+    #[inline]
+    fn write(g: &PairingOutput<P>, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", g)
+    }
+
     /// Pairing operations
     #[inline]
     fn billinear_map(g1: &P::G1, g2: &P::G2) -> PairingOutput<P> {
@@ -292,13 +359,13 @@ pub trait ArkPairingOps<P: Pairing> {
 pub struct ArkScalarConfig<F: FftField>(PhantomData<F>);
 impl<F: FftField> ArkScalarOps<F> for ArkScalarConfig<F> {}
 
-pub struct ArkGroupConfig<G: ArkGroup>(PhantomData<G>);
-impl<G: ArkGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
+pub struct ArkGroupConfig<G: CurveGroup>(PhantomData<G>);
+impl<G: CurveGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
 
 pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
-/// Sometimes we need a dummy pairing for non-pairing curves (1 curve)
+/// Sometimes we need a dummy pairing for non-pairing curves
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct DummyPairing<G: CurveGroup>(PhantomData<G>);
 impl<G: CurveGroup> Pairing for DummyPairing<G> where G::BaseField : PrimeField {
@@ -334,13 +401,13 @@ impl ArkConfig for ArkBls12_381 {
     type F = ark_bls12_381::Fr;
     type G1 = ark_bls12_381::G1Projective;
     type G2 = ark_bls12_381::G2Projective;
-    type GT = PairingOutput<Bls12<ark_bls12_381::Config>>;
+    type G1Affine = ark_bls12_381::G1Affine;
+    type G2Affine = ark_bls12_381::G2Affine;
     type P = Bls12<ark_bls12_381::Config>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -349,13 +416,13 @@ impl ArkConfig for ArkBn254 {
     type F = ark_bn254::Fr;
     type G1 = ark_bn254::G1Projective;
     type G2 = ark_bn254::G2Projective;
-    type GT = PairingOutput<Bn<ark_bn254::Config>>;
+    type G1Affine = ark_bn254::G1Affine;
+    type G2Affine = ark_bn254::G2Affine;
     type P = Bn<ark_bn254::Config>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -364,13 +431,13 @@ impl ArkConfig for ArkMNT4_298 {
     type F = ark_mnt4_298::Fr;
     type G1 = ark_mnt4_298::G1Projective;
     type G2 = ark_mnt4_298::G2Projective;
-    type GT = PairingOutput<MNT4<ark_mnt4_298::Config>>;
+    type G1Affine = ark_mnt4_298::G1Affine;
+    type G2Affine = ark_mnt4_298::G2Affine;
     type P = MNT4<ark_mnt4_298::Config>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -379,13 +446,13 @@ impl ArkConfig for ArkCurve25519 {
     type F = ark_curve25519::Fr;
     type G1 = ark_curve25519::EdwardsProjective;
     type G2 = ark_curve25519::EdwardsProjective;
-    type GT = ark_curve25519::EdwardsProjective;
+    type G1Affine = ark_curve25519::EdwardsAffine;
+    type G2Affine = ark_curve25519::EdwardsAffine;
     type P = DummyPairing<ark_curve25519::EdwardsProjective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -394,13 +461,13 @@ impl ArkConfig for ArkSecp256k1 {
     type F = ark_secp256k1::Fr;
     type G1 = ark_secp256k1::Projective;
     type G2 = ark_secp256k1::Projective;
-    type GT = ark_secp256k1::Projective;
+    type G1Affine = ark_secp256k1::Affine;
+    type G2Affine = ark_secp256k1::Affine;
     type P = DummyPairing<ark_secp256k1::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -409,13 +476,13 @@ impl ArkConfig for ArkPallas {
     type F = ark_pallas::Fr;
     type G1 = ark_pallas::Projective;
     type G2 = ark_pallas::Projective;
-    type GT = ark_pallas::Projective;
+    type G1Affine = ark_pallas::Affine;
+    type G2Affine = ark_pallas::Affine;
     type P = DummyPairing<ark_pallas::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -424,13 +491,13 @@ impl ArkConfig for ArkVesta {
     type F = ark_vesta::Fr;
     type G1 = ark_vesta::Projective;
     type G2 = ark_vesta::Projective;
-    type GT = ark_vesta::Projective;
+    type G1Affine = ark_vesta::Affine;
+    type G2Affine = ark_vesta::Affine;
     type P = DummyPairing<ark_vesta::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
@@ -439,21 +506,13 @@ impl ArkConfig for ArkEd25519 {
     type F = ark_ed25519::Fr;
     type G1 = ark_ed25519::EdwardsProjective;
     type G2 = ark_ed25519::EdwardsProjective;
-    type GT = ark_ed25519::EdwardsProjective;
+    type G1Affine = ark_ed25519::EdwardsAffine;
+    type G2Affine = ark_ed25519::EdwardsAffine;
     type P = DummyPairing<ark_ed25519::EdwardsProjective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
     type G2Ops = ArkGroupConfig<Self::G2>;
-    type GTOps = ArkGroupConfig<Self::GT>;
     type POps = ArkPairingConfig<Self::P>;
 }
 
-/*
-   pub type ArkSecp256k1 = ArkSWCurve<ark_secp256k1::Config>;
-pub type ArkPallas = ArkSWCurve<ark_pallas::PallasConfig>;
-pub type ArkVesta = ArkSWCurve<ark_vesta::VestaConfig>;
-pub type ArkEd25519 = ArkTECurve<ark_ed25519::EdwardsConfig>;
-pub type ArkF17 = ArkField<F17>;
-pub type ArkF65537 = ArkField<F65537>;
-*/
