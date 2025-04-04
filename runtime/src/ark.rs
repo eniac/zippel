@@ -6,20 +6,21 @@ use core::hash::Hasher;
 use rayon::prelude::*;
 
 use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
-use ark_ff::{Zero, FftField, PrimeField, AdditiveGroup};
+use ark_ff::{MontConfig, Zero, Fp64, PrimeField, AdditiveGroup};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::VariableBaseMSM;
-use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
+use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::bls12::Bls12;
 use ark_ec::models::bn::Bn;
 use ark_ec::mnt4::MNT4;
 use ark_ec::{CurveGroup, AffineRepr, PrimeGroup};
 use ark_std::UniformRand;
-use crate::Nothing;
+
+use crate::nothing::{NoCurve, NoPairing};
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig {
-    type F: FftField;
+    type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
     type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
     type G1Affine: AffineRepr<ScalarField = Self::F, Group = Self::G1>;
@@ -34,7 +35,7 @@ pub trait ArkConfig {
 }
 
 /// Operations on Arkworks scalar fields
-pub trait ArkScalarOps<F: FftField> {
+pub trait ArkScalarOps<F: PrimeField> {
     /// Field constants
     #[inline]
     fn zero() -> F {
@@ -200,9 +201,6 @@ pub trait ArkScalarOps<F: FftField> {
     }
 }
 
-/// Minimum API to implement both G1, G2, GT
-pub trait ArkGroup = PrimeGroup + ScalarMul + VariableBaseMSM;
-
 pub trait ArkGroupOps<G: CurveGroup> {
     /// Group constants
     #[inline]
@@ -356,8 +354,8 @@ pub trait ArkPairingOps<P: Pairing> {
 }
 
 /// Zippel arkworks configuration helper objects
-pub struct ArkScalarConfig<F: FftField>(PhantomData<F>);
-impl<F: FftField> ArkScalarOps<F> for ArkScalarConfig<F> {}
+pub struct ArkScalarConfig<F: PrimeField>(PhantomData<F>);
+impl<F: PrimeField> ArkScalarOps<F> for ArkScalarConfig<F> {}
 
 pub struct ArkGroupConfig<G: CurveGroup>(PhantomData<G>);
 impl<G: CurveGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
@@ -365,35 +363,6 @@ impl<G: CurveGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
 pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
-/// Sometimes we need a dummy pairing for non-pairing curves
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-pub struct DummyPairing<G: CurveGroup>(PhantomData<G>);
-impl<G: CurveGroup> Pairing for DummyPairing<G> where G::BaseField : PrimeField {
-    type BaseField = G::BaseField;
-    type ScalarField = G::ScalarField;
-    type G1 = G;
-    type G1Affine = G::Affine;
-    type G1Prepared = G;
-
-    type G2 = G;
-    type G2Affine = G::Affine;
-    type G2Prepared = G;
-    type TargetField = Nothing;
-
-    // Required methods
-    fn multi_miller_loop(
-        _: impl IntoIterator<Item = impl Into<Self::G1Prepared>>,
-        _: impl IntoIterator<Item = impl Into<Self::G2Prepared>>,
-    ) -> MillerLoopOutput<Self> {
-        MillerLoopOutput(Nothing::new())
-    }
-
-    fn final_exponentiation(
-        _: MillerLoopOutput<Self>,
-    ) -> Option<PairingOutput<Self>> {
-        None
-    }
-}
 
 /// Concrete Zippel arkworks configurations
 pub struct ArkBls12_381 {}
@@ -448,7 +417,7 @@ impl ArkConfig for ArkCurve25519 {
     type G2 = ark_curve25519::EdwardsProjective;
     type G1Affine = ark_curve25519::EdwardsAffine;
     type G2Affine = ark_curve25519::EdwardsAffine;
-    type P = DummyPairing<ark_curve25519::EdwardsProjective>;
+    type P = NoPairing<ark_curve25519::EdwardsProjective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
@@ -463,7 +432,7 @@ impl ArkConfig for ArkSecp256k1 {
     type G2 = ark_secp256k1::Projective;
     type G1Affine = ark_secp256k1::Affine;
     type G2Affine = ark_secp256k1::Affine;
-    type P = DummyPairing<ark_secp256k1::Projective>;
+    type P = NoPairing<ark_secp256k1::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
@@ -478,7 +447,7 @@ impl ArkConfig for ArkPallas {
     type G2 = ark_pallas::Projective;
     type G1Affine = ark_pallas::Affine;
     type G2Affine = ark_pallas::Affine;
-    type P = DummyPairing<ark_pallas::Projective>;
+    type P = NoPairing<ark_pallas::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
@@ -493,7 +462,7 @@ impl ArkConfig for ArkVesta {
     type G2 = ark_vesta::Projective;
     type G1Affine = ark_vesta::Affine;
     type G2Affine = ark_vesta::Affine;
-    type P = DummyPairing<ark_vesta::Projective>;
+    type P = NoPairing<ark_vesta::Projective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
@@ -508,7 +477,7 @@ impl ArkConfig for ArkEd25519 {
     type G2 = ark_ed25519::EdwardsProjective;
     type G1Affine = ark_ed25519::EdwardsAffine;
     type G2Affine = ark_ed25519::EdwardsAffine;
-    type P = DummyPairing<ark_ed25519::EdwardsProjective>;
+    type P = NoPairing<ark_ed25519::EdwardsProjective>;
 
     type FOps = ArkScalarConfig<Self::F>;
     type G1Ops = ArkGroupConfig<Self::G1>;
@@ -516,3 +485,32 @@ impl ArkConfig for ArkEd25519 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
+pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
+impl<F: PrimeField> ArkConfig for ArkFieldN<F> {
+    type F = F;
+    type G1 = NoCurve<F>;
+    type G2 = NoCurve<F>;
+    type G1Affine = NoCurve<F>;
+    type G2Affine = NoCurve<F>;
+    type P = NoPairing<NoCurve<F>>;
+
+    type FOps = ArkScalarConfig<Self::F>;
+    type G1Ops = ArkGroupConfig<Self::G1>;
+    type G2Ops = ArkGroupConfig<Self::G2>;
+    type POps = ArkPairingConfig<Self::P>;
+}
+
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
+#[modulus = "17"]
+#[generator = "3"]
+pub struct F17Config;
+pub type F17 = Fp64<F17Config>;
+
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
+#[modulus = "65537"]
+#[generator = "3"]
+pub struct F65537Config;
+pub type F65537 = Fp64<F65537Config>;
+
+pub type ArkField17 = ArkFieldN<F17>;
+pub type ArkField65537 = ArkFieldN<F65537>;

@@ -25,6 +25,7 @@ rayon = "1.10.0"
 rand = { version = "0.8", features = ["std"]}
 num-bigint = "0.4.6"
 zeroize = "1.8.1"
+ark-crypto-primitives = "0.5.0"
 
 [dev-dependencies]
 ark-std = "0.5.0"

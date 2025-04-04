@@ -7,6 +7,7 @@ use std::fmt;
 use core::hash::{Hash, Hasher};
 use std::ops::{Add, Sub, Mul, Div};
 use ark_ec::CurveGroup;
+use ark_ec::hashing::map_to_curve_hasher::MapToCurveBasedHasher;
 
 use crate::typ::RTyp;
 
@@ -870,7 +871,15 @@ impl<C: ArkConfig> Value<C> {
 
     /// TODO: How do I sample the hasher state?
     pub fn value_challenge<H: Hasher>(typ: &RTyp, h: &mut H) -> Self {
-        unimplemented!()
+        let buffer = h.finish().to_le_bytes();
+        match typ {
+            RTyp::Index => Value::Index(h.finish()),
+            RTyp::Scalar => unimplemented!(),
+            RTyp::G1 => unimplemented!(),
+            RTyp::G2 => unimplemented!(),
+            RTyp::GT => unimplemented!(),
+            _ => panic!("Challenge not supported for type {}", typ),
+        }
     }
 
     /// Dynamic casts

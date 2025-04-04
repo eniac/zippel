@@ -5,4 +5,3 @@ pub mod values;
 pub mod typ;
 
 mod nothing;
-pub use nothing::Nothing;
