@@ -73,10 +73,10 @@ dependencies = [
 [[package]]
 name = "ark-bls12-377"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -95,11 +95,11 @@ dependencies = [
 [[package]]
 name = "ark-bls12-381"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-serialize 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -117,10 +117,10 @@ dependencies = [
 [[package]]
 name = "ark-bn254"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -163,44 +163,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-crypto-primitives"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0c292754729c8a190e50414fd1a37093c786c709899f29c9f7daccecfa855e"
-dependencies = [
- "ahash",
- "ark-crypto-primitives-macros",
- "ark-ec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-relations",
- "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-snark",
- "ark-std",
- "blake2",
- "derivative",
- "digest",
- "fnv",
- "sha2",
-]
-
-[[package]]
-name = "ark-crypto-primitives-macros"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e89fe77d1f0f4fe5b96dfc940923d88d17b6a773808124f21e764dfb063c6a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
 name = "ark-curve25519"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -228,12 +196,12 @@ dependencies = [
 [[package]]
 name = "ark-ec"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-poly 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-serialize 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
  "educe",
  "fnv",
@@ -248,22 +216,22 @@ dependencies = [
 [[package]]
 name = "ark-ed-on-cp6-782"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-bls12-377 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-bls12-377 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
 [[package]]
 name = "ark-ed25519"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "ark-curve25519",
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -290,11 +258,11 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ff-asm 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff-macros 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-serialize 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ff-asm 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff-macros 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
  "arrayvec 0.7.6",
  "digest",
@@ -313,16 +281,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62945a2f7e6de02a31fe400aa489f0e0f5b2502e69f95f853adb82a96c7a6b60"
 dependencies = [
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -335,19 +303,19 @@ dependencies = [
  "num-traits",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "num-bigint",
  "num-traits",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -364,10 +332,10 @@ dependencies = [
 [[package]]
 name = "ark-mnt4-298"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -385,10 +353,10 @@ dependencies = [
 [[package]]
 name = "ark-mnt4-753"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -419,10 +387,10 @@ dependencies = [
 [[package]]
 name = "ark-pallas"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -444,11 +412,11 @@ dependencies = [
 [[package]]
 name = "ark-poly"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "ahash",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-serialize 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
  "educe",
  "fnv",
@@ -456,24 +424,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-relations"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec46ddc93e7af44bcab5230937635b06fb5744464dd6a7e7b083e80ebd274384"
-dependencies = [
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-std",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "ark-secp256k1"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
 ]
 
@@ -493,9 +449,9 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-serialize-derive 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-serialize-derive 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
  "arrayvec 0.7.6",
  "digest",
@@ -510,29 +466,17 @@ checksum = "213888f660fddcca0d257e88e54ac05bca01885f258ccdf695bafd77031bb69d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
-]
-
-[[package]]
-name = "ark-snark"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d368e2848c2d4c129ce7679a7d0d2d612b6a274d3ea6a13bad4445d61b381b88"
-dependencies = [
- "ark-ff 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-relations",
- "ark-serialize 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "ark-std",
+ "syn",
 ]
 
 [[package]]
@@ -548,10 +492,10 @@ dependencies = [
 [[package]]
 name = "ark-vesta"
 version = "0.5.0"
-source = "git+https://github.com/elefthei/algebra.git#41f4d488233fd1ad8f90641748191a5c13d4ea8d"
+source = "git+https://github.com/arkworks-rs/algebra.git#05e3faa69f1cfa9fc1a8133e624c598653461208"
 dependencies = [
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-pallas",
  "ark-std",
 ]
@@ -579,15 +523,6 @@ name = "bitflags"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest",
-]
 
 [[package]]
 name = "block-buffer"
@@ -797,17 +732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "derive_arbitrary"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -815,7 +739,7 @@ checksum = "30542c1ad912e0e3d22a1935c290e12e8a29d704a420177a31faad4a601a0800"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -826,7 +750,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
- "subtle",
 ]
 
 [[package]]
@@ -838,7 +761,7 @@ dependencies = [
  "enum-ordinalize",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -864,7 +787,7 @@ checksum = "0d28318a75d4aead5c4db25382e8ef717932d0346600cacae6357eb5941bc5ff"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -965,6 +888,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbd780fe5cc30f81464441920d82ac8740e2e46b29a6fad543ddd075229ce37e"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
 name = "indexmap"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,6 +964,15 @@ checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "keccak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
+dependencies = [
+ "cpufeatures",
 ]
 
 [[package]]
@@ -1216,7 +1154,7 @@ dependencies = [
  "itertools 0.10.5",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1239,7 +1177,7 @@ dependencies = [
  "pest_meta",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1262,12 +1200,6 @@ dependencies = [
  "fixedbitset",
  "indexmap",
 ]
-
-[[package]]
-name = "pin-project-lite"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "plotters"
@@ -1428,27 +1360,27 @@ name = "runtime"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
- "ark-bls12-377 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-bls12-381 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-bn254 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-crypto-primitives",
+ "ark-bls12-377 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-bls12-381 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-bn254 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-curve25519",
- "ark-ec 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-ed-on-cp6-782",
  "ark-ed25519",
- "ark-ff 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-mnt4-298 0.5.0 (git+https://github.com/elefthei/algebra.git)",
- "ark-mnt4-753 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-mnt4-298 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-mnt4-753 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-pallas",
- "ark-poly 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-secp256k1",
- "ark-serialize 0.5.0 (git+https://github.com/elefthei/algebra.git)",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
  "ark-vesta",
  "lang",
  "num-bigint",
  "rand",
  "rayon",
+ "spongefish",
  "zeroize",
 ]
 
@@ -1496,7 +1428,7 @@ checksum = "5b0276cf7f2c73365f7157c8123c21cd9a50fbbd844757af28ca1f5925fc2a00"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1539,6 +1471,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
 
 [[package]]
+name = "spongefish"
+version = "0.2.0"
+source = "git+https://github.com/arkworks-rs/spongefish.git#e8cebe0920c38a68d568f190163b8dacf998dacc"
+dependencies = [
+ "digest",
+ "hex",
+ "keccak",
+ "rand",
+ "zeroize",
+]
+
+[[package]]
 name = "strum"
 version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1554,24 +1498,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
- "syn 2.0.100",
-]
-
-[[package]]
-name = "subtle"
-version = "2.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
+ "syn",
 ]
 
 [[package]]
@@ -1611,7 +1538,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1622,7 +1549,7 @@ checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1633,35 +1560,6 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "tracing"
-version = "0.1.41"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
-dependencies = [
- "pin-project-lite",
- "tracing-core",
-]
-
-[[package]]
-name = "tracing-core"
-version = "0.1.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
-dependencies = [
- "once_cell",
- "valuable",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.2.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0d2eaa99c3c2e41547cfa109e910a68ea03823cccad4a0525dcbc9b01e8c71"
-dependencies = [
- "tracing-core",
 ]
 
 [[package]]
@@ -1693,12 +1591,6 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
-
-[[package]]
-name = "valuable"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "version_check"
@@ -1750,7 +1642,7 @@ dependencies = [
  "log",
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
  "wasm-bindgen-shared",
 ]
 
@@ -1772,7 +1664,7 @@ checksum = "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
  "wasm-bindgen-backend",
  "wasm-bindgen-shared",
 ]
@@ -1904,7 +1796,7 @@ checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1915,7 +1807,7 @@ checksum = "a996a8f63c5c4448cd959ac1bab0aaa3306ccfd060472f85943ee0750f0169be"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]
 
 [[package]]
@@ -1935,5 +1827,5 @@ checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.100",
+ "syn",
 ]

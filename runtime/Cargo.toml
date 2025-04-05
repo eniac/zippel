@@ -4,28 +4,28 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ark-ec = { git = "https://github.com/elefthei/algebra.git" }
-ark-serialize = { git = "https://github.com/elefthei/algebra.git" }
-ark-bls12-377 = { git = "https://github.com/elefthei/algebra.git" }
-ark-bls12-381 = { git = "https://github.com/elefthei/algebra.git" }
-ark-ed-on-cp6-782 = { git = "https://github.com/elefthei/algebra.git" }
-ark-bn254 = { git = "https://github.com/elefthei/algebra.git" }
-ark-mnt4-298 = { git = "https://github.com/elefthei/algebra.git" }
-ark-mnt4-753 = { git = "https://github.com/elefthei/algebra.git" }
-ark-pallas = { git = "https://github.com/elefthei/algebra.git" }
-ark-secp256k1 = { git = "https://github.com/elefthei/algebra.git" }
-ark-curve25519 = { git = "https://github.com/elefthei/algebra.git" }
-ark-ed25519 = { git = "https://github.com/elefthei/algebra.git" }
-ark-vesta = { git = "https://github.com/elefthei/algebra.git" }
-ark-ff =  { git = "https://github.com/elefthei/algebra.git" }
-ark-poly =  { git = "https://github.com/elefthei/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ed-on-cp6-782 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-mnt4-753 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-pallas = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-secp256k1 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-curve25519 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ed25519 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-vesta = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5.0"
+spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git" }
 lang = { version = "0.1.0", path = "../lang" }
 rayon = "1.10.0"
 rand = { version = "0.8", features = ["std"]}
 num-bigint = "0.4.6"
 zeroize = "1.8.1"
-ark-crypto-primitives = "0.5.0"
 
 [dev-dependencies]
 ark-std = "0.5.0"
