@@ -6,6 +6,7 @@ use std::fmt;
 use petgraph::graph::NodeIndex;
 use lang::id::Tid;
 
+use runtime::RTyp;
 use share::Set;
 
 /// Operands are expressions which are not important
@@ -22,6 +23,8 @@ pub enum Operand<T> {
     Gen(T),
     /// Random element
     Rand(T),
+    /// Vanishing polynomial
+    Vanishing(Box<Operand<T>>),
     /// Node input
     Underscore(NodeIndex),
     /// Coefficients of a univariate vector
@@ -51,7 +54,10 @@ pub enum Op<T, V> {
     Hash(T),
 
     /// Convert from evaluation domain to lagrange domain.
-    Interpolate(V),
+    Ifft(V),
+
+    /// Convert from lagrange domain to evaluation domain
+    Fft(V),
 
     /// Equality check
     Equ(V, V),
@@ -64,8 +70,9 @@ pub enum Op<T, V> {
 }
 
 /// A typed, operation is a computation on values
-pub type Operation = Op<Tid, (Operand<Tid>, CTyp)>;
+pub type Operation = Op<RTyp, (Operand<RTyp>, RTyp)>;
 
+/// Smart constructors to simplify operands a bit
 impl<T> Operand<T> {
     pub fn ram(v: Operand<T>, i: Operand<T>) -> Operand<T> {
         match (v, i) {
@@ -74,13 +81,8 @@ impl<T> Operand<T> {
             (Operand::Ram(box v, box Operand::Range(r)), Operand::Lit(i)) =>
                 Operand::ram(v, Operand::lit(r.compose_index(i))),
             (Operand::Vec(vs), Operand::Lit(i)) => vs[i],
-            (Operand::Vec(vs), Operand::Range(r)) => {
-                let mut res = Vec::new();
-                for i in r {
-                    res.push(vs[i]);
-                }
-                Operand::Vec(res)
-            },
+            (Operand::Vec(vs), Operand::Range(r)) =>
+                Operand::Vec(r.iter().map(|i| vs[*i]).collect::<Vec<_>>()),
             (Operand::Range(r), Operand::Lit(i)) => Operand::Lit(r.start + i* r.step),
             (v, i) => Operand::Ram(Box::new(v), Box::new(i)),
         }
@@ -102,20 +104,17 @@ impl<T> Operand<T> {
 
     pub fn add(v1: Operand<T>, v2: Operand<T>) -> Operand<T> {
         match (v1, v2) {
-            (Operand::Vec(l), Operand::Vec(r)) => {
-                let mut res = Vec::new();
-                for (l, r) in l.iter().zip(r.iter()) {
-                    res.push(Operand::add(l.clone(), r.clone()));
-                }
-                Operand::Vec(res)
-            },
-            (Operand::Vec(mut vs), v) | (v, Operand::Vec(mut vs)) => {
-                vs.iter_mut().for_each(|l| *l = Operand::add(l.clone(), v.clone()));
-                Operand::Vec(vs)
-            },
+            (Operand::Lit(l), Operand::Lit(r)) => Operand::Lit(l + r),
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l + r),
             (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
                 Operand::Range(l + CRange::singleton(r)),
+            (Operand::Vec(l), Operand::Vec(r)) =>
+                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::add(l, r)).collect()),
+            (Operand::Vec(vs), v) | (v, Operand::Vec(vs)) =>
+                Operand::Vec(vs.into_iter().map(|l| Operand::add(l, v.clone())).collect()),
+            (Operand::Coef(l), Operand::Coef(r)) => Operand::coef(Operand::add(*l, *r)),
+            (Operand::Mle(l), Operand::Mle(r)) => Operand::mle(Operand::add(*l, *r)),
+
             (l, r) =>
                 Operand::Bin(BinOp::Add, Box::new(l), Box::new(r)),
         }

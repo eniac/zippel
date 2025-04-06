@@ -846,6 +846,7 @@ version = "0.1.0"
 dependencies = [
  "lang",
  "petgraph",
+ "runtime",
  "share",
  "thiserror 2.0.12",
 ]

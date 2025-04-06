@@ -366,6 +366,17 @@ impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
 /// Concrete Zippel arkworks configurations
 pub struct ArkBls12_381 {}
+pub struct ArkBn254 {}
+pub struct ArkMNT4_298 {}
+pub struct ArkCurve25519 {}
+pub struct ArkSecp256k1 {}
+pub struct ArkPallas {}
+pub struct ArkVesta {}
+pub struct ArkEd25519 {}
+pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
+pub type ArkField17 = ArkFieldN<F17>;
+pub type ArkField65537 = ArkFieldN<F65537>;
+
 impl ArkConfig for ArkBls12_381 {
     type F = ark_bls12_381::Fr;
     type G1 = ark_bls12_381::G1Projective;
@@ -380,7 +391,6 @@ impl ArkConfig for ArkBls12_381 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkBn254 {}
 impl ArkConfig for ArkBn254 {
     type F = ark_bn254::Fr;
     type G1 = ark_bn254::G1Projective;
@@ -395,7 +405,6 @@ impl ArkConfig for ArkBn254 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkMNT4_298 {}
 impl ArkConfig for ArkMNT4_298 {
     type F = ark_mnt4_298::Fr;
     type G1 = ark_mnt4_298::G1Projective;
@@ -410,7 +419,6 @@ impl ArkConfig for ArkMNT4_298 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkCurve25519 {}
 impl ArkConfig for ArkCurve25519 {
     type F = ark_curve25519::Fr;
     type G1 = ark_curve25519::EdwardsProjective;
@@ -425,7 +433,6 @@ impl ArkConfig for ArkCurve25519 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkSecp256k1 {}
 impl ArkConfig for ArkSecp256k1 {
     type F = ark_secp256k1::Fr;
     type G1 = ark_secp256k1::Projective;
@@ -440,7 +447,6 @@ impl ArkConfig for ArkSecp256k1 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkPallas {}
 impl ArkConfig for ArkPallas {
     type F = ark_pallas::Fr;
     type G1 = ark_pallas::Projective;
@@ -455,7 +461,6 @@ impl ArkConfig for ArkPallas {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkVesta {}
 impl ArkConfig for ArkVesta {
     type F = ark_vesta::Fr;
     type G1 = ark_vesta::Projective;
@@ -470,7 +475,6 @@ impl ArkConfig for ArkVesta {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkEd25519 {}
 impl ArkConfig for ArkEd25519 {
     type F = ark_ed25519::Fr;
     type G1 = ark_ed25519::EdwardsProjective;
@@ -485,7 +489,6 @@ impl ArkConfig for ArkEd25519 {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
 impl<F: PrimeField> ArkConfig for ArkFieldN<F> {
     type F = F;
     type G1 = NoCurve<F>;
@@ -512,5 +515,4 @@ pub type F17 = Fp64<F17Config>;
 pub struct F65537Config;
 pub type F65537 = Fp64<F65537Config>;
 
-pub type ArkField17 = ArkFieldN<F17>;
-pub type ArkField65537 = ArkFieldN<F65537>;
+

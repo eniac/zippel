@@ -53,9 +53,7 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | gen_exp
          | coef_exp
          | mle_exp
-         | interp_exp
          | eval_exp
-         | vanish_exp
          | challenge_exp
          | random_exp
          | map_exp
@@ -71,11 +69,9 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | id
     }
     gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                         // Group generator
-    coef_exp      = { "coef" ~ aexp  }                                 // Create a univariate polynomial
-    mle_exp       = { "mle"  ~ aexp  }                                 // Create a multilinear expression
-    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ ")" }               // Interpolate (IFFT) points to a univariate
-    eval_exp      = { "evaluate" ~ "(" ~ aexp ~ ")" }                  // Evaluate (FFT) a univariate or MLE
-    vanish_exp    = { "vanishing" ~ "(" ~ aexp ~ ")" }                    // Vanishing polynomial for vec of points
+    coef_exp      = { "coef" ~ "(" ~ aexp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
+    eval_exp      = { "eval" ~ "(" ~ aexp ~ ")" }                      // Evaluation form (FFT) univariate polynomial or MLE
+    mle_exp       = { "mle" ~ "(" ~ aexp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     random_exp    = { "random" ~ "<" ~ id ~ ">" }                      // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                   // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }    // Map comprehension

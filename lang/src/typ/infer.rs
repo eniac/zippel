@@ -62,9 +62,6 @@ pub enum TypeError {
     #[error("EvaluateError: Expects a polynomial (univariate or MLE):\n{0}, {1} |- evaluate ( {2}: {3})")]
     Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error("VanishingError: Expects a field vector:\n{0}, {1} |- vanishing ( {2}: {3})")]
-    Vanishing(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
-
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
@@ -138,9 +135,6 @@ impl<'a> TypeError {
     }
     pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Eval(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
-    }
-    pub fn vanish(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
-        TypeError::Vanishing(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
     pub fn ram(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
@@ -419,50 +413,29 @@ impl Typeable for CExp {
                     Err(TypeError::gen(kctx, vctx, t, k))
                 }
             }
-
-            // Interpolation of points into a univariate polynomial
-            CExp::Interpolate(box a) => {
-                let t = a.infer(kctx, fctx, vctx)
-                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
-
-                // Only field vectors can be interpolated
-                match t.clone() {
-                    CTyp::Vec(box ta, n) => {
-                        // Must be a field
-                        let t = ta.to_scalar(kctx).ok_or(TypeError::interp(kctx, vctx, &a, &t))?;
-                        Ok(CTyp::Uni(t, n))
-                    },
-                    _ => Err(TypeError::interp(kctx, vctx, &a, &t))
-                }
-            },
-            // Vanishing polynomial of points
-            CExp::Vanishing(box a) => {
-                let t = a.infer(kctx, fctx, vctx)
-                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
-
-                // Only field vectors can be interpolated
-                match t.clone() {
-                    CTyp::Vec(box ta, n) => {
-                        // Must be a field
-                        let t = ta.to_scalar(kctx).ok_or(TypeError::vanish(kctx, vctx, &a, &t))?;
-                        Ok(CTyp::Uni(t, n))
-                    },
-                    _ => Err(TypeError::vanish(kctx, vctx, &a, &t))
-                }
-            },
-            // Evaluate a polynomial at some points (or MLE at bool hypercube)
-            CExp::Evaluate(box a) => {
+            // Convert a polynomial to its evaluation form
+            CExp::Eval(box a) => {
                 let t = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
 
                 // Only univariate and MLE polynomials can be evaluated
                 match t.clone() {
-                    CTyp::Uni(tid, _) | CTyp::Mle(tid, _) => {
+                    CTyp::Uni(tid, n) => {
                         let k = kctx.get(&tid).ok_or(
                             TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tid)))?;
                         // Only field elements can be evaluated
                         if k.is_scalar() {
-                            Ok(CTyp::Base(tid))
+                            Ok(CTyp::vec(CTyp::Base(tid), n))
+                        } else {
+                            Err(TypeError::eval(kctx, vctx, &a, &t))
+                        }
+                    },
+                    CTyp::Mle(tid, n) => {
+                        let k = kctx.get(&tid).ok_or(
+                            TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tid)))?;
+                        // Only field elements can be evaluated
+                        if k.is_scalar() {
+                            Ok(CTyp::vec(CTyp::Base(tid), 1 << n))
                         } else {
                             Err(TypeError::eval(kctx, vctx, &a, &t))
                         }
@@ -993,12 +966,12 @@ mod tests {
 
     // Test interpolate
     #[test]
-    fn test_interpolate() {
+    fn test_coef() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an interpolation expression interpolate([1, 2, 3], [1, 2, 3])
-        let interp1 = CExp::interpolate(
+        // Create an interpolation expressionin coef([1, 2, 3], [1, 2, 3])
+        let interp1 = CExp::coef(
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::lit(2),
@@ -1008,7 +981,7 @@ mod tests {
         assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Uni(Tid::from("F"), 3)));
 
-        let interp_bad = CExp::interpolate(
+        let interp_bad = CExp::coef(
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::varstr("g1"),
@@ -1019,53 +992,29 @@ mod tests {
 
     // Test evaluation
     #[test]
-    fn test_evaluate() {
+    fn test_eval() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an evaluation expression evaluate([f1, 2, 3])
-        let eval1 = CExp::evaluate(
-            CExp::coef(CExp::vec(vec![
-                CExp::varstr("f1"),
-                CExp::lit(2),
-                CExp::lit(3),
-            ])));
+        // Create an evaluation expression eval(coef([f1,2,3]))
+        let eval1 = CExp::eval(
+            CExp::coef(
+                CExp::vec(
+                    vec![
+                        CExp::varstr("f1"),
+                        CExp::lit(2),
+                        CExp::lit(3),
+                    ])));
 
         assert_eq!(eval1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("F"))));
+            Ok(CTyp::vec(CTyp::Base(Tid::from("F")), 3)));
 
-        let eval_bad = CExp::evaluate(
+        let eval_bad = CExp::eval(
             CExp::vec(vec![
                 CExp::varstr("f1"),
             ]));
 
         assert!(eval_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
-    }
-
-    // Test vanishing polynomial
-    #[test]
-    fn test_vanishing() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        // Create a vanishing polynomial expression
-        let vanish1 = CExp::vanishing(
-            CExp::vec(vec![
-                CExp::varstr("f1"),
-                CExp::lit(2),
-                CExp::lit(3),
-            ]));
-
-        assert_eq!(vanish1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Uni(Tid::from("F"), 3)));
-
-        let vanish_bad = CExp::vanishing(
-            CExp::vec(vec![
-                CExp::varstr("f1"),
-                CExp::varstr("g1"),
-            ]));
-
-        assert!(vanish_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
     // Test for function application
@@ -1102,5 +1051,28 @@ mod tests {
             CExp::lit(2)
         ]));
         assert!(app2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Test for random access
+    #[test]
+    fn test_ram() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create a random access expression v1[2]
+        let ram1 = CExp::ram(
+            CExp::varstr("v1"),
+            CExp::lit(2));
+
+        assert_eq!(ram1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Base(Tid::from("F"))));
+
+        // Create a random access expression v1[0..4]
+        let ram2 = CExp::ram(
+            CExp::varstr("v1"),
+            CExp::range(Range::new(0, 4)));
+
+        assert_eq!(ram2.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(CTyp::Base(Tid::from("F")), 4)));
     }
 }

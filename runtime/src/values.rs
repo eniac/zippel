@@ -1117,19 +1117,10 @@ impl<C: ArkConfig> Hash for Value<C> {
     }
 }
 
-pub type ValueBls12_381 = Value<ArkBls12_381>;
-pub type ValueCurve25519 = Value<ArkCurve25519>;
-pub type ValueBn254 = Value<ArkBn254>;
-pub type ValueMNT4_298 = Value<ArkMNT4_298>;
-pub type ValueSecp256k1 = Value<ArkSecp256k1>;
-pub type ValuePallas = Value<ArkPallas>;
-pub type ValueVesta = Value<ArkVesta>;
-pub type ValueEd25519 = Value<ArkEd25519>;
-
 #[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)] use ark_std::test_rng;
 #[cfg(test)]
-impl<'a> Arbitrary<'a> for ValueBls12_381 {
+impl<'a, C: ArkConfig> Arbitrary<'a> for Value<C> {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let mut rng = test_rng();
         if u.arbitrary::<bool>()? {

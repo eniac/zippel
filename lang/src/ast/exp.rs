@@ -130,6 +130,13 @@ pub enum Exp<N> {
     ///     ```
     Coef(Box<Exp<N>>),
 
+    ///     Convert from lagrange domain to evaluation domain.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let p = eval(poly);
+    ///     ```
+    Eval(Box<Exp<N>>),
+
     ///     Multilinear extension of a matrix, polynomial, etc.
     ///     **Zippel Code:**
     ///     ```zippel
@@ -184,27 +191,6 @@ pub enum Exp<N> {
     ///     r <- challenge<F>();
     ///     ```
     Challenge(Tid),
-
-    ///     Convert from evaluation domain to lagrange domain.
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let p = interpolate([1, 2]);
-    ///     ```
-    Interpolate(Box<Exp<N>>),
-
-    ///     Convert from lagrange domain to evaluation domain.
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let p = evaluate(poly);
-    ///     ```
-    Evaluate(Box<Exp<N>>),
-
-    ///     Vanishing polynomial of a vector
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let p = vanishing([1, 2]);
-    ///     ```
-    Vanishing(Box<Exp<N>>),
 
     ///     Represents inclusion of an element in a vector
     ///
@@ -310,12 +296,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Random(t) => Ok(Exp::Random(t)),
             Exp::Gen(t) => Ok(Exp::Gen(t)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Interpolate(box x) =>
-                Ok(Exp::Interpolate(Box::new(x.traverse1(f)?))),
-            Exp::Evaluate(box x) =>
-                Ok(Exp::Evaluate(Box::new(x.traverse1(f)?))),
-            Exp::Vanishing(box x) =>
-                Ok(Exp::Vanishing(Box::new(x.traverse1(f)?))),
+            Exp::Eval(box x) =>
+                Ok(Exp::Eval(Box::new(x.traverse1(f)?))),
             Exp::Ram(box x, box i) =>
                 Ok(Exp::Ram(
                         Box::new(x.traverse1(f)?),
@@ -355,9 +337,7 @@ impl TidSubst for CExp {
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
-            | Exp::Interpolate(box p)
-            | Exp::Evaluate(box p)
-            | Exp::Vanishing(box p)
+            | Exp::Eval(box p)
             | Exp::Not(box p) => p.tid_subst(from, to),
             Exp::Vec(v)
             | Exp::App(_, v) => v.tid_subst(from, to),
@@ -386,22 +366,21 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => Set::new(),
+            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_)
+            | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Coef(box p)
-                | Exp::Mle(box p)
-                | Exp::Assert(box p)
-                | Exp::Verify(box p)
-                | Exp::Interpolate(box p)
-                | Exp::Evaluate(box p)
-                | Exp::Vanishing(box p)
-                | Exp::Not(box p) => p.freevars(),
+            | Exp::Mle(box p)
+            | Exp::Assert(box p)
+            | Exp::Verify(box p)
+            | Exp::Eval(box p)
+            | Exp::Not(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
-                | Exp::Ram(box a, box b)
-                | Exp::Contains(box a, box b)
-                | Exp::Map(box a, _, box b)
-                | Exp::Let(_, box a, box b)
-                | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
+            | Exp::Ram(box a, box b)
+            | Exp::Contains(box a, box b)
+            | Exp::Map(box a, _, box b)
+            | Exp::Let(_, box a, box b)
+            | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
         }
     }
 }
@@ -415,9 +394,7 @@ impl ExpSubst for CExp {
             Exp::Coef(box p)
             | Exp::Mle(box p)
             | Exp::Assert(box p)
-            | Exp::Interpolate(box p)
-            | Exp::Evaluate(box p)
-            | Exp::Vanishing(box p)
+            | Exp::Eval(box p)
             | Exp::Verify(box p)
             | Exp::Not(box p) => p.subst(from, to, ctx),
             Exp::Vec(v)
@@ -495,12 +472,8 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::map(x.range_traverse(f)?, id,r.range_traverse(f)?)),
             Exp::Ram(box x, box i) =>
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
-            Exp::Evaluate(box x) =>
-                Ok(Exp::evaluate(x.range_traverse(f)?)),
-            Exp::Vanishing(box x) =>
-                Ok(Exp::vanishing(x.range_traverse(f)?)),
-            Exp::Interpolate(box x) =>
-                Ok(Exp::interpolate(x.range_traverse(f)?)),
+            Exp::Eval(box x) =>
+                Ok(Exp::eval(x.range_traverse(f)?)),
             Exp::Contains(box a, box b) =>
                 Ok(Exp::contains(a.range_traverse(f)?, b.range_traverse(f)?)),
             Exp::Not(box a) =>
@@ -582,14 +555,8 @@ impl<N> Exp<N> {
     pub fn mle(a: Self) -> Self {
         Exp::Mle(Box::new(a))
     }
-    pub fn interpolate(e: Self) -> Self {
-        Exp::Interpolate(Box::new(e))
-    }
-    pub fn evaluate(e: Self) -> Self {
-        Exp::Evaluate(Box::new(e))
-    }
-    pub fn vanishing(e: Self) -> Self {
-        Exp::Vanishing(Box::new(e))
+    pub fn eval(e: Self) -> Self {
+        Exp::Eval(Box::new(e))
     }
     pub fn challenge(t: Tid) -> Self {
         Exp::Challenge(t)
@@ -762,18 +729,8 @@ where
                 d.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Interpolate(b) => allocator.concat([
-                allocator.text("interpolate("),
-                (*b).pretty(allocator),
-                allocator.text(")")
-            ]),
-            Exp::Evaluate(b) => allocator.concat([
-                allocator.text("evaluate("),
-                (*b).pretty(allocator),
-                allocator.text(")")
-            ]),
-            Exp::Vanishing(b) => allocator.concat([
-                allocator.text("vanishing("),
+            Exp::Eval(b) => allocator.concat([
+                allocator.text("eval("),
                 (*b).pretty(allocator),
                 allocator.text(")")
             ]),
@@ -970,9 +927,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::interp_exp => Ok(Exp::interpolate(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::eval_exp => Ok(Exp::evaluate(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::vanish_exp => Ok(Exp::vanishing(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::eval_exp => Ok(Exp::eval(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
                 Rule::challenge_exp =>
                     Ok(Exp::challenge(Tid::from_pest(&mut pair.into_inner())?)),
@@ -1157,32 +1112,22 @@ fn parser_bin() {
 }
 
 #[test]
-fn parser_interpolate() {
-    let ex = "interpolate(x + 2)";
+fn parser_coef() {
+    let ex = "coef([1,2,3])";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::interpolate(Exp::varstr("x") + Exp::from(2)))
+        Ok(Exp::coef(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
     );
 }
 
 #[test]
-fn parser_evaluate() {
-    let ex = "evaluate(x + 2)";
+fn parser_eval() {
+    let ex = "eval(x + 2)";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::evaluate(Exp::varstr("x") + Exp::from(2)))
-    );
-}
-
-#[test]
-fn parser_vanishing() {
-    let ex = "vanishing(x + 2)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
-    assert_eq!(
-        UExp::from_pest(&mut pairs),
-        Ok(Exp::vanishing(Exp::varstr("x") + Exp::from(2)))
+        Ok(Exp::eval(Exp::varstr("x") + Exp::from(2)))
     );
 }
 

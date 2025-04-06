@@ -1,10 +1,10 @@
 use crate::typ::{Typ, Size, Kind, CTyp, TypeVars, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
-use crate::ast::{Arg, Args, ExpSubst};
-use share::{Pretty, Set, Ctx, DocAllocator, DocBuilder, BoxAllocator};
+use crate::ast::{Arg, Args};
+use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
-use crate::id::{Gen, Vid, Fid, Tid, TidSubst};
+use crate::id::{Gen, Fid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
 
