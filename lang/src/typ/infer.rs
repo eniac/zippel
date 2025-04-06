@@ -319,6 +319,18 @@ impl Typeable for CExp {
                         // Add an element to the vector
                         Ok(CTyp::vec(t, n + 1))
                     },
+                    (CTyp::Mle(t1, n), CTyp::Mle(t2, m)) => {
+                        // Type [t1] and [t2] should be the same ([t])
+                        let t = Tid::lub_equ(t1, t2, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        // Add the sizes of the MLEs and pad to the next power of two
+                        let (l, r) = log2((1 << n) + (1 << m));
+                        if r == 1 {
+                            Ok(CTyp::mle(t, l))
+                        } else {
+                            Ok(CTyp::mle(t, l + 1))
+                        }
+                    },
                     (_, _) => Err(TypeError::concat(kctx, vctx, &ta, &tb))
                 }
             }
@@ -622,6 +634,10 @@ mod tests {
             vctx.insert(&Vid::from("s1"), &CTyp::Base(Tid::from("S")));
             // Add variable "s2" of type "S"
             vctx.insert(&Vid::from("s2"), &CTyp::Base(Tid::from("S")));
+            // Add variable "p" of type "Uni<F, 5>"
+            vctx.insert(&Vid::from("p"), &CTyp::Uni(Tid::from("F"), 5));
+            // Add variable "m" of type "Mle<F, 3>"
+            vctx.insert(&Vid::from("m"), &CTyp::Mle(Tid::from("F"), 3));
             vctx
         };
     }
@@ -885,6 +901,12 @@ mod tests {
             CExp::concat(CExp::varstr("f2"), CExp::varstr("v2"));
         assert_eq!(fv2_concat.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(CTyp::varstr("F"), 5)));
+
+        // Create expression m ++ m
+        let mle_concat =
+            CExp::concat(CExp::varstr("m"), CExp::varstr("m"));
+        assert_eq!(mle_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::mle(Tid::from("F"), 4)));
     }
 
     // Test for equality
