@@ -56,8 +56,14 @@ pub enum TypeError {
     #[error("ConcatenateError: Expects two vectors with the same element types:\n {0}, {1} |- {2} ++ {3}")]
     Concat(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CTyp, CTyp),
 
-    #[error("InterpolateError: Expects two field vectors with the same size:\n{0}, {1} |- interpolate ( {2}: {3}, {4}: {5} )")]
-    Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+    #[error("InterpolateError: Expects a field vector:\n{0}, {1} |- interpolate ( {2}: {3})")]
+    Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
+    #[error("EvaluateError: Expects a polynomial (univariate or MLE):\n{0}, {1} |- evaluate ( {2}: {3})")]
+    Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
+    #[error("VanishingError: Expects a field vector:\n{0}, {1} |- vanishing ( {2}: {3})")]
+    Vanishing(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
@@ -127,8 +133,14 @@ impl<'a> TypeError {
     pub fn concat(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CTyp, b: &CTyp) -> Self {
         TypeError::Concat(kctx.clone(), vctx.clone(), a.clone(), b.clone())
     }
-    pub fn interp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
-        TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
+    pub fn interp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+        TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+    }
+    pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+        TypeError::Eval(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+    }
+    pub fn vanish(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+        TypeError::Vanishing(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
     pub fn ram(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
@@ -167,7 +179,7 @@ impl Typeable for CExp {
                 // It must be a vector of fields, or a vector of Fin
                 match typ {
                     CTyp::Vec(box b, n) => {
-                        let i = b.to_field(kctx).ok_or(TypeError::coef(kctx, &vctx, self))?;
+                        let i = b.to_scalar(kctx).ok_or(TypeError::coef(kctx, &vctx, self))?;
                         Ok(CTyp::uni(i, n))
                     },
                     _ => Err(TypeError::coef(kctx, &vctx, self))
@@ -183,7 +195,7 @@ impl Typeable for CExp {
                 // It must be a vector of fields, or a vector of Fin
                 match typ {
                     CTyp::Vec(box b, n) => {
-                        let i = b.to_field(kctx).ok_or(TypeError::mle(kctx, &vctx, self))?;
+                        let i = b.to_scalar(kctx).ok_or(TypeError::mle(kctx, &vctx, self))?;
 
                         // MLEs come in sizes 2^n
                         let (exp, rem) = log2(n);
@@ -269,7 +281,7 @@ impl Typeable for CExp {
             }
 
             // Handle ^
-            CExp::Bin(BinOp::Pow, a, b) => {
+            CExp::Bin(BinOp::Pow, box a, box b) => {
                 let ta = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
                 let tb = b.infer(kctx, fctx, vctx)
@@ -387,7 +399,7 @@ impl Typeable for CExp {
                     TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&t)))?;
 
                 // Only allow challenges/random for field elements
-                if k.is_multiplicative() {
+                if k.is_scalar() {
                     Ok(CTyp::Base(t))
                 } else {
                     Err(TypeError::challenge(kctx, vctx, t, k))
@@ -409,24 +421,53 @@ impl Typeable for CExp {
             }
 
             // Interpolation of points into a univariate polynomial
-            CExp::Interpolate(box a, box b) => {
-                let ta = a.infer(kctx, fctx, vctx)
+            CExp::Interpolate(box a) => {
+                let t = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
-                let tb = b.infer(kctx, fctx, vctx)
-                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
-
-                // Must have a LUB; a vector of fields
-                let t = CTyp::lub_equ(ta.clone(), tb.clone(), kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self),  e))?;
 
                 // Only field vectors can be interpolated
-                match t {
-                    CTyp::Vec(box t, n) => {
+                match t.clone() {
+                    CTyp::Vec(box ta, n) => {
                         // Must be a field
-                        let t = t.to_field(kctx).ok_or(TypeError::interp(kctx, vctx, &a, ta, &b, tb))?;
+                        let t = ta.to_scalar(kctx).ok_or(TypeError::interp(kctx, vctx, &a, &t))?;
                         Ok(CTyp::Uni(t, n))
                     },
-                    _ => Err(TypeError::interp(kctx, vctx, &a, ta, &b, tb))
+                    _ => Err(TypeError::interp(kctx, vctx, &a, &t))
+                }
+            },
+            // Vanishing polynomial of points
+            CExp::Vanishing(box a) => {
+                let t = a.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+
+                // Only field vectors can be interpolated
+                match t.clone() {
+                    CTyp::Vec(box ta, n) => {
+                        // Must be a field
+                        let t = ta.to_scalar(kctx).ok_or(TypeError::vanish(kctx, vctx, &a, &t))?;
+                        Ok(CTyp::Uni(t, n))
+                    },
+                    _ => Err(TypeError::vanish(kctx, vctx, &a, &t))
+                }
+            },
+            // Evaluate a polynomial at some points (or MLE at bool hypercube)
+            CExp::Evaluate(box a) => {
+                let t = a.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+
+                // Only univariate and MLE polynomials can be evaluated
+                match t.clone() {
+                    CTyp::Uni(tid, _) | CTyp::Mle(tid, _) => {
+                        let k = kctx.get(&tid).ok_or(
+                            TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tid)))?;
+                        // Only field elements can be evaluated
+                        if k.is_scalar() {
+                            Ok(CTyp::Base(tid))
+                        } else {
+                            Err(TypeError::eval(kctx, vctx, &a, &t))
+                        }
+                    },
+                    _ => Err(TypeError::eval(kctx, vctx, &a, &t))
                 }
             },
 
@@ -572,10 +613,9 @@ impl Typeable for CBody {
 mod tests {
     use super::*;
     use share::{Ctx, Set};
-    use crate::id::{Fid, Tid, Vid};
-    use crate::ast::{BinOp, Exp, Exps, UExp, CExp, CExps, CSig, Sig, Args, CArg};
+    use crate::id::{Tid, Vid};
+    use crate::ast::{Exps, CExp, Sig, Args, CArg};
     use crate::typ::{TypeVar, TypeVars, CTyp, Kind};
-    use crate::typ::lub::{Lub, LubError, BinopError};
     use crate::typ::range::Range;
     use lazy_static::lazy_static;
 
@@ -586,8 +626,8 @@ mod tests {
             kctx.insert(&Tid::from("F"), &Kind::Field);
             // Add group type "G"
             kctx.insert(&Tid::from("G"), &Kind::Group);
-            // Add multiplicative group type "M"
-            kctx.insert(&Tid::from("M"), &Kind::Multiplicative("F".into()));
+            // Add scalar type "S"
+            kctx.insert(&Tid::from("S"), &Kind::Scalar("G".into()));
             kctx
         };
 
@@ -605,10 +645,10 @@ mod tests {
             vctx.insert(&Vid::from("g1"), &CTyp::Base(Tid::from("G")));
             // Add variable "g2" of type "G"
             vctx.insert(&Vid::from("g2"), &CTyp::Base(Tid::from("G")));
-            // Add variable "m1" of type "M"
-            vctx.insert(&Vid::from("m1"), &CTyp::Base(Tid::from("M")));
-            // Add variable "m2" of type "M"
-            vctx.insert(&Vid::from("m2"), &CTyp::Base(Tid::from("M")));
+            // Add variable "s1" of type "S"
+            vctx.insert(&Vid::from("s1"), &CTyp::Base(Tid::from("S")));
+            // Add variable "s2" of type "S"
+            vctx.insert(&Vid::from("s2"), &CTyp::Base(Tid::from("S")));
             vctx
         };
     }
@@ -646,10 +686,10 @@ mod tests {
         assert_eq!(group_add.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G"))));
 
-        // Create expression m1 + m2
+        // Create expression s1 + s2
         let mult_group_add =
-            CExp::add(CExp::varstr("m1"), CExp::varstr("m2"));
-        assert!(mult_group_add.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+            CExp::add(CExp::varstr("s1"), CExp::varstr("s2"));
+        assert_eq!(mult_group_add.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 + v1
         let vec_add1 =
@@ -682,10 +722,10 @@ mod tests {
         assert_eq!(group_sub.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G"))));
 
-        // Create expression m1 - m2
+        // Create expression s1 - s2
         let mult_group_sub =
-            CExp::sub(CExp::varstr("m1"), CExp::varstr("m2"));
-        assert!(mult_group_sub.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+            CExp::sub(CExp::varstr("s1"), CExp::varstr("s2"));
+        assert_eq!(mult_group_sub.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 - v1
         let vec_sub1 =
@@ -717,11 +757,11 @@ mod tests {
             CExp::mul(CExp::varstr("g1"), CExp::varstr("g2"));
         assert!(group_mul.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
-        // Create expression m1 * m2
+        // Create expression s1 * s2
         let mult_group_mul =
-            CExp::mul(CExp::varstr("m1"), CExp::varstr("m2"));
+            CExp::mul(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(mult_group_mul.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("M"))));
+            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 * v1
         let vec_mul1 =
@@ -753,11 +793,11 @@ mod tests {
             CExp::div(CExp::varstr("g1"), CExp::varstr("g2"));
         assert!(group_div.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
-        // Create expression m1 / m2
+        // Create expression s1 / s2
         let mult_group_div =
-            CExp::div(CExp::varstr("m1"), CExp::varstr("m2"));
+            CExp::div(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(mult_group_div.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("M"))));
+            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 / v1
         let vec_div1 =
@@ -779,7 +819,7 @@ mod tests {
 
         // Create expression x ^ y
         let field_pow =
-            CExp::pow(CExp::varstr("f1"), CExp::varstr("f2"));
+            CExp::pow(CExp::varstr("f1"), CExp::lit(2));
 
         assert_eq!(field_pow.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F"))));
@@ -789,20 +829,19 @@ mod tests {
             CExp::pow(CExp::varstr("g1"), CExp::varstr("g2"));
         assert!(group_pow.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
-        // Create expression m1 ^ m2
+        // Create expression s1 ^ s2
         let mult_group_pow1 =
-            CExp::pow(CExp::varstr("m1"), CExp::varstr("m2"));
-        assert!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+            CExp::pow(CExp::varstr("s1"), CExp::lit(2));
+        assert_eq!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Base(Tid::from("S"))));
 
-        // Create expression m1 ^ f1
+        // Create expression s1 ^ f1
         let mult_group_pow1 =
-            CExp::pow(CExp::varstr("m1"), CExp::varstr("f1"));
-        assert_eq!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("M"))));
+            CExp::pow(CExp::varstr("s1"), CExp::varstr("f1"));
+        assert!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
         // Create expression v1 ^ v1
         let vec_pow1 =
-            CExp::pow(CExp::varstr("v1"), CExp::varstr("v1"));
+            CExp::pow(CExp::varstr("v1"), CExp::vec(vec![CExp::lit(1); 5]));
         assert_eq!(vec_pow1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(CTyp::varstr("F"), 5)));
 
@@ -830,11 +869,11 @@ mod tests {
             CExp::dot(CExp::varstr("g1"), CExp::varstr("g2"));
         assert!(group_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
-        // Create expression m1 . m2
+        // Create expression s1 . s2
         let mult_group_dot =
-            CExp::dot(CExp::varstr("m1"), CExp::varstr("m2"));
+            CExp::dot(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(mult_group_dot.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("M"))));
+            Ok(CTyp::Base(Tid::from("S"))));
 
         // Create expression v1 . v1
         let vec_dot1 =
@@ -891,14 +930,10 @@ mod tests {
             CExp::equ(CExp::varstr("g1"), CExp::varstr("g2"));
         assert_eq!(group_equ.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
 
-        // Create expression m1 == m2
+        // Create expression s1 == s2
         let mult_group_equ =
-            CExp::equ(CExp::varstr("m1"), CExp::varstr("m2"));
+            CExp::equ(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(mult_group_equ.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
-
-        let mult_group_equ2 =
-            CExp::equ(CExp::varstr("m1"), CExp::varstr("f1"));
-        assert_eq!(mult_group_equ2.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
 
         // Create expression v1 == v1
         let vec_equ1 =
@@ -965,48 +1000,75 @@ mod tests {
         // Create an interpolation expression interpolate([1, 2, 3], [1, 2, 3])
         let interp1 = CExp::interpolate(
             CExp::vec(vec![
-                CExp::lit(1),
+                CExp::varstr("f1"),
                 CExp::lit(2),
                 CExp::lit(3),
-            ]),
-            CExp::vec(vec![
-                CExp::lit(4),
-                CExp::lit(5),
-                CExp::lit(6),
             ]));
 
         assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Uni(Tid::from("F"), 3)));
 
-        // create an interpolation expression interpolate([1, 2, f1], [f2, 3, f1])
-        let interp2 = CExp::interpolate(
-            CExp::vec(vec![
-                CExp::lit(1),
-                CExp::lit(2),
-                CExp::varstr("f1"),
-            ]),
-            CExp::vec(vec![
-                CExp::varstr("f2"),
-                CExp::lit(3),
-                CExp::varstr("f1"),
-            ]));
-
-        assert_eq!(interp2.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Uni(Tid::from("F"), 3)));
-
         let interp_bad = CExp::interpolate(
             CExp::vec(vec![
                 CExp::varstr("f1"),
-                CExp::varstr("f2"),
-            ]),
-            CExp::vec(vec![
                 CExp::varstr("g1"),
-                CExp::varstr("g2"),
             ]));
 
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
+    // Test evaluation
+    #[test]
+    fn test_evaluate() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create an evaluation expression evaluate([f1, 2, 3])
+        let eval1 = CExp::evaluate(
+            CExp::coef(CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::lit(2),
+                CExp::lit(3),
+            ])));
+
+        assert_eq!(eval1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Base(Tid::from("F"))));
+
+        let eval_bad = CExp::evaluate(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+            ]));
+
+        assert!(eval_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Test vanishing polynomial
+    #[test]
+    fn test_vanishing() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create a vanishing polynomial expression
+        let vanish1 = CExp::vanishing(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::lit(2),
+                CExp::lit(3),
+            ]));
+
+        assert_eq!(vanish1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Uni(Tid::from("F"), 3)));
+
+        let vanish_bad = CExp::vanishing(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::varstr("g1"),
+            ]));
+
+        assert!(vanish_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Test for function application
     #[test]
     fn test_app() {
         let fctx = Set::singleton(
@@ -1031,7 +1093,6 @@ mod tests {
         ]));
 
         assert!(app1.infer(&KIND_CTX, &Set::new(), &mut vctx).is_err());
-
         assert_eq!(app1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G"))));
 

@@ -188,9 +188,23 @@ pub enum Exp<N> {
     ///     Convert from evaluation domain to lagrange domain.
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let p = interpolate([1, 2], [0, 3]);
+    ///     let p = interpolate([1, 2]);
     ///     ```
-    Interpolate(Box<Exp<N>>, Box<Exp<N>>),
+    Interpolate(Box<Exp<N>>),
+
+    ///     Convert from lagrange domain to evaluation domain.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let p = evaluate(poly);
+    ///     ```
+    Evaluate(Box<Exp<N>>),
+
+    ///     Vanishing polynomial of a vector
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let p = vanishing([1, 2]);
+    ///     ```
+    Vanishing(Box<Exp<N>>),
 
     ///     Represents inclusion of an element in a vector
     ///
@@ -296,11 +310,12 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Random(t) => Ok(Exp::Random(t)),
             Exp::Gen(t) => Ok(Exp::Gen(t)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Interpolate(box x, box y) =>
-                Ok(Exp::Interpolate(
-                    Box::new(x.traverse1(f)?),
-                    Box::new(y.traverse1(f)?)
-                )),
+            Exp::Interpolate(box x) =>
+                Ok(Exp::Interpolate(Box::new(x.traverse1(f)?))),
+            Exp::Evaluate(box x) =>
+                Ok(Exp::Evaluate(Box::new(x.traverse1(f)?))),
+            Exp::Vanishing(box x) =>
+                Ok(Exp::Vanishing(Box::new(x.traverse1(f)?))),
             Exp::Ram(box x, box i) =>
                 Ok(Exp::Ram(
                         Box::new(x.traverse1(f)?),
@@ -340,12 +355,14 @@ impl TidSubst for CExp {
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
+            | Exp::Interpolate(box p)
+            | Exp::Evaluate(box p)
+            | Exp::Vanishing(box p)
             | Exp::Not(box p) => p.tid_subst(from, to),
             Exp::Vec(v)
             | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
-            | Exp::Interpolate(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Contains(box a, box b)
             | Exp::Let(_, box a, box b)
@@ -374,10 +391,12 @@ impl FreeVars for CExp {
                 | Exp::Mle(box p)
                 | Exp::Assert(box p)
                 | Exp::Verify(box p)
+                | Exp::Interpolate(box p)
+                | Exp::Evaluate(box p)
+                | Exp::Vanishing(box p)
                 | Exp::Not(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
-                | Exp::Interpolate(box a, box b)
                 | Exp::Ram(box a, box b)
                 | Exp::Contains(box a, box b)
                 | Exp::Map(box a, _, box b)
@@ -396,12 +415,14 @@ impl ExpSubst for CExp {
             Exp::Coef(box p)
             | Exp::Mle(box p)
             | Exp::Assert(box p)
+            | Exp::Interpolate(box p)
+            | Exp::Evaluate(box p)
+            | Exp::Vanishing(box p)
             | Exp::Verify(box p)
             | Exp::Not(box p) => p.subst(from, to, ctx),
             Exp::Vec(v)
             | Exp::App(_, v) => v.subst(from, to, ctx),
             Exp::Bin(_, box a, box b)
-            | Exp::Interpolate(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Let(None, box a, box b)
             | Exp::Contains(box a, box b) => {
@@ -474,8 +495,12 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::map(x.range_traverse(f)?, id,r.range_traverse(f)?)),
             Exp::Ram(box x, box i) =>
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
-            Exp::Interpolate(box x, box y) =>
-                Ok(Exp::interpolate(x.range_traverse(f)?, y.range_traverse(f)?)),
+            Exp::Evaluate(box x) =>
+                Ok(Exp::evaluate(x.range_traverse(f)?)),
+            Exp::Vanishing(box x) =>
+                Ok(Exp::vanishing(x.range_traverse(f)?)),
+            Exp::Interpolate(box x) =>
+                Ok(Exp::interpolate(x.range_traverse(f)?)),
             Exp::Contains(box a, box b) =>
                 Ok(Exp::contains(a.range_traverse(f)?, b.range_traverse(f)?)),
             Exp::Not(box a) =>
@@ -557,8 +582,14 @@ impl<N> Exp<N> {
     pub fn mle(a: Self) -> Self {
         Exp::Mle(Box::new(a))
     }
-    pub fn interpolate(e: Self, d: Self) -> Self {
-        Exp::Interpolate(Box::new(e), Box::new(d))
+    pub fn interpolate(e: Self) -> Self {
+        Exp::Interpolate(Box::new(e))
+    }
+    pub fn evaluate(e: Self) -> Self {
+        Exp::Evaluate(Box::new(e))
+    }
+    pub fn vanishing(e: Self) -> Self {
+        Exp::Vanishing(Box::new(e))
     }
     pub fn challenge(t: Tid) -> Self {
         Exp::Challenge(t)
@@ -731,11 +762,19 @@ where
                 d.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Interpolate(b, d) => allocator.concat([
+            Exp::Interpolate(b) => allocator.concat([
                 allocator.text("interpolate("),
                 (*b).pretty(allocator),
-                allocator.text(", "),
-                (*d).pretty(allocator),
+                allocator.text(")")
+            ]),
+            Exp::Evaluate(b) => allocator.concat([
+                allocator.text("evaluate("),
+                (*b).pretty(allocator),
+                allocator.text(")")
+            ]),
+            Exp::Vanishing(b) => allocator.concat([
+                allocator.text("vanishing("),
+                (*b).pretty(allocator),
                 allocator.text(")")
             ]),
             Exp::Ram(x, i) => allocator.concat([
@@ -800,7 +839,7 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.intersperse(
-            self.0.into_iter().map(|x| x.pretty(allocator)), ";\n")
+            self.0.into_iter().map(|x| x.pretty(allocator)), ", ")
     }
     fn is_nil(&self) -> bool {
         self.0.is_empty()
@@ -931,13 +970,9 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::interp_exp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::interpolate(
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
-                    ))
-                },
+                Rule::interp_exp => Ok(Exp::interpolate(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::eval_exp => Ok(Exp::evaluate(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::vanish_exp => Ok(Exp::vanishing(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
                 Rule::challenge_exp =>
                     Ok(Exp::challenge(Tid::from_pest(&mut pair.into_inner())?)),
@@ -998,7 +1033,6 @@ impl<'pest> FromPest<'pest> for UExp {
                 },
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
-                    dbg!(&inner);
                     Ok(Exp::verify(
                         UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
@@ -1124,14 +1158,31 @@ fn parser_bin() {
 
 #[test]
 fn parser_interpolate() {
-    let ex = "interpolate(x + 2, 4*x)";
+    let ex = "interpolate(x + 2)";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::interpolate(
-            Exp::varstr("x") + Exp::from(2),
-            Exp::from(4) * Exp::varstr("x")
-        ))
+        Ok(Exp::interpolate(Exp::varstr("x") + Exp::from(2)))
+    );
+}
+
+#[test]
+fn parser_evaluate() {
+    let ex = "evaluate(x + 2)";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::evaluate(Exp::varstr("x") + Exp::from(2)))
+    );
+}
+
+#[test]
+fn parser_vanishing() {
+    let ex = "vanishing(x + 2)";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::vanishing(Exp::varstr("x") + Exp::from(2)))
     );
 }
 
@@ -1205,7 +1256,6 @@ fn parser_concat() {
 fn parser_let() {
     let ex = "let x = 2; 3";
     let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
-    dbg!(&pairs);
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::letx(

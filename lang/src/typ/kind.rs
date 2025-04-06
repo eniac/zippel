@@ -16,8 +16,6 @@ pub enum Kind {
     Group,
     /// Scalar of group
     Scalar(Tid),
-    /// Multiplicative subgroup of field [F: Tid]
-    Multiplicative(Tid),
     /// Pairing-friendly groups
     Pairing(Tid, Tid),
     /// Range of numbers
@@ -25,9 +23,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub fn multiplicative<'a>(a: &'a str) -> Self {
-       Kind::Multiplicative(Tid::new(a))
-    }
     pub fn scalar<'a>(a: &'a str) -> Self {
         Kind::Scalar(Tid::new(a))
     }
@@ -37,9 +32,10 @@ impl Kind {
     pub fn range(start: usize, step: usize, end: usize) -> Self {
         Kind::Range(Range { start, step, end })
     }
-    pub fn is_multiplicative(&self) -> bool {
+    pub fn is_scalar(&self) -> bool {
         match self {
-            Kind::Field | Kind::Multiplicative(_) => true,
+            Kind::Field => true,
+            Kind::Scalar(_) => true,
             _ => false,
         }
     }
@@ -69,7 +65,6 @@ where
         match self {
             Kind::Field => allocator.text("Field"),
             Kind::Group => allocator.text(format!("Group")),
-            Kind::Multiplicative(f) => allocator.text(format!("Multiplicative({})", f)),
             Kind::Scalar(f) => allocator.text(format!("Scalar({})", f)),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing({}, {})", g1, g2)),
             Kind::Range(r) => allocator.concat([
@@ -110,7 +105,6 @@ impl<'pest> FromPest<'pest> for Kind {
             Rule::kind_ty => Kind::from_pest(&mut pair.into_inner()),
             Rule::field_ty => Ok(Kind::Field),
             Rule::group_ty => Ok(Kind::Group),
-            Rule::multiplicative_ty => Ok(Kind::Multiplicative(Tid::from_pest(&mut pair.into_inner())?)),
             Rule::scalar_ty => Ok(Kind::Scalar(Tid::from_pest(&mut pair.into_inner())?)),
             Rule::pairing_ty => {
                 let mut inner = pair.into_inner();

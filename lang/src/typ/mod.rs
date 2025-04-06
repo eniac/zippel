@@ -121,11 +121,11 @@ impl<N> Typ<N> {
             _ => None
         }
     }
-    pub fn to_field(self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
+    pub fn to_scalar(self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(&b)?;
-                if k == &Kind::Field {
+                if k.is_scalar() {
                     Some(b)
                 } else {
                     None
@@ -133,7 +133,7 @@ impl<N> Typ<N> {
             },
             Typ::Fin(_) =>
                 // Find the first field and return It
-                ctx.iter().find(|(_, k)| k == &&Kind::Field)
+                ctx.iter().find(|(_, k)| k.is_scalar())
                     .map(|(b, _)| b.clone()),
 
             _ => None

@@ -131,12 +131,12 @@ impl<'pest> FromPest<'pest> for TypeVars {
                             }
                             tvars.push(tv);
                         },
-                        Kind::Multiplicative(f) => {
-                            // Is [f] a field kind?
+                        Kind::Scalar(f) => {
+                            // Is [f] a group kind?
                             let tvf = tvars.iter().find(|tv| tv.id == f)
                                 .ok_or(ConversionError::Malformed(InputError::KindNotFound(f.clone())))?;
-                            if ! (tvf.kind == Kind::Field) {
-                                return Err(ConversionError::Malformed(InputError::MultiplicativeField(f.clone(), tvf.kind.clone())));
+                            if ! (tvf.kind == Kind::Group) {
+                                return Err(ConversionError::Malformed(InputError::ScalarGroup(f.clone(), tvf.kind.clone())));
                             }
                             tvars.push(tv);
                         },
@@ -205,7 +205,7 @@ impl fmt::Display for TypeVars {
 #[cfg(test)] use pest::Parser;
 #[test]
 fn typevars_parser() {
-    let ex = "A: Field, B1: Group, B2: Group, D: Multiplicative<A>, E: Pairing<B1, B2>, F: 0..10";
+    let ex = "A: Field, B1: Group, B2: Group, D: Scalar<B2>, E: Pairing<B1, B2>, F: 0..10";
     let mut pairs = ZippelParser::parse(Rule::tvars, ex).unwrap();
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
@@ -213,7 +213,7 @@ fn typevars_parser() {
             TypeVar::new("A", Kind::Field),
             TypeVar::new("B1", Kind::Group),
             TypeVar::new("B2", Kind::Group),
-            TypeVar::new("D", Kind::multiplicative("A")),
+            TypeVar::new("D", Kind::scalar("B2")),
             TypeVar::new("E", Kind::pairing("B1", "B2")),
             TypeVar::new("F", Kind::range(0, 1, 10))
         ]))
@@ -226,11 +226,11 @@ fn typevars_parser() {
         Err(ConversionError::Malformed(InputError::DuplicateTid(Tid::new("A"))))
     );
 
-    let ex_bad_multiplicative = "A: Field, B: Group, D: Multiplicative<B>";
+    let ex_bad_multiplicative = "A: Field, B: Group, D: Scalar<A>";
     let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_multiplicative).unwrap();
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
-        Err(ConversionError::Malformed(InputError::MultiplicativeField(Tid::new("B"), Kind::Group)))
+        Err(ConversionError::Malformed(InputError::ScalarGroup(Tid::new("A"), Kind::Field)))
     );
 
     let ex_bad_pairing = "A: Field, B: Group, E: Pairing<A, B>";

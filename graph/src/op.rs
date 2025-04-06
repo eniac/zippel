@@ -8,7 +8,8 @@ use lang::id::Tid;
 
 use share::Set;
 
-/// Operands are expressions which are (very close to) irreducible
+/// Operands are expressions which are not important
+/// enough to be nodes in the graph.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum Operand<T> {
     /// Numeric literal
@@ -50,7 +51,7 @@ pub enum Op<T, V> {
     Hash(T),
 
     /// Convert from evaluation domain to lagrange domain.
-    Interpolate(V, V),
+    Interpolate(V),
 
     /// Equality check
     Equ(V, V),

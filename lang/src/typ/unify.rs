@@ -56,7 +56,7 @@ impl Unify for Tid {
             // Both kinds are defined
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Group, Kind::Group) => Ok(subs.add_equ(&a, &b)),
-            (Kind::Multiplicative(x), Kind::Multiplicative(y)) => {
+            (Kind::Scalar(x), Kind::Scalar(y)) => {
                 subs.add_equ(x, y);
                 Ok(subs.add_equ(&a, &b))
             },
@@ -65,8 +65,6 @@ impl Unify for Tid {
                 subs.add_equ(k2, k4);
                 Ok(subs.add_equ(&a, &b))
             },
-            (Kind::Field, Kind::Multiplicative(f)) => Ok(subs.add_equ(&a, &f)),
-            (Kind::Multiplicative(f), Kind::Field) => Ok(subs.add_equ(&b, &f)),
             // Ranges in kinds should be concretized already, if not its a bug
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) => Err(UnifyError::kind_mismatch(&a, &ka, &b, &kb))
@@ -102,20 +100,20 @@ impl Unify for CTyp {
                 },
             // Finite fields can act like 0 degree polynomals
             (CTyp::Uni(a, n), b) | (b, CTyp::Uni(a, n)) => {
-                let t = b.to_field(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
+                let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
                 Ok(CTyp::Uni(Tid::unify(a, t, ctx, subs)
                     .map_err(|e| UnifyError::typ(&x, &y, e))?, n))
             },
             // Finite fields can act like 0 variable MLEs
             (CTyp::Mle(a, n), b) | (b, CTyp::Mle(a, n)) => {
-                let t = b.to_field(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
+                let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
                 Ok(CTyp::Mle(Tid::unify(a, t, ctx, subs)
                     .map_err(|e| UnifyError::typ(&x, &y, e))?, n))
             },
             // Indices can act like finite fields
             (a, b) => {
-                let ta = a.to_field(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
-                let tb = b.to_field(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
+                let ta = a.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
+                let tb = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
                 Ok(CTyp::Base(Tid::unify(ta, tb, ctx, subs)
                     .map_err(|e| UnifyError::typ(&x, &y, e))?))
             }
@@ -130,16 +128,18 @@ fn unify_typ() {
     let f2 = Tid::from("F2");
     let g1 = Tid::from("G1");
     let g2 = Tid::from("G2");
-    let m1 = Tid::from("M1");
+    let s1 = Tid::from("S1");
     let p = Tid::from("P");
+    let pp = Tid::from("P2");
 
     let ctx = Ctx::from([
         (f1.clone(), Kind::Field),
         (f2.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
-        (m1.clone(), Kind::Multiplicative(f1.clone())),
-        (p.clone(), Kind::Pairing(g1.clone(), g2.clone()))
+        (s1.clone(), Kind::Scalar(f1.clone())),
+        (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
+        (pp.clone(), Kind::Pairing(g1.clone(), g1.clone())),
     ]);
 
     let mut subs = AliasSubsts::new();
@@ -147,13 +147,13 @@ fn unify_typ() {
     let tf1 = CTyp::Base(f1.clone());
     let tf2 = CTyp::Base(f2.clone());
     let tg1 = CTyp::Base(g1.clone());
-    let tg2 = CTyp::Base(g2.clone());
-    let tm1 = CTyp::Base(m1.clone());
+    let ts1 = CTyp::Base(s1.clone());
     let tp = CTyp::Base(p.clone());
+    let tp2 = CTyp::Base(pp.clone());
 
     // Unify base types
     assert_eq!(CTyp::unify(tg1.clone(), tg1.clone(), &ctx, &mut subs), Ok(tg1.clone()));
-    assert_eq!(CTyp::unify(tm1.clone(), tf1.clone(), &ctx, &mut subs), Ok(tf1.clone()));
+    assert_eq!(CTyp::unify(ts1.clone(), ts1.clone(), &ctx, &mut subs), Ok(ts1.clone()));
     assert!(subs.is_empty()); // same field M ~ F and group G1 ~ G2 no substitution needed
 
     assert_eq!(CTyp::unify(tf1.clone(), tf2.clone(), &ctx, &mut subs), Ok(tf1.clone()));
@@ -176,10 +176,17 @@ fn unify_typ() {
     subs.clear();
 
     // Multivariate polynomial unification
-    assert_eq!(CTyp::unify(CTyp::mle(m1.clone(), 10), CTyp::mle(f1.clone(), 11), &ctx, &mut subs), Ok(CTyp::mle(f1.clone(), 11)));
+    assert_eq!(CTyp::unify(CTyp::mle(s1.clone(), 10), CTyp::mle(s1.clone(), 11), &ctx, &mut subs), Ok(CTyp::mle(s1.clone(), 11)));
     assert!(subs.is_empty()); // same field M ~ F no substitution needed
 
     // Fin type unification
     assert_eq!(CTyp::unify(CTyp::fin(Range::new(0, 2)), CTyp::fin(Range::new(1, 10)), &ctx, &mut subs), Ok(CTyp::fin(Range::new(0, 10))));
     assert!(subs.is_empty()); // no substitution needed
+
+    // Bad pairing
+    assert_eq!(CTyp::unify(tp.clone(), tp2.clone(), &ctx, &mut subs),
+        Ok(CTyp::Base(Tid::from("P"))));
+    assert_eq!(subs.get(&g1), Some(&Set::from([g1.clone(), g2.clone()])));
+    assert_eq!(subs.get(&g2), Some(&Set::from([g1.clone(), g2.clone()])));
+
 }

@@ -32,11 +32,10 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 
 /// Base kinds
-kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | multiplicative_ty }
+kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty }
     field_ty          = { "Field" }
     group_ty          = { "Group" }
     pairing_ty        = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
-    multiplicative_ty = { "Multiplicative" ~ "<" ~ id ~ ">" }
     scalar_ty         = { "Scalar" ~ "<" ~ id ~ ">" }
     range_ty          = { range }
 
@@ -55,6 +54,8 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | coef_exp
          | mle_exp
          | interp_exp
+         | eval_exp
+         | vanish_exp
          | challenge_exp
          | random_exp
          | map_exp
@@ -72,7 +73,9 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
     gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                         // Group generator
     coef_exp      = { "coef" ~ aexp  }                                 // Create a univariate polynomial
     mle_exp       = { "mle"  ~ aexp  }                                 // Create a multilinear expression
-    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ "," ~ aexp ~ ")" }  // Interpolate (FFT) with domain and values
+    interp_exp    = { "interpolate" ~ "(" ~ aexp ~ ")" }               // Interpolate (IFFT) points to a univariate
+    eval_exp      = { "evaluate" ~ "(" ~ aexp ~ ")" }                  // Evaluate (FFT) a univariate or MLE
+    vanish_exp    = { "vanishing" ~ "(" ~ aexp ~ ")" }                    // Vanishing polynomial for vec of points
     random_exp    = { "random" ~ "<" ~ id ~ ">" }                      // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                   // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }    // Map comprehension
@@ -107,7 +110,7 @@ arg = { qualifier ~ id ~ ":" ~ typ }
    qualifier = { "public" | "private" }
 args = { arg? ~ ("," ~ arg)* }
 
-/// Declarations are either [protocols] or [functions]. Protocols end with a [verify] and functions end with an [AExp]
+/// Declarations are either [protocols] or [functions].
 decl = { proto_decl | func_decl }
     proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ bexp ~ "{" ~ stmts ~ "}" }
     func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }

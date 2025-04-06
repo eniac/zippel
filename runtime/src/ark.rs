@@ -171,7 +171,7 @@ pub trait ArkScalarOps<F: PrimeField> {
         domain.fft_in_place(a);
     }
 
-    /// Random and hashing
+    /// Random and challenge sponge infrastructure
     #[inline]
     fn rand<R: Rng + ?Sized>(rng: &mut R) -> F {
         F::rand(rng)
@@ -179,7 +179,7 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     #[inline]
     fn hash<H: Hasher>(f: &F, h: &mut H) {
-        f.hash(h)
+        f.hash(h);
     }
 
     #[inline]

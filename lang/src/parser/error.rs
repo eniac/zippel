@@ -35,8 +35,6 @@ pub enum InputError<'pest> {
     KindNotFound(Tid),
     #[error("KindError: Pairing<{0},{1}> requires {2}: {3} to be a Group")]
     PairingGroup(Tid, Tid, Tid, Kind),
-    #[error("KindError: Multiplicative<{0}> requires {0}: {1} to be a Field")]
-    MultiplicativeField(Tid, Kind),
     #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
     ScalarGroup(Tid, Kind),
     #[error("ReservedType: Bool is a reserved type")]
