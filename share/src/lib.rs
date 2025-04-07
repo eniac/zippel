@@ -2,6 +2,7 @@
 mod context;
 mod pretty;
 pub mod traversal;
+pub mod macros;
 
 pub use pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 pub use context::{Ctx, Set};

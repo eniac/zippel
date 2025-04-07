@@ -6,10 +6,9 @@ use std::fmt;
 use core::hash::{Hash, Hasher};
 use std::ops::{Add, Sub, Mul, Div};
 use ark_ec::CurveGroup;
-use ark_ec::hashing::map_to_curve_hasher::MapToCurveBasedHasher;
 
 use crate::arkworks::config::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
-use crate::typ::{RTyp, RBase};
+use crate::typ::RTyp;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -33,6 +32,8 @@ pub enum Value<C: ArkConfig> {
     G2Affine(C::G2Affine),
     VecG1Affine(Vec<C::G1Affine>),
     VecG2Affine(Vec<C::G2Affine>),
+    /// Vectors of vectors etc
+    Vec(Vec<Value<C>>)
 }
 
 impl<C: ArkConfig> Value<C> {
@@ -110,6 +111,10 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter()
                 .zip(other.into_vec_gt_mut().par_iter_mut())
                 .for_each(|(a, b)| C::POps::add(a, b)),
+            Value::Vec(vs) =>
+                vs.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_add(b)),
         }
     }
 
@@ -186,6 +191,10 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter()
                 .zip(other.into_vec_gt_mut().par_iter_mut())
                 .for_each(|(a, b)| C::POps::sub(a, b)),
+            Value::Vec(vs) =>
+                vs.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_sub(b)),
         }
     }
 
@@ -230,6 +239,9 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecGT(_) =>
                         other.into_vec_gt_mut().par_iter_mut()
                         .for_each(|b| C::POps::mul(&(*a).into(), b)),
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_mul(b)),
                 },
             Value::Scalar(a) =>
                 match &other {
@@ -264,6 +276,9 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecGT(_) =>
                         other.into_vec_gt_mut().par_iter_mut()
                         .for_each(|b| C::POps::mul(a, b)),
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_mul(b)),
                 },
             Value::G1(a) =>
                 match &other {
@@ -281,8 +296,12 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::VecG1Affine(C::G1Ops::vec_mul(a, vr));
                     },
                     // Group1 * Vec<G2>
-                    Value::VecG2(_) =>
+                    Value::VecG2(_) | Value::VecG2Affine(_) =>
                         *other = Value::GT(C::POps::billinear_vec_mul(&vec![*a], other.into_vec_g2_mut())[0]),
+                    // Group1 * Vec<T>
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_mul(b)),
                     _ => panic!("Expected scalar or group2, found {}", other)
                 },
             Value::G2(a) =>
@@ -301,8 +320,12 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::VecG2Affine(C::G2Ops::vec_mul(a, vr));
                     },
                     // G2 * Vec<Group1>
-                    Value::VecG1(_) =>
+                    Value::VecG1(_) | Value::VecG1Affine(_) =>
                         *other = Value::GT(C::POps::billinear_vec_mul(other.into_vec_g1_mut(), &vec![*a])[0]),
+                    // G2 * Vec<T>
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_mul(b)),
                     _ => panic!("Expected scalar or group1, found {}", other)
                 },
             Value::G1Affine(a) =>
@@ -322,6 +345,10 @@ impl<C: ArkConfig> Value<C> {
                         let vr = other.into_vec_scalar_mut();
                         *other = Value::VecGT(C::POps::vec_mul(a, vr))
                     },
+                    // GT * Vec<T>
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_mul(b)),
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::VecIndex(v) =>
@@ -373,6 +400,11 @@ impl<C: ArkConfig> Value<C> {
                         v.par_iter()
                         .zip(other.into_vec_gt_mut().par_iter_mut())
                         .for_each(|(a, b)| C::POps::mul(&(*a).into(), b)),
+                    // Vec<Index> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::Index(*a).value_mul(b)),
                 },
             Value::VecScalar(v) =>
                 match &other {
@@ -392,31 +424,36 @@ impl<C: ArkConfig> Value<C> {
                     // Vec<index> * GT
                     Value::GT(g) =>
                         *other = Value::VecGT(C::POps::vec_mul(g, v)),
-                    // Vec<Index> * Vec<Index> = Vec<Index>
+                    // Vec<Scalar> * Vec<Scalar> = Vec<Scalar>
                     Value::VecIndex(_) =>
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b)),
-                    // Vec<Index> * Vec<Scalar> = Vec<Scalar>
+                    // Vec<Scalar> * Vec<Scalar> = Vec<Scalar>
                     Value::VecScalar(_) =>
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b)),
-                    // Vec<Index> * Vec<Group1> = Vec<Group1>
+                    // Vec<Scalar> * Vec<Group1> = Vec<Group1>
                     Value::VecG1(_) | Value::VecG1Affine(_) =>
                         v.par_iter()
                         .zip(other.into_vec_g1_mut().par_iter_mut())
                         .for_each(|(a, b)| C::G1Ops::mul(a, b)),
-                    // Vec<Index> * Vec<G2> = Vec<G2>
+                    // Vec<Scalar> * Vec<G2> = Vec<G2>
                     Value::VecG2(_) | Value::VecG2Affine(_) =>
                         v.par_iter()
                         .zip(other.into_vec_g2_mut().par_iter_mut())
                         .for_each(|(a, b)| C::G2Ops::mul(a, b)),
-                    // Vec<Index> * Vec<GT> = Vec<GT>
+                    // Vec<Scalar> * Vec<GT> = Vec<GT>
                     Value::VecGT(_) =>
                         v.par_iter()
                         .zip(other.into_vec_gt_mut().par_iter_mut())
                         .for_each(|(a, b)| C::POps::mul(a, b)),
+                    // Vec<Scalar> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::Scalar(*a).value_mul(b)),
                     _ => panic!("Expected vec index, found {}", other)
                 },
             Value::VecG1(v) =>
@@ -450,6 +487,11 @@ impl<C: ArkConfig> Value<C> {
                     // Vec<Group1> * Vec<G2>
                     Value::VecG2(_)  | Value::VecG2Affine(_) =>
                         *other = Value::VecGT(C::POps::billinear_vec_mul(v, other.into_vec_g2_mut())),
+                    // Vec<Group1> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::G1(*a).value_mul(b)),
                     _ => panic!("Expected scalar or group2, found {}", other)
                 },
             Value::VecG2(v) =>
@@ -483,6 +525,11 @@ impl<C: ArkConfig> Value<C> {
                     // Vec<Group1> * Vec<G2>
                     Value::VecG1(_) | Value::VecG1Affine(_) =>
                         *other = Value::VecGT(C::POps::billinear_vec_mul(other.into_vec_g1_mut(), v)),
+                    // Vec<G2> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::G2(*a).value_mul(b)),
                     _ => panic!("Expected scalar or group1, found {}", other)
                 },
             Value::VecG1Affine(v) =>
@@ -510,8 +557,17 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::POps::mul(a, b));
                         *other = Value::VecGT(vr);
                     },
+                    // Vec<GT> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::GT(*a).value_mul(b)),
                     _ => panic!("Expected scalar, found {}", other)
                 },
+            Value::Vec(v) =>
+                v.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_mul(b)),
         }
     }
 
@@ -533,6 +589,9 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecScalar(_) =>
                         other.into_vec_scalar_mut().par_iter_mut()
                         .for_each(|b| C::FOps::div(&(*a).into(), b)),
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_div(b)),
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::Scalar(a) =>
@@ -545,6 +604,9 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecIndex(_) | Value::VecScalar(_) =>
                         other.into_vec_scalar_mut().par_iter_mut()
                         .for_each(|b| C::FOps::div(a, b)),
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_div(b)),
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::G1(a) =>
@@ -563,6 +625,11 @@ impl<C: ArkConfig> Value<C> {
                         C::FOps::vec_inv(&mut vr);
                         *other = Value::VecG1Affine(C::G1Ops::vec_mul(a, &vr));
                     },
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_div(b)),
+
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::G2(a) =>
@@ -581,6 +648,10 @@ impl<C: ArkConfig> Value<C> {
                         C::FOps::vec_inv(&mut vr);
                         *other = Value::VecG2Affine(C::G2Ops::vec_mul(a, &vr));
                     },
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_div(b)),
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::G1Affine(a) =>
@@ -603,6 +674,10 @@ impl<C: ArkConfig> Value<C> {
                         C::FOps::vec_inv(&mut vr);
                         *other = Value::VecGT(C::POps::vec_mul(a, &vr));
                     },
+                    Value::Vec(_) =>
+                        other.into_vec_mut().par_iter_mut()
+                        .for_each(|b| self.value_div(b)),
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::VecIndex(v) =>
@@ -627,6 +702,12 @@ impl<C: ArkConfig> Value<C> {
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::div(&(*a).into(), b)),
+                    // Vec<Index> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::Index(*a).value_div(b)),
+
                     _ => panic!("Expected vec index, found {}", other)
                 },
             Value::VecScalar(v) =>
@@ -650,6 +731,12 @@ impl<C: ArkConfig> Value<C> {
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b));
                     },
+                    // Vec<Scalar> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::Scalar(*a).value_div(b)),
+
                     _ => panic!("Expected vec index, found {}", other)
                 },
             Value::VecG1(v) =>
@@ -675,6 +762,12 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::G1Ops::mul(a, b));
                         *other = Value::VecG1(vr);
                     },
+                    // Vec<G1> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::G1(*a).value_div(b)),
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::VecG2(v) =>
@@ -700,6 +793,12 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::G2Ops::mul(a, b));
                         *other = Value::VecG2(vr);
                     },
+                    // Vec<G2> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::G2(*a).value_div(b)),
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::VecG1Affine(v) =>
@@ -729,8 +828,18 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::POps::mul(a, b));
                         *other = Value::VecGT(vr);
                     },
+                    // Vec<GT> * Vec<T>
+                    Value::Vec(_) =>
+                        v.par_iter()
+                        .zip(other.into_vec_mut().par_iter_mut())
+                        .for_each(|(a, b)| Value::GT(*a).value_div(b)),
+
                     _ => panic!("Expected scalar, found {}", other)
                 },
+            Value::Vec(v) =>
+                v.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_div(b)),
         }
     }
 
@@ -772,6 +881,23 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter_mut().for_each(|v| C::FOps::pow(v, *i));
                 *other = Value::VecScalar(vs);
             },
+            // Vec<Index> ^ Vec<Index> = Vec<Index>
+            (Value::VecIndex(vs), _) =>
+                vs.par_iter()
+                .zip(other.into_vec_index_mut().par_iter_mut())
+                .for_each(|(a, b)| *b = pow64(*a, *b)),
+
+            // Vec<T> ^ Index
+            (Value::Vec(vs), Value::Index(_)) => {
+                let mut vs = vs.clone();
+                vs.par_iter_mut().for_each(|v| Value::value_pow(other, v));
+                *other = Value::Vec(vs);
+            }
+            // Vec<T> ^ Vec
+            (Value::Vec(v), _) =>
+                v.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_pow(b)),
             (a, b) => panic!("Mismatched values {} ^ {}", a, b)
         }
     }
@@ -860,6 +986,10 @@ impl<C: ArkConfig> Value<C> {
                         C::POps::add(&b, &mut a);
                         a
                     })),
+            (Value::Vec(a), _) =>
+                a.par_iter()
+                .zip(other.into_vec_mut().par_iter_mut())
+                .for_each(|(a, b)| a.value_dot(b)),
             (a, b) => panic!("Mismatched values {} . {}", a, b)
         }
     }
@@ -916,42 +1046,46 @@ impl<C: ArkConfig> Value<C> {
             (Value::G1(a), Value::G1(b)) => a == b,
             (Value::G2(a), Value::G2(b)) => a == b,
             (Value::GT(a), Value::GT(b)) => a == b,
-            (Value::G1Affine(a), Value::G1(b)) => a == &b.into_affine(),
-            (Value::G2Affine(a), Value::G2(b)) => a == &b.into_affine(),
-            (Value::G1(a), Value::G1Affine(b)) => &a.into_affine() == b,
-            (Value::G2(a), Value::G2Affine(b)) => &a.into_affine() == b,
+            (Value::G1Affine(a), Value::G1(b))
+            | (Value::G1(b), Value::G1Affine(a)) => a == &b.into_affine(),
+            (Value::G2Affine(a), Value::G2(b))
+            | (Value::G2(b), Value::G2Affine(a)) => a == &b.into_affine(),
             (Value::VecG1(a), Value::VecG1(b)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
             (Value::VecG2(a), Value::VecG2(b)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
             (Value::VecGT(a), Value::VecGT(b)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
-            (Value::VecG1(a), Value::VecG1Affine(b)) =>
+            (Value::VecG1(a), Value::VecG1Affine(b))
+            | (Value::VecG1Affine(b), Value::VecG1(a)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| &a.into_affine() == b),
-            (Value::VecG1Affine(a), Value::VecG1(b)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == &b.into_affine()),
-            (Value::VecG2(a), Value::VecG2Affine(b)) =>
+            (Value::VecG2(a), Value::VecG2Affine(b))
+            | (Value::VecG2Affine(b), Value::VecG2(a)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| &a.into_affine() == b),
-            (Value::VecG2Affine(a), Value::VecG2(b)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == &b.into_affine()),
+            (Value::Vec(a), Value::Vec(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, b)),
+            (Value::Vec(a), Value::VecScalar(b))
+            | (Value::VecScalar(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::Scalar(*b))),
+            (Value::Vec(a), Value::VecIndex(b))
+            | (Value::VecIndex(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::Index(*b))),
+            (Value::Vec(a), Value::VecG1(b))
+            | (Value::VecG1(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G1(*b))),
+            (Value::Vec(a), Value::VecG2(b))
+            | (Value::VecG2(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G2(*b))),
+            (Value::Vec(a), Value::VecGT(b))
+            | (Value::VecGT(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::GT(*b))),
+            (Value::Vec(a), Value::VecG1Affine(b))
+            | (Value::VecG1Affine(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G1Affine(*b))),
+            (Value::Vec(a), Value::VecG2Affine(b))
+            | (Value::VecG2Affine(b), Value::Vec(a)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G2Affine(*b))),
             (a, b) => panic!("Cannot compare {} == {}", a, b)
-        }
-    }
-
-    /// Random
-    #[inline]
-    pub fn value_rand<R: Rng + Sized>(rng: &mut R, typ: RTyp) -> Self {
-        match typ {
-            RTyp::Base(RBase::Index) => Value::Index(rng.next_u64()),
-            RTyp::Base(RBase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
-            RTyp::Base(RBase::G1) => Value::G1(C::G1Ops::rand(rng)),
-            RTyp::Base(RBase::G2) => Value::G2(C::G2Ops::rand(rng)),
-            RTyp::Base(RBase::GT) => Value::GT(C::POps::rand(rng)),
-            RTyp::Vec(RBase::Index, n) => Value::VecIndex((0..n).map(|_| rng.next_u64()).collect()),
-            RTyp::Vec(RBase::Scalar, n) => Value::VecG1(C::G1Ops::vec_rand(rng, n)),
-            RTyp::Vec(RBase::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, n)),
-            RTyp::Vec(RBase::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, n)),
-            RTyp::Vec(RBase::GT, n) => Value::VecGT(C::POps::vec_rand(rng, n)),
         }
     }
 
@@ -1030,21 +1164,70 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::VecScalar(v) => v,
             Value::VecIndex(v) => {
-                *self = Value::VecScalar(v.iter().map(|i| (*i).into()).collect());
+                *self = Value::VecScalar(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_scalar_mut()
+            },
+            Value::Vec(v) => {
+                *self = Value::VecScalar(v.par_iter().map(|v| v.into_scalar()).collect());
                 self.into_vec_scalar_mut()
             },
             _ => panic!("Expected mut vec scalar, found {}", self),
         }
     }
+
+    #[inline]
+    pub fn into_vec_mut(&mut self) -> &mut Vec<Self> {
+        match self {
+            Value::Vec(v) => v,
+            Value::VecIndex(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::Index(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecG1(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::G1(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecG2(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::G2(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecGT(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::GT(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecG1Affine(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::G1Affine(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecG2Affine(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::G2Affine(*i)).collect());
+                self.into_vec_mut()
+            },
+            Value::VecBool(v) => {
+                *self = Value::Vec(v.par_iter().map(|i| Value::Bool(*i)).collect());
+                self.into_vec_mut()
+            },
+            _ => panic!("Expected mut vec, found {}", self),
+        }
+    }
+
     pub fn into_vec_g1_mut(&mut self) -> &mut Vec<C::G1> {
         match self {
             Value::VecG1(v) => v,
+            Value::VecG1Affine(v) => {
+                *self = Value::VecG1(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_g1_mut()
+            },
             _ => panic!("Expected mut vec group1, found {}", self),
         }
     }
     pub fn into_vec_g2_mut(&mut self) -> &mut Vec<C::G2> {
         match self {
             Value::VecG2(v) => v,
+            Value::VecG2Affine(v) => {
+                *self = Value::VecG2(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_g2_mut()
+            },
             _ => panic!("Expected mut vec group2, found {}", self),
         }
     }
@@ -1080,27 +1263,59 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Generate a random value, given some parameters
-    pub fn generate_value<R: Rng + Sized>(rng: &mut R, value: usize, e: usize) -> Self {
-        if e == 0 {
-            match value {
-                0 => Value::Scalar(C::FOps::rand(rng)),
-                1 => Value::G1(C::G1Ops::rand(rng)),
-                2 => Value::G2(C::G2Ops::rand(rng)),
-                3 => Value::GT(C::POps::rand(rng)),
-                4 => Value::G1Affine(C::G1Ops::rand(rng).into()),
-                5 => Value::G2Affine(C::G2Ops::rand(rng).into()),
-                _ => Value::Index(rng.next_u64()),
-            }
-        } else {
-            match value {
-                0 => Value::VecScalar(C::FOps::vec_rand(rng, e)),
-                1 => Value::VecG1(C::G1Ops::vec_rand(rng, e)),
-                2 => Value::VecG2(C::G2Ops::vec_rand(rng, e)),
-                3 => Value::VecGT(C::POps::vec_rand(rng, e)),
-                4 => Value::VecG1Affine(C::G1Ops::vec_rand(rng, e).into_iter().map(|a| a.into()).collect()),
-                5 => Value::VecG2Affine(C::G2Ops::vec_rand(rng, e).into_iter().map(|a| a.into()).collect()),
-                _ => Value::VecIndex((0..e).map(|_| rng.next_u64()).collect()),
-            }
+    pub fn random<R: Rng + Sized>(rng: &mut R, typ: &RTyp) -> Self {
+        match typ {
+            RTyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
+            RTyp::Index => Value::Index(rng.next_u64() % 100),
+            RTyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
+            RTyp::G1 => Value::G1(C::G1Ops::rand(rng)),
+            RTyp::G2 => Value::G2(C::G2Ops::rand(rng)),
+            RTyp::GT => Value::GT(C::POps::rand(rng)),
+            RTyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into()),
+            RTyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into()),
+            RTyp::Vec(box RTyp::Index, n) => Value::VecIndex((0..*n).map(|_| rng.next_u64() % 100).collect()),
+            RTyp::Vec(box RTyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            RTyp::Vec(box RTyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
+            RTyp::Vec(box RTyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
+            RTyp::Vec(box RTyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
+            RTyp::Vec(box RTyp::G1Affine, n) =>
+                Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
+            RTyp::Vec(box RTyp::G2Affine, n) =>
+                Value::VecG2Affine(C::G2Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
+            RTyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
+        }
+    }
+
+    pub fn typ(&self) -> Option<RTyp> {
+        match self {
+            Value::Bool(_) => Some(RTyp::Bool),
+            Value::VecBool(v) => Some(RTyp::Vec(Box::new(RTyp::Bool), v.len())),
+            Value::Index(_) => Some(RTyp::Index),
+            Value::Scalar(_) => Some(RTyp::Scalar),
+            Value::G1(_) => Some(RTyp::G1),
+            Value::G2(_) => Some(RTyp::G2),
+            Value::G1Affine(_) => Some(RTyp::G1Affine),
+            Value::G2Affine(_) => Some(RTyp::G2Affine),
+            Value::GT(_) => Some(RTyp::GT),
+            Value::VecScalar(v) => Some(RTyp::Vec(Box::new(RTyp::Scalar), v.len())),
+            Value::VecG1(v) => Some(RTyp::Vec(Box::new(RTyp::G1), v.len())),
+            Value::VecG2(v) => Some(RTyp::Vec(Box::new(RTyp::G2), v.len())),
+            Value::VecG1Affine(v) => Some(RTyp::Vec(Box::new(RTyp::G1Affine), v.len())),
+            Value::VecG2Affine(v) => Some(RTyp::Vec(Box::new(RTyp::G2Affine), v.len())),
+            Value::VecGT(v) => Some(RTyp::Vec(Box::new(RTyp::GT), v.len())),
+            Value::VecIndex(v) => Some(RTyp::Vec(Box::new(RTyp::Index), v.len())),
+            Value::Vec(v) =>
+                if v.is_empty() {
+                    return None;
+                } else {
+                    let typ = v[0].typ();
+                    for i in v.iter().skip(1) {
+                        if typ != i.typ() {
+                            return None;
+                        }
+                    }
+                    Some(RTyp::Vec(Box::new(typ?), v.len()))
+                }
         }
     }
 }
@@ -1177,50 +1392,176 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             },
+            Value::Vec(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
         }
     }
 }
 
 impl<C: ArkConfig> Hash for Value<C> {
     fn hash<H: Hasher>(&self, h: &mut H) {
-        match self {
-            Value::Bool(b) => h.write_u8(*b as u8),
-            Value::VecBool(v) => v.iter().for_each(|b| h.write_u8(*b as u8)),
-            Value::Index(i) => h.write_u64(*i),
-            Value::Scalar(s) => C::FOps::hash(s, h),
-            Value::G1(g) => C::G1Ops::hash(g, h),
-            Value::G2(g) => C::G2Ops::hash(g, h),
-            Value::GT(g) => C::POps::hash(g, h),
-            Value::G1Affine(g) => C::G1Ops::hash(&(*g).into(), h),
-            Value::G2Affine(g) => C::G2Ops::hash(&(*g).into(), h),
-            Value::VecScalar(v) => C::FOps::vec_hash(v, h),
-            Value::VecIndex(v) => v.iter().for_each(|i| h.write_u64(*i)),
-            Value::VecG1(v) => C::G1Ops::vec_hash(v, h),
-            Value::VecG2(v) => C::G2Ops::vec_hash(v, h),
-            Value::VecGT(v) => C::POps::vec_hash(v, h),
-            Value::VecG1Affine(v) =>
-                v.iter().for_each(|g| C::G1Ops::hash(&(*g).into(), h)),
-            Value::VecG2Affine(v) =>
-                v.iter().for_each(|g| C::G2Ops::hash(&(*g).into(), h)),
-        }
+        unimplemented!();
     }
 }
 
-#[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
+#[cfg(test)] use crate::arkworks::ArkBls12_381;
+#[cfg(test)] use share::assert_deq;
 #[cfg(test)] use ark_std::test_rng;
-#[cfg(test)]
-impl<'a, C: ArkConfig> Arbitrary<'a> for Value<C> {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut rng = test_rng();
-        if u.arbitrary::<bool>()? {
-            // Generate elements (size = 0)
-            let value = u.int_in_range(0..=4)?;
-            Ok(Value::generate_value(&mut rng, value, 0))
-        } else {
-            // Generate vectors (size > 0)
-            let value = u.int_in_range(0..=6)?;
-            let e = (1 as usize) << u.int_in_range(1..=6)?;
-            Ok(Value::generate_value(&mut rng, value, e))
-        }
-    }
+
+// Commutativity of addition
+#[test]
+fn test_value_add_comm() {
+    // Scalar + Scalar
+    let mut rng = test_rng();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // Group1 + Group1
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // Group2 + Group2
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // GT + GT
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // Vec<Scalar> + Vec<Scalar>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+
+    // Vec<Index> + Vec<Index>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // Vec<Scalar> + Vec<Index>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
+    assert_deq!(am, bm);
+
+    // G1 + G1Affine
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_add(&a, &mut bm);
+    Value::value_add(&b, &mut am);
 }
+
+// Commutativity of multiplication
+#[test]
+fn test_value_mul_comm() {
+    // Scalar * Scalar
+    let mut rng = test_rng();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::Scalar));
+
+    // Vec<Scalar> * Vec<Scalar>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::vec_scalar(10)));
+
+    // Vec<Index> * Vec<Index>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::vec_index(10)));
+
+    // Vec<Scalar> * Vec<Index>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::vec_scalar(10)));
+
+    // G1 * G2
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::GT));
+
+    // G1Affine * G2Affine
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2Affine);
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::GT));
+
+    // Vec<G1> * Vec<G2Affine>
+    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G1), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G2Affine), 10));
+    let mut am = a.clone();
+    let mut bm = b.clone();
+    Value::value_mul(&a, &mut bm);
+    Value::value_mul(&b, &mut am);
+    assert_deq!(am, bm);
+    assert_eq!(am.typ(), Some(RTyp::vec_gt(10)));
+}
+
+

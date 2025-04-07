@@ -70,8 +70,8 @@ impl TOperand {
         TOperand { typ, operand }
     }
 
-    pub fn typ(&self) -> RTyp {
-        self.typ
+    pub fn typ(&self) -> &RTyp {
+        &self.typ
     }
 
     pub fn operand(&self) -> &Operand {

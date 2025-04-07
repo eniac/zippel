@@ -5,7 +5,7 @@ use share::traversal::ToTraversal1;
 
 use crate::graph::{Op, Operand};
 use crate::graph::Principal;
-use crate::typ::{RTyp, RBase};
+use crate::typ::RTyp;
 use std::fmt;
 
 /// A node in the DAG

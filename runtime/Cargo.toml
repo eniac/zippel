@@ -33,4 +33,5 @@ lang = { path = "../lang" }
 [dev-dependencies]
 ark-std = "0.5.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
+arbtest = "0.3.2"
 

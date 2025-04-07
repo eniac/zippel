@@ -31,7 +31,6 @@ pub struct Dag<A>(Graph<Node<A>, Edge>);
 /// Dag with no annotations
 pub type PDag = Dag<Principal>;
 
-/*
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
     #[error("Variable not found {0}")]
@@ -51,6 +50,7 @@ impl GraphError {
     }
 }
 
+/*
 impl<A> Dag<A> {
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
@@ -134,7 +134,8 @@ impl PDag {
         let mut g = Dag(Graph::new());
         // Build [fctx] from module
         let fctx =
-            m.iter().map(|(sig, body)| (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
+            m.iter().map(|(sig, body)|
+                (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
         for (sig, body) in m.into_iter() {
             // Initial node is the function signature
             let start = g.add_node(Node::inp(sig.clone()));
@@ -154,13 +155,15 @@ impl PDag {
                     if let CTyp::Bool = relation.infer(&kctx, &fctx.keys(), &vctx)? {
                         g.add_exp(relation, start, &kctx, &fctx, &vctx, &vars)?;
                     } else {
-                        return Err(TypeError::decl(&sig.name,TypeError::bool(&kctx, &vctx, &relation)).into());
+                        return Err(TypeError::decl(&sig.name,
+                                TypeError::bool(&kctx, &vctx, &relation)).into());
                     }
                     // Add the body to the Graph
                     if let CTyp::Bool = body.infer(&kctx, &fctx.keys(), &vctx)? {
                         g.add_exp(body, start, &kctx, &fctx, &vctx, &vars);
                     } else {
-                        return Err(TypeError::decl(&sig.name,TypeError::bool(&kctx, &vctx, &body)).into());
+                        return Err(TypeError::decl(&sig.name,
+                                TypeError::bool(&kctx, &vctx, &body)).into());
                     }
                 },
                 CBody::Func { body } => {
@@ -168,7 +171,8 @@ impl PDag {
                     if t == sig.ret {
                         g.add_exp(body, start, &kctx, &fctx, &vctx, &vars);
                     } else {
-                        return Err(TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &t).into());
+                        return Err(TypeError::func_ret(&kctx, &vctx, body,
+                                &sig.name, &sig.ret, &t).into());
                     }
                 },
             }
@@ -532,5 +536,4 @@ fn test_graph_from_module() {
     let g = PrettyResult(PDag::from_module(m)).pretty_unwrap();
     g.write_pdf("test_graph_from_module").unwrap();
 }
-
 */

@@ -19,7 +19,7 @@ use ark_std::UniformRand;
 use crate::nothing::{NoCurve, NoPairing};
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
-pub trait ArkConfig {
+pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq {
     type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
     type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
@@ -365,15 +365,33 @@ impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
 
 /// Concrete Zippel arkworks configurations
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkBls12_381 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkBn254 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkMNT4_298 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkCurve25519 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkSecp256k1 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkPallas {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkVesta {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkEd25519 {}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
+
 pub type ArkField17 = ArkFieldN<F17>;
 pub type ArkField65537 = ArkFieldN<F65537>;
 
