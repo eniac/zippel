@@ -77,6 +77,9 @@ pub enum TypeError {
     #[error("BoolError: Expected boolean expression:\n{0}, {1} |- {2}")]
     Bool(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
+    #[error("FuncRetError: The return type of function {3} must be {4} but is found {0}, {1} |- {2} : {5}")]
+    FuncRet(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Fid, CTyp, CTyp),
+
     #[error(transparent)]
     Unify(#[from] UnifyError),
 
@@ -150,6 +153,9 @@ impl<'a> TypeError {
     }
     pub fn contains(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: CExp, ta: CTyp, b: CExp, tb: CTyp) -> Self {
         TypeError::Contains(kctx.clone(), vctx.clone(), a, ta, b, tb)
+    }
+    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: &Fid, t: &CTyp, r: &CTyp) -> Self {
+        TypeError::FuncRet(kctx.clone(), vctx.clone(), e, id.clone(), t.clone(), r.clone())
     }
 }
 
@@ -361,6 +367,22 @@ impl Typeable for CExp {
                 }
             }
 
+            CExp::Bin(BinOp::Contains, a, b) => {
+                let ta = a.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let tb = b.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match (ta, tb) {
+                    (x, CTyp::Vec(box a, _)) => {
+                        CTyp::lub_equ(x, a, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        Ok(CTyp::bool())
+                    },
+                    (ta, tb) => Err(TypeError::contains(kctx, &vctx, *a, ta, *b, tb))
+                }
+            }
+
             // Range expression
             CExp::Range(r) => {
                 // Infer the type of the range expression as a vector of sizes
@@ -425,6 +447,7 @@ impl Typeable for CExp {
                     Err(TypeError::gen(kctx, vctx, t, k))
                 }
             }
+
             // Convert a polynomial to its evaluation form
             CExp::Eval(box a) => {
                 let t = a.infer(kctx, fctx, vctx)
@@ -514,21 +537,6 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Contains(a, b) => {
-                let ta = a.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (ta, tb) {
-                    (x, CTyp::Vec(box a, _)) => {
-                        CTyp::lub_equ(x, a, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        Ok(CTyp::bool())
-                    },
-                    (ta, tb) => Err(TypeError::contains(kctx, &vctx, *a, ta, *b, tb))
-                }
-            }
 
             CExp::Not(a) => {
                 let ta = a.traverse1(&mut |x| x.infer(kctx, fctx, vctx))

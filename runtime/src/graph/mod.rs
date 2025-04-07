@@ -4,10 +4,10 @@ mod edge;
 mod op;
 mod principal;
 
-pub use op::{Operand, Op, TOp};
-pub use node::{Node, PNode};
-pub use edge::{Dependency, Edge};
-pub use principal::Principal;
+pub use crate::graph::op::{Operand, Op, TOperand, TOp};
+pub use crate::graph::node::{Node, PNode};
+pub use crate::graph::edge::Edge;
+pub use crate::graph::principal::Principal;
 
 use share::Ctx;
 use lang::ast::{CModule, CExp, ExpSubst, Arg, CSig, CBody};
@@ -31,6 +31,7 @@ pub struct Dag<A>(Graph<Node<A>, Edge>);
 /// Dag with no annotations
 pub type PDag = Dag<Principal>;
 
+/*
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
     #[error("Variable not found {0}")]
@@ -61,23 +62,17 @@ impl<A> Dag<A> {
         self.0.update_edge(source, sink, edge);
     }
 
-    fn add_edges(&mut self, vars: &Ctx<Vid, NodeIndex>, source: NodeIndex, sink: Value) {
+    fn add_edges(&mut self, vars: &Ctx<Vid, NodeIndex>, source: NodeIndex, sink: Operand) {
         match sink {
-            Value::Lit(_) => (),
-            Value::Var(v) =>
-                self.add_edge(source, vars.get(&v).expect(&format!("Variable not found {}", v)),
-                    Edge::Var(v)),
-            Value::Node(n) => self.add_edge(source, n, Edge::Data),
-            Value::Vec(vs) => {
+            Operand::Lit(_) => (),
+            Operand::Underscore(n) => self.add_edge(source, n, Edge::Data),
+            Operand::Vec(vs) => {
                 for v in vs {
                     self.add_edges(vars, source, v);
                 }
             }
-            Value::Ram(box v, _) => self.add_edges(vars, source, *v),
-            Value::Slice(box v, _) => self.add_edges(vars, source, *v),
-        }
-        for (vid, sink) in sinks {
-            self.add_edge(source, sink, Edge::Var(vid));
+            Operand::Ram(box v, _) => self.add_edges(vars, source, v),
+            _ => unimplemented!()
         }
     }
 
@@ -137,25 +132,47 @@ impl<A> Dag<A> {
 impl PDag {
     fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut g = Dag(Graph::new());
-        // Add empty transcript node
-        let transcr = g.add_node(Node::empty_transcript());
         // Build [fctx] from module
         let fctx =
             m.iter().map(|(sig, body)| (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
         for (sig, body) in m.into_iter() {
             // Initial node is the function signature
-            let it = g.add_node(Node::inp(sig.clone()));
-            // Add arguments to [vctx]
+            let start = g.add_node(Node::inp(sig.clone()));
+            // Add arguments to [vctx] and [vars]
             let mut vars = Ctx::new();
             let mut vctx = Ctx::new();
             for Arg { id, typ, .. } in sig.args {
-                vars.insert(&id, &it);
+                vars.insert(&id, &start);
                 vctx.insert(&id, &typ);
             }
             // Kind context
             let kctx = sig.typevars.to_ctx();
-            g.add_body(body, transcr, it, &kctx, &fctx, &vctx, &vars)?;
-        }
+            // Add the body to the graph
+            match body {
+                CBody::Proto { relation, body } => {
+                    // Add the protocol relation to the graph
+                    if let CTyp::Bool = relation.infer(&kctx, &fctx.keys(), &vctx)? {
+                        g.add_exp(relation, start, &kctx, &fctx, &vctx, &vars)?;
+                    } else {
+                        return Err(TypeError::decl(&sig.name,TypeError::bool(&kctx, &vctx, &relation)).into());
+                    }
+                    // Add the body to the Graph
+                    if let CTyp::Bool = body.infer(&kctx, &fctx.keys(), &vctx)? {
+                        g.add_exp(body, start, &kctx, &fctx, &vctx, &vars);
+                    } else {
+                        return Err(TypeError::decl(&sig.name,TypeError::bool(&kctx, &vctx, &body)).into());
+                    }
+                },
+                CBody::Func { body } => {
+                    let t = body.infer(&kctx, &fctx.keys(), &vctx)?;
+                    if t == sig.ret {
+                        g.add_exp(body, start, &kctx, &fctx, &vctx, &vars);
+                    } else {
+                        return Err(TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &t).into());
+                    }
+                },
+            }
+        };
         Ok(g)
     }
 
@@ -163,48 +180,42 @@ impl PDag {
     pub fn set_principal(&mut self, it: NodeIndex, ann: Principal) {
         self.0[it].set_principal(ann);
     }
-    /// Add a body [body] to the graph
-    pub fn add_body(&mut self,
-        body: CBody, transcr: NodeIndex, it: NodeIndex,
-        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Value, GraphError> {
-        match body {
-            CBody::Proto { relation, body } => {
-                self.add_exp(relation, transcr, kctx, fctx, vctx, vars)?;
-                self.add_exp(body, transcr, kctx, fctx, vctx, vars)
-            },
-            CBody::Func { body } =>
-                self.add_exp(body, transcr, kctx, fctx, vctx, vars)
-        }
-    }
 
     /// Add an expression [exp] to the graph
     pub fn add_exp(&mut self,
         exp: CExp,
         transcr: NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Value, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Operand, GraphError> {
         // Type inference for [self]
-        let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
-        let val = match exp.clone() {
+        match exp.clone() {
             // Literals get appended to the last node [self.it]
             CExp::Lit(n) => {
-                Ok(Value::Lit(n))
+                Ok(Operand::Lit(n))
             },
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) => Ok(Value::Var(id)),
+            CExp::Var(id) => vars.get(&id)
+                .map(|n| Operand::underscore(n))
+                .ok_or_else(|| GraphError::var_not_found(&id)),
 
             // Create a new [coef] node
             CExp::Coef(box v) => {
+                // Infer the type of [v]
+                let tv = v.infer(kctx, &fctx.keys(), vctx)?;
+                // Check if [v] is a scalar vector
+                let (f, n) = tv.to_scalar_vec(kctx).ok_or_else(|| {
+                    Err(TypeError::coef(kctx, vctx, &v))
+                })?;
+
                 // Add child first
                 let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ncoef = self.add_node(Node::coef(typ,  child));
+                let ncoef = self.add_node(Node::coef(,  child));
 
                 // Add edge from [ncoef] to [child]
                 self.add_edges(ncoef, vars, child);
-                Ok(Value::Node(ncoef))
+                Ok(Operand::Underscore(ncoef))
             },
 
             // Create a new [mle] Node
@@ -215,7 +226,7 @@ impl PDag {
                 let nmle = self.add_node(Node::mle(typ, child));
                 // Add edge from [nmle] to [child]
                 self.add_edges(nmle, vars, child);
-                Ok(Value::Node(nmle))
+                Ok(Operand::Node(nmle))
             },
 
             // Create a new [vec] value
@@ -224,7 +235,7 @@ impl PDag {
                 for v in vs {
                     vals.push(self.add_exp(v, transcr, kctx, fctx, vctx, vars)?);
                 }
-                Ok(Value::vec(vals))
+                Ok(Operand::vec(vals))
             }
 
 
@@ -244,7 +255,7 @@ impl PDag {
 
             // Create a new interpolation node
             CExp::Interpolate(box a, box b) => {
-                // Add children first
+                // Add children first        val
                 let vl = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
                 let vr = self.add_exp(b, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
@@ -320,7 +331,7 @@ impl PDag {
             },
 
             // Create a [range] value, no new nodes added
-            CExp::Range(r) => Ok(Value::Range(r)),
+            CExp::Range(r) => Ok(Operand::Range(r)),
 
             // Create a new [map] node, with a vector of values
             CExp::Map(box l, x, box CExp::Vec(vs)) => {
@@ -426,63 +437,63 @@ impl PDag {
                 }
                 // Add the body to the graph
                 self.add_body(body, transcr, it, kctx, fctx, vctx, vars)
-        },
-        CExp::Let(Some(id), box l, box r) => {
-            // Infer the type of [l]
-            let tl = l.infer(kctx, &fctx.keys(), vctx)?;
-            // Add left-hand side as node
-            let nl = self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
-            // Add [id] to the variable context
-            let mut vctx = vctx.clone();
-            vctx.insert(&id, &tl);
-            let mut vars = vars.clone();
-            vars.insert(&id, &nl);
-            // Add right-hand side as Node
-            self.add_exp(r, transcr, it, kctx, fctx, &vctx, &vars)
-        },
-        CExp::Let(None, box l, box r) => {
-            self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
-            self.add_exp(r, transcr, it, kctx, fctx, vctx, vars)
-        },
-        CExp::Log(id, box l, box r) => {
-            // Infer the type of [l]
-            let tl = l.infer(kctx, &fctx.keys(), vctx)?;
-            // Add left-hand side as node
-            let nl = self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
-            // Verifier sees the log statement in [nl]
-            self.set_principal(nl, Principal::Verifier);
-            // Add [id] to the variable context
-            let mut vctx = vctx.clone();
-            vctx.insert(&id, &tl);
-            let mut vars = vars.clone();
-            vars.insert(&id, &nl);
-            // Add right-hand side as Node
-            let nr = self.add_exp(r, nl, it, kctx, fctx, &vctx, &vars)?;
-            // Add transcript edge to [nr]
-            self.add_edge(transcr, nr, Edge::transcript());
-            // Return the right-hand side
-            Ok(nr)
-        },
-        CExp::Assert(box a) => {
-            // Add new node
-            let nassert = self.add_node(Node::check(typ));
-            // Add edge from [it] to [nassert]
-            self.add_edge(it, nassert, Edge::data());
-            let ni = self.add_exp(a, transcr, nassert, kctx, fctx, vctx, vars)?;
-            self.set_principal(ni, Principal::Prover);
-            Ok(ni)
-        },
-        CExp::Verify(box a) => {
-            // Add new node
-            let nverify = self.add_node(Node::check(typ));
-            // Add edge from [it] to [nverify]
-            self.add_edge(it, nverify, Edge::data());
-            let ni = self.add_exp(a, transcr, nverify, kctx, fctx, vctx, vars)?;
-            self.set_principal(ni, Principal::Verifier);
-            Ok(ni)
-        },
+            },
+            CExp::Let(Some(id), box l, box r) => {
+                // Infer the type of [l]
+                let tl = l.infer(kctx, &fctx.keys(), vctx)?;
+                // Add left-hand side as node
+                let nl = self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
+                // Add [id] to the variable context
+                let mut vctx = vctx.clone();
+                vctx.insert(&id, &tl);
+                let mut vars = vars.clone();
+                vars.insert(&id, &nl);
+                // Add right-hand side as Node
+                self.add_exp(r, transcr, it, kctx, fctx, &vctx, &vars)
+            },
+            CExp::Let(None, box l, box r) => {
+                self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
+                self.add_exp(r, transcr, it, kctx, fctx, vctx, vars)
+            },
+            CExp::Log(id, box l, box r) => {
+                // Infer the type of [l]
+                let tl = l.infer(kctx, &fctx.keys(), vctx)?;
+                // Add left-hand side as node
+                let nl = self.add_exp(l, transcr, it, kctx, fctx, vctx, vars)?;
+                // Verifier sees the log statement in [nl]
+                self.set_principal(nl, Principal::Verifier);
+                // Add [id] to the variable context
+                let mut vctx = vctx.clone();
+                vctx.insert(&id, &tl);
+                let mut vars = vars.clone();
+                vars.insert(&id, &nl);
+                // Add right-hand side as Node
+                let nr = self.add_exp(r, nl, it, kctx, fctx, &vctx, &vars)?;
+                // Add transcript edge to [nr]
+                self.add_edge(transcr, nr, Edge::transcript());
+                // Return the right-hand side
+                Ok(nr)
+            },
+            CExp::Assert(box a) => {
+                // Add new node
+                let nassert = self.add_node(Node::check(typ));
+                // Add edge from [it] to [nassert]
+                self.add_edge(it, nassert, Edge::data());
+                let ni = self.add_exp(a, transcr, nassert, kctx, fctx, vctx, vars)?;
+                self.set_principal(ni, Principal::Prover);
+                Ok(ni)
+            },
+            CExp::Verify(box a) => {
+                // Add new node
+                let nverify = self.add_node(Node::check(typ));
+                // Add edge from [it] to [nverify]
+                self.add_edge(it, nverify, Edge::data());
+                let ni = self.add_exp(a, transcr, nverify, kctx, fctx, vctx, vars)?;
+                self.set_principal(ni, Principal::Verifier);
+                Ok(ni)
+            },
+        }
     }
-}
 }
 
 #[cfg(test)]
@@ -522,5 +533,4 @@ fn test_graph_from_module() {
     g.write_pdf("test_graph_from_module").unwrap();
 }
 
-
-
+*/

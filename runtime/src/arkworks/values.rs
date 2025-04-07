@@ -1,4 +1,3 @@
-use crate::ark::*;
 use ark_ec::pairing::PairingOutput;
 use ark_ff::Field;
 use rayon::prelude::*;
@@ -9,10 +8,14 @@ use std::ops::{Add, Sub, Mul, Div};
 use ark_ec::CurveGroup;
 use ark_ec::hashing::map_to_curve_hasher::MapToCurveBasedHasher;
 
-use crate::typ::RTyp;
+use crate::arkworks::config::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
+use crate::typ::{RTyp, RBase};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
+    /// Boolean
+    Bool(bool),
+    VecBool(Vec<bool>),
     /// Scalars
     Index(u64),
     Scalar(C::F),
@@ -37,6 +40,7 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_add(&self, other: &mut Self) {
         match self {
+            Value::Bool(_) | Value::VecBool(_) => panic!("Cannot add bools {} + {}", self, other),
             // Indexes coerce to scalars (addition)
             Value::Index(a) =>
                 match &other {
@@ -112,6 +116,7 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_sub(&self, other: &mut Self) {
         match self {
+            Value::Bool(_) | Value::VecBool(_) => panic!("Cannot subtract bools {} - {}", self, other),
             // Indexes coerce to scalars (addition)
             Value::Index(a) =>
                 match &other {
@@ -188,8 +193,10 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_mul(&self, other: &mut Self) {
         match self {
+            Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
             Value::Index(a) =>
                 match &other {
+                    Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
                     // Index * Index = Index
                     Value::Index(_) => *other.into_index_mut() *= *a,
                     // Index * whatever, cast index to scalar
@@ -226,6 +233,7 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::Scalar(a) =>
                 match &other {
+                    Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
                     // Scalar * index, cast index to Scalar
                     Value::Index(b) => C::FOps::mul(a, &mut (*b).into()),
                     // Scalar * Scalar = Scalar
@@ -318,6 +326,7 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::VecIndex(v) =>
                 match &other {
+                    Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
                     // Vec<Index> * Index
                     Value::Index(i) =>
                         *other = Value::VecIndex(v.par_iter().map(|a| *a * *i).collect()),
@@ -510,6 +519,7 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_div(&self, other: &mut Self) {
         match self {
+            Value::Bool(_) | Value::VecBool(_) => panic!("Cannot divide bools {} / {}", self, other),
             Value::Index(a) =>
                 match &other {
                     // Index / Index = Index
@@ -854,32 +864,101 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    #[inline]
+    pub fn value_and(&self, other: &mut Self) {
+        match (self, other) {
+            (Value::Bool(a), Value::Bool(b)) => *b = *a && *b,
+            (Value::VecBool(a), Value::VecBool(b)) => {
+                *b = a.par_iter().zip(b.par_iter()).map(|(a, b)| *a && *b).collect();
+            },
+            (a, b) => panic!("Cannot AND {} and {}", a, b)
+        }
+    }
+
+    #[inline]
+    pub fn value_or(&self, other: &mut Self) {
+        match (self, other) {
+            (Value::Bool(a), Value::Bool(b)) => *b = *a || *b,
+            (Value::VecBool(a), Value::VecBool(b)) => {
+                *b = a.par_iter().zip(b.par_iter()).map(|(a, b)| *a || *b).collect();
+            },
+            (a, b) => panic!("Cannot OR {} and {}", a, b)
+        }
+    }
+
+    #[inline]
+    pub fn value_not(&self) -> Self {
+        match self {
+            Value::Bool(a) => Value::Bool(!*a),
+            Value::VecBool(a) => Value::VecBool(a.iter().map(|a| !*a).collect()),
+            a => panic!("Cannot NOT {}", a)
+        }
+    }
+
+    /// Value equality
+    #[inline]
+    pub fn value_equ(a: &Self, other: &Self) -> bool {
+        match (a, other) {
+            (Value::Bool(a), Value::Bool(b)) => *a == *b,
+            (Value::VecBool(a), Value::VecBool(b)) => a == b,
+            (Value::Index(a), Value::Index(b)) => *a == *b,
+            (Value::Scalar(a), Value::Scalar(b)) => a == b,
+            (Value::Scalar(a), Value::Index(b)) => *a == (*b).into(),
+            (Value::Index(a), Value::Scalar(b)) => <u64 as Into<C::F>>::into(*a) == *b,
+            (Value::VecIndex(a), Value::VecIndex(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| *a == *b),
+            (Value::VecScalar(a), Value::VecScalar(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| *a == *b),
+            (Value::VecIndex(a), Value::VecScalar(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| <u64 as Into<C::F>>::into(*a) == *b),
+            (Value::VecScalar(a), Value::VecIndex(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| <u64 as Into<C::F>>::into(*b) == *a),
+            (Value::G1(a), Value::G1(b)) => a == b,
+            (Value::G2(a), Value::G2(b)) => a == b,
+            (Value::GT(a), Value::GT(b)) => a == b,
+            (Value::G1Affine(a), Value::G1(b)) => a == &b.into_affine(),
+            (Value::G2Affine(a), Value::G2(b)) => a == &b.into_affine(),
+            (Value::G1(a), Value::G1Affine(b)) => &a.into_affine() == b,
+            (Value::G2(a), Value::G2Affine(b)) => &a.into_affine() == b,
+            (Value::VecG1(a), Value::VecG1(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
+            (Value::VecG2(a), Value::VecG2(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
+            (Value::VecGT(a), Value::VecGT(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == b),
+            (Value::VecG1(a), Value::VecG1Affine(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| &a.into_affine() == b),
+            (Value::VecG1Affine(a), Value::VecG1(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == &b.into_affine()),
+            (Value::VecG2(a), Value::VecG2Affine(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| &a.into_affine() == b),
+            (Value::VecG2Affine(a), Value::VecG2(b)) =>
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| a == &b.into_affine()),
+            (a, b) => panic!("Cannot compare {} == {}", a, b)
+        }
+    }
+
     /// Random
     #[inline]
     pub fn value_rand<R: Rng + Sized>(rng: &mut R, typ: RTyp) -> Self {
         match typ {
-            RTyp::Index => Value::Index(rng.next_u64()),
-            RTyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
-            RTyp::G1 => Value::G1(C::G1Ops::rand(rng)),
-            RTyp::G2 => Value::G2(C::G2Ops::rand(rng)),
-            RTyp::GT => Value::GT(C::POps::rand(rng)),
-            RTyp::VecG1(n) => Value::VecG1(C::G1Ops::vec_rand(rng, n)),
-            RTyp::VecG2(n) => Value::VecG2(C::G2Ops::vec_rand(rng, n)),
-            RTyp::VecGT(n) => Value::VecGT(C::POps::vec_rand(rng, n)),
+            RTyp::Base(RBase::Index) => Value::Index(rng.next_u64()),
+            RTyp::Base(RBase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
+            RTyp::Base(RBase::G1) => Value::G1(C::G1Ops::rand(rng)),
+            RTyp::Base(RBase::G2) => Value::G2(C::G2Ops::rand(rng)),
+            RTyp::Base(RBase::GT) => Value::GT(C::POps::rand(rng)),
+            RTyp::Vec(RBase::Index, n) => Value::VecIndex((0..n).map(|_| rng.next_u64()).collect()),
+            RTyp::Vec(RBase::Scalar, n) => Value::VecG1(C::G1Ops::vec_rand(rng, n)),
+            RTyp::Vec(RBase::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, n)),
+            RTyp::Vec(RBase::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, n)),
+            RTyp::Vec(RBase::GT, n) => Value::VecGT(C::POps::vec_rand(rng, n)),
         }
     }
 
     /// TODO: How do I sample the hasher state?
     pub fn value_challenge<H: Hasher>(typ: &RTyp, h: &mut H) -> Self {
-        let buffer = h.finish().to_le_bytes();
-        match typ {
-            RTyp::Index => Value::Index(h.finish()),
-            RTyp::Scalar => unimplemented!(),
-            RTyp::G1 => unimplemented!(),
-            RTyp::G2 => unimplemented!(),
-            RTyp::GT => unimplemented!(),
-            _ => panic!("Challenge not supported for type {}", typ),
-        }
+        // TODO: Use spongefish to hash and generate challenges
+        unimplemented!();
     }
 
     /// Dynamic casts
@@ -1029,6 +1108,14 @@ impl<C: ArkConfig> Value<C> {
 impl<C: ArkConfig> fmt::Display for Value<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::VecBool(v) => {
+                write!(f, "[")?;
+                for i in v {
+                    write!(f, "{}, ", i)?;
+                }
+                write!(f, "]")
+            },
             Value::Index(i) => write!(f, "{}", i),
             Value::Scalar(a) => C::FOps::write(a, f),
             Value::G1(a) => C::G1Ops::write(a, f),
@@ -1097,6 +1184,8 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
 impl<C: ArkConfig> Hash for Value<C> {
     fn hash<H: Hasher>(&self, h: &mut H) {
         match self {
+            Value::Bool(b) => h.write_u8(*b as u8),
+            Value::VecBool(v) => v.iter().for_each(|b| h.write_u8(*b as u8)),
             Value::Index(i) => h.write_u64(*i),
             Value::Scalar(s) => C::FOps::hash(s, h),
             Value::G1(g) => C::G1Ops::hash(g, h),

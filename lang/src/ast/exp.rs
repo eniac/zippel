@@ -67,6 +67,14 @@ pub enum BinOp {
     ///     ```
     Equ,
 
+    ///     Represents inclusion of an element in a vector
+    ///
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     assert(x in v);
+    ///     ```
+    Contains,
+
     ///     Represents the logical AND of two boolean expressions.
     ///
     ///     **Zippel Code:**
@@ -192,14 +200,6 @@ pub enum Exp<N> {
     ///     ```
     Challenge(Tid),
 
-    ///     Represents inclusion of an element in a vector
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(x in v);
-    ///     ```
-    Contains(Box<Exp<N>>, Box<Exp<N>>),
-
     ///     Represents the negation of a boolean expression.
     ///
     ///     **Zippel Code:**
@@ -303,8 +303,6 @@ impl<N> ToTraversal1<N> for Exp<N> {
                         Box::new(x.traverse1(f)?),
                         Box::new(i.traverse1(f)?)
                 )),
-            Exp::Contains(a, b) =>
-                Ok(Exp::Contains(a.traverse1(&mut |x| x.traverse1(f))?, b.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Not(a) => Ok(Exp::Not(a.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Let(x, box a, box b) =>
                 Ok(Exp::Let(x, Box::new(a.traverse1(f)?), Box::new(b.traverse1(f)?))),
@@ -344,7 +342,6 @@ impl TidSubst for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Contains(box a, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b) => {
                 a.tid_subst(from, to);
@@ -377,7 +374,6 @@ impl FreeVars for CExp {
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Contains(box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
@@ -401,8 +397,7 @@ impl ExpSubst for CExp {
             | Exp::App(_, v) => v.subst(from, to, ctx),
             Exp::Bin(_, box a, box b)
             | Exp::Ram(box a, box b)
-            | Exp::Let(None, box a, box b)
-            | Exp::Contains(box a, box b) => {
+            | Exp::Let(None, box a, box b) => {
                 a.subst(from, to, ctx);
                 b.subst(from, to, ctx);
             },
@@ -474,8 +469,6 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
             Exp::Eval(box x) =>
                 Ok(Exp::eval(x.range_traverse(f)?)),
-            Exp::Contains(box a, box b) =>
-                Ok(Exp::contains(a.range_traverse(f)?, b.range_traverse(f)?)),
             Exp::Not(box a) =>
                 Ok(Exp::not(a.range_traverse(f)?)),
             Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
@@ -627,11 +620,11 @@ impl<N> Exp<N> {
     pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
         Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
+    pub fn contains(a: Exp<N>, b: Exp<N>) -> Self {
+        Exp::Bin(BinOp::Contains, Box::new(a), Box::new(b))
+    }
     pub fn app(id: Fid, args: Exps<N>) -> Self {
         Exp::App(id, args)
-    }
-    pub fn contains(a: Exp<N>, b: Exp<N>) -> Self {
-        Exp::Contains(Box::new(a), Box::new(b))
     }
     pub fn not(a: Self) -> Self {
         Exp::Not(Box::new(a))
@@ -657,6 +650,7 @@ where
             BinOp::Equ => allocator.text(" == "),
             BinOp::And => allocator.text(" && "),
             BinOp::Or => allocator.text(" || "),
+            BinOp::Contains => allocator.text(" in "),
         }
     }
 
@@ -739,11 +733,6 @@ where
                 allocator.text("["),
                 (*i).pretty(allocator),
                 allocator.text("]"),
-            ]),
-            Exp::Contains(a, b) => allocator.concat([
-                a.pretty(allocator),
-                allocator.text(" in "),
-                b.pretty(allocator),
             ]),
             Exp::Not(a) => allocator.concat([
                 allocator.text("!"),

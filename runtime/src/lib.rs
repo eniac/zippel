@@ -1,14 +1,27 @@
 #![feature(associated_type_defaults)]
 #![feature(trait_alias)]
-pub mod ark;
-pub mod values;
+#![feature(box_patterns)]
+pub mod arkworks;
 pub mod typ;
+pub mod graph;
 
 mod nothing;
 
-pub use values::Value;
 pub use typ::RTyp;
-pub use ark::{
+pub use graph::{
+    Dag,
+    PDag,
+    Op,
+    Operand,
+    Edge,
+    Principal
+};
+
+pub use arkworks::Value;
+pub use arkworks::{
+    ArkScalarOps,
+    ArkGroupOps,
+    ArkPairingOps,
     ArkConfig,
     ArkBls12_381,
     ArkBn254,

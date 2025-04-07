@@ -139,6 +139,16 @@ impl<N> Typ<N> {
             _ => None
         }
     }
+
+    pub fn to_scalar_vec(self, ctx: &Ctx<Tid, Kind>) -> Option<(Tid, N)> {
+        match self {
+            Typ::Vec(box t, n) => {
+                let s = t.to_scalar(ctx)?;
+                Some((s, n))
+            },
+            _ => None
+        }
+    }
 }
 
 impl<N> Typs<N> {

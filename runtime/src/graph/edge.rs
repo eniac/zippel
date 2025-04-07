@@ -18,6 +18,10 @@ impl Edge {
     pub fn transcript(v: Vid) -> Edge {
         Edge::Transcript(v)
     }
+
+    pub fn data() -> Edge {
+        Edge::Data
+    }
 }
 
 impl fmt::Display for Edge {

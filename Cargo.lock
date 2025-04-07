@@ -841,17 +841,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "graph"
-version = "0.1.0"
-dependencies = [
- "lang",
- "petgraph",
- "runtime",
- "share",
- "thiserror 2.0.12",
-]
-
-[[package]]
 name = "half"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1379,9 +1368,12 @@ dependencies = [
  "ark-vesta",
  "lang",
  "num-bigint",
+ "petgraph",
  "rand",
  "rayon",
+ "share",
  "spongefish",
+ "thiserror 2.0.12",
  "zeroize",
 ]
 
