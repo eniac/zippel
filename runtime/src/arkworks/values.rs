@@ -4,7 +4,7 @@ use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
 use core::hash::{Hash, Hasher};
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Sub, Mul, Div, BitXor, BitAnd, BitOr, AddAssign, SubAssign, MulAssign, DivAssign, BitXorAssign, BitAndAssign, BitOrAssign};
 use ark_ec::CurveGroup;
 
 use crate::arkworks::config::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
@@ -1320,6 +1320,88 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
+impl<C: ArkConfig> Add for &Value<C> {
+    type Output = Value<C>;
+
+    fn add(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_add(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> AddAssign for Value<C> {
+    fn add_assign(&mut self, other: Self) {
+        other.value_add(self);
+    }
+}
+
+impl<C: ArkConfig> Sub for &Value<C> {
+    type Output = Value<C>;
+
+    fn sub(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_sub(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Mul for &Value<C> {
+    type Output = Value<C>;
+
+    fn mul(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_mul(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> MulAssign for Value<C> {
+    fn mul_assign(&mut self, other: Self) {
+        other.value_mul(self);
+    }
+}
+
+impl<C: ArkConfig> Div for &Value<C> {
+    type Output = Value<C>;
+
+    fn div(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_div(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitXor for &Value<C> {
+    type Output = Value<C>;
+
+    fn bitxor(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_pow(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitAnd for &Value<C> {
+    type Output = Value<C>;
+
+    fn bitand(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_and(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitOr for &Value<C> {
+    type Output = Value<C>;
+
+    fn bitor(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_or(&mut other);
+        other
+    }
+}
+
 impl<C: ArkConfig> fmt::Display for Value<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -1420,73 +1502,41 @@ fn test_value_add_comm() {
     let mut rng = test_rng();
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
+    assert_deq!(&a + &b, &b + &a);
 
     // Group1 + Group1
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
+    assert_deq!(&a + &b, &b + &a);
 
     // Group2 + Group2
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
 
     // GT + GT
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
+    assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Scalar>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
+    assert_deq!(&a + &b, &b + &a);
 
     // Vec<Index> + Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
+    assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
-    assert_deq!(am, bm);
+    assert_deq!(&a + &b, &b + &a);
 
     // G1 + G1Affine
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_add(&a, &mut bm);
-    Value::value_add(&b, &mut am);
+    assert_deq!(&a + &b, &b + &a);
 }
 
 // Commutativity of multiplication
@@ -1496,72 +1546,37 @@ fn test_value_mul_comm() {
     let mut rng = test_rng();
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::Scalar));
+    assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Scalar>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::vec_scalar(10)));
+    assert_deq!(&a * &b, &b * &a);
 
     // Vec<Index> * Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::vec_index(10)));
+    assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::vec_scalar(10)));
+    assert_deq!(&a * &b, &b * &a);
 
     // G1 * G2
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::GT));
+    assert_deq!(&a * &b, &b * &a);
 
     // G1Affine * G2Affine
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2Affine);
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::GT));
+    assert_deq!(&a * &b, &b * &a);
 
     // Vec<G1> * Vec<G2Affine>
     let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G1), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G2Affine), 10));
-    let mut am = a.clone();
-    let mut bm = b.clone();
-    Value::value_mul(&a, &mut bm);
-    Value::value_mul(&b, &mut am);
-    assert_deq!(am, bm);
-    assert_eq!(am.typ(), Some(RTyp::vec_gt(10)));
+    assert_deq!(&a * &b, &b * &a);
 }
 
 
