@@ -1,6 +1,7 @@
 pub mod config;
 pub mod values;
 pub mod types;
+pub mod utils;
 
 pub use values::Value;
 pub use types::{Ark, ATyp};

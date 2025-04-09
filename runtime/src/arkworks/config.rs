@@ -1,22 +1,24 @@
-use rand::Rng;
-use std::hash::Hash;
-use std::fmt;
-use std::marker::PhantomData;
 use core::hash::Hasher;
+use rand::Rng;
 use rayon::prelude::*;
+use spongefish::ProverState;
+use std::fmt;
+use std::hash::Hash;
+use std::marker::PhantomData;
 
-use ark_poly::{GeneralEvaluationDomain, EvaluationDomain};
-use ark_ff::{MontConfig, Zero, Fp64, PrimeField, AdditiveGroup};
-use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::VariableBaseMSM;
-use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::bls12::Bls12;
-use ark_ec::models::bn::Bn;
 use ark_ec::mnt4::MNT4;
-use ark_ec::{CurveGroup, AffineRepr, PrimeGroup};
+use ark_ec::models::bn::Bn;
+use ark_ec::pairing::{Pairing, PairingOutput};
+use ark_ec::scalar_mul::ScalarMul;
+use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
+use ark_ff::{AdditiveGroup, Fp64, MontConfig, PrimeField, Zero};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
+use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt::Display {
@@ -28,10 +30,10 @@ pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt
     type P: Pairing<ScalarField = Self::F, G1 = Self::G1, G2 = Self::G2>;
 
     /// Operations on arkwork types
-    type FOps : ArkScalarOps<Self::F>;
-    type G1Ops : ArkGroupOps<Self::G1>;
-    type G2Ops : ArkGroupOps<Self::G2>;
-    type POps : ArkPairingOps<Self::P>;
+    type FOps: ArkScalarOps<Self::F>;
+    type G1Ops: ArkGroupOps<Self::G1>;
+    type G2Ops: ArkGroupOps<Self::G2>;
+    type POps: ArkPairingOps<Self::P>;
 }
 
 /// Operations on Arkworks scalar fields
@@ -105,7 +107,9 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     #[inline]
     fn vec_neg(f: &mut Vec<F>) {
-        f.par_iter_mut().for_each(|x| { x.neg_in_place(); });
+        f.par_iter_mut().for_each(|x| {
+            x.neg_in_place();
+        });
     }
 
     #[inline]
@@ -141,21 +145,20 @@ pub trait ArkScalarOps<F: PrimeField> {
         Self::vec_inv(f2);
         ark_ff::fields::batch_inversion::<F>(f2);
         f2.par_iter_mut()
-        .zip(f1.par_iter())
-        .for_each(|(a, b)| *a *= b);
+            .zip(f1.par_iter())
+            .for_each(|(a, b)| *a *= b);
     }
 
     #[inline]
     fn vec_pow(f1: &mut Vec<F>, i: u64) {
-        f1.par_iter_mut()
-            .for_each(|x| {
-                let mut i = i;
-                while (i % 2) == 0 {
-                    x.square_in_place();
-                    i /= 2;
-                }
-                *x = x.pow(&[i as u64]);
-            });
+        f1.par_iter_mut().for_each(|x| {
+            let mut i = i;
+            while (i % 2) == 0 {
+                x.square_in_place();
+                i /= 2;
+            }
+            *x = x.pow(&[i as u64]);
+        });
     }
 
     /// FFT and IFFT
@@ -178,21 +181,20 @@ pub trait ArkScalarOps<F: PrimeField> {
     }
 
     #[inline]
-    fn hash<H: Hasher>(f: &F, h: &mut H) {
-        f.hash(h);
+    fn hash(f: &F, state: &mut ProverState) {
+        prover_state.add_bytes(to_bytes!(f).unwrap());
     }
 
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<F> {
         let mut v = vec![Self::zero(); n];
-        v.iter_mut()
-            .for_each(|x| *x = Self::rand(rng));
+        v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
     }
 
     #[inline]
-    fn vec_hash<H: Hasher>(f: &Vec<F>, h: &mut H) {
-        f.hash(h)
+    fn vec_hash(f: &Vec<F>, state: &mut ProverState) {
+        prover_state.add_bytes(to_bytes!(f).unwrap());
     }
 
     #[inline]
@@ -234,18 +236,17 @@ pub trait ArkGroupOps<G: CurveGroup> {
         G::rand(rng)
     }
     #[inline]
-    fn hash<H: Hasher>(g: &G, h: &mut H) {
-        g.hash(h)
+    fn hash(g: &G, state: &mut ProverState) {
+        prover_state.add_bytes(to_bytes!(g).unwrap());
     }
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<G> {
         let mut v = vec![Self::zero(); n];
-        v.iter_mut()
-            .for_each(|x| *x = Self::rand(rng));
+        v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
     }
     #[inline]
-    fn vec_hash<H: Hasher>(g: &Vec<G>, h: &mut H) {
+    fn vec_hash(g: &Vec<G>, state: &mut ProverState) {
         g.hash(h)
     }
     /// Group vec operations
@@ -297,19 +298,18 @@ pub trait ArkPairingOps<P: Pairing> {
         PairingOutput::rand(rng)
     }
     #[inline]
-    fn hash<H: Hasher>(g: &PairingOutput<P>, h: &mut H) {
-        g.hash(h)
+    fn hash(g: &PairingOutput<P>, state: &mut ProverState) {
+        prover_state.add_bytes(to_bytes!(g).unwrap());
     }
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<PairingOutput<P>> {
         let mut v = vec![Self::zero(); n];
-        v.iter_mut()
-            .for_each(|x| *x = Self::rand(rng));
+        v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
     }
     #[inline]
-    fn vec_hash<H: Hasher>(g: &Vec<PairingOutput<P>>, h: &mut H) {
-        g.hash(h)
+    fn vec_hash(g: &Vec<PairingOutput<P>>, state: &mut ProverState) {
+        prover_state.add_bytes(to_bytes!(g).unwrap());
     }
     /// Group vec operations
     #[inline]
@@ -336,8 +336,7 @@ pub trait ArkPairingOps<P: Pairing> {
     fn billinear_vec_mul(g1: &Vec<P::G1>, g2: &Vec<P::G2>) -> Vec<PairingOutput<P>> {
         g1.par_iter()
             .zip(g2.par_iter())
-            .map(|(g1, g2)|
-                Self::billinear_map(g1, g2))
+            .map(|(g1, g2)| Self::billinear_map(g1, g2))
             .collect()
     }
 
@@ -345,11 +344,10 @@ pub trait ArkPairingOps<P: Pairing> {
     fn billinear_vec_dot(g1: &Vec<P::G1>, g2: &Vec<P::G2>) -> PairingOutput<P> {
         g1.par_iter()
             .zip(g2.par_iter())
-            .fold_with(PairingOutput::zero(), |acc, (g1, g2)|
+            .fold_with(PairingOutput::zero(), |acc, (g1, g2)| {
                 P::pairing(*g1, *g2) + acc
-            ).reduce(
-                || PairingOutput::zero(),
-                |acc, gt| gt + acc)
+            })
+            .reduce(|| PairingOutput::zero(), |acc, gt| gt + acc)
     }
 }
 
@@ -363,14 +361,12 @@ impl<G: CurveGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
 pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
-
 /// Concrete Zippel arkworks configurations
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkBls12_381 {}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkBn254 {}
-
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkMNT4_298 {}
@@ -580,4 +576,3 @@ pub type F17 = Fp64<F17Config>;
 #[generator = "3"]
 pub struct F65537Config;
 pub type F65537 = Fp64<F65537Config>;
-
