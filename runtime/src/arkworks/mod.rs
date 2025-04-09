@@ -1,7 +1,9 @@
 pub mod config;
 pub mod values;
+pub mod types;
 
 pub use values::Value;
+pub use types::{Ark, ATyp};
 pub use config::{
     ArkScalarOps,
     ArkGroupOps,

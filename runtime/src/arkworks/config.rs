@@ -19,7 +19,7 @@ use ark_std::UniformRand;
 use crate::nothing::{NoCurve, NoPairing};
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
-pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq {
+pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt::Display {
     type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
     type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
@@ -371,6 +371,7 @@ pub struct ArkBls12_381 {}
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkBn254 {}
 
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct ArkMNT4_298 {}
 
@@ -394,6 +395,53 @@ pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
 
 pub type ArkField17 = ArkFieldN<F17>;
 pub type ArkField65537 = ArkFieldN<F65537>;
+
+impl fmt::Display for ArkBls12_381 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BLS12-381")
+    }
+}
+impl fmt::Display for ArkBn254 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BN254")
+    }
+}
+impl fmt::Display for ArkMNT4_298 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MNT4-298")
+    }
+}
+impl fmt::Display for ArkCurve25519 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Curve25519")
+    }
+}
+impl fmt::Display for ArkSecp256k1 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SECP256K1")
+    }
+}
+
+impl fmt::Display for ArkPallas {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Pallas")
+    }
+}
+impl fmt::Display for ArkVesta {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Vesta")
+    }
+}
+impl fmt::Display for ArkEd25519 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Ed25519")
+    }
+}
+impl<F: PrimeField> fmt::Display for ArkFieldN<F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Field<{}>", F::MODULUS)
+    }
+}
 
 impl ArkConfig for ArkBls12_381 {
     type F = ark_bls12_381::Fr;
@@ -532,5 +580,4 @@ pub type F17 = Fp64<F17Config>;
 #[generator = "3"]
 pub struct F65537Config;
 pub type F65537 = Fp64<F65537Config>;
-
 

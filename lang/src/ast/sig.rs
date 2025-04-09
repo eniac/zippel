@@ -1,9 +1,9 @@
-use crate::typ::{Typ, Size, Kind, CTyp, TypeVars, CTyps, Range, RangeTraversal};
+use crate::typ::{Size, Kind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
-use crate::ast::{Arg, Args};
+use crate::ast::{GArg, GArgs};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
-use share::traversal::ToTraversal1;
+use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Gen, Fid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
@@ -21,8 +21,8 @@ pub enum SigError {
 pub struct Sig<N> {
     pub name: Fid,
     pub typevars: TypeVars,
-    pub args: Args<N>,
-    pub ret: Typ<N>
+    pub args: GArgs<N>,
+    pub ret: GTyp<N>
 }
 
 /// Symbolic sized signature
@@ -56,7 +56,7 @@ impl CSig {
         for (l, r) in shifted.args.iter().zip(typs.iter()) {
             let typ = CTyp::unify(l.typ.clone(), r.clone(), &kind_ctx, &mut subs)
                     .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
-            args.push(Arg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
+            args.push(GArg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
         }
 
         // Substitute alias in the return type and typevars
@@ -71,7 +71,7 @@ impl<N> ToTraversal1<N> for Sig<N> {
     type Output<Z> = Sig<Z>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
         let Sig { name, typevars, args, ret } = self;
-        Ok(Sig { name, typevars, args: args.traverse1(f)?, ret: ret.traverse1(f)? })
+        Ok(Sig { name, typevars, args: args.traverse2(f)?, ret: ret.traverse2(f)? })
     }
 }
 

@@ -5,7 +5,6 @@ use std::fmt;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Tid, Vid, TidSubst};
-use crate::eval::Eval;
 use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
 use crate::parser::*;
 
@@ -19,41 +18,41 @@ use crate::parser::*;
 ///     In this example, `a` is the identifier of the argument, `F` is the type and `Verifier` is
 ///     the principal.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Arg<N> {
+pub struct Arg<T, N> {
     pub qualifier: Qualifier,
     pub id: Vid,
-    pub typ: Typ<N>,
+    pub typ: Typ<T, N>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Args<N>(pub Vec<Arg<N>>);
+pub struct Args<T, N>(pub Vec<Arg<T, N>>);
+
+/// Generic typed argument
+pub type GArg<N> = Arg<Tid, N>;
+pub type GArgs<N> = Args<Tid, N>;
 
 /// Symbolically sized arg
-pub type UArg = Arg<Size>;
-
-/// Symbolically sized args
-pub type UArgs = Args<Size>;
+pub type UArg = Arg<Tid, Size>;
+pub type UArgs = Args<Tid, Size>;
 
 /// Concrete sized arg
-pub type CArg = Arg<usize>;
+pub type CArg = Arg<Tid, usize>;
+pub type CArgs = Args<Tid, usize>;
 
-/// Concrete sized args
-pub type CArgs = Args<usize>;
-
-impl<N> Arg<N> {
-    pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<N>) -> Self {
+impl<T, N> Arg<T, N> {
+    pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<T, N>) -> Self {
         Arg { qualifier, id: Vid::new(id), typ }
     }
-    pub fn public<'a>(id: &'a str, typ: Typ<N>) -> Self {
+    pub fn public<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
         Arg { qualifier: Qualifier::Public, id: Vid::new(id), typ }
     }
-    pub fn private<'a>(id: &'a str, typ: Typ<N>) -> Self {
+    pub fn private<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
         Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
     }
 }
 
-impl<N> Args<N> {
-    pub fn iter(&self) -> std::slice::Iter<Arg<N>> {
+impl<T, N> Args<T, N> {
+    pub fn iter(&self) -> std::slice::Iter<Arg<T, N>> {
         self.0.iter()
     }
     pub fn len(&self) -> usize {
@@ -61,71 +60,90 @@ impl<N> Args<N> {
     }
 }
 
-impl<N> IntoIterator for Args<N> {
-    type Item = Arg<N>;
-    type IntoIter = std::vec::IntoIter<Arg<N>>;
+impl<T, N> IntoIterator for Args<T, N> {
+    type Item = Arg<T, N>;
+    type IntoIter = std::vec::IntoIter<Arg<T, N>>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N> FromIterator<Arg<N>> for Args<N> {
-    fn from_iter<I: IntoIterator<Item=Arg<N>>>(iter: I) -> Self {
+impl<T, N> FromIterator<Arg<T, N>> for Args<T, N> {
+    fn from_iter<I: IntoIterator<Item=Arg<T, N>>>(iter: I) -> Self {
         Args(iter.into_iter().collect())
     }
 }
 
-impl<N> TidSubst for Arg<N> {
+impl<N> TidSubst for GArg<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.typ.tid_subst(from, to)
     }
 }
 
-impl<N> TidSubst for Args<N> {
+impl<N> TidSubst for GArgs<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.0.iter_mut().for_each(|arg| arg.tid_subst(from, to))
     }
 }
 
-/// How to traverse the first type parameter [N] of [Arg<N>]
-impl<N> ToTraversal1<N> for Arg<N> {
-    type Output<Z> = Arg<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Arg<Z>, E> {
+/// How to traverse the first type parameter [T] of [Arg<T, N>]
+impl<T, N> ToTraversal1<T> for Arg<T, N> {
+    type Output<Z> = Arg<Z, N>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         let Arg { qualifier, id, typ } = self;
         Ok(Arg { qualifier, id, typ: typ.traverse1(f)? })
     }
 }
 
-/// How to traverse the first type parameter [N] of [Args<N>]
-impl<N> ToTraversal1<N> for Args<N> {
-    type Output<Z> = Args<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Args<Z>, E> {
+/// How to traverse the second type parameter [N] of [Arg<T, N>]
+impl<T, N> ToTraversal2<N> for Arg<T, N> {
+    type Output<Z> = Arg<T, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        let Arg { qualifier, id, typ } = self;
+        Ok(Arg { qualifier, id, typ: typ.traverse2(f)? })
+    }
+}
+
+/// How to traverse the second type parameter [N] of [Args<T, N>]
+impl<T, N> ToTraversal1<T> for Args<T, N> {
+    type Output<Z> = Args<Z, N>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Args(self.0.traverse1(&mut |x| x.traverse1(f))?))
     }
 }
 
-impl<N> RangeTraversal<N> for Arg<N> {
+/// How to traverse the second type parameter [N] of [Args<T, N>]
+impl<T, N> ToTraversal2<N> for Args<T, N> {
+    type Output<Z> = Args<T, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        Ok(Args(self.0.traverse1(&mut |x| x.traverse2(f))?))
+    }
+}
+
+impl<T, N> RangeTraversal<N> for Arg<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Arg { qualifier: self.qualifier, id: self.id, typ: self.typ.range_traverse(f)? })
     }
 }
 
-impl<N> RangeTraversal<N> for Args<N> {
+impl<T, N> RangeTraversal<N> for Args<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Args(self.0.into_iter().map(|arg| arg.range_traverse(f)).collect::<Result<_, _>>()?))
     }
 }
-impl<const L: usize, N: Clone> From<[Arg<N>; L]> for Args<N> {
-    fn from(args: [Arg<N>; L]) -> Self {
-        Args(args.to_vec())
+
+impl<const L: usize, N, T> From<[Arg<T, N>; L]> for Args<T, N> {
+    fn from(args: [Arg<T, N>; L]) -> Self {
+        Args(args.into_iter().collect())
     }
 }
 
 /// Pretty printer instance
-impl<'a, D, N, A> Pretty<'a, D, A> for Arg<N>
+impl<'a, D, T, N, A> Pretty<'a, D, A> for Arg<T, N>
 where
     D: DocAllocator<'a, A>,
     N: 'a + Clone + Pretty<'a, D, A>,
+    T: 'a + Clone + Pretty<'a, D, A>,
     D::Doc: Clone,
     A: 'a + Clone,
 {
@@ -146,22 +164,24 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Arg<N>
+impl<'a, T, N> fmt::Display for Arg<T, N>
 where
+    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
     N: Clone + Pretty<'a, BoxAllocator, ()> + 'a
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Arg<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Arg<T, N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(60, f)
     }
 }
 
 /// Pretty printer instance
-impl<'a, D, N, A> Pretty<'a, D, A> for Args<N>
+impl<'a, D, T, N, A> Pretty<'a, D, A> for Args<T, N>
 where
     D: DocAllocator<'a, A>,
     N: 'a + Clone + Pretty<'a, D, A>,
+    T: 'a + Clone + Pretty<'a, D, A>,
     D::Doc: Clone,
     A: 'a + Clone,
 {
@@ -176,19 +196,20 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Args<N>
+impl<'a, T, N> fmt::Display for Args<T, N>
 where
+    T: Clone + Pretty<'a, BoxAllocator, ()> + 'a,
     N: Clone + Pretty<'a, BoxAllocator, ()> + 'a
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Args<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Args<T, N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(140, f)
     }
 }
 
 /// Parser instances
-impl<'pest> FromPest<'pest> for Arg<Size> {
+impl<'pest> FromPest<'pest> for GArg<Size> {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 
@@ -209,7 +230,7 @@ impl<'pest> FromPest<'pest> for Arg<Size> {
     }
 }
 
-impl<'pest> FromPest<'pest> for Args<Size> {
+impl<'pest> FromPest<'pest> for GArgs<Size> {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 
@@ -249,10 +270,11 @@ fn arg_parser() {
 }
 
 #[cfg(test)] use share::Ctx;
+#[cfg(test)] use crate::eval::Eval;
 #[test]
 fn arg_traversal() {
-    let arg = Arg::new(Qualifier::Public, "a",
+    let arg = GArg::new(Qualifier::Public, "a",
         Typ::fin(Range { start: Size::varstr("N") / 2, step: Size::one(), end: Size::varstr("N")*2 }));
-    assert_eq!(arg.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 2))).unwrap(),
+    assert_eq!(arg.traverse2(&mut |x| x.eval(&Ctx::singleton("N".into(), 2))).unwrap(),
        Arg::new(Qualifier::Public, "a", Typ::fin(Range { start: 1, step: 1, end: 4 })));
 }

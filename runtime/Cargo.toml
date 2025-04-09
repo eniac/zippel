@@ -22,7 +22,7 @@ ark-poly =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5.0"
 spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", features = ["arkworks-algebra"] }
 rayon = "1.10.0"
-rand = { version = "0.8", features = ["std"]}
+rand = { version = "0.8", features = ["std"] }
 num-bigint = "0.4.6"
 zeroize = "1.8.1"
 petgraph = "0.7.1"

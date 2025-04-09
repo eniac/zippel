@@ -1,13 +1,13 @@
-#![feature(box_patterns)]
 mod node;
 mod edge;
 mod op;
 mod principal;
 
-pub use crate::graph::op::{Operand, Op, TOperand, TOp};
+pub use crate::graph::op::{Operand, Op};
 pub use crate::graph::node::{Node, PNode};
 pub use crate::graph::edge::Edge;
 pub use crate::graph::principal::Principal;
+pub use crate::arkworks::ArkConfig;
 
 use share::Ctx;
 use lang::ast::{CModule, CExp, ExpSubst, Arg, CSig, CBody};
@@ -26,10 +26,10 @@ use std::path::PathBuf;
 /// It is parameterized by types `A` representing a
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
-pub struct Dag<A>(Graph<Node<A>, Edge>);
+pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Edge>);
 
 /// Dag with no annotations
-pub type PDag = Dag<Principal>;
+pub type PDag<C> = Dag<C, Principal>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -190,7 +190,7 @@ impl PDag {
         exp: CExp,
         transcr: NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Operand, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<TOperand, GraphError> {
         // Type inference for [self]
         match exp.clone() {
             // Literals get appended to the last node [self.it]
@@ -215,7 +215,7 @@ impl PDag {
                 // Add child first
                 let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ncoef = self.add_node(Node::coef(,  child));
+                let ncoef = self.add_node(Node::coef(child))
 
                 // Add edge from [ncoef] to [child]
                 self.add_edges(ncoef, vars, child);
@@ -536,4 +536,5 @@ fn test_graph_from_module() {
     let g = PrettyResult(PDag::from_module(m)).pretty_unwrap();
     g.write_pdf("test_graph_from_module").unwrap();
 }
+
 */

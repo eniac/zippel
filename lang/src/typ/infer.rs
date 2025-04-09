@@ -389,7 +389,7 @@ impl Typeable for CExp {
                 let rr = Range::from_num(r.start, r.step, r.end)
                     .map_err(|e| TypeError::range(kctx, vctx, r, e))?;
 
-                Ok(CTyp::vec(CTyp::Fin(rr), rr.get_size()))
+                Ok(CTyp::vec(CTyp::Fin(rr), rr.len()))
             }
 
             // Map comprehension

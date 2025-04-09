@@ -1,51 +1,45 @@
 use lang::typ::range::CRange;
-use std::fmt;
-use petgraph::graph::NodeIndex;
 use lang::ast::BinOp;
 
-use crate::RTyp;
+use crate::arkworks::{ArkConfig, Ark, ATyp};
+use crate::arkworks::Value;
 
-/// Operands are expressions which are not important
+use petgraph::graph::NodeIndex;
+use std::fmt;
+
+/// Typed operands are expressions which are not important
 /// enough to be nodes in the graph.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Operand {
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum Operand<C: ArkConfig> {
     /// Value
-    Lit(usize),
+    Value(Value<C>),
     /// Binary operation
-    Bin(BinOp, Box<Operand>, Box<Operand>),
+    Bin(BinOp, Box<Operand<C>>, Box<Operand<C>>, ATyp),
     /// Boolean not
-    Not(Box<Operand>),
+    Not(Box<Operand<C>>),
     /// Generator for a group
-    Gen,
+    Gen(ATyp),
     /// Random element
-    Rand,
+    Rand(ATyp),
     /// Node input
-    Underscore(NodeIndex),
+    Underscore(NodeIndex, ATyp),
     /// Range of numbers
     Range(CRange),
     /// Random access into a value
-    Ram(Box<Operand>, Box<Operand>),
+    Ram(Box<Operand<C>>, Box<Operand<C>>),
     /// Vector of values
-    Vec(Vec<Operand>),
+    Vec(Vec<Operand<C>>),
 }
 
-/// Typed operands
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct TOperand {
-    typ: RTyp,
-    operand: Operand,
-}
-
-/// An operation [Op] is loosely a node in the graph,
-/// and it corresponds to one [lang::ast::Exp] in the AST.
+/// An operation [Op] is loosely a node in the program graph.
 /// It is parameterized by tye type of operands [V] and the type of types [T].
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Op<T> {
+#[derive(PartialEq, Eq, Clone)]
+pub enum OpF<T> {
     /// Binary operation
     Bin(BinOp, T, T),
 
     /// Random oracle challenge
-    Challenge(RTyp),
+    Challenge(ATyp),
 
     /// Absorb values in the transcript
     Hash(T),
@@ -63,39 +57,54 @@ pub enum Op<T> {
     Check(T),
 }
 
-pub type TOp = Op<TOperand>;
+pub type Op<C> = OpF<Operand<C>>;
 
-impl TOperand {
-    pub fn new(typ: RTyp, operand: Operand) -> TOperand {
-        TOperand { typ, operand }
+impl<C: ArkConfig> Operand<C> {
+    pub fn typ(&self) -> ATyp {
+        match &self {
+            Operand::Value(v) => v.typ(),
+            Operand::Bin(_, _, _, t) => t.clone(),
+            Operand::Not(_) => ATyp::bool(),
+            Operand::Gen(t) => t.clone(),
+            Operand::Rand(t) => t.clone(),
+            Operand::Underscore(_, t) => t.clone(),
+            Operand::Range(r) => ATyp::vec(ATyp::fin(r.clone()), r.len()),
+            Operand::Ram(box l, box r) =>
+                match (l.typ(), r.typ()) {
+                    (ATyp::Vec(box typ, _), ATyp::Fin(_)) => typ,
+                    (ATyp::Vec(box typ, _), ATyp::Vec(box ATyp::Fin(_), m)) =>
+                        ATyp::vec(typ, m),
+                    (a, b) =>
+                        panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
+                }
+            Operand::Vec(vs) => {
+                let typ = vs[0].typ();
+                for v in vs.iter().skip(1) {
+                    if v.typ() != typ {
+                        panic!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ());
+                    }
+                }
+                ATyp::vec(typ, vs.len())
+            }
+        }
     }
 
-    pub fn typ(&self) -> &RTyp {
-        &self.typ
-    }
-
-    pub fn operand(&self) -> &Operand {
-        &self.operand
-    }
-}
-
-/// Smart constructors to simplify operands a bit
-impl Operand {
-    pub fn ram(v: Operand, i: Operand) -> Operand {
+    /// Smart constructors to simplify operands a bit
+    pub fn ram(v: Self, i: Self) -> Operand<C> {
         match (v, i) {
             (Operand::Ram(box v, box Operand::Range(l)), Operand::Range(r)) =>
                 Operand::ram(v, Operand::range(l.compose(&r))),
-            (Operand::Ram(box v, box Operand::Range(r)), Operand::Lit(i)) =>
-                Operand::ram(v, Operand::lit(r.compose_index(i))),
-            (Operand::Vec(vs), Operand::Lit(i)) => vs[i].clone(),
+            (Operand::Ram(box v, box Operand::Range(r)), Operand::Value(Value::Index(i))) =>
+                Operand::ram(v, r.compose_index(i as usize).into()),
+            (Operand::Vec(vs), Operand::Value(Value::Index(i))) => vs[i as usize].clone(),
             (Operand::Vec(vs), Operand::Range(r)) =>
-                Operand::Vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
-            (Operand::Range(r), Operand::Lit(i)) => Operand::Lit(r.start + i* r.step),
+                Operand::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
+            (Operand::Range(r), Operand::Value(Value::Index(i))) => r.compose_index(i as usize).into(),
             (v, i) => Operand::Ram(Box::new(v), Box::new(i)),
         }
     }
 
-    pub fn concat(v1: Operand, v2: Operand) -> Operand {
+    pub fn concat(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Vec(mut vs1), Operand::Vec(vs2)) => {
                 vs1.extend(vs2);
@@ -105,109 +114,201 @@ impl Operand {
                 vs.push(v);
                 Operand::Vec(vs)
             },
-            (l, r) => Operand::Bin(BinOp::Concat, Box::new(l), Box::new(r)),
+            (l, r) =>
+                Operand::Bin(BinOp::Concat, Box::new(l), Box::new(r), typ),
         }
     }
 
-    pub fn add(v1: Operand, v2: Operand) -> Operand {
+    pub fn add(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l + r),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l + CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::add(l, r)).collect()),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Range(l + CRange::singleton(r as usize)),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::add(l, r, t.clone())).collect())
+            },
+            (Operand::Vec(l), Operand::Range(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::add(l, r.into(), t.clone())).collect())
+            },
+            (Operand::Range(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::add(l.into(), r, t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Add, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Add, Box::new(l), Box::new(r), typ)
         }
     }
 
-    pub fn sub(v1: Operand, v2: Operand) -> Operand {
+    pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l - r),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l - CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::sub(l, r)).collect()),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Range(l - CRange::singleton(r as usize)),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::sub(l, r, t.clone())).collect())
+            },
+            (Operand::Vec(l), Operand::Range(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::sub(l, r.into(), t.clone())).collect())
+            },
+            (Operand::Range(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::sub(l.into(), r, t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Add, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Sub, Box::new(l), Box::new(r), typ)
         }
     }
 
-    pub fn mul(v1: Operand, v2: Operand) -> Operand {
+    pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l * r),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l * CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::mul(l, r)).collect()),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Range(l * CRange::singleton(r as usize)),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::mul(l, r, t.clone())).collect())
+            },
+            (Operand::Vec(l), Operand::Range(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::mul(l, r.into(), t.clone())).collect())
+            },
+            (Operand::Range(r), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::mul(r.into(), l, t.clone())).collect())
+            },
+           (Operand::Vec(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter()
+                    .map(|l| Operand::mul(l, r.into(), t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Mul, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Mul, Box::new(l), Box::new(r), typ),
         }
     }
 
-    pub fn div(v1: Operand, v2: Operand) -> Operand {
+    pub fn div(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l / r),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l / CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::div(l, r)).collect()),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Range(l / CRange::singleton(r as usize)),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::div(l, r, t.clone())).collect())
+            },
+            (Operand::Vec(l), Operand::Range(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::div(l, r.into(), t.clone())).collect())
+            },
+            (Operand::Range(r), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::div(r.into(), l, t.clone())).collect())
+            },
+           (Operand::Vec(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter()
+                    .map(|l| Operand::div(l, r.into(), t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Div, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Div, Box::new(l), Box::new(r), typ),
         }
     }
 
-    pub fn pow(v1: Operand, v2: Operand) -> Operand {
+    pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l ^ r),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l ^ CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::pow(l, r)).collect()),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Range(l ^ CRange::singleton(r as usize)),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::pow(l, r, t.clone())).collect())
+            },
+            (Operand::Vec(l), Operand::Range(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::pow(l, r.into(), t.clone())).collect())
+            },
+            (Operand::Range(r), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::pow(r.into(), l, t.clone())).collect())
+            },
+           (Operand::Vec(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter()
+                    .map(|l| Operand::pow(l, r.into(), t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Pow, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Pow, Box::new(l), Box::new(r), typ),
         }
     }
 
-    pub fn dot(v1: Operand, v2: Operand) -> Operand {
+    pub fn dot(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
-            (Operand::Range(l), Operand::Range(r)) => Operand::lit((l * r).into_iter().sum()),
-            (Operand::Range(l), Operand::Lit(r)) | (Operand::Lit(r), Operand::Range(l)) =>
-                Operand::Range(l * CRange::singleton(r)),
-            (Operand::Vec(l), Operand::Vec(r)) =>
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::dot(l, r)).collect()),
+            (Operand::Range(l), Operand::Range(r)) =>
+                Operand::Value(Value::Index(
+                    l.into_iter()
+                    .zip(r.into_iter())
+                    .map(|(a, b)| (a * b) as u64)
+                    .sum())),
+            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+                Operand::Value(Value::Index(
+                    l.into_iter()
+                    .map(|a| (a * r as usize) as u64)
+                    .sum())),
+            (Operand::Vec(l), Operand::Vec(r)) => {
+                let (t, _) = typ.into_vec().unwrap();
+                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::dot(l, r, t.clone())).collect())
+            },
             // Default case, constructor
             (l, r) =>
-                Operand::Bin(BinOp::Dot, Box::new(l), Box::new(r)),
+                Operand::Bin(BinOp::Dot, Box::new(l), Box::new(r), typ),
         }
     }
 
-    pub fn not(v: Operand) -> Operand {
+    pub fn not(v: Self) -> Operand<C> {
         match v {
             Operand::Not(box v) => v,
             _ => Operand::Not(Box::new(v)),
         }
     }
-    pub fn vec(vs: Vec<Operand>) -> Operand {
+
+    pub fn vec(vs: Vec<Operand<C>>) -> Operand<C> {
         Operand::Vec(vs)
     }
-    pub fn underscore(n: &NodeIndex) -> Operand {
-        Operand::Underscore(*n)
+    pub fn underscore(n: &NodeIndex, typ: ATyp) -> Operand<C> {
+        Operand::Underscore(*n, typ)
     }
-    pub fn lit(n: usize) -> Operand {
-        Operand::Lit(n)
-    }
-    pub fn range(r: CRange) -> Operand {
+    pub fn range(r: CRange) -> Operand<C> {
         Operand::Range(r)
     }
     pub fn nodes(&self) -> Vec<NodeIndex> {
         match self {
-            Operand::Underscore(n) => vec![*n],
+            Operand::Underscore(n, _) => vec![*n],
             Operand::Ram(box v, _) => v.nodes(),
             Operand::Vec(vs) => {
                 let mut res = Vec::new();
@@ -216,7 +317,7 @@ impl Operand {
                 }
                 res
             },
-            Operand::Bin(_, l, r) => {
+            Operand::Bin(_, l, r, _) => {
                 let mut res = l.nodes();
                 res.extend(r.nodes());
                 res
@@ -226,10 +327,10 @@ impl Operand {
     }
 }
 
-impl fmt::Display for Operand {
+impl<C: ArkConfig> fmt::Display for Operand<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Operand::Lit(x) => write!(f, "{}", x),
+            Operand::Value(x) => write!(f, "{}", x),
             Operand::Ram(box v, r) => write!(f, "{}[{}]", v, r),
             Operand::Vec(vs) => {
                 write!(f, "[")?;
@@ -238,71 +339,41 @@ impl fmt::Display for Operand {
                 }
                 write!(f, "]")
             },
-            Operand::Gen => write!(f, "gen()"),
-            Operand::Rand => write!(f, "rand()"),
+            Operand::Gen(t) => write!(f, "gen<{}>", t),
+            Operand::Rand(t) => write!(f, "rand<{}>", t),
             Operand::Not(v) => write!(f, "!{}", v),
-            Operand::Bin(op, l, r) => write!(f, "({} {} {})", l, op, r),
+            Operand::Bin(op, l, r, t) => write!(f, "({} {} {}) : {}", l, op, r, t),
             Operand::Range(r) => write!(f, "{}", r),
-            Operand::Underscore(n) => write!(f, "_{}", n.index()),
+            Operand::Underscore(n, t) => write!(f, "_{} : {}", n.index(), t),
         }
     }
 }
 
-impl fmt::Display for TOperand {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} : {}", self.operand, self.typ)
+impl<C: ArkConfig> From<Value<C>> for Operand<C> {
+    fn from(v: Value<C>) -> Self {
+        Operand::Value(v)
     }
 }
 
-impl From<usize> for Operand {
+impl<C: ArkConfig> From<u64> for Operand<C> {
+    fn from(v: u64) -> Self {
+        Operand::Value(Value::Index(v))
+    }
+}
+
+impl<C: ArkConfig> From<usize> for Operand<C> {
     fn from(v: usize) -> Self {
-        Operand::Lit(v)
+        Operand::Value(Value::Index(v as u64))
     }
 }
 
-impl From<CRange> for Operand {
+impl<C: ArkConfig> From<CRange> for Operand<C> {
     fn from(r: CRange) -> Self {
         Operand::Range(r)
     }
 }
 
-impl From<NodeIndex> for Operand {
-    fn from(n: NodeIndex) -> Self {
-        Operand::Underscore(n)
-    }
-}
-
-impl TOp {
-    pub fn bin(op: BinOp, a: TOperand, b: TOperand) -> TOp {
-        Op::Bin(op, a, b)
-    }
-
-    pub fn eval(a: TOperand) -> TOp {
-        Op::Eval(a)
-    }
-
-    pub fn coef(a: TOperand) -> TOp {
-        Op::Coef(a)
-    }
-
-    pub fn hash(a: TOperand) -> TOp {
-        Op::Hash(a)
-    }
-
-    pub fn contains(a: TOperand, b: TOperand) -> TOp {
-        Op::Contains(a, b)
-    }
-
-    pub fn challenge(t: RTyp) -> TOp {
-        Op::Challenge(t)
-    }
-
-    pub fn check(a: TOperand) -> TOp {
-        Op::Check(a)
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for Op<T> {
+impl<C: ArkConfig> fmt::Display for Op<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Bin(op, a, b) => write!(f, "({} {} {})", op, a, b),
@@ -313,5 +384,29 @@ impl<T: fmt::Display> fmt::Display for Op<T> {
             Op::Challenge(tid) => write!(f, "challenge<{}>", tid),
             Op::Check(a) => write!(f, "(check {})", a)
         }
+    }
+}
+
+impl<C: ArkConfig> Op<C> {
+    pub fn coef(op: Operand<C>) -> Self {
+        Op::Coef(op)
+    }
+    pub fn eval(op: Operand<C>) -> Self {
+        Op::Eval(op)
+    }
+    pub fn hash(op: Operand<C>) -> Self {
+        Op::Hash(op)
+    }
+    pub fn contains(a: Operand<C>, b: Operand<C>) -> Self {
+        Op::Contains(a, b)
+    }
+    pub fn check(op: Operand<C>) -> Self {
+        Op::Check(op)
+    }
+    pub fn challenge(tid: ATyp) -> Self {
+        Op::Challenge(tid)
+    }
+    pub fn bin(op: BinOp, a: Operand<C>, b: Operand<C>) -> Self {
+        Op::Bin(op, a, b)
     }
 }

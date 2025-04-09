@@ -2,12 +2,10 @@
 #![feature(trait_alias)]
 #![feature(box_patterns)]
 pub mod arkworks;
-pub mod typ;
 pub mod graph;
 
 mod nothing;
 
-pub use typ::RTyp;
 pub use graph::{
     Dag,
     PDag,
@@ -17,12 +15,12 @@ pub use graph::{
     Principal
 };
 
-pub use arkworks::Value;
+pub use arkworks::{Ark, ATyp, Value};
 pub use arkworks::{
+    ArkConfig,
     ArkScalarOps,
     ArkGroupOps,
     ArkPairingOps,
-    ArkConfig,
     ArkBls12_381,
     ArkBn254,
     ArkMNT4_298,

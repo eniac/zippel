@@ -2,7 +2,7 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 use std::ops::{Add, Sub, Mul, Div, BitXor};
-
+use rand::Rng;
 use thiserror::Error;
 
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
@@ -70,6 +70,10 @@ impl CRange {
         Range { start, step: 1, end: start + 1 }
     }
 
+    pub fn random<R: Rng>(&self, rng: &mut R) -> usize {
+        self.start + (rng.next_u32() % (self.len() as u32)) as usize * self.step
+    }
+
     /// Function to check if a value is contained in the range
     pub fn contains(&self, value: usize) -> bool {
         // Check if the value is within the bounds of the range
@@ -81,7 +85,7 @@ impl CRange {
         (value - self.start) % self.step == 0
     }
 
-    pub fn get_size(&self) -> usize {
+    pub fn len(&self) -> usize {
         (self.end - self.start) / self.step
     }
 

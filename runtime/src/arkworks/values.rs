@@ -1,14 +1,14 @@
 use ark_ec::pairing::PairingOutput;
 use ark_ff::Field;
+use lang::typ::Range;
 use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
 use core::hash::{Hash, Hasher};
-use std::ops::{Add, Sub, Mul, Div, BitXor, BitAnd, BitOr, AddAssign, SubAssign, MulAssign, DivAssign, BitXorAssign, BitAndAssign, BitOrAssign};
+use std::ops::{Add, Sub, Mul, Div, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::CurveGroup;
 
-use crate::arkworks::config::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
-use crate::typ::RTyp;
+use crate::arkworks::{ATyp, Ark, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -1090,7 +1090,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// TODO: How do I sample the hasher state?
-    pub fn value_challenge<H: Hasher>(typ: &RTyp, h: &mut H) -> Self {
+    pub fn value_challenge<H: Hasher>(typ: &ATyp, h: &mut H) -> Self {
         // TODO: Use spongefish to hash and generate challenges
         unimplemented!();
     }
@@ -1263,58 +1263,61 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Generate a random value, given some parameters
-    pub fn random<R: Rng + Sized>(rng: &mut R, typ: &RTyp) -> Self {
+    pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
-            RTyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
-            RTyp::Index => Value::Index(rng.next_u64() % 100),
-            RTyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
-            RTyp::G1 => Value::G1(C::G1Ops::rand(rng)),
-            RTyp::G2 => Value::G2(C::G2Ops::rand(rng)),
-            RTyp::GT => Value::GT(C::POps::rand(rng)),
-            RTyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into()),
-            RTyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into()),
-            RTyp::Vec(box RTyp::Index, n) => Value::VecIndex((0..*n).map(|_| rng.next_u64() % 100).collect()),
-            RTyp::Vec(box RTyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
-            RTyp::Vec(box RTyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
-            RTyp::Vec(box RTyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
-            RTyp::Vec(box RTyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
-            RTyp::Vec(box RTyp::G1Affine, n) =>
+            ATyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
+            ATyp::Fin(r) => Value::Index(r.random(rng) as u64),
+            ATyp::Base(Ark::Scalar) => Value::Scalar(C::FOps::rand(rng)),
+            ATyp::Base(Ark::G1) => Value::G1(C::G1Ops::rand(rng)),
+            ATyp::Base(Ark::G2) => Value::G2(C::G2Ops::rand(rng)),
+            ATyp::Base(Ark::G1Affine) => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
+            ATyp::Base(Ark::G2Affine) => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
+            ATyp::Base(Ark::GT) => Value::GT(C::POps::rand(rng)),
+            ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as u64).collect()),
+            ATyp::Vec(box ATyp::Base(Ark::Scalar), n)
+            | ATyp::Uni(_,  n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::Base(Ark::G1), n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::Base(Ark::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::Base(Ark::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::Base(Ark::G1Affine), n) =>
                 Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
-            RTyp::Vec(box RTyp::G2Affine, n) =>
+            ATyp::Vec(box ATyp::Base(Ark::G2Affine), n) =>
                 Value::VecG2Affine(C::G2Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
-            RTyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
+            ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
+            ATyp::Mle(_, n) => Value::VecScalar((0..(1 << *n)).map(|_| C::FOps::rand(rng)).collect()),
         }
     }
 
-    pub fn typ(&self) -> Option<RTyp> {
+    pub fn typ(&self) -> ATyp {
         match self {
-            Value::Bool(_) => Some(RTyp::Bool),
-            Value::VecBool(v) => Some(RTyp::Vec(Box::new(RTyp::Bool), v.len())),
-            Value::Index(_) => Some(RTyp::Index),
-            Value::Scalar(_) => Some(RTyp::Scalar),
-            Value::G1(_) => Some(RTyp::G1),
-            Value::G2(_) => Some(RTyp::G2),
-            Value::G1Affine(_) => Some(RTyp::G1Affine),
-            Value::G2Affine(_) => Some(RTyp::G2Affine),
-            Value::GT(_) => Some(RTyp::GT),
-            Value::VecScalar(v) => Some(RTyp::Vec(Box::new(RTyp::Scalar), v.len())),
-            Value::VecG1(v) => Some(RTyp::Vec(Box::new(RTyp::G1), v.len())),
-            Value::VecG2(v) => Some(RTyp::Vec(Box::new(RTyp::G2), v.len())),
-            Value::VecG1Affine(v) => Some(RTyp::Vec(Box::new(RTyp::G1Affine), v.len())),
-            Value::VecG2Affine(v) => Some(RTyp::Vec(Box::new(RTyp::G2Affine), v.len())),
-            Value::VecGT(v) => Some(RTyp::Vec(Box::new(RTyp::GT), v.len())),
-            Value::VecIndex(v) => Some(RTyp::Vec(Box::new(RTyp::Index), v.len())),
-            Value::Vec(v) =>
-                if v.is_empty() {
-                    return None;
-                } else {
+            Value::Bool(_) => ATyp::Bool,
+            Value::VecBool(v) => ATyp::Vec(Box::new(ATyp::Bool), v.len()),
+            Value::Index(n) => ATyp::fin(Range::singleton(*n as usize)),
+            Value::Scalar(_) => ATyp::Base(Ark::Scalar),
+            Value::G1(_) => ATyp::Base(Ark::G1),
+            Value::G2(_) => ATyp::Base(Ark::G2),
+            Value::G1Affine(_) => ATyp::Base(Ark::G1),
+            Value::G2Affine(_) => ATyp::Base(Ark::G2),
+            Value::GT(_) => ATyp::Base(Ark::GT),
+            Value::VecScalar(v) => ATyp::Vec(Box::new(ATyp::base(Ark::Scalar)), v.len()),
+            Value::VecG1(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G1)), v.len()),
+            Value::VecG2(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G2)), v.len()),
+            Value::VecG1Affine(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G1Affine)), v.len()),
+            Value::VecG2Affine(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G2Affine)), v.len()),
+            Value::VecGT(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::GT)), v.len()),
+            Value::VecIndex(v) => {
+                let min = *v.iter().min().unwrap() as usize;
+                let max = *v.iter().max().unwrap() as usize;
+                ATyp::Vec(Box::new(ATyp::Fin(Range::new(min, max))), v.len())
+            },
+            Value::Vec(v) => {
                     let typ = v[0].typ();
                     for i in v.iter().skip(1) {
                         if typ != i.typ() {
-                            return None;
+                            panic!("Mismatched types in vector {} and {}", typ, i.typ());
                         }
                     }
-                    Some(RTyp::Vec(Box::new(typ?), v.len()))
+                    ATyp::Vec(Box::new(typ), v.len())
                 }
         }
     }
@@ -1500,42 +1503,42 @@ impl<C: ArkConfig> Hash for Value<C> {
 fn test_value_add_comm() {
     // Scalar + Scalar
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
     assert_deq!(&a + &b, &b + &a);
 
     // Group1 + Group1
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
     assert_deq!(&a + &b, &b + &a);
 
     // Group2 + Group2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
 
     // GT + GT
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::GT);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::GT));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::GT));
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Index> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // G1 + G1Affine
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1Affine));
     assert_deq!(&a + &b, &b + &a);
 }
 
@@ -1544,38 +1547,38 @@ fn test_value_add_comm() {
 fn test_value_mul_comm() {
     // Scalar * Scalar
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Scalar);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Index> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::Index), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // G1 * G2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
     assert_deq!(&a * &b, &b * &a);
 
     // G1Affine * G2Affine
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G1Affine);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::G2Affine);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1Affine));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2Affine));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<G1> * Vec<G2Affine>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G1), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &RTyp::Vec(Box::new(RTyp::G2Affine), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::G1)), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::G2Affine)), 10));
     assert_deq!(&a * &b, &b * &a);
 }
 

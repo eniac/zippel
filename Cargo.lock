@@ -981,6 +981,7 @@ dependencies = [
  "pest",
  "pest-ast",
  "pest_derive",
+ "rand",
  "rayon",
  "share",
  "thiserror 1.0.69",

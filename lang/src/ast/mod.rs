@@ -5,7 +5,7 @@ pub mod arg;
 pub mod sig;
 
 pub use exp::{Exp, Exps, ExpSubst, FreeVars, CExp, CExps, UExp, UExps, BinOp};
-pub use arg::{Arg, Args, CArg, CArgs};
+pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use sig::{Sig, CSig};
 pub use decl::{Body, CBody};
 pub use module::{Module, CModule};

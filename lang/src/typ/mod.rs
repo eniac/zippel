@@ -20,7 +20,7 @@ pub use subst::{SizeSubsts, AliasSubsts};
 pub use range::{Range, RangeError, RangeTraversal};
 
 use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use share::traversal::ToTraversal1;
+use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
@@ -28,15 +28,15 @@ use std::fmt;
 
 /// The types of expressions, [N] is the size parameter
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum Typ<N> {
+pub enum Typ<T, N> {
     /// Univariate polynomial of degree [Size] and base type [Tid]
-    Uni(Tid, N),
+    Uni(T, N),
     /// Multilinear polynomial of arity [Size] and base type [Tid]
-    Mle(Tid, N),
+    Mle(T, N),
     /// Vector of size [N] and base type [Typ]
-    Vec(Box<Typ<N>>, N),
+    Vec(Box<Typ<T, N>>, N),
     /// Tid type [Tid]
-    Base(Tid),
+    Base(T),
     /// Fin within range
     Fin(Range<N>),
     /// Boolean (BExp)
@@ -45,9 +45,21 @@ pub enum Typ<N> {
 
 /// Many types
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct Typs<N>(pub Vec<Typ<N>>);
+pub struct Typs<T, N>(pub Vec<Typ<T, N>>);
 
-impl<N> TidSubst for Typ<N> {
+/// Generic type [Tid]
+pub type GTyp<N> = Typ<Tid, N>;
+pub type GTyps<N> = Typs<Tid, N>;
+
+/// Symbolically sized type
+pub type UTyp = Typ<Tid, Size>;
+pub type UTyps = Typ<Tid, Size>;
+
+/// Concrete size type
+pub type CTyp = Typ<Tid, usize>;
+pub type CTyps = Typs<Tid, usize>;
+
+impl<N> TidSubst for GTyp<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
             Typ::Uni(b, _)
@@ -60,40 +72,49 @@ impl<N> TidSubst for Typ<N> {
     }
 }
 
-impl<N> IntoIterator for Typs<N> {
-    type Item = Typ<N>;
-    type IntoIter = std::vec::IntoIter<Typ<N>>;
+impl<T, N> IntoIterator for Typs<T, N> {
+    type Item = Typ<T, N>;
+    type IntoIter = std::vec::IntoIter<Typ<T, N>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N> FromIterator<Typ<N>> for Typs<N> {
-    fn from_iter<I: IntoIterator<Item=Typ<N>>>(iter: I) -> Self {
+impl<T, N> FromIterator<Typ<T, N>> for Typs<T, N> {
+    fn from_iter<I: IntoIterator<Item=Typ<T, N>>>(iter: I) -> Self {
         Typs(iter.into_iter().collect())
     }
 }
 
-impl<N> TidSubst for Typs<N> {
+impl<N> TidSubst for GTyps<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.0.iter_mut().for_each(|t| t.tid_subst(from, to))
     }
 }
 
-/// Symbolically sized type
-pub type UTyp = Typ<Size>;
+impl<T, N> Typ<T, N> {
+    pub fn base(b: T) -> Self {
+        Typ::Base(b)
+    }
+    pub fn vec(b: Typ<T, N>, n: N) -> Self {
+        Typ::Vec(Box::new(b), n)
+    }
+    pub fn fin(range: Range<N>) -> Self {
+        Typ::Fin(range)
+    }
+    pub fn bool() -> Self {
+        Typ::Bool
+    }
+    pub fn into_vec(self) -> Option<(Typ<T,N>, N)> {
+        match self {
+            Typ::Vec(box b, n) => Some((b, n)),
+            _ => None
+        }
+    }
+}
 
-/// Symbolically sized types
-pub type UTyps = Typ<Size>;
-
-/// Concrete size type
-pub type CTyp = Typ<usize>;
-
-/// Concrete size types
-pub type CTyps = Typs<usize>;
-
-impl<N> Typ<N> {
+impl<N> GTyp<N> {
     pub fn varstr<'a>(b: &'a str) -> Self {
         Typ::Base(Tid::new(b))
     }
@@ -106,21 +127,7 @@ impl<N> Typ<N> {
     pub fn mle(b: Tid, n: N) -> Self {
         Typ::Mle(b, n)
     }
-    pub fn vec(b: Typ<N>, n: N) -> Self {
-        Typ::Vec(Box::new(b), n)
-    }
-    pub fn fin(range: Range<N>) -> Self {
-        Typ::Fin(range)
-    }
-    pub fn bool() -> Self {
-        Typ::Bool
-    }
-    pub fn get_base(&self) -> Option<&Tid> {
-        match self {
-            Typ::Base(b) => Some(b),
-            _ => None
-        }
-    }
+
     pub fn to_scalar(self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
@@ -151,37 +158,52 @@ impl<N> Typ<N> {
     }
 }
 
-impl<N> Typs<N> {
+impl<T, N> Typs<T, N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> std::slice::Iter<Typ<N>> {
+    pub fn iter(&self) -> std::slice::Iter<Typ<T, N>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn last(&self) -> Option<&Typ<N>> {
+    pub fn last(&self) -> Option<&Typ<T, N>> {
         self.0.last()
     }
 }
 
-impl<N> ToTraversal1<N> for Typ<N> {
-    type Output<Z> = Typ<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+impl<T, N> ToTraversal1<T> for Typ<T, N> {
+    type Output<Z> = Typ<Z, N>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        match self {
+            Typ::Uni(b, n) => Ok(Typ::Uni(f(b)?, n)),
+            Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
+            Typ::Base(b) => Ok(Typ::Base(f(b)?)),
+            Typ::Vec(box b, n) =>
+                Ok(Typ::vec(b.traverse1(f)?, n)),
+            Typ::Fin(r) => Ok(Typ::Fin(r)),
+            Typ::Bool => Ok(Typ::Bool)
+        }
+    }
+}
+
+impl<T, N> ToTraversal2<N> for Typ<T, N> {
+    type Output<Z> = Typ<T, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
             Typ::Uni(b, n) => Ok(Typ::Uni(b, f(n)?)),
             Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) =>
-                Ok(Typ::vec(b.traverse1(f)?, f(n)?)),
+                Ok(Typ::vec(b.traverse2(f)?, f(n)?)),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Bool => Ok(Typ::Bool)
         }
     }
 }
 
-impl<N> RangeTraversal<N> for Typ<N> {
+impl<T, N> RangeTraversal<N> for Typ<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
@@ -191,23 +213,31 @@ impl<N> RangeTraversal<N> for Typ<N> {
     }
 }
 
-impl<N> ToTraversal1<N> for Typs<N> {
-    type Output<Z> = Typs<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+impl<T, N> ToTraversal1<T> for Typs<T, N> {
+    type Output<Z> = Typs<Z, N>;
+    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Typs(self.0.into_iter().map(|t| t.traverse1(f)).collect::<Result<Vec<_>, _>>()?))
     }
 }
 
-impl<N> RangeTraversal<N> for Typs<N> {
+impl<T, N> ToTraversal2<N> for Typs<T, N> {
+    type Output<Z> = Typs<T, Z>;
+    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+        Ok(Typs(self.0.into_iter().map(|t| t.traverse2(f)).collect::<Result<Vec<_>, _>>()?))
+    }
+}
+
+impl<T, N> RangeTraversal<N> for Typs<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Typs(self.0.into_iter().map(|t| t.range_traverse(f)).collect::<Result<Vec<_>, _>>()?))
     }
 }
 
 /// Pretty-printer for zippel types.
-impl<'a, D, A, N> Pretty<'a, D, A> for Typ<N>
+impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
 where
     D: DocAllocator<'a, A>,
+    T: Pretty<'a, D, A>,
     N: Pretty<'a, D, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -228,7 +258,7 @@ where
                 n.pretty(allocator),
                 allocator.text(">")
             ]),
-            Typ::Base(base) => allocator.text(base.to_string()),
+            Typ::Base(base) => base.pretty(allocator),
             Typ::Vec(box t, n) => allocator.concat([
                 allocator.text("["),
                 t.pretty(allocator),
@@ -250,9 +280,10 @@ where
     }
 }
 
-impl<'a, D, A, N> Pretty<'a, D, A> for Typs<N>
+impl<'a, D, A, T, N> Pretty<'a, D, A> for Typs<T, N>
 where
     D: DocAllocator<'a, A>,
+    T: Pretty<'a, D, A>,
     N: Pretty<'a, D, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -266,24 +297,24 @@ where
     }
 }
 
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typ<N> {
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone, T: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typ<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Typ<N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Typ<T, N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
-impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typs<N> {
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone, T: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Typs<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Typs<N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Typs<T, N> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
 /// Parser for zippel types.
-impl<'pest> FromPest<'pest> for Typ<Size> {
+impl<'pest> FromPest<'pest> for UTyp {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 
@@ -325,20 +356,20 @@ impl<'pest> FromPest<'pest> for Typ<Size> {
 #[test]
 fn typ_parser() {
     let mut pairs = ZippelParser::parse(Rule::typ, "A").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::varstr("A"));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::varstr("A"));
 
     pairs = ZippelParser::parse(Rule::typ, "Uni<X, 2^N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::mle(Tid::from("X"), Size::from(2)));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::mle(Tid::from("X"), Size::from(2)));
 
     pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::vec(Typ::varstr("A"), Size::from("N")));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::vec(Typ::varstr("A"), Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
 
     pairs = ZippelParser::parse(Rule::typ, "Bool").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), Typ::Bool);
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Bool);
 }
