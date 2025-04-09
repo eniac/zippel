@@ -1,5 +1,5 @@
 use lang::ast::{CSig, BinOp};
-use lang::typ::CTyp;
+use lang::typ::ATyp;
 use lang::id::Tid;
 use share::traversal::ToTraversal2;
 
