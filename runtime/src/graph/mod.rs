@@ -7,7 +7,7 @@ pub use crate::graph::op::{Operand, Op};
 pub use crate::graph::node::{Node, PNode};
 pub use crate::graph::edge::Edge;
 pub use crate::graph::principal::Principal;
-pub use crate::arkworks::ArkConfig;
+pub use crate::arkworks::{Ark, ArkConfig, Value};
 
 use share::Ctx;
 use lang::ast::{CModule, CExp, ExpSubst, Arg, CSig, CBody};
@@ -51,7 +51,7 @@ impl GraphError {
 }
 
 /*
-impl<A> Dag<A> {
+impl<C: ArkConfig, A> Dag<C, A> {
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
         self.0.node_count()
@@ -62,10 +62,10 @@ impl<A> Dag<A> {
         self.0.update_edge(source, sink, edge);
     }
 
-    fn add_edges(&mut self, vars: &Ctx<Vid, NodeIndex>, source: NodeIndex, sink: Operand) {
+    fn add_edges(&mut self, vars: &Ctx<Vid, NodeIndex>, source: NodeIndex, sink: Operand<C>) {
         match sink {
-            Operand::Lit(_) => (),
-            Operand::Underscore(n) => self.add_edge(source, n, Edge::Data),
+            Operand::Value(_) => (),
+            Operand::Underscore(n, _) => self.add_edge(source, n, Edge::Data),
             Operand::Vec(vs) => {
                 for v in vs {
                     self.add_edges(vars, source, v);
@@ -77,11 +77,11 @@ impl<A> Dag<A> {
     }
 
     /// Add a node to the graph (no deduplication)
-    fn add_node(&mut self, node: Node<A>) -> NodeIndex {
+    fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
         self.0.add_node(node)
     }
 
-    pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<A> {
+    pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<C, A> {
         &mut self.0[it]
     }
 
@@ -129,7 +129,7 @@ impl<A> Dag<A> {
 }
 
 /// Constructors for graphs
-impl PDag {
+impl<C: ArkConfig> PDag<C> {
     fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut g = Dag(Graph::new());
         // Build [fctx] from module
@@ -190,18 +190,23 @@ impl PDag {
         exp: CExp,
         transcr: NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<TOperand, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, NodeIndex>) -> Result<Operand<C>, GraphError> {
         // Type inference for [self]
         match exp.clone() {
             // Literals get appended to the last node [self.it]
             CExp::Lit(n) => {
-                Ok(Operand::Lit(n))
+                Ok(Operand::Value(Value::Index(n as u64)))
             },
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) => vars.get(&id)
-                .map(|n| Operand::underscore(n))
-                .ok_or_else(|| GraphError::var_not_found(&id)),
+            CExp::Var(id) => {
+                let typ = vctx.get(&id).ok_or_else(|| GraphError::var_not_found(&id))?;
+                let n = vars.get(&id).ok_or_else(|| GraphError::var_not_found(&id))?;
+                let at = typ.to_ark(kctx).ok_or_else(|| {
+                    Err(TypeError::var(&id, kctx, vctx))
+                })?;
+                Ok(Operand::underscore(n, at))
+            },
 
             // Create a new [coef] node
             CExp::Coef(box v) => {
@@ -215,11 +220,16 @@ impl PDag {
                 // Add child first
                 let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let ncoef = self.add_node(Node::coef(child))
+                let ncoef = self.add_node(Node::coef(child));
 
                 // Add edge from [ncoef] to [child]
                 self.add_edges(ncoef, vars, child);
-                Ok(Operand::Underscore(ncoef))
+
+                if let (ATyp::Base(Ark::Scalar), n) = child.typ().into_vec() {
+                    Ok(Operand::Underscore(ncoef, ATyp::Uni(Ark::Scalar, n)))
+                } else {
+                    Err(TypeError::coef(kctx, vctx, &v).into())
+                }
             },
 
             // Create a new [mle] Node

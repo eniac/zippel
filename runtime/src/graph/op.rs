@@ -1,7 +1,7 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
 
-use crate::arkworks::{ArkConfig, Ark, ATyp};
+use crate::arkworks::{ArkConfig, ATyp};
 use crate::arkworks::Value;
 
 use petgraph::graph::NodeIndex;
@@ -122,7 +122,8 @@ impl<C: ArkConfig> Operand<C> {
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l + r),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Range(l + CRange::singleton(r as usize)),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
@@ -148,7 +149,8 @@ impl<C: ArkConfig> Operand<C> {
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l - r),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Range(l - CRange::singleton(r as usize)),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
@@ -174,7 +176,8 @@ impl<C: ArkConfig> Operand<C> {
     pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l * r),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Range(l * CRange::singleton(r as usize)),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
@@ -206,7 +209,8 @@ impl<C: ArkConfig> Operand<C> {
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l / r),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Range(l / CRange::singleton(r as usize)),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
@@ -238,7 +242,8 @@ impl<C: ArkConfig> Operand<C> {
     pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Operand<C> {
         match (v1, v2) {
             (Operand::Range(l), Operand::Range(r)) => Operand::Range(l ^ r),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Range(l ^ CRange::singleton(r as usize)),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
@@ -275,14 +280,16 @@ impl<C: ArkConfig> Operand<C> {
                     .zip(r.into_iter())
                     .map(|(a, b)| (a * b) as u64)
                     .sum())),
-            (Operand::Range(l), Operand::Value(Value::Index(r))) | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
+            (Operand::Range(l), Operand::Value(Value::Index(r)))
+            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
                 Operand::Value(Value::Index(
                     l.into_iter()
                     .map(|a| (a * r as usize) as u64)
                     .sum())),
             (Operand::Vec(l), Operand::Vec(r)) => {
                 let (t, _) = typ.into_vec().unwrap();
-                Operand::Vec(l.into_iter().zip(r.into_iter()).map(|(l, r)| Operand::dot(l, r, t.clone())).collect())
+                Operand::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Operand::dot(l, r, t.clone())).collect())
             },
             // Default case, constructor
             (l, r) =>
@@ -342,7 +349,8 @@ impl<C: ArkConfig> fmt::Display for Operand<C> {
             Operand::Gen(t) => write!(f, "gen<{}>", t),
             Operand::Rand(t) => write!(f, "rand<{}>", t),
             Operand::Not(v) => write!(f, "!{}", v),
-            Operand::Bin(op, l, r, t) => write!(f, "({} {} {}) : {}", l, op, r, t),
+            Operand::Bin(op, l, r, t) =>
+                write!(f, "({} {} {}) : {}", l, op, r, t),
             Operand::Range(r) => write!(f, "{}", r),
             Operand::Underscore(n, t) => write!(f, "_{} : {}", n.index(), t),
         }

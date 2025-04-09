@@ -199,6 +199,20 @@ impl<K, V> Ctx<K, V> {
     pub fn entry(&mut self, k: K) -> std::collections::btree_map::Entry<K, V> where K: Ord {
         self.0.entry(k)
     }
+
+    pub fn find_one(&self, f: impl Fn(&K, &V) -> bool) -> Option<(K, V)>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
+        let res: Vec<(K, V)> = self.0.iter().filter(|(k, v)| f(k, v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        if res.len() == 1 {
+            Some(res[0].clone())
+        } else {
+            None
+        }
+    }
+
     pub fn extract_if(&mut self, f: impl Fn(&K, &V) -> bool) -> Ctx<K, V>
     where
         K: Ord + Clone,
