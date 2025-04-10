@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
 use core::hash::{Hash, Hasher};
-use std::ops::{Add, Sub, Mul, Div, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
+use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::CurveGroup;
 
 use crate::arkworks::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
@@ -844,6 +844,29 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    pub fn value_rem(&self, other: &mut Self) {
+        match (self, &other) {
+            (Value::Index(a), Value::Index(b)) =>
+                *other.into_index_mut() = *a % *b,
+            (Value::Index(i), Value::VecIndex(_)) => {
+                other.into_vec_index_mut()
+                    .par_iter_mut().for_each(|v| *v %= *i);
+            },
+            (Value::VecIndex(vs), Value::Index(i)) => {
+                let mut vs = vs.clone();
+                vs.par_iter_mut().for_each(|v| *v %= *i);
+                *other = Value::VecIndex(vs);
+            },
+            (Value::VecIndex(vs), Value::VecIndex(_)) => {
+                other.into_vec_index_mut()
+                    .par_iter_mut()
+                    .zip(vs.par_iter())
+                    .for_each(|(v, i)| *v  = *i % *v);
+                },
+            (_, _) =>
+                panic!("Cannot do {} % {}", self, other)
+        }
+    }
     /// Value exponentiation, saves result in other
     pub fn value_pow(&self, other: &mut Self) {
         #[inline]
@@ -1372,6 +1395,16 @@ impl<C: ArkConfig> Div for &Value<C> {
     fn div(self, other: Self) -> Self::Output {
         let mut other = other.clone();
         self.value_div(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Rem for &Value<C> {
+    type Output = Value<C>;
+
+    fn rem(self, other: Self) -> Self::Output {
+        let mut other = other.clone();
+        self.value_rem(&mut other);
         other
     }
 }
