@@ -1,7 +1,8 @@
 use lang::typ::range::CRange;
+use lang::typ::ATyp;
 use lang::ast::BinOp;
 
-use crate::arkworks::{ArkConfig, ATyp};
+use crate::arkworks::ArkConfig;
 use crate::arkworks::Value;
 
 use petgraph::graph::NodeIndex;

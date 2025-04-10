@@ -59,6 +59,12 @@ pub enum BinOp {
     ///     ```
     Concat,
 
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let inner: F = 5 % 2;
+    ///     ```
+    Rem,
+
     ///     Represents the equality comparison between two arithmetic expressions.
     ///
     ///     **Zippel Code:**
@@ -587,6 +593,9 @@ impl<N> Exp<N> {
     pub fn dot(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Dot, Box::new(l), Box::new(r))
     }
+    pub fn rem(l: Self, r: Self) -> Self {
+        Exp::Bin(BinOp::Rem, Box::new(l), Box::new(r))
+    }
     pub fn concat(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Concat, Box::new(l), Box::new(r))
     }
@@ -647,6 +656,7 @@ where
             BinOp::Pow => allocator.text(" ^ "),
             BinOp::Dot => allocator.text(" . "),
             BinOp::Concat => allocator.text(" ++ "),
+            BinOp::Rem => allocator.text(" % "),
             BinOp::Equ => allocator.text(" == "),
             BinOp::And => allocator.text(" && "),
             BinOp::Or => allocator.text(" || "),
@@ -895,7 +905,7 @@ lazy_static! {
         PrattParser::new()
             .op(Op::infix(and_op, Left) | Op::infix(or_op, Left))
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
-            .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left))
+            .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
             .op(Op::infix(concat_op, Left))
             .op(Op::infix(pow_op, Right))
     };
@@ -1011,6 +1021,7 @@ impl<'pest> FromPest<'pest> for UExp {
                     Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
                     Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
                     Rule::dot_op => Ok(Exp::dot(lhs?, rhs?)),
+                    Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
                     Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
                     _ => unreachable!(),
                 })
@@ -1097,6 +1108,22 @@ fn parser_bin() {
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::pow(Exp::varstr("x"), Exp::from(2)))
+    );
+
+    // Dot
+    let ex7 = "x . 2";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex7).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::dot(Exp::varstr("x"), Exp::from(2)))
+    );
+
+    // Rem
+    let ex8 = "x % 2";
+    let mut pairs = ZippelParser::parse(Rule::aexp, ex8).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::rem(Exp::varstr("x"), Exp::from(2)))
     );
 }
 

@@ -7,12 +7,12 @@ pub use crate::graph::op::{Operand, Op};
 pub use crate::graph::node::{Node, PNode};
 pub use crate::graph::edge::Edge;
 pub use crate::graph::principal::Principal;
-pub use crate::arkworks::{Ark, ArkConfig, Value};
+pub use crate::arkworks::{ArkConfig, Value};
 
 use share::Ctx;
 use lang::ast::{CModule, CExp, ExpSubst, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
-use lang::typ::{CTyp, CTyps, Kind};
+use lang::typ::{CTyp, CTyps, ATyp, ATyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;

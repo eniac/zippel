@@ -18,7 +18,7 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
-use crate::to_bytes;
+// use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt::Display {
@@ -182,7 +182,8 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     #[inline]
     fn hash(f: &F, state: &mut ProverState) {
-        prover_state.add_bytes(to_bytes!(f).unwrap());
+        // state.add_bytes(to_bytes!(f).unwrap());
+        unimplemented!("hash not implemented");
     }
 
     #[inline]
@@ -194,7 +195,8 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     #[inline]
     fn vec_hash(f: &Vec<F>, state: &mut ProverState) {
-        prover_state.add_bytes(to_bytes!(f).unwrap());
+        // state.add_bytes(to_bytes!(f).unwrap());
+        unimplemented!("vec_hash not implemented");
     }
 
     #[inline]
@@ -237,7 +239,8 @@ pub trait ArkGroupOps<G: CurveGroup> {
     }
     #[inline]
     fn hash(g: &G, state: &mut ProverState) {
-        prover_state.add_bytes(to_bytes!(g).unwrap());
+        // state.add_bytes(to_bytes!(g).unwrap());
+        unimplemented!("hash not implemented");
     }
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<G> {
@@ -247,7 +250,8 @@ pub trait ArkGroupOps<G: CurveGroup> {
     }
     #[inline]
     fn vec_hash(g: &Vec<G>, state: &mut ProverState) {
-        g.hash(h)
+        // state.add_bytes(to_bytes!(g).unwrap());
+        unimplemented!("vec_hash not implemented");
     }
     /// Group vec operations
     #[inline]
@@ -299,7 +303,8 @@ pub trait ArkPairingOps<P: Pairing> {
     }
     #[inline]
     fn hash(g: &PairingOutput<P>, state: &mut ProverState) {
-        prover_state.add_bytes(to_bytes!(g).unwrap());
+        // state.add_bytes(to_bytes!(g).unwrap());
+        unimplemented!("hash not implemented");
     }
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<PairingOutput<P>> {
@@ -309,7 +314,8 @@ pub trait ArkPairingOps<P: Pairing> {
     }
     #[inline]
     fn vec_hash(g: &Vec<PairingOutput<P>>, state: &mut ProverState) {
-        prover_state.add_bytes(to_bytes!(g).unwrap());
+        // state.add_bytes(to_bytes!(g).unwrap());
+        unimplemented!("vec_hash not implemented");
     }
     /// Group vec operations
     #[inline]

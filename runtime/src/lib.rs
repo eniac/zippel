@@ -15,7 +15,7 @@ pub use graph::{
     Principal
 };
 
-pub use arkworks::{Ark, ATyp, Value};
+pub use arkworks::Value;
 pub use arkworks::{
     ArkConfig,
     ArkScalarOps,

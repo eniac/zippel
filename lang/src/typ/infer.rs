@@ -302,6 +302,16 @@ impl Typeable for CExp {
                         .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
+            // Handle %
+            CExp::Bin(BinOp::Rem, a, b) => {
+                let ta = a.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+                let tb = b.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+
+                CTyp::lub_rem(ta, tb, kctx)
+                        .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+            }
             // Handle ++
             CExp::Bin(BinOp::Concat, a, b) => {
                 let ta = a.infer(kctx, fctx, vctx)
@@ -340,6 +350,7 @@ impl Typeable for CExp {
                     (_, _) => Err(TypeError::concat(kctx, vctx, &ta, &tb))
                 }
             }
+
             CExp::Bin(BinOp::Equ, a, b) => {
                 let ta = a.infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
@@ -806,6 +817,42 @@ mod tests {
         let vec_div2 =
             CExp::div(CExp::varstr("v1"), CExp::varstr("v2"));
         assert!(vec_div2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+       // Create expression p / p
+        let uni_div =
+            CExp::div(CExp::varstr("p"), CExp::varstr("p"));
+        assert_eq!(uni_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::uni(Tid::from("F"), 0)));
+    }
+
+    // Test for remainder
+    #[test]
+    fn test_binary_rem_inference() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create expression x % y
+        let field_rem =
+            CExp::rem(CExp::varstr("f1"), CExp::varstr("f2"));
+
+        // fields have no modulo
+        assert!(field_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // Create expression g1 % g2, groups have no modulo
+        let group_rem =
+            CExp::rem(CExp::varstr("g1"), CExp::varstr("g2"));
+        assert!(group_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // Create expression s1 % s2
+        let mult_group_rem =
+            CExp::rem(CExp::varstr("s1"), CExp::varstr("s2"));
+        assert!(mult_group_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // Create expression p % p
+        let uni_rem =
+            CExp::rem(CExp::varstr("p"), CExp::varstr("p"));
+        assert_eq!(uni_rem.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::uni(Tid::from("F"), 4)));
     }
 
     // Test for power

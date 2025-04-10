@@ -1,10 +1,8 @@
-use lang::ast::{CSig, BinOp};
-use lang::typ::ATyp;
-use lang::id::Tid;
+use lang::ast::CSig;
 use share::traversal::ToTraversal2;
 
 use crate::graph::{Op, Operand};
-use crate::arkworks::{Ark, ATyp, ArkConfig};
+use crate::arkworks::ArkConfig;
 use crate::graph::Principal;
 use std::fmt;
 

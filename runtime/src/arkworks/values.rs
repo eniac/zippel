@@ -1,6 +1,6 @@
 use ark_ec::pairing::PairingOutput;
 use ark_ff::Field;
-use lang::typ::Range;
+use lang::typ::{ATyp, Ark, Range};
 use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
@@ -8,7 +8,8 @@ use core::hash::{Hash, Hasher};
 use std::ops::{Add, Sub, Mul, Div, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::CurveGroup;
 
-use crate::arkworks::{ATyp, Ark, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
+use crate::arkworks::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {

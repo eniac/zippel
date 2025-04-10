@@ -8,6 +8,7 @@ mul_op = @{ "*" }
 div_op = @{ "/" }
 pow_op = @{ "^" }
 dot_op = @{ "." }
+rem_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
 le_op = @{ "<=" }
@@ -83,7 +84,7 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
     verify_exp    = { "verify" ~ "(" ~ bexp ~ ")"  }                   // Assertion (Verifier) expression
     let_exp       = { "let" ~ id ~ "=" ~ aexp ~ ";" ~ aexp }           // Let expression
     log_exp       = { id ~ "<-" ~ aexp ~ ";" ~ aexp }                  // Transcript log expression
-    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op }
+    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op }
 aexps = { aexp ~ ("," ~ aexp)* }
 stmts   = { aexp ~ (";" ~ aexp)* ~ ";"? }
 

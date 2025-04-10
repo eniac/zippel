@@ -20,6 +20,8 @@ pub enum BinopError<K: fmt::Display> {
     Div(K, K),
     #[error("Cannot take exponent of {0} ^ {1}")]
     Pow(K, K),
+    #[error("Cannot take remainder of {0} % {1}")]
+    Rem(K, K),
     #[error("Cannot take dot-product of {0} . {1}")]
     Dot(K, K),
 }
@@ -82,6 +84,11 @@ impl LubError {
                 TypeVar { id: a.clone(), kind: ka.clone() },
                 TypeVar { id: b.clone(), kind: kb.clone() }))
     }
+    pub fn tv_rem(a: &Tid, ka: &Kind, b: &Tid, kb: &Kind) -> Self {
+        LubError::Kind(BinopError::Rem(
+                TypeVar { id: a.clone(), kind: ka.clone() },
+                TypeVar { id: b.clone(), kind: kb.clone() }))
+    }
     pub fn tv_dot(a: &Tid, ka: &Kind, b: &Tid, kb: &Kind) -> Self {
         LubError::Kind(BinopError::Dot(
                 TypeVar { id: a.clone(), kind: ka.clone() },
@@ -120,6 +127,9 @@ impl LubError {
     pub fn range_mul(a: &Range<usize>, b: &Range<usize>) -> Self {
         LubError::Range(BinopError::Mul(a.clone(), b.clone()))
     }
+    pub fn range_rem(a: &Range<usize>, b: &Range<usize>) -> Self {
+        LubError::Range(BinopError::Rem(a.clone(), b.clone()))
+    }
     pub fn range_dot(a: &Range<usize>, b: &Range<usize>) -> Self {
         LubError::Range(BinopError::Dot(a.clone(), b.clone()))
     }
@@ -147,6 +157,9 @@ impl LubError {
     pub fn typ_pow(a: &CTyp, b: &CTyp) -> Self {
         LubError::Type(BinopError::Pow(a.clone(), b.clone()))
     }
+    pub fn typ_rem(a: &CTyp, b: &CTyp) -> Self {
+        LubError::Type(BinopError::Rem(a.clone(), b.clone()))
+    }
     pub fn typ_dot(a: &CTyp, b: &CTyp) -> Self {
         LubError::Type(BinopError::Dot(a.clone(), b.clone()))
     }
@@ -162,6 +175,7 @@ pub trait Lub where Self: Sized {
     fn lub_div(a: Self, b: Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_pow(a: Self, b: Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_dot(a: Self, b: Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    fn lub_rem(a: Self, b: Self, ctx: &Self::Context) -> Result<Self, LubError>;
 }
 
 /// Least-upper bounds for [Range] overapproximate sets of integers
@@ -263,6 +277,25 @@ impl Lub for Range<usize> {
                     LubError::bad_range(&b, e)))?;
 
         Ok(a ^ b)
+    }
+
+    fn lub_rem(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
+        // Validate Ranges
+        a.check().map_err(|e|
+                LubError::next(
+                    LubError::range_rem(&a, &b),
+                    LubError::bad_range(&a, e)))?;
+        b.check().map_err(|e|
+                LubError::next(
+                    LubError::range_rem(&a, &b),
+                    LubError::bad_range(&b, e)))?;
+
+        // Check if the divisor range includes zero
+        if b.start == 0 {
+            return Err(LubError::Range(BinopError::Div(a, b))); // Division by zero is undefined
+        }
+
+        Ok(a % b)
     }
 
     fn lub_dot(a: Self, b: Self, _: &Nothing) -> Result<Self, LubError> {
@@ -388,9 +421,22 @@ impl Lub for Tid {
         }
     }
 
+    /// Least-upper-bound for remainder of different kinds
+    fn lub_rem(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(&a)
+            .ok_or(LubError::next(LubError::tid_div(&a, &b), LubError::kind_not_found(&a)))?;
+        let kb = ctx.get(&b)
+            .ok_or(LubError::next(LubError::tid_div(&a, &b), LubError::kind_not_found(&b)))?;
+        Err(LubError::tv_rem(&a, ka, &b, kb))
+    }
+
     /// Least-upper-bound for exponentiation of different kinds
-    fn lub_pow(_: Tid, _: Tid, _: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
-        unreachable!()
+    fn lub_pow(a: Tid, b: Tid, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(&a)
+            .ok_or(LubError::next(LubError::tid_div(&a, &b), LubError::kind_not_found(&a)))?;
+        let kb = ctx.get(&b)
+            .ok_or(LubError::next(LubError::tid_div(&a, &b), LubError::kind_not_found(&b)))?;
+        Err(LubError::tv_pow(&a, ka, &b, kb))
     }
 
     /// Least-upper-bound for dot product is the same as multiplication (for kinds)
@@ -679,6 +725,35 @@ impl Lub for CTyp {
                 }
             },
             (_, _) => Err(LubError::typ_div(&x, &y))
+        }
+    }
+
+    fn lub_rem(x: CTyp, y: CTyp, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+        match (x.clone(), y.clone()) {
+            (CTyp::Base(a), CTyp::Base(b)) =>
+                Ok(CTyp::Base(Tid::lub_rem(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_rem(&x, &y), e))?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::lub_rem(a, b, &Nothing)
+                    .map_err(|e| LubError::next(LubError::typ_rem(&x, &y), e))?)),
+            // Uni<A> % Uni<B> = Uni<C> where deg(C) = deg(B) - 1
+            (CTyp::Uni(a, n), CTyp::Uni(b, m)) if n >= m =>
+                Ok(CTyp::Uni(Tid::lub_equ(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_rem(&x, &y), e))?, m.saturating_sub(1))),
+            // Vec<A> % Vec<B> = Vec<C> where C = A = B
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(CTyp::lub_rem(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::typ_rem(&x, &y), e))?, n))
+                } else {
+                    Err(LubError::typ_rem(&x, &y))
+                },
+            // Vec<A> / c = Vec<A>
+            (CTyp::Vec(box b, n), a) =>
+                Ok(CTyp::vec(CTyp::lub_rem(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::typ_rem(&x, &y), e))?, n)),
+
+            (_, _) => Err(LubError::typ_rem(&x, &y))
         }
     }
 

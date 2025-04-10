@@ -1,7 +1,7 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
-use std::ops::{Add, Sub, Mul, Div, BitXor};
+use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
 use rand::Rng;
 use thiserror::Error;
 
@@ -283,6 +283,30 @@ impl Div for CRange {
         // Compute new start and end
         let new_start = a_min / b_max; // Smallest quotient
         let new_end = a_max / b_min + 1; // Largest quotient + 1 (right-exclusive)
+
+        // Use a step of 1 for safe overapproximation
+        let new_step = 1;
+
+        Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        }
+    }
+}
+
+impl Rem for CRange {
+    type Output = CRange;
+
+    fn rem(self, b: CRange) -> CRange {
+        let a_min = self.start;
+        let a_max = self.end - self.step;
+        let b_min = b.start;
+        let b_max = b.end - b.step;
+
+        // Compute new start and end
+        let new_start = a_min % b_max; // Smallest remainder
+        let new_end = a_max % b_min + 1; // Largest remainder + 1 (right-exclusive)
 
         // Use a step of 1 for safe overapproximation
         let new_step = 1;

@@ -1,6 +1,5 @@
 use std::fmt;
 
-use lang::typ::Typ;
 use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
