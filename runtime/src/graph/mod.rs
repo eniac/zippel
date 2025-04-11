@@ -10,7 +10,7 @@ pub use crate::graph::principal::Principal;
 pub use crate::arkworks::{ArkConfig, Value, ATyp};
 
 use share::{traversal::ToTraversal1, Ctx};
-use lang::ast::{CModule, BinOp, CExp, ExpSubst, Arg, CSig, CBody};
+use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
 use lang::typ::{CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};

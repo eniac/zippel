@@ -253,14 +253,6 @@ pub trait FreeVars {
     fn freevars(&self) -> Set<Vid>;
 }
 
-/// Traverse VIDs
-pub trait ExpSubst : FreeVars + Sized {
-    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>);
-    fn shift(&mut self, from: &Vid, ctx: &mut Set<Vid>) {
-        self.subst(from, &CExp::Var(Vid::gen(from, ctx)), ctx);
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub struct Exps<N>(pub Vec<Exp<N>>);
 
@@ -380,71 +372,6 @@ impl FreeVars for CExp {
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
         }
-    }
-}
-
-impl ExpSubst for CExp {
-    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
-        match self {
-            Exp::Var(id) if id == from => *self = to.clone(),
-            Exp::Var(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Bool(_)
-            | Exp::Gen(_) | Exp::Lit(_) | Exp::Range(_) => {},
-            Exp::Coef(box p)
-            | Exp::Mle(box p)
-            | Exp::Assert(box p)
-            | Exp::Eval(box p)
-            | Exp::Verify(box p)
-            | Exp::Not(box p) => p.subst(from, to, ctx),
-            Exp::Vec(v)
-            | Exp::App(_, v) => v.subst(from, to, ctx),
-            Exp::Bin(_, box a, box b)
-            | Exp::Ram(box a, box b)
-            | Exp::Let(None, box a, box b) => {
-                a.subst(from, to, ctx);
-                b.subst(from, to, ctx);
-            },
-            Exp::Map(box l, id, box r) =>
-                if id == from {
-                    // Shadowing
-                    r.subst(from, to, ctx);
-                } else if to.freevars().contains(id) {
-                    // Capturing, shift [id] in [l]
-                    r.subst(from, to, ctx);
-                    let nid = Vid::gen(&id, ctx);
-                    l.subst(&id, &CExp::var(&nid), ctx);
-                    ctx.insert(nid.clone());
-                    l.subst(from, to, ctx);
-                } else {
-                    // No shadowing or capturing
-                    r.subst(from, to, ctx);
-                    ctx.insert(id.clone());
-                    l.subst(from, to, ctx);
-                }
-            Exp::Let(Some(id), box a, box b)
-            | Exp::Log(id, box a, box b) =>
-                if id == from {
-                    // Shadowing
-                    a.subst(from, to, ctx);
-                } else if to.freevars().contains(id) {
-                    // Capturing, shift [x] in [a]
-                    a.subst(from, to, ctx);
-                    let nid = Vid::gen(&id, ctx);
-                    b.subst(&id, &CExp::var(&nid), ctx);
-                    ctx.insert(nid.clone());
-                    b.subst(from, to, ctx);
-                } else {
-                    // No shadowing or capturing
-                    a.subst(from, to, ctx);
-                    ctx.insert(id.clone());
-                    b.subst(from, to, ctx);
-                }
-        }
-    }
-}
-
-impl ExpSubst for CExps {
-    fn subst(&mut self, from: &Vid, to: &CExp, ctx: &mut Set<Vid>) {
-        self.0.iter_mut().for_each(|x| x.subst(from, to, ctx))
     }
 }
 
