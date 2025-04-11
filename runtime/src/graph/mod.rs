@@ -62,9 +62,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.update_edge(source, sink, edge);
     }
 
-    fn add_edges(&mut self,source: NodeIndex, sink: Operand<C>) {
-        sink.nodes().iter().for_each(|n| {
-            self.add_edge(source, *n, Edge::Data);
+    fn add_edges(&mut self, sink: NodeIndex, source: Operand<C>) {
+        source.edges().into_iter().for_each(|(n, e)| {
+            self.add_edge(n, sink, e);
         });
     }
 
@@ -107,8 +107,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .arg(fdot.clone())
             .arg("-o")
             .arg(fpdf.clone())
-            .spawn()
-            .expect("[dot] CLI failed to convert DAG to [pdf] file")
+            .spawn()?
             .wait()?;
 
         // Remove DOT file
@@ -141,10 +140,13 @@ impl<C: ArkConfig> PDag<C> {
                     TypeError::decl(&sig.name,
                         TypeError::ark(&kctx, &vctx, &CExp::var(id), typ))
                 })?;
-                vars.insert(id, &Operand::Underscore(start, at));
+                vars.insert(id, &Operand::var(id, &start, at));
                 vctx.insert(id, typ);
             }
-            g.add_body(body, sig, start, &kctx, &fctx, &vctx, &vars)?;
+            let op = g.add_body(body, sig, start, &kctx, &fctx, &vctx, &vars)?;
+            let nr = g.add_node(Node::ret(&op));
+            // Add edges from [start] to [op]
+            g.add_edges(nr, op);
         }
         Ok(g)
     }
@@ -485,5 +487,7 @@ fn test_graph_from_module() {
     assert_eq!(m.len(), 4);
     println!("{}", m);
     let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
-    g.write_pdf("test_graph_from_module").unwrap();
+    g.write_pdf("test_graph_from_module").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
 }

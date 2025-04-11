@@ -1,7 +1,8 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
-
+use lang::id::Vid;
 use crate::arkworks::{Value, ATyp, ArkConfig};
+use crate::graph::Edge;
 
 use petgraph::graph::NodeIndex;
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
@@ -21,6 +22,8 @@ pub enum Operand<C: ArkConfig> {
     Rand(ATyp),
     /// Node input
     Underscore(NodeIndex, ATyp),
+    /// Variable input
+    Var(Vid, NodeIndex, ATyp),
     /// Range of numbers
     Range(CRange),
     /// Random access into a value
@@ -33,6 +36,7 @@ pub enum Operand<C: ArkConfig> {
 /// It is parameterized by tye type of operands [V] and the type of types [T].
 #[derive(PartialEq, Eq, Clone)]
 pub enum OpF<T> {
+
     /// Binary operation
     Bin(BinOp, T, T),
 
@@ -65,6 +69,7 @@ impl<C: ArkConfig> Operand<C> {
             Operand::Gen(t) => t.clone(),
             Operand::Rand(t) => t.clone(),
             Operand::Underscore(_, t) => t.clone(),
+            Operand::Var(_, _, t) => t.clone(),
             Operand::Range(r) => ATyp::vec(ATyp::Fin(r.clone()), r.len()),
             Operand::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
@@ -407,21 +412,25 @@ impl<C: ArkConfig> Operand<C> {
     pub fn underscore(n: &NodeIndex, typ: ATyp) -> Operand<C> {
         Operand::Underscore(*n, typ)
     }
+    pub fn var(v: &Vid, n: &NodeIndex, typ: ATyp) -> Operand<C> {
+        Operand::Var(v.clone(), *n, typ)
+    }
     pub fn range(r: CRange) -> Operand<C> {
         Operand::Range(r)
     }
-    pub fn nodes(&self) -> Vec<NodeIndex> {
+    pub fn edges(&self) -> Vec<(NodeIndex, Edge)> {
         match self {
-            Operand::Underscore(n, _) => vec![*n],
+            Operand::Underscore(n, _) => vec![(*n, Edge::Data)],
+            Operand::Var(v, n, _) => vec![(*n, Edge::Var(v.clone()))],
             Operand::Ram(box a, box b) =>
-                a.nodes().into_iter()
-                    .chain(b.nodes().into_iter())
+                a.edges().into_iter()
+                    .chain(b.edges().into_iter())
                     .collect(),
             Operand::Vec(vs) =>
                 vs.into_iter()
-                    .flat_map(|v| v.nodes())
+                    .flat_map(|v| v.edges())
                     .collect(),
-            Operand::Not(box v) => v.nodes(),
+            Operand::Not(box v) => v.edges(),
             Operand::Value(_)
             | Operand::Gen(_)
             | Operand::Rand(_)
@@ -446,7 +455,8 @@ impl<C: ArkConfig> fmt::Display for Operand<C> {
             Operand::Rand(t) => write!(f, "rand<{}>", t),
             Operand::Not(v) => write!(f, "!{}", v),
             Operand::Range(r) => write!(f, "{}", r),
-            Operand::Underscore(n, t) => write!(f, "_{} : {}", n.index(), t),
+            Operand::Underscore(n, _) => write!(f, "_"),
+            Operand::Var(v, n, _) => write!(f, "{}", v),
         }
     }
 }
@@ -478,11 +488,11 @@ impl<C: ArkConfig> From<CRange> for Operand<C> {
 impl<C: ArkConfig> fmt::Display for Op<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Op::Bin(op, a, b) => write!(f, "({} {} {})", op, a, b),
+            Op::Bin(op, a, b) => write!(f, "({} {} {})", a, op, b),
             Op::Eval(a) => write!(f, "(eval {})", a),
             Op::Coef(a) => write!(f, "(coef {})", a),
             Op::Hash(a) => write!(f, "(hash {})", a),
-            Op::Contains(a, b) => write!(f, "(in {} {})", a, b),
+            Op::Contains(a, b) => write!(f, "({} in {})", a, b),
             Op::Challenge(tid) => write!(f, "challenge<{}>", tid),
             Op::Check(a) => write!(f, "(check {})", a)
         }

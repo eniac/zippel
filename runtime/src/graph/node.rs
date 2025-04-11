@@ -13,6 +13,8 @@ pub enum Node<C: ArkConfig, A> {
     Inp(CSig),
     /// A side relation that must hold on input arguments for a function
     Pre(CSig),
+    /// A return value
+    Return(Operand<C>),
     /// Operation node
     Op(Op<C>, A)
 }
@@ -58,13 +60,17 @@ impl<C: ArkConfig> PNode<C> {
     pub fn verify(op: &Operand<C>) -> Self {
         Node::Op(Op::Check(op.clone()), Principal::Verifier)
     }
+    pub fn ret(op: &Operand<C>) -> Self {
+        Node::Return(op.clone())
+    }
 }
 
 impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Inp(sig) => write!(f, "{}", sig),
-            Node::Pre(sig) => write!(f, "Pre({}, {}, {})", sig.name, sig.typevars, sig.args),
+            Node::Pre(sig) => write!(f, "pre {}, {}, {}", sig.name, sig.typevars, sig.args),
+            Node::Return(op) => write!(f, "ret {}", op),
             Node::Op(op, ann) =>
                 write!(f, "{} @ {}", op, ann)
         }
@@ -76,6 +82,7 @@ impl<C: ArkConfig, N> ToTraversal2<N> for Node<C, N> {
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
             Node::Inp(sig) => Ok(Node::Inp(sig)),
+            Node::Return(op) => Ok(Node::Return(op)),
             Node::Pre(sig) => Ok(Node::Pre(sig)),
             Node::Op(op, ann) => {
                 let ann = f(ann)?;
