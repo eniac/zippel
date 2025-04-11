@@ -1,6 +1,6 @@
 use ark_ec::pairing::PairingOutput;
 use ark_ff::Field;
-use lang::typ::{ATyp, Ark, Range};
+use lang::typ::Range;
 use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
@@ -8,8 +8,7 @@ use core::hash::{Hash, Hasher};
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::CurveGroup;
 
-use crate::arkworks::{ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
-
+use crate::arkworks::{ATyp, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -1019,6 +1018,13 @@ impl<C: ArkConfig> Value<C> {
     }
 
     #[inline]
+    pub fn dot(self, other: Self) -> Self {
+        let mut other = other;
+        self.value_dot(&mut other);
+        other
+    }
+
+    #[inline]
     pub fn value_and(&self, other: &mut Self) {
         match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => *b = *a && *b,
@@ -1291,24 +1297,22 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
             ATyp::Fin(r) => Value::Index(r.random(rng) as u64),
-            ATyp::Base(Ark::Scalar) => Value::Scalar(C::FOps::rand(rng)),
-            ATyp::Base(Ark::G1) => Value::G1(C::G1Ops::rand(rng)),
-            ATyp::Base(Ark::G2) => Value::G2(C::G2Ops::rand(rng)),
-            ATyp::Base(Ark::G1Affine) => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
-            ATyp::Base(Ark::G2Affine) => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
-            ATyp::Base(Ark::GT) => Value::GT(C::POps::rand(rng)),
+            ATyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
+            ATyp::G1 => Value::G1(C::G1Ops::rand(rng)),
+            ATyp::G2 => Value::G2(C::G2Ops::rand(rng)),
+            ATyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
+            ATyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
+            ATyp::GT => Value::GT(C::POps::rand(rng)),
             ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as u64).collect()),
-            ATyp::Vec(box ATyp::Base(Ark::Scalar), n)
-            | ATyp::Uni(_,  n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(Ark::G1), n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(Ark::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(Ark::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
-            ATyp::Vec(box ATyp::Base(Ark::G1Affine), n) =>
+            ATyp::Vec(box ATyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G1Affine, n) =>
                 Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
-            ATyp::Vec(box ATyp::Base(Ark::G2Affine), n) =>
+            ATyp::Vec(box ATyp::G2Affine, n) =>
                 Value::VecG2Affine(C::G2Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-            ATyp::Mle(_, n) => Value::VecScalar((0..(1 << *n)).map(|_| C::FOps::rand(rng)).collect()),
         }
     }
 
@@ -1316,19 +1320,19 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Bool(_) => ATyp::Bool,
             Value::VecBool(v) => ATyp::Vec(Box::new(ATyp::Bool), v.len()),
-            Value::Index(n) => ATyp::fin(Range::singleton(*n as usize)),
-            Value::Scalar(_) => ATyp::Base(Ark::Scalar),
-            Value::G1(_) => ATyp::Base(Ark::G1),
-            Value::G2(_) => ATyp::Base(Ark::G2),
-            Value::G1Affine(_) => ATyp::Base(Ark::G1),
-            Value::G2Affine(_) => ATyp::Base(Ark::G2),
-            Value::GT(_) => ATyp::Base(Ark::GT),
-            Value::VecScalar(v) => ATyp::Vec(Box::new(ATyp::base(Ark::Scalar)), v.len()),
-            Value::VecG1(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G1)), v.len()),
-            Value::VecG2(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G2)), v.len()),
-            Value::VecG1Affine(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G1Affine)), v.len()),
-            Value::VecG2Affine(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::G2Affine)), v.len()),
-            Value::VecGT(v) => ATyp::Vec(Box::new(ATyp::Base(Ark::GT)), v.len()),
+            Value::Index(n) => ATyp::Fin(Range::singleton(*n as usize)),
+            Value::Scalar(_) => ATyp::Scalar,
+            Value::G1(_) => ATyp::G1,
+            Value::G2(_) => ATyp::G2,
+            Value::G1Affine(_) => ATyp::G1,
+            Value::G2Affine(_) => ATyp::G2,
+            Value::GT(_) => ATyp::GT,
+            Value::VecScalar(v) => ATyp::vec(ATyp::Scalar, v.len()),
+            Value::VecG1(v) => ATyp::vec(ATyp::G1, v.len()),
+            Value::VecG2(v) => ATyp::vec(ATyp::G2, v.len()),
+            Value::VecG1Affine(v) => ATyp::vec(ATyp::G1Affine, v.len()),
+            Value::VecG2Affine(v) => ATyp::vec(ATyp::G2Affine, v.len()),
+            Value::VecGT(v) => ATyp::vec(ATyp::GT, v.len()),
             Value::VecIndex(v) => {
                 let min = *v.iter().min().unwrap() as usize;
                 let max = *v.iter().max().unwrap() as usize;
@@ -1347,6 +1351,98 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
+impl<C: ArkConfig> AddAssign for Value<C> {
+    fn add_assign(&mut self, other: Self) {
+        other.value_add(self);
+    }
+}
+
+impl<C: ArkConfig> MulAssign for Value<C> {
+    fn mul_assign(&mut self, other: Self) {
+        other.value_mul(self);
+    }
+}
+
+impl<C: ArkConfig> Add for Value<C> {
+    type Output = Value<C>;
+
+    fn add(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_add(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Sub for Value<C> {
+    type Output = Value<C>;
+
+    fn sub(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_sub(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Mul for Value<C> {
+    type Output = Value<C>;
+
+    fn mul(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_mul(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Div for Value<C> {
+    type Output = Value<C>;
+
+    fn div(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_div(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> Rem for Value<C> {
+    type Output = Value<C>;
+
+    fn rem(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_rem(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitXor for Value<C> {
+    type Output = Value<C>;
+
+    fn bitxor(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_pow(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitAnd for Value<C> {
+    type Output = Value<C>;
+
+    fn bitand(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_and(&mut other);
+        other
+    }
+}
+
+impl<C: ArkConfig> BitOr for Value<C> {
+    type Output = Value<C>;
+
+    fn bitor(self, other: Self) -> Self::Output {
+        let mut other = other;
+        self.value_or(&mut other);
+        other
+    }
+}
+
 impl<C: ArkConfig> Add for &Value<C> {
     type Output = Value<C>;
 
@@ -1354,12 +1450,6 @@ impl<C: ArkConfig> Add for &Value<C> {
         let mut other = other.clone();
         self.value_add(&mut other);
         other
-    }
-}
-
-impl<C: ArkConfig> AddAssign for Value<C> {
-    fn add_assign(&mut self, other: Self) {
-        other.value_add(self);
     }
 }
 
@@ -1380,12 +1470,6 @@ impl<C: ArkConfig> Mul for &Value<C> {
         let mut other = other.clone();
         self.value_mul(&mut other);
         other
-    }
-}
-
-impl<C: ArkConfig> MulAssign for Value<C> {
-    fn mul_assign(&mut self, other: Self) {
-        other.value_mul(self);
     }
 }
 
@@ -1537,27 +1621,28 @@ impl<C: ArkConfig> Hash for Value<C> {
 fn test_value_add_comm() {
     // Scalar + Scalar
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
     assert_deq!(&a + &b, &b + &a);
 
     // Group1 + Group1
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1);
     assert_deq!(&a + &b, &b + &a);
 
     // Group2 + Group2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G2);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G2);
+    assert_deq!(&a + &b, &b + &a);
 
     // GT + GT
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::GT));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::GT));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::GT);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::GT);
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Index> + Vec<Index>
@@ -1566,13 +1651,13 @@ fn test_value_add_comm() {
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // G1 + G1Affine
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1Affine));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1Affine);
     assert_deq!(&a + &b, &b + &a);
 }
 
@@ -1581,13 +1666,13 @@ fn test_value_add_comm() {
 fn test_value_mul_comm() {
     // Scalar * Scalar
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::Scalar));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Index> * Vec<Index>
@@ -1596,23 +1681,23 @@ fn test_value_mul_comm() {
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::Scalar)), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // G1 * G2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G2);
     assert_deq!(&a * &b, &b * &a);
 
     // G1Affine * G2Affine
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G1Affine));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Base(Ark::G2Affine));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G1Affine);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::G2Affine);
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<G1> * Vec<G2Affine>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::G1)), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Base(Ark::G2Affine)), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::G1), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::G2Affine), 10));
     assert_deq!(&a * &b, &b * &a);
 }
 

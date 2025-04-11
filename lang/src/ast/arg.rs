@@ -2,7 +2,7 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Tid, Vid, TidSubst};
 use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
@@ -57,6 +57,9 @@ impl<T, N> Args<T, N> {
     }
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+    pub fn to_ctx(&self) -> Ctx<Vid, Typ<T, N>> where T: Clone, N: Clone {
+        self.0.iter().map(|arg| (arg.id.clone(), arg.typ.clone())).collect()
     }
 }
 
@@ -253,6 +256,7 @@ impl<'pest> FromPest<'pest> for GArgs<Size> {
 }
 
 #[cfg(test)] use pest::Parser;
+#[cfg(test)] use crate::eval::Eval;
 #[test]
 fn arg_parser() {
     let ex = "public a: F, private foo: X";
@@ -269,8 +273,6 @@ fn arg_parser() {
     assert!(ZippelParser::parse(Rule::arg, ex3).is_err());
 }
 
-#[cfg(test)] use share::Ctx;
-#[cfg(test)] use crate::eval::Eval;
 #[test]
 fn arg_traversal() {
     let arg = GArg::new(Qualifier::Public, "a",

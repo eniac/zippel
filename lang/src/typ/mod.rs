@@ -61,10 +61,6 @@ pub type UTyps = Typ<Tid, Size>;
 pub type CTyp = Typ<Tid, usize>;
 pub type CTyps = Typs<Tid, usize>;
 
-/// A zippel type with concrete arkworks base types
-pub type ATyp = Typ<Ark, usize>;
-pub type ATyps = Typs<Ark, usize>;
-
 impl<N> TidSubst for GTyp<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
@@ -112,12 +108,6 @@ impl<T, N> Typ<T, N> {
     pub fn bool() -> Self {
         Typ::Bool
     }
-    pub fn into_vec(self) -> Option<(Typ<T,N>, N)> {
-        match self {
-            Typ::Vec(box b, n) => Some((b, n)),
-            _ => None
-        }
-    }
 }
 
 impl<N> GTyp<N> {
@@ -148,7 +138,6 @@ impl<N> GTyp<N> {
                 // Find the first field and return It
                 ctx.iter().find(|(_, k)| k.is_scalar())
                     .map(|(b, _)| b.clone()),
-
             _ => None
         }
     }
@@ -164,43 +153,6 @@ impl<N> GTyp<N> {
     }
 
 
-}
-
-impl CTyp {
-    // Convert from Generic types to arkworks types
-    pub fn to_ark(&self, kctx: &Ctx<Tid, Kind>) -> Option<ATyp> {
-        match self {
-            Typ::Base(b) => {
-                let k = kctx.get(b).unwrap();
-                match k {
-                    Kind::Field => return Some(Typ::Base(Ark::Scalar)),
-                    Kind::Group => {
-                        // For all other groups that form a pairing
-                        for (og, _) in kctx.iter().filter(|(t, k)| k.is_group() && t != &b) {
-                            if let Some((_, Kind::Pairing(x, y))) = kctx.find_one(|t, k| k.is_pairing(og, t)) {
-                                if &x == b {
-                                    return Some(Typ::Base(Ark::G1));
-                                } else if &y == b {
-                                    return Some(Typ::Base(Ark::G2));
-                                }
-                            }
-                        }
-                        None
-                    },
-                    Kind::Pairing(_, _) => Some(Typ::Base(Ark::GT)),
-                    Kind::Scalar(_) => Some(Typ::Base(Ark::Scalar)),
-                    // CTyp have no Range kinds
-                    Kind::Range(_) => unreachable!()
-                }
-            },
-            Typ::Vec(box t, n) =>
-                Some(Typ::vec(t.to_ark(kctx)?, *n)),
-            Typ::Fin(r) => Some(ATyp::Fin(*r)),
-            Typ::Bool => Some(ATyp::Bool),
-            Typ::Uni(_, n) => Some(ATyp::Uni(Ark::Scalar, *n)),
-            Typ::Mle(_, n) => Some(ATyp::Mle(Ark::Scalar, *n)),
-        }
-    }
 }
 
 impl<T, N> Typs<T, N> {

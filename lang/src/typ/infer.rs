@@ -23,6 +23,9 @@ pub enum TypeError {
     #[error("{0}\n\n{1}")]
     Next(Box<TypeError>, Box<TypeError>),
 
+    #[error("TypeError: Cannot find an Arkworks type for {0}, {1} |- {2} : {3}")]
+    Ark(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
     #[error("TypeError: In expression {0}, {1} |- {2}")]
     CExp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
@@ -99,6 +102,9 @@ impl<'a> TypeError {
     }
     pub fn lub(a: Self, l: LubError) -> Self {
         TypeError::next(a, TypeError::from(l))
+    }
+    pub fn ark(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
+        TypeError::Ark(kctx.clone(), vctx.clone(), e.clone(), t.clone())
     }
     pub fn exp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::CExp(kctx.clone(), vctx.clone(), e.clone())

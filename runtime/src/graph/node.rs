@@ -1,8 +1,8 @@
-use lang::ast::CSig;
+use lang::ast::{BinOp, CSig};
 use share::traversal::ToTraversal2;
 
 use crate::graph::{Op, Operand};
-use crate::arkworks::ArkConfig;
+use crate::arkworks::{ATyp, ArkConfig};
 use crate::graph::Principal;
 use std::fmt;
 
@@ -36,8 +36,27 @@ impl<C: ArkConfig> PNode<C> {
         }
     }
 
-    pub fn coef(op: Operand<C>) -> Self {
+    pub fn coef(op: &Operand<C>) -> Self {
         Node::Op(Op::coef(op), Principal::default())
+    }
+
+    pub fn bin(op: BinOp, a: &Operand<C>, b: &Operand<C>) -> Self {
+        Node::Op(Op::bin(op, a, b), Principal::default())
+    }
+
+    pub fn challenge(typ: &ATyp) -> Self {
+        Node::Op(Op::Challenge(typ.clone()), Principal::default())
+    }
+
+    pub fn hash(op: &Operand<C>) -> Self {
+        Node::Op(Op::Hash(op.clone()), Principal::Verifier)
+    }
+
+    pub fn assert(op: &Operand<C>) -> Self {
+        Node::Op(Op::Check(op.clone()), Principal::Prover)
+    }
+    pub fn verify(op: &Operand<C>) -> Self {
+        Node::Op(Op::Check(op.clone()), Principal::Verifier)
     }
 }
 

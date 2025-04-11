@@ -1,4 +1,4 @@
-use std::ops::{Add, Div, Mul, Sub, BitXor};
+use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, BitOr};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
@@ -266,14 +266,10 @@ pub struct Exps<N>(pub Vec<Exp<N>>);
 
 /// Symbolic sized AST node, as parsed from input
 pub type UExp = Exp<Size>;
-
-/// Concrete size untyped AST node
-pub type CExp = Exp<usize>;
-
-/// Symbolic sized AST sequence, as parsed from input
 pub type UExps = Exps<Size>;
 
 /// Concrete size untyped AST node
+pub type CExp = Exp<usize>;
 pub type CExps = Exps<usize>;
 
 /// How to traverse the first type parameter [N] for Exp<N>
@@ -802,43 +798,67 @@ where
     }
 }
 
-impl Add for UExp {
+impl<N> Add for Exp<N> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
-        UExp::add(self, rhs)
+        Exp::add(self, rhs)
     }
 }
 
-impl Sub for UExp {
+impl<N> Sub for Exp<N> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self {
-        UExp::sub(self, rhs)
+        Exp::sub(self, rhs)
     }
 }
 
-impl Mul for UExp {
+impl<N> Mul for Exp<N> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self {
-        UExp::mul(self, rhs)
+        Exp::mul(self, rhs)
     }
 }
 
-impl Div for UExp {
+impl<N> Div for Exp<N> {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self {
-        UExp::div(self, rhs)
+        Exp::div(self, rhs)
     }
 }
 
-impl BitXor for UExp {
+impl<N> Rem for Exp<N> {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self {
+        Exp::rem(self, rhs)
+    }
+}
+
+impl<N> BitXor for Exp<N> {
     type Output = Self;
 
     fn bitxor(self, rhs: Self) -> Self {
-        UExp::pow(self, rhs)
+        Exp::pow(self, rhs)
+    }
+}
+
+impl<N> BitAnd for Exp<N> {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self {
+        Exp::and(self, rhs)
+    }
+}
+
+impl<N> BitOr for Exp<N> {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Exp::or(self, rhs)
     }
 }
 
