@@ -524,3 +524,17 @@ fn graph_from_module_foo() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
+
+#[test]
+fn graph_from_module_poly() {
+    let ex = r#"
+        fn poly_add<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32> {
+            a * b
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    println!("{}", m);
+    let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+    g.write_pdf("graph_poly").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+}
