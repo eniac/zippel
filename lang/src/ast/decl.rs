@@ -6,9 +6,10 @@ use bumpalo::Bump;
 
 use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::ast::{Exp, FreeVars, CExp, Sig, GArgs};
+use crate::ast::{Exp, FreeVars, CExp, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Fid, Vid};
-use crate::typ::{GTyp, Range, Size, TypeVars, RangeTraversal};
+use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal};
+use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
 
 
@@ -55,7 +56,7 @@ impl<N> Body<N> {
     pub fn is_func(&self) -> bool {
         ! self.is_proto()
     }
-    pub fn body(&self) -> &Exp<N> {
+    pub fn body(self) -> Exp<N> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
@@ -149,6 +150,36 @@ impl<N> FromIterator<Decl<N>> for Decls<N> {
     }
 }
 
+impl CBody {
+    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
+        // Kind context
+        let kctx = sig.typevars.to_ctx();
+        // Add arguments to [vctx] and [vars]
+        let mut vctx = sig.args.to_ctx();
+        match self {
+            Body::Proto { body, relation } => {
+                let tr = relation.infer(&kctx, &fctx, &vctx)?;
+                let br = body.infer(&kctx, &fctx, &vctx)?;
+                if tr == CTyp::Bool && br == CTyp::Bool {
+                    Ok(())
+                } else {
+                    Err(TypeError::decl(&sig.name,
+                        TypeError::bool(&kctx, &vctx, &relation)).into())
+                }
+            },
+            Body::Func { body } => {
+                let br = body.infer(&kctx, &fctx, &vctx)?;
+                if br == sig.ret {
+                    Ok(())
+                } else {
+                    Err(TypeError::decl(&sig.name,
+                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br)).into())
+                }
+            }
+        }
+    }
+}
+
 /// Traversable1 instance for Body (N)
 impl<N> ToTraversal1<N> for Body<N> {
     type Output<Z> = Body<Z>;
@@ -207,11 +238,11 @@ where
         match self {
             Body::Proto { relation, body } =>
                 allocator.concat([
-                    allocator.text("where ("),
+                    allocator.text(" where ("),
                     relation.pretty(allocator),
                     allocator.text(") {"),
                     allocator.line(),
-                    body.pretty(allocator).indent(2),
+                    body.pretty(allocator).group().indent(2),
                     allocator.line(),
                     allocator.text("}"),
                 ]),
@@ -219,7 +250,7 @@ where
                 allocator.concat([
                     allocator.text("{"),
                     allocator.line(),
-                    body.pretty(allocator).indent(2),
+                    body.pretty(allocator).group().indent(2),
                     allocator.line(),
                     allocator.text("}"),
                 ]),

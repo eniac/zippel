@@ -18,8 +18,6 @@ pub enum Operand<C: ArkConfig> {
     Not(Box<Operand<C>>),
     /// Generator for a group
     Gen(ATyp),
-    /// Random element
-    Rand(ATyp),
     /// Node input
     Underscore(NodeIndex, ATyp),
     /// Variable input
@@ -40,17 +38,20 @@ pub enum OpF<T> {
     /// Binary operation
     Bin(BinOp, T, T),
 
+    /// Random element
+    Random(ATyp),
+
     /// Random oracle challenge
     Challenge(ATyp),
-
-    /// Absorb values in the transcript
-    Hash(T),
 
     /// Convert from evaluation domain to lagrange domain.
     Coef(T),
 
     /// Convert from lagrange domain to evaluation domain
     Eval(T),
+
+    /// Hash operation into a cryptographic transcript
+    Hash(T),
 
     /// Vector containment check
     Contains(T, T),
@@ -67,7 +68,6 @@ impl<C: ArkConfig> Operand<C> {
             Operand::Value(v) => v.typ(),
             Operand::Not(_) => ATyp::Bool,
             Operand::Gen(t) => t.clone(),
-            Operand::Rand(t) => t.clone(),
             Operand::Underscore(_, t) => t.clone(),
             Operand::Var(_, _, t) => t.clone(),
             Operand::Range(r) => ATyp::vec(ATyp::Fin(r.clone()), r.len()),
@@ -420,8 +420,8 @@ impl<C: ArkConfig> Operand<C> {
     }
     pub fn edges(&self) -> Vec<(NodeIndex, Edge)> {
         match self {
-            Operand::Underscore(n, _) => vec![(*n, Edge::Data)],
-            Operand::Var(v, n, _) => vec![(*n, Edge::Var(v.clone()))],
+            Operand::Underscore(n, _) => vec![(*n, Edge::data())],
+            Operand::Var(v, n, _) => vec![(*n, Edge::var(v.clone()))],
             Operand::Ram(box a, box b) =>
                 a.edges().into_iter()
                     .chain(b.edges().into_iter())
@@ -433,7 +433,6 @@ impl<C: ArkConfig> Operand<C> {
             Operand::Not(box v) => v.edges(),
             Operand::Value(_)
             | Operand::Gen(_)
-            | Operand::Rand(_)
             | Operand::Range(_) => vec![],
         }
     }
@@ -452,7 +451,6 @@ impl<C: ArkConfig> fmt::Display for Operand<C> {
                 write!(f, "]")
             },
             Operand::Gen(t) => write!(f, "gen<{}>", t),
-            Operand::Rand(t) => write!(f, "rand<{}>", t),
             Operand::Not(v) => write!(f, "!{}", v),
             Operand::Range(r) => write!(f, "{}", r),
             Operand::Underscore(n, _) => write!(f, "_"),
@@ -494,6 +492,7 @@ impl<C: ArkConfig> fmt::Display for Op<C> {
             Op::Hash(a) => write!(f, "(hash {})", a),
             Op::Contains(a, b) => write!(f, "({} in {})", a, b),
             Op::Challenge(tid) => write!(f, "challenge<{}>", tid),
+            Op::Random(t) => write!(f, "random<{}>", t),
             Op::Check(a) => write!(f, "(check {})", a)
         }
     }
@@ -506,17 +505,20 @@ impl<C: ArkConfig> Op<C> {
     pub fn eval(op: &Operand<C>) -> Self {
         Op::Eval(op.clone())
     }
-    pub fn hash(op: &Operand<C>) -> Self {
-        Op::Hash(op.clone())
-    }
     pub fn contains(a: &Operand<C>, b: &Operand<C>) -> Self {
         Op::Contains(a.clone(), b.clone())
     }
-    pub fn check(op: &Operand<C>) -> Self {
-        Op::Check(op.clone())
-    }
     pub fn challenge(tid: ATyp) -> Self {
         Op::Challenge(tid)
+    }
+    pub fn random(tid: ATyp) -> Self {
+        Op::Random(tid)
+    }
+    pub fn hash(op: &Operand<C>) -> Self {
+        Op::Hash(op.clone())
+    }
+    pub fn check(op: &Operand<C>) -> Self {
+        Op::Check(op.clone())
     }
     pub fn bin(op: BinOp, a: &Operand<C>, b: &Operand<C>) -> Self {
         Op::Bin(op, a.clone(), b.clone())

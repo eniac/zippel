@@ -677,11 +677,13 @@ where
                 allocator.text(" = "),
                 (*t).pretty(allocator),
                 allocator.text(";"),
+                allocator.hardline(),
                 (*e).pretty(allocator),
             ]),
             Exp::Let(None, t, e) => allocator.concat([
                 (*t).pretty(allocator),
                 allocator.text(";"),
+                allocator.hardline(),
                 (*e).pretty(allocator),
             ]),
             Exp::Log(x, t, e) => allocator.concat([
@@ -689,6 +691,7 @@ where
                 allocator.text(" <- "),
                 (*t).pretty(allocator),
                 allocator.text(";"),
+                allocator.hardline(),
                 (*e).pretty(allocator),
             ]),
             Exp::Assert(c) => allocator.concat([
@@ -867,9 +870,9 @@ impl<'pest> FromPest<'pest> for UExp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
+                Rule::lit_bexp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
-                Rule::lit_bexp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),

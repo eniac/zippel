@@ -160,8 +160,8 @@ impl<'a> TypeError {
     pub fn contains(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: CExp, ta: CTyp, b: CExp, tb: CTyp) -> Self {
         TypeError::Contains(kctx.clone(), vctx.clone(), a, ta, b, tb)
     }
-    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: &Fid, t: &CTyp, r: &CTyp) -> Self {
-        TypeError::FuncRet(kctx.clone(), vctx.clone(), e, id.clone(), t.clone(), r.clone())
+    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Fid, t: &CTyp, r: &CTyp) -> Self {
+        TypeError::FuncRet(kctx.clone(), vctx.clone(), e.clone(), id.clone(), t.clone(), r.clone())
     }
 }
 

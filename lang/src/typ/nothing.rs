@@ -15,7 +15,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text("∅")
+        allocator.text("")
     }
     fn is_nil(&self) -> bool {
         true

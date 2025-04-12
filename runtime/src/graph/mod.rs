@@ -4,7 +4,7 @@ mod op;
 mod principal;
 
 pub use crate::graph::op::{Operand, Op};
-pub use crate::graph::node::{Node, PNode};
+pub use crate::graph::node::Node;
 pub use crate::graph::edge::Edge;
 pub use crate::graph::principal::Principal;
 pub use crate::arkworks::{ArkConfig, Value, ATyp};
@@ -12,7 +12,7 @@ pub use crate::arkworks::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
-use lang::typ::{CTyp, CTyps, Kind};
+use lang::typ::{Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
@@ -30,7 +30,7 @@ use std::path::PathBuf;
 pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Edge>);
 
 /// Dag with no annotations
-pub type PDag<C> = Dag<C, Principal>;
+pub type PDag<C> = Dag<C, Nothing>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -59,12 +59,18 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Edge deduplication
     fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Edge) {
-        self.0.update_edge(source, sink, edge);
+        self.0.add_edge(source, sink, edge);
     }
 
     fn add_edges(&mut self, sink: NodeIndex, source: Operand<C>) {
         source.edges().into_iter().for_each(|(n, e)| {
             self.add_edge(n, sink, e);
+        });
+    }
+
+    fn add_implicit_edges(&mut self, sink: NodeIndex, source: Operand<C>) {
+        source.edges().into_iter().for_each(|(n, e)| {
+            self.add_edge(n, sink, e.into_implicit());
         });
     }
 
@@ -90,8 +96,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 &[],
                 &|_, e|
                         match e.weight() {
-                            Edge::Var(_) | Edge::Data => "color = \"black\"",
+                            Edge::Data(_) => "color = \"black\"",
                             Edge::Transcript => "color = \"red\"",
+                            Edge::Implicit(_) => "color = \"blue\"",
                         }.to_string(),
                 &|_, _| String::new()
             );
@@ -129,7 +136,7 @@ impl<C: ArkConfig> PDag<C> {
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
         for (sig, body) in m.into_iter() {
             // Initial node is the function signature
-            let start = g.add_node(Node::inp(sig.clone()));
+            let mut start = g.add_node(Node::inp(sig.clone()));
             // Kind context
             let kctx = sig.typevars.to_ctx();
             // Add arguments to [vctx] and [vars]
@@ -143,54 +150,34 @@ impl<C: ArkConfig> PDag<C> {
                 vars.insert(id, &Operand::var(id, &start, at));
                 vctx.insert(id, typ);
             }
-            let op = g.add_body(body, sig, start, &kctx, &fctx, &vctx, &vars)?;
-            let nr = g.add_node(Node::ret(&op));
-            // Add edges from [start] to [op]
-            g.add_edges(nr, op);
+            // Typecheck the body with the type signature
+            body.typecheck(sig, &fctx.keys())?;
+            // Take cases on the type of declaration
+            match body {
+                CBody::Proto { relation, body } => {
+                    // Add the relation to the graph
+                    let orel = g.add_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                    // g.add_implicit_edges(start, orel);
+
+                    // Add the body to the Graph
+                    let op = g.add_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                    let nr = g.add_node(Node::ret(&op));
+                    g.add_edges(nr, op);
+                },
+                CBody::Func { body } => {
+                    let op = g.add_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                    let nr = g.add_node(Node::ret(&op));
+                    g.add_edges(nr, op);
+                }
+            };
         }
         Ok(g)
-    }
-
-    /// Overwrite the principal in node [it]
-    pub fn set_principal(&mut self, it: NodeIndex, ann: Principal) {
-        self.0[it].set_principal(ann);
-    }
-
-    pub fn add_body(&mut self, body: CBody, sig: CSig, transcr: NodeIndex, kctx: &Ctx<Tid, Kind>,
-        fctx: &Ctx<CSig, CBody>, vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, Operand<C>>) -> Result<Operand<C>, GraphError> {
-        match body {
-            CBody::Proto { relation, body } => {
-                // Add the protocol relation to the graph
-                if let CTyp::Bool = relation.infer(&kctx, &fctx.keys(), &vctx)? {
-                    self.add_exp(relation, transcr, &kctx, &fctx, &vctx, &vars)?;
-                } else {
-                    return Err(TypeError::decl(&sig.name,
-                            TypeError::bool(&kctx, &vctx, &relation)).into());
-                };
-                // Add the body to the Graph
-                if let CTyp::Bool = body.infer(&kctx, &fctx.keys(), &vctx)? {
-                    self.add_exp(body, transcr, &kctx, &fctx, &vctx, &vars)
-                } else {
-                    Err(TypeError::decl(&sig.name,
-                            TypeError::bool(&kctx, &vctx, &body)).into())
-                }
-            },
-            CBody::Func { body } => {
-                let t = body.infer(&kctx, &fctx.keys(), &vctx)?;
-                if t == sig.ret {
-                    self.add_exp(body, transcr, &kctx, &fctx, &vctx, &vars)
-                } else {
-                    Err(TypeError::func_ret(&kctx, &vctx, body,
-                            &sig.name, &sig.ret, &t).into())
-                }
-            }
-        }
     }
 
     /// Add an expression [exp] to the graph
     pub fn add_exp(&mut self,
         exp: CExp,
-        transcr: NodeIndex,
+        transcr: &mut NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, Operand<C>>) -> Result<Operand<C>, GraphError> {
         let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
@@ -210,7 +197,7 @@ impl<C: ArkConfig> PDag<C> {
                 .ok_or_else(|| GraphError::var_not_found(&id)),
 
             // Create a new [coef], [eval] or [mle] node
-            CExp::Coef(box v) | CExp::Eval(box v) | CExp::Mle(box v) => {
+            CExp::Coef(box v) => {
                 // Add child first
                 let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
                 // Add new node
@@ -226,11 +213,30 @@ impl<C: ArkConfig> PDag<C> {
                     )
                 })?))
             },
+            CExp::Eval(box v) => {
+                // Add child first
+                let child = self.add_exp(v, transcr, kctx, fctx, vctx, vars)?;
+                // Add new node
+                let neval = self.add_node(Node::eval(&child));
+
+                // Add edge from [ncoef] to [child]
+                self.add_edges(neval, child);
+
+                Ok(Operand::Underscore(neval, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ)
+                    )
+                })?))
+            },
 
             // Create a new [vec] value
             CExp::Vec(vs) =>
                 Ok(Operand::vec(vs.0.traverse1(&mut |v|
                             self.add_exp(v, transcr, kctx, fctx, vctx, vars))?)),
+
+            // MLE is a noop?
+            CExp::Mle(box inner) => self.add_exp(inner, transcr, kctx, fctx, vctx, vars),
 
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
@@ -329,7 +335,9 @@ impl<C: ArkConfig> PDag<C> {
                 })?;
                 let nchallenge = self.add_node(Node::challenge(&at));
                 // Add transcript edge to [nchallenge]
-                self.add_edge(transcr, nchallenge, Edge::Transcript);
+                self.add_edge(*transcr, nchallenge, Edge::Transcript);
+                // Update transcript node
+                *transcr = nchallenge;
                 Ok(Operand::Underscore(nchallenge, at))
             },
             CExp::Gen(_) =>
@@ -339,13 +347,15 @@ impl<C: ArkConfig> PDag<C> {
                                 TypeError::exp(kctx, vctx, &exp),
                                 TypeError::ark(kctx, vctx, &exp, &typ))
                         })?)),
-            CExp::Random(_) =>
-                Ok(Operand::Rand(
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, vctx, &exp),
-                                TypeError::ark(kctx, vctx, &exp, &typ))
-                        })?)),
+            CExp::Random(_) => {
+                let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ))
+                })?;
+                let nrand = self.add_node(Node::random(&at));
+                Ok(Operand::Underscore(nrand, at))
+            },
             CExp::App(fid, params) => {
                 // type inference for each parameter
                 let param_types: CTyps = params.iter()
@@ -388,7 +398,7 @@ impl<C: ArkConfig> PDag<C> {
                     .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, Operand<C>>>();
 
                 // Add the body to the graph
-                self.add_body(body, sig, transcr, kctx, fctx, &vctx, &vars)
+                self.add_exp(body.body(), transcr, kctx, fctx, &vctx, &vars)
             },
             CExp::Let(Some(id), box l, box r) => {
                 // Infer the type of [l]
@@ -415,15 +425,19 @@ impl<C: ArkConfig> PDag<C> {
                 // Add hash node
                 let nl = self.add_node(Node::hash(&ol));
                 // Add transcript edge to [nl]
-                self.add_edge(transcr, nl, Edge::Transcript);
-
+                self.add_edge(*transcr, nl, Edge::Transcript);
+                // Update transcript node
+                *transcr = nl;
                 // Add [id] to the variable context
                 let mut vctx = vctx.clone();
                 vctx.insert(&id, &tl);
                 let mut vars = vars.clone();
                 vars.insert(&id, &ol);
+
+                // Add edge to hash
+                self.add_edges(nl, ol);
                 // Add right-hand side as Node
-                self.add_exp(r, nl, kctx, fctx, &vctx, &vars)
+                self.add_exp(r, transcr, kctx, fctx, &vctx, &vars)
             },
             CExp::Assert(box a) => {
                 let oa = self.add_exp(a, transcr, kctx, fctx, vctx, vars)?;
@@ -475,19 +489,38 @@ impl<A, E: fmt::Display> PrettyResult<A, E> {
 #[cfg(test)] use lang::ast::module::UModule;
 #[cfg(test)] use crate::arkworks::ArkBls12_381;
 #[test]
-fn test_graph_from_module() {
-    let ex = concat!(
-        "fn sum<N: 1..4, F: Field>(public a: [F; 2^N]) -> F {\n",
-        "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
-        "}\n",
-        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
-        "   a[0]\n",
-        "}");
+fn graph_from_module_sum() {
+    let ex = r#"
+        fn sum<N: 1..4, F: Field>(public a: [F; 2^N]) -> F {
+            sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])
+        }
+
+        fn sum<F: Field>(public a: [F; 1]) -> F {
+           a[0]
+        }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     assert_eq!(m.len(), 4);
     println!("{}", m);
     let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
-    g.write_pdf("test_graph_from_module").unwrap_or_else(|e| {
+    g.write_pdf("graph_sum").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+}
+
+#[test]
+fn graph_from_module_foo() {
+    let ex = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            let r = random<F>;
+            c <- challenge<F>;
+            a <- r * c;
+            b <- r + c + s;
+            assert(true);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    println!("{}", m);
+    let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+    g.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }

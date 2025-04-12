@@ -61,11 +61,11 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | vec_exp
          | ram_exp
          | range_exp
-         | app_exp
          | assert_exp
          | verify_exp
          | let_exp
          | log_exp
+         | app_exp
          | positive
          | id
     }
@@ -79,9 +79,9 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
     vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }               // vector of elements
     ram_exp       = { id ~ "[" ~ aexp ~ "]" }                          // Randm access into a vector
     range_exp     = { range }                                          // Range expression
-    app_exp       = { id ~ "(" ~ aexps ~ ")" }                         // Function application
     assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" }                    // Assertion (Prover) expression
     verify_exp    = { "verify" ~ "(" ~ bexp ~ ")"  }                   // Assertion (Verifier) expression
+    app_exp       = { id ~ "(" ~ aexps ~ ")" }                         // Function application
     let_exp       = { "let" ~ id ~ "=" ~ aexp ~ ";" ~ aexp }           // Let expression
     log_exp       = { id ~ "<-" ~ aexp ~ ";" ~ aexp }                  // Transcript log expression
     bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op }
