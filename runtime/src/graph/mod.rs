@@ -30,7 +30,7 @@ use std::path::PathBuf;
 pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Edge>);
 
 /// Dag with no annotations
-pub type PDag<C> = Dag<C, Nothing>;
+pub type UDag<C> = Dag<C, Nothing>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -121,7 +121,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 }
 
 /// Constructors for graphs
-impl<C: ArkConfig> PDag<C> {
+impl<C: ArkConfig> UDag<C> {
     fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut g = Dag(Graph::new());
         // Build [fctx] from module
@@ -501,7 +501,7 @@ fn graph_from_module_sum() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     assert_eq!(m.len(), 4);
     println!("{}", m);
-    let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+    let g = PrettyResult(UDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
     g.write_pdf("graph_sum").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
@@ -519,7 +519,7 @@ fn graph_from_module_foo() {
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
-    let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+    let g = PrettyResult(UDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
     g.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
@@ -533,7 +533,7 @@ fn graph_from_module_poly() {
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
-    let g = PrettyResult(PDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+    let g = PrettyResult(UDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
     g.write_pdf("graph_poly").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });

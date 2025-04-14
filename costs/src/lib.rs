@@ -1,4 +1,5 @@
 pub mod bench_info;
+
 // Import all the curves
 use ark_bls12_377::Bls12_377;
 use ark_bls12_381::Bls12_381;
