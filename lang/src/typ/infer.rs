@@ -334,7 +334,23 @@ impl Typeable for CExp {
                         // Add the sizes of the vectors
                         Ok(CTyp::vec(t, x + y))
                     },
-                    (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
+                    (CTyp::Uni(a, n), CTyp::Uni(b, m)) => {
+                        // Type [a] and [b] should be the same ([t])
+                        let t = Tid::lub_equ(a, b, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        // Add the sizes of the vectors
+                        Ok(CTyp::uni(t, n + m))
+                    },
+                    (CTyp::Uni(a, n), CTyp::Vec(box b, m))
+                    | (CTyp::Vec(box b, m), CTyp::Uni(a, n)) => {
+                        // Type [a] and [b] should be the same ([t])
+                        CTyp::lub_equ(CTyp::base(a.clone()), b, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        // Add elements to the polynomial
+                        Ok(CTyp::uni(a, n + m))
+                    },
+                    (CTyp::Vec(box a, n), b)
+                    | (b, CTyp::Vec(box a, n)) => {
                         // Type [a] and [b] should be the same ([t])
                         let t = CTyp::lub_equ(a, b, kctx)
                             .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;

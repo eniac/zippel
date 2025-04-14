@@ -248,8 +248,8 @@ impl<C: ArkConfig> PDag<C> {
                     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r), op @(BinOp::Mul | BinOp::Div | BinOp::Rem)) =>
                         if &l < n && &r < n {
                             // Pad with zeroes
-                            let ex_a = CExp::concat(CExp::eval(a), CExp::zeroes(*n - l));
-                            let ex_b = CExp::concat(CExp::eval(b), CExp::zeroes(*n - r));
+                            let ex_a = CExp::eval(CExp::concat(a, CExp::zeroes(*n - l)));
+                            let ex_b = CExp::eval(CExp::concat(b, CExp::zeroes(*n - r)));
                             return self.add_exp(CExp::coef(CExp::bin(op, ex_a, ex_b)),
                                 transcr, kctx, fctx, vctx, vars);
                         } else {
