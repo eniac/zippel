@@ -1,42 +1,57 @@
 use std::fmt;
 use lang::id::Vid;
 
-/// Represents edges of graphs in the Zippel language
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum Edge {
-    Data(Option<Vid>),
+#[derive(Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub enum EdgeType {
+    Data,
     Transcript,
-    Implicit(Option<Vid>),
+    Implicit,
 }
 
+/// Represents edges of graphs in the Zippel language
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub struct Edge(pub EdgeType, pub Option<Vid>);
+
 impl Edge {
+    pub fn new(edge_type: EdgeType, var: Option<Vid>) -> Edge {
+        Edge(edge_type, var)
+    }
     pub fn var(var: Vid) -> Edge {
-        Edge::Data(Some(var))
+        Edge(EdgeType::Data, Some(var))
     }
 
     pub fn transcript() -> Edge {
-        Edge::Transcript
+        Edge(EdgeType::Transcript, None)
+    }
+
+    pub fn transcript_var(var: Vid) -> Edge {
+        Edge(EdgeType::Transcript, Some(var))
     }
 
     pub fn data() -> Edge {
-        Edge::Data(None)
+        Edge(EdgeType::Data, None)
     }
-    pub fn into_implicit(&self) -> Self {
+
+    pub fn implicit() -> Edge {
+        Edge(EdgeType::Implicit, None)
+    }
+}
+
+impl fmt::Display for EdgeType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Edge::Data(v) => Edge::Implicit(v.clone()),
-            e => e.clone(),
+            EdgeType::Data => write!(f, "data"),
+            EdgeType::Transcript => write!(f, "transcript"),
+            EdgeType::Implicit => write!(f, "implicit"),
         }
     }
 }
 
 impl fmt::Display for Edge {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Edge::Data(Some(v)) => write!(f, "{}", v),
-            Edge::Data(None) => write!(f, ""),
-            Edge::Transcript => write!(f, ""),
-            Edge::Implicit(Some(v)) => write!(f, "{}", v),
-            Edge::Implicit(None) => write!(f, ""),
+        match self.1 {
+            Some(ref v) => write!(f, "{} {}", self.0, v),
+            None => write!(f, "{}", self.0),
         }
     }
 }

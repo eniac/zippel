@@ -530,24 +530,24 @@ impl<C: ArkConfig> Operand<C> {
         Operand::Check(Box::new(op))
     }
 
-    pub fn edges(&self) -> Vec<(NodeIndex, Edge)> {
+    pub fn dependencies(&self) -> Vec<(NodeIndex, Option<Vid>)> {
         match self {
-            Operand::Underscore(n, _) => vec![(*n, Edge::data())],
+            Operand::Underscore(n, _) => vec![(*n, None)],
             Operand::Bin(_, box a, box b, _)
             | Operand::Ram(box a, box b) =>
-                a.edges().into_iter()
-                    .chain(b.edges().into_iter())
+                a.dependencies().into_iter()
+                    .chain(b.dependencies().into_iter())
                     .collect(),
-            Operand::Var(v, n, _) => vec![(*n, Edge::var(v.clone()))],
+            Operand::Var(v, n, _) => vec![(*n, Some(v.clone()))],
             Operand::Vec(vs) =>
                 vs.into_iter()
-                    .flat_map(|v| v.edges())
+                    .flat_map(|v| v.dependencies())
                     .collect(),
             Operand::Not(box v)
             | Operand::Coef(box v)
             | Operand::Check(box v)
             | Operand::Hash(box v)
-            | Operand::Eval(box v) => v.edges(),
+            | Operand::Eval(box v) => v.dependencies(),
             Operand::Value(_)
             | Operand::Gen(_)
             | Operand::Random(_)
