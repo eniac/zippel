@@ -8,7 +8,7 @@ use core::hash::{Hash, Hasher};
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::CurveGroup;
 
-use crate::arkworks::{ATyp, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
+use crate::{ATyp, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -1125,6 +1125,243 @@ impl<C: ArkConfig> Value<C> {
         unimplemented!();
     }
 
+    pub fn ram(self, r: Self) -> Self {
+        match (self, r) {
+            (Value::VecIndex(a), Value::VecIndex(b)) =>
+                Value::VecIndex(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecIndex(a), Value::Index(b)) =>
+                Value::Index(a[b as usize].clone()),
+            (Value::VecScalar(a), Value::VecIndex(b)) =>
+                Value::VecScalar(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecScalar(a), Value::Index(b)) =>
+                Value::Scalar(a[b as usize].clone()),
+            (Value::VecG1(a), Value::VecIndex(b)) =>
+                Value::VecG1(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecG1(a), Value::Index(b)) =>
+                Value::G1(a[b as usize].clone()),
+            (Value::VecG2(a), Value::VecIndex(b)) =>
+                Value::VecG2(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecG2(a), Value::Index(b)) =>
+                Value::G2(a[b as usize].clone()),
+            (Value::VecGT(a), Value::VecIndex(b)) =>
+                Value::VecGT(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecGT(a), Value::Index(b)) =>
+                Value::GT(a[b as usize].clone()),
+            (Value::VecG1Affine(a), Value::VecIndex(b)) =>
+                Value::VecG1Affine(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecG1Affine(a), Value::Index(b)) =>
+                Value::G1Affine(a[b as usize].clone()),
+            (Value::VecG2Affine(a), Value::VecIndex(b)) =>
+                Value::VecG2Affine(b.par_iter().map(|i| a[*i as usize]).collect()),
+            (Value::VecG2Affine(a), Value::Index(b)) =>
+                Value::G2Affine(a[b as usize].clone()),
+            (Value::Vec(a), Value::VecIndex(b)) =>
+                Value::Vec(b.par_iter().map(|i| a[*i as usize].clone()).collect()),
+            (Value::Vec(a), Value::Index(b)) =>
+                a[b as usize].clone(),
+            (Value::Vec(a), Value::Vec(b)) =>
+                Value::Vec(b.par_iter().map(|i| a[i.into_index() as usize].clone()).collect()),
+            (a, b) => panic!("Cannot do {}[{}]", a, b)
+
+        }
+    }
+
+    pub fn concat(self, r: &mut Self) {
+        match &self {
+            Value::VecScalar(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_scalar_mut());
+                *r = Value::VecScalar(a);
+            },
+            Value::VecG1(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_g1_mut());
+                *r = Value::VecG1(a);
+            },
+            Value::VecG2(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_g2_mut());
+                *r = Value::VecG2(a);
+            },
+            Value::VecGT(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_gt_mut());
+                *r = Value::VecGT(a);
+            },
+            Value::VecG1Affine(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_g1_affine_mut());
+                *r = Value::VecG1Affine(a);
+            },
+            Value::VecG2Affine(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_g2_affine_mut());
+                *r = Value::VecG2Affine(a);
+            },
+            Value::VecBool(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_bool_mut());
+                *r = Value::VecBool(a);
+            },
+            Value::VecIndex(a) => {
+                let mut a = a.clone();
+                a.append(r.into_vec_index_mut());
+                *r = Value::VecIndex(a);
+            },
+            Value::Scalar(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_scalar_mut());
+                *r = Value::VecScalar(a);
+            },
+            Value::G1(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_g1_mut());
+                *r = Value::VecG1(a);
+            },
+            Value::G2(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_g2_mut());
+                *r = Value::VecG2(a);
+            },
+            Value::GT(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_gt_mut());
+                *r = Value::VecGT(a);
+            },
+            Value::G1Affine(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_g1_affine_mut());
+                *r = Value::VecG1Affine(a);
+            },
+            Value::G2Affine(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_g2_affine_mut());
+                *r = Value::VecG2Affine(a);
+            },
+            Value::Bool(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_bool_mut());
+                *r = Value::VecBool(a);
+            },
+            Value::Index(a) => {
+                let mut a = vec![*a];
+                a.append(r.into_vec_index_mut());
+                *r = Value::VecIndex(a);
+            },
+            Value::Vec(a) =>
+                match &r {
+                    Value::Vec(_) => {
+                        let mut a = a.clone();
+                        a.append(r.into_vec_mut());
+                        *r = Value::Vec(a);
+                    },
+                    Value::VecBool(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_bool_mut().append(r.into_vec_bool_mut());
+                        *r = slf;
+                    },
+                    Value::VecScalar(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_scalar_mut().append(r.into_vec_scalar_mut());
+                        *r = slf;
+                    },
+                    Value::VecG1(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_g1_mut().append(r.into_vec_g1_mut());
+                        *r = slf;
+                    },
+                    Value::VecG2(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_g2_mut().append(r.into_vec_g2_mut());
+                        *r = slf;
+                    },
+                    Value::VecGT(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_gt_mut().append(r.into_vec_gt_mut());
+                        *r = slf;
+                    },
+                    Value::VecG1Affine(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_g1_affine_mut().append(r.into_vec_g1_affine_mut());
+                        *r = slf;
+                    },
+                    Value::VecG2Affine(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_g2_affine_mut().append(r.into_vec_g2_affine_mut());
+                        *r = slf;
+                    },
+                    Value::VecIndex(_) => {
+                        let mut slf = self.clone();
+                        slf.into_vec_index_mut().append(r.into_vec_index_mut());
+                        *r = slf;
+                    },
+                    _ => {
+                        let mut a = a.clone();
+                        a.push(r.clone());
+                        *r = Value::Vec(a);
+                    }
+            }
+        }
+    }
+
+    /// Generate a random value, given some parameters
+    pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
+        match typ {
+            ATyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
+            ATyp::Fin(r) => Value::Index(r.random(rng) as u64),
+            ATyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
+            ATyp::G1 => Value::G1(C::G1Ops::rand(rng)),
+            ATyp::G2 => Value::G2(C::G2Ops::rand(rng)),
+            ATyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
+            ATyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
+            ATyp::GT => Value::GT(C::POps::rand(rng)),
+            ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as u64).collect()),
+            ATyp::Vec(box ATyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::G1Affine, n) =>
+                Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
+            ATyp::Vec(box ATyp::G2Affine, n) =>
+                Value::VecG2Affine(C::G2Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
+            ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
+        }
+    }
+
+    pub fn typ(&self) -> ATyp {
+        match self {
+            Value::Bool(_) => ATyp::Bool,
+            Value::VecBool(v) => ATyp::Vec(Box::new(ATyp::Bool), v.len()),
+            Value::Index(n) => ATyp::Fin(Range::singleton(*n as usize)),
+            Value::Scalar(_) => ATyp::Scalar,
+            Value::G1(_) => ATyp::G1,
+            Value::G2(_) => ATyp::G2,
+            Value::G1Affine(_) => ATyp::G1,
+            Value::G2Affine(_) => ATyp::G2,
+            Value::GT(_) => ATyp::GT,
+            Value::VecScalar(v) => ATyp::vec(ATyp::Scalar, v.len()),
+            Value::VecG1(v) => ATyp::vec(ATyp::G1, v.len()),
+            Value::VecG2(v) => ATyp::vec(ATyp::G2, v.len()),
+            Value::VecG1Affine(v) => ATyp::vec(ATyp::G1Affine, v.len()),
+            Value::VecG2Affine(v) => ATyp::vec(ATyp::G2Affine, v.len()),
+            Value::VecGT(v) => ATyp::vec(ATyp::GT, v.len()),
+            Value::VecIndex(v) => {
+                let min = *v.iter().min().unwrap() as usize;
+                let max = *v.iter().max().unwrap() as usize;
+                ATyp::Vec(Box::new(ATyp::Fin(Range::new(min, max))), v.len())
+            },
+            Value::Vec(v) => {
+                    let typ = v[0].typ();
+                    for i in v.iter().skip(1) {
+                        if typ != i.typ() {
+                            panic!("Mismatched types in vector {} and {}", typ, i.typ());
+                        }
+                    }
+                    ATyp::Vec(Box::new(typ), v.len())
+                }
+        }
+    }
+
     /// Dynamic casts
     pub fn into_scalar(&self) -> C::F {
         match self {
@@ -1267,6 +1504,32 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec groupt, found {}", self),
         }
     }
+    pub fn into_vec_g1_affine_mut(&mut self) -> &mut Vec<C::G1Affine> {
+        match self {
+            Value::VecG1Affine(v) => v,
+            Value::VecG1(v) => {
+                *self = Value::VecG1Affine(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_g1_affine_mut()
+            },
+            _ => panic!("Expected mut vec group1, found {}", self),
+        }
+    }
+    pub fn into_vec_g2_affine_mut(&mut self) -> &mut Vec<C::G2Affine> {
+        match self {
+            Value::VecG2Affine(v) => v,
+            Value::VecG2(v) => {
+                *self = Value::VecG2Affine(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_g2_affine_mut()
+            },
+            _ => panic!("Expected mut vec group2, found {}", self),
+        }
+    }
+    pub fn into_vec_bool_mut(&mut self) -> &mut Vec<bool> {
+        match self {
+            Value::VecBool(v) => v,
+            _ => panic!("Expected mut vec bool, found {}", self),
+        }
+    }
     pub fn into_vec_index_mut(&mut self) -> &mut Vec<u64> {
         match self {
             Value::VecIndex(v) => v,
@@ -1292,61 +1555,18 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    /// Generate a random value, given some parameters
-    pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
-        match typ {
-            ATyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
-            ATyp::Fin(r) => Value::Index(r.random(rng) as u64),
-            ATyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
-            ATyp::G1 => Value::G1(C::G1Ops::rand(rng)),
-            ATyp::G2 => Value::G2(C::G2Ops::rand(rng)),
-            ATyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
-            ATyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
-            ATyp::GT => Value::GT(C::POps::rand(rng)),
-            ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as u64).collect()),
-            ATyp::Vec(box ATyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::G1Affine, n) =>
-                Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
-            ATyp::Vec(box ATyp::G2Affine, n) =>
-                Value::VecG2Affine(C::G2Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
-            ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-        }
-    }
-
-    pub fn typ(&self) -> ATyp {
+    pub fn is_vec(&self) -> bool {
         match self {
-            Value::Bool(_) => ATyp::Bool,
-            Value::VecBool(v) => ATyp::Vec(Box::new(ATyp::Bool), v.len()),
-            Value::Index(n) => ATyp::Fin(Range::singleton(*n as usize)),
-            Value::Scalar(_) => ATyp::Scalar,
-            Value::G1(_) => ATyp::G1,
-            Value::G2(_) => ATyp::G2,
-            Value::G1Affine(_) => ATyp::G1,
-            Value::G2Affine(_) => ATyp::G2,
-            Value::GT(_) => ATyp::GT,
-            Value::VecScalar(v) => ATyp::vec(ATyp::Scalar, v.len()),
-            Value::VecG1(v) => ATyp::vec(ATyp::G1, v.len()),
-            Value::VecG2(v) => ATyp::vec(ATyp::G2, v.len()),
-            Value::VecG1Affine(v) => ATyp::vec(ATyp::G1Affine, v.len()),
-            Value::VecG2Affine(v) => ATyp::vec(ATyp::G2Affine, v.len()),
-            Value::VecGT(v) => ATyp::vec(ATyp::GT, v.len()),
-            Value::VecIndex(v) => {
-                let min = *v.iter().min().unwrap() as usize;
-                let max = *v.iter().max().unwrap() as usize;
-                ATyp::Vec(Box::new(ATyp::Fin(Range::new(min, max))), v.len())
-            },
-            Value::Vec(v) => {
-                    let typ = v[0].typ();
-                    for i in v.iter().skip(1) {
-                        if typ != i.typ() {
-                            panic!("Mismatched types in vector {} and {}", typ, i.typ());
-                        }
-                    }
-                    ATyp::Vec(Box::new(typ), v.len())
-                }
+            Value::Vec(_) => true,
+            Value::VecBool(_) => true,
+            Value::VecScalar(_) => true,
+            Value::VecG1(_) => true,
+            Value::VecG2(_) => true,
+            Value::VecGT(_) => true,
+            Value::VecG1Affine(_) => true,
+            Value::VecG2Affine(_) => true,
+            Value::VecIndex(_) => true,
+            _ => false,
         }
     }
 }
@@ -1495,7 +1715,6 @@ impl<C: ArkConfig> Rem for &Value<C> {
 
 impl<C: ArkConfig> BitXor for &Value<C> {
     type Output = Value<C>;
-
     fn bitxor(self, other: Self) -> Self::Output {
         let mut other = other.clone();
         self.value_pow(&mut other);

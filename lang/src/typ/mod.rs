@@ -18,8 +18,9 @@ pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};
 pub use nothing::Nothing;
 pub use subst::{SizeSubsts, AliasSubsts};
-pub use range::{Range, RangeError, RangeTraversal};
+pub use range::{Range, CRange, RangeError, RangeTraversal};
 pub use ark::Ark;
+pub use infer::{Typeable, TypeError};
 
 use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::{ToTraversal1, ToTraversal2};
@@ -107,6 +108,12 @@ impl<T, N> Typ<T, N> {
     }
     pub fn bool() -> Self {
         Typ::Bool
+    }
+    pub fn into_vec(self) -> (Self, N) {
+        match self {
+            Typ::Vec(box t, n) => (t, n),
+            _ => unreachable!()
+        }
     }
 }
 

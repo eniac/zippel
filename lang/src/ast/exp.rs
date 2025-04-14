@@ -1,4 +1,4 @@
-use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, BitOr};
+use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, BitOr, Index};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
@@ -453,6 +453,14 @@ impl<const N: usize, T> From<[Exp<T>; N]> for Exps<T> {
     }
 }
 
+impl<T> Index<usize> for Exps<T> {
+    type Output = Exp<T>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0.index(index)
+    }
+}
+
 /// Construct untyped expressions
 impl<N> Exp<N> {
     pub fn from_vec(a: Self, ts: &[Self]) -> Self where N: Clone {
@@ -560,6 +568,16 @@ impl<N> Exp<N> {
     }
     pub fn not(a: Self) -> Self {
         Exp::Not(Box::new(a))
+    }
+}
+
+impl CExp {
+    pub fn zeroes(n: usize) -> Self {
+        Exp::map(
+            Exp::lit(0),
+            Vid::from("_"),
+            Exp::range(Range::new(0, n)),
+        )
     }
 }
 

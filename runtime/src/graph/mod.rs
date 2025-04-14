@@ -3,7 +3,7 @@ mod edge;
 mod op;
 mod principal;
 
-pub use crate::graph::op::{Operand, Op};
+pub use crate::graph::op::Operand;
 pub use crate::graph::node::Node;
 pub use crate::graph::edge::Edge;
 pub use crate::graph::principal::Principal;
@@ -180,17 +180,17 @@ impl<C: ArkConfig> PDag<C> {
         transcr: &mut NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, Operand<C>>) -> Result<Operand<C>, GraphError> {
-        let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
         // Type inference for [self]
+        let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
+        // Convert [CExp] to [Operand] while creating the graph
         match exp.clone() {
             // Literals get appended to the last node [self.it]
-            CExp::Lit(n) => {
-                Ok(Operand::Value(Value::Index(n as u64)))
-            },
+            CExp::Lit(n) =>
+                Ok(Operand::Value(Value::Index(n as u64))),
 
-            CExp::Bool(b) => {
-                Ok(Operand::Value(Value::Bool(b)))
-            },
+            CExp::Bool(b) =>
+                Ok(Operand::Value(Value::Bool(b))),
+
             // Variables are edges, no new nodes are added
             CExp::Var(id) => vars.get(&id)
                 .map(|v| v.clone())
@@ -244,19 +244,18 @@ impl<C: ArkConfig> PDag<C> {
                 let tb = b.infer(kctx, &fctx.keys(), vctx)?;
 
                 // Convert polynomials to vectors
-                match (ta, tb, op) {
-                    (CTyp::Uni(_, _), CTyp::Uni(_, _), BinOp::Mul) => {
-                        return self.add_exp(CExp::coef(CExp::eval(a) * CExp::eval(b)),
-                            transcr, kctx, fctx, vctx, vars);
-                    }
-                    (CTyp::Uni(_, _), CTyp::Uni(_, _), BinOp::Div) => {
-                        return self.add_exp(CExp::coef(CExp::eval(a) / CExp::eval(b)),
-                            transcr, kctx, fctx, vctx, vars);
-                    }
-                    (CTyp::Uni(_, _), CTyp::Uni(_, _), BinOp::Rem) => {
-                        return self.add_exp(CExp::coef(CExp::eval(a) % CExp::eval(b)),
-                            transcr, kctx, fctx, vctx, vars);
-                    }
+                match (&typ, ta, tb, op) {
+                    (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r), op @(BinOp::Mul | BinOp::Div | BinOp::Rem)) =>
+                        if &l < n && &r < n {
+                            // Pad with zeroes
+                            let ex_a = CExp::concat(CExp::eval(a), CExp::zeroes(*n - l));
+                            let ex_b = CExp::concat(CExp::eval(b), CExp::zeroes(*n - r));
+                            return self.add_exp(CExp::coef(CExp::bin(op, ex_a, ex_b)),
+                                transcr, kctx, fctx, vctx, vars);
+                        } else {
+                            return self.add_exp(CExp::coef(CExp::bin(op, CExp::eval(a), CExp::eval(b))),
+                                transcr, kctx, fctx, vctx, vars);
+                        },
                     _ => ()
                 };
 
@@ -271,17 +270,19 @@ impl<C: ArkConfig> PDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?;
 
+                let bop = Operand::bin(op, vl.clone(), vr.clone(), atyp.clone());
+
                 // Maybe there will be no node
-                if let Some(op) = Operand::bin(op, &vl, &vr, &atyp) {
-                    Ok(op)
-                } else {
+                if let Operand::Bin(op, box vl, box vr, atyp) = bop {
                     // Add new node
-                    let nbin = self.add_node(Node::bin(op, &vl, &vr));
+                    let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp));
 
                     // Add edges from [nbin] to [vl] and [vr]
                     self.add_edges(nbin, vl);
                     self.add_edges(nbin, vr);
                     Ok(Operand::Underscore(nbin, atyp))
+                } else {
+                    Ok(bop)
                 }
             },
 
@@ -290,7 +291,6 @@ impl<C: ArkConfig> PDag<C> {
 
             // Create a [range] value, no new nodes added
             CExp::Range(r) => Ok(Operand::range(r)),
-
 
             CExp::Map(box l, x, box e) => {
                 // Type of [e]
@@ -304,7 +304,7 @@ impl<C: ArkConfig> PDag<C> {
                 })?;
 
                 // Get the size [n] from type [te]
-                let (_, n) = ate.into_vec().unwrap();
+                let (_, n) = ate.into_vec();
                 // Operands are saved here
                 let mut res = Vec::with_capacity(n);
                 // Create operands

@@ -26,10 +26,10 @@ impl ATyp {
         ATyp::Vec(Box::new(t), n)
     }
 
-    pub fn into_vec(self) -> Option<(ATyp, usize)> {
+    pub fn into_vec(self) -> (ATyp, usize) {
         match self {
-            ATyp::Vec(box b, n) => Some((b, n)),
-            _ => None
+            ATyp::Vec(box b, n) => (b, n),
+            _ => unreachable!()
         }
     }
 

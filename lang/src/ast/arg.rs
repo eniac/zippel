@@ -256,7 +256,6 @@ impl<'pest> FromPest<'pest> for GArgs<Size> {
 }
 
 #[cfg(test)] use pest::Parser;
-#[cfg(test)] use crate::eval::Eval;
 #[test]
 fn arg_parser() {
     let ex = "public a: F, private foo: X";

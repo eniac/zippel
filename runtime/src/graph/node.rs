@@ -2,7 +2,7 @@ use lang::ast::{BinOp, CSig};
 use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
-use crate::graph::{Op, Operand};
+use crate::graph::Operand;
 use crate::arkworks::{ATyp, ArkConfig};
 use crate::graph::Principal;
 use std::fmt;
@@ -15,7 +15,7 @@ pub enum Node<C: ArkConfig, A> {
     /// A return value
     Return(Operand<C>),
     /// Operation node
-    Op(Op<C>, Principal, A),
+    Op(Operand<C>, Principal, A),
 }
 
 /// A node in the DAG with no annotations
@@ -27,28 +27,28 @@ impl<C: ArkConfig> Node<C, Nothing> {
     }
 
     pub fn coef(op: &Operand<C>) -> Self {
-        Node::Op(Op::coef(op), Principal::Any, Nothing)
+        Node::Op(Operand::coef(op.clone()), Principal::Any, Nothing)
     }
     pub fn eval(op: &Operand<C>) -> Self {
-        Node::Op(Op::eval(op), Principal::Any, Nothing)
+        Node::Op(Operand::eval(op.clone()), Principal::Any, Nothing)
     }
-    pub fn bin(op: BinOp, a: &Operand<C>, b: &Operand<C>) -> Self {
-        Node::Op(Op::bin(op, a, b), Principal::Any, Nothing)
+    pub fn bin(op: BinOp, a: &Operand<C>, b: &Operand<C>, typ: &ATyp) -> Self {
+        Node::Op(Operand::bin(op, a.clone(), b.clone(), typ.clone()), Principal::Any, Nothing)
     }
     pub fn challenge(typ: &ATyp) -> Self {
-        Node::Op(Op::challenge(typ.clone()), Principal::Verifier, Nothing)
+        Node::Op(Operand::challenge(typ.clone()), Principal::Verifier, Nothing)
     }
     pub fn random(typ: &ATyp) -> Self {
-        Node::Op(Op::random(typ.clone()), Principal::Any, Nothing)
+        Node::Op(Operand::random(typ.clone()), Principal::Any, Nothing)
     }
     pub fn hash(op: &Operand<C>) -> Self {
-        Node::Op(Op::hash(op), Principal::Verifier, Nothing)
+        Node::Op(Operand::hash(op.clone()), Principal::Verifier, Nothing)
     }
     pub fn assert(op: &Operand<C>) -> Self {
-        Node::Op(Op::check(op), Principal::Prover, Nothing)
+        Node::Op(Operand::check(op.clone()), Principal::Prover, Nothing)
     }
     pub fn verify(op: &Operand<C>) -> Self {
-        Node::Op(Op::check(op), Principal::Verifier, Nothing)
+        Node::Op(Operand::check(op.clone()), Principal::Verifier, Nothing)
     }
     pub fn ret(op: &Operand<C>) -> Self {
         Node::Return(op.clone())

@@ -3,17 +3,18 @@
 #![feature(box_patterns)]
 pub mod arkworks;
 pub mod graph;
-
+// pub mod rewrite;
 mod nothing;
 
 pub use graph::{
     Dag,
     PDag,
-    Op,
     Operand,
     Edge,
     Principal
 };
+
+// pub use rewrite::ExpSimpl;
 
 pub use arkworks::{Value, ATyp};
 pub use arkworks::{

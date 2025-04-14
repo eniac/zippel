@@ -8,7 +8,6 @@ use thiserror::Error;
 use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
 use crate::typ::Size;
-use crate::eval::Eval;
 use crate::parser::*;
 
 
