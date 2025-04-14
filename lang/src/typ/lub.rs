@@ -469,18 +469,6 @@ impl Lub for CTyp {
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
                 Ok(CTyp::vec(CTyp::lub_equ(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n)),
-            // Finite fields can act like 0 degree polynomals
-            (CTyp::Uni(a, n), b) | (b, CTyp::Uni(a, n)) => {
-                let t = b.to_scalar(ctx).ok_or(LubError::typ_equ(&x, &y))?;
-                Ok(CTyp::Uni(Tid::lub_equ(a, t, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n))
-            },
-            // Finite fields can act like 0 variable MLEs
-            (CTyp::Mle(a, n), b) | (b, CTyp::Mle(a, n)) => {
-                let t = b.to_scalar(ctx).ok_or(LubError::typ_equ(&x, &y))?;
-                Ok(CTyp::Mle(Tid::lub_equ(a, t, ctx)
-                    .map_err(|e| LubError::next(LubError::typ_equ(&x, &y), e))?, n))
-            },
             // Indices can act like finite fields
             (a, b) => {
                 let ta = a.to_scalar(ctx).ok_or(LubError::typ_equ(&x, &y))?;
@@ -515,26 +503,6 @@ impl Lub for CTyp {
                 } else {
                     Err(LubError::typ_add(&x, &y))
                 },
-            // Uni<A> + c = Uni<A> if c is a finite field
-            (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
-                let t = CTyp::lub_add(a.clone(), CTyp::Base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Uni(c, n))
-                } else {
-                    Err(LubError::typ_add(&x, &y))
-                }
-            }
-            // Mle<A> + c = Mle<A> if c is a finite field
-            (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) => {
-                let t = CTyp::lub_add(a.clone(), CTyp::Base(b), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_add(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Mle(c, n))
-                } else {
-                    Err(LubError::typ_add(&x, &y))
-                }
-            }
 
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
@@ -574,27 +542,6 @@ impl Lub for CTyp {
                 } else {
                     Err(LubError::typ_sub(&x, &y))
                 },
-            // Uni<A> - c = Uni<A> if c is a finite field
-            (CTyp::Uni(b, n), a) => {
-                let t = CTyp::lub_sub(CTyp::Base(b), a.clone(), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_sub(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Uni(c, n))
-                } else {
-                    Err(LubError::typ_sub(&x, &y))
-                }
-            }
-
-            // Mle<A> - c = Mle<A> if c is a finite field
-            (CTyp::Mle(b, n), a) => {
-                let t = CTyp::lub_sub(CTyp::Base(b), a.clone(), ctx)
-                    .map_err(|e| LubError::next(LubError::typ_sub(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Mle(c, n))
-                } else {
-                    Err(LubError::typ_sub(&x, &y))
-                }
-            }
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
@@ -773,7 +720,6 @@ impl Lub for CTyp {
                     Err(LubError::typ_pow(&x, &y))
                 }
             },
-
             // Vec<A> ^ Vec<B> = Vec<C>
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -782,7 +728,7 @@ impl Lub for CTyp {
                 } else {
                     Err(LubError::typ_pow(&x, &y))
                 },
-            // Vec<B> ^ A = Vec<B>
+            // Vec<B> ^ A = Vec<A^B>
             (CTyp::Vec(box a, n), b) =>
                 Ok(CTyp::vec(CTyp::lub_pow(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::typ_pow(&x, &y), e))?, n)),
@@ -920,8 +866,6 @@ fn lub_typ() {
     assert_eq!(CTyp::lub_add(CTyp::uni(f.clone(), 10), CTyp::uni(f.clone(), 11), &ctx), Ok(CTyp::uni(f.clone(), 11)));
     assert_eq!(CTyp::lub_add(CTyp::mle(f.clone(), 10), CTyp::mle(f.clone(), 11), &ctx), Ok(CTyp::mle(f.clone(), 11)));
     assert_eq!(CTyp::lub_add(CTyp::vec(tg1.clone(), 10), CTyp::vec(tg1.clone(), 10), &ctx), Ok(CTyp::vec(tg1.clone(), 10)));
-    assert_eq!(CTyp::lub_add(CTyp::uni(f.clone(), 10), tf.clone(), &ctx), Ok(CTyp::uni(f.clone(), 10)));
-    assert_eq!(CTyp::lub_add(CTyp::mle(f.clone(), 10), tf.clone(), &ctx), Ok(CTyp::mle(f.clone(), 10)));
 
     assert_eq!(CTyp::lub_pow(tf.clone(), tr.clone(), &ctx), Ok(tf.clone()));
     assert_eq!(CTyp::lub_pow(CTyp::vec(tf.clone(), 10), tr.clone(), &ctx), Ok(CTyp::vec(tf.clone(), 10)));
