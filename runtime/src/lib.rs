@@ -9,7 +9,7 @@ mod nothing;
 pub use graph::{
     Dag,
     PDag,
-    Operand,
+    Op,
     Edge,
     Principal
 };

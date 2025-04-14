@@ -10,18 +10,18 @@ use petgraph::graph::NodeIndex;
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
 use std::fmt;
 
-/// Typed operands are expressions which are not important
+/// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Operand<C: ArkConfig> {
+pub enum Op<C: ArkConfig> {
     /// Value
     Value(Value<C>),
 
     /// Binary operations
-    Bin(BinOp, Box<Operand<C>>, Box<Operand<C>>, ATyp),
+    Bin(BinOp, Box<Op<C>>, Box<Op<C>>, ATyp),
 
     /// Boolean not
-    Not(Box<Operand<C>>),
+    Not(Box<Op<C>>),
 
     /// Generator for a group
     Gen(ATyp),
@@ -36,10 +36,10 @@ pub enum Operand<C: ArkConfig> {
     Range(CRange),
 
     /// Random access into a value
-    Ram(Box<Operand<C>>, Box<Operand<C>>),
+    Ram(Box<Op<C>>, Box<Op<C>>),
 
     /// Vector of values
-    Vec(Vec<Operand<C>>),
+    Vec(Vec<Op<C>>),
 
     /// Random element
     Random(ATyp),
@@ -48,29 +48,29 @@ pub enum Operand<C: ArkConfig> {
     Challenge(ATyp),
 
     /// Convert from evaluation domain to lagrange domain.
-    Coef(Box<Operand<C>>),
+    Coef(Box<Op<C>>),
 
     /// Convert from lagrange domain to evaluation domain
-    Eval(Box<Operand<C>>),
+    Eval(Box<Op<C>>),
 
     /// Hash operation into a cryptographic transcript
-    Hash(Box<Operand<C>>),
+    Hash(Box<Op<C>>),
 
     /// Assertion or verification check
-    Check(Box<Operand<C>>),
+    Check(Box<Op<C>>),
 }
 
-impl<C: ArkConfig> Operand<C> {
+impl<C: ArkConfig> Op<C> {
     pub fn typ(&self) -> ATyp {
         match &self {
-            Operand::Value(v) => v.typ(),
-            Operand::Bin(_, _, _, typ) => typ.clone(),
-            Operand::Not(_) => ATyp::Bool,
-            Operand::Gen(t) => t.clone(),
-            Operand::Underscore(_, t) => t.clone(),
-            Operand::Var(_, _, t) => t.clone(),
-            Operand::Range(r) => ATyp::vec(ATyp::Fin(r.clone()), r.len()),
-            Operand::Ram(box l, box r) =>
+            Op::Value(v) => v.typ(),
+            Op::Bin(_, _, _, typ) => typ.clone(),
+            Op::Not(_) => ATyp::Bool,
+            Op::Gen(t) => t.clone(),
+            Op::Underscore(_, t) => t.clone(),
+            Op::Var(_, _, t) => t.clone(),
+            Op::Range(r) => ATyp::vec(ATyp::Fin(r.clone()), r.len()),
+            Op::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
                     (ATyp::Vec(box typ, _), ATyp::Fin(_)) => typ,
                     (ATyp::Vec(box typ, _), ATyp::Vec(box ATyp::Fin(_), m)) =>
@@ -78,7 +78,7 @@ impl<C: ArkConfig> Operand<C> {
                     (a, b) =>
                         panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
                 }
-            Operand::Vec(vs) => {
+            Op::Vec(vs) => {
                 let typ = vs[0].typ();
                 for v in vs.iter().skip(1) {
                     if v.typ() != typ {
@@ -87,12 +87,12 @@ impl<C: ArkConfig> Operand<C> {
                 }
                 ATyp::vec(typ, vs.len())
             }
-            Operand::Random(t) => t.clone(),
-            Operand::Challenge(t) => t.clone(),
-            Operand::Coef(box op) => op.typ(),
-            Operand::Eval(box op) => op.typ(),
-            Operand::Hash(_) => ATyp::Scalar,
-            Operand::Check(box op) => op.typ(),
+            Op::Random(t) => t.clone(),
+            Op::Challenge(t) => t.clone(),
+            Op::Coef(box op) => op.typ(),
+            Op::Eval(box op) => op.typ(),
+            Op::Hash(_) => ATyp::Scalar,
+            Op::Check(box op) => op.typ(),
         }
     }
 
@@ -114,195 +114,195 @@ impl<C: ArkConfig> Operand<C> {
     }
 
     pub fn index(i: usize) -> Self {
-        Operand::Value(Value::Index(i as u64))
+        Op::Value(Value::Index(i as u64))
     }
 
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self {
         match (v, i) {
-            (Operand::Ram(box v, box Operand::Range(l)), Operand::Range(r)) =>
-                Operand::ram(v, Operand::range(l.compose(&r))),
-            (Operand::Ram(box v, box Operand::Range(r)), Operand::Value(Value::Index(i))) =>
-                Operand::ram(v, r.compose_index(i as usize).into()),
-            (Operand::Vec(vs), Operand::Value(Value::Index(i))) => vs[i as usize].clone(),
-            (Operand::Vec(vs), Operand::Range(r)) =>
-                Operand::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
-            (Operand::Range(r), Operand::Value(Value::Index(i))) => r.compose_index(i as usize).into(),
-            (v, i) => Operand::Ram(Box::new(v), Box::new(i)),
+            (Op::Ram(box v, box Op::Range(l)), Op::Range(r)) =>
+                Op::ram(v, Op::range(l.compose(&r))),
+            (Op::Ram(box v, box Op::Range(r)), Op::Value(Value::Index(i))) =>
+                Op::ram(v, r.compose_index(i as usize).into()),
+            (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i as usize].clone(),
+            (Op::Vec(vs), Op::Range(r)) =>
+                Op::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
+            (Op::Range(r), Op::Value(Value::Index(i))) => r.compose_index(i as usize).into(),
+            (v, i) => Op::Ram(Box::new(v), Box::new(i)),
         }
     }
 
     /// Concatenation simplifications
     pub fn concat(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Vec(mut vs1), Operand::Vec(vs2)) => {
+            (Op::Vec(mut vs1), Op::Vec(vs2)) => {
                 vs1.extend(vs2);
-                Operand::Vec(vs1)
+                Op::Vec(vs1)
             },
-            (Operand::Vec(mut vs), v) | (v, Operand::Vec(mut vs)) => {
+            (Op::Vec(mut vs), v) | (v, Op::Vec(mut vs)) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.typ() == t {
                     vs.push(v);
-                    Operand::Vec(vs)
+                    Op::Vec(vs)
                 } else {
-                    Operand::Bin(BinOp::Concat, Box::new(v), Box::new(Operand::Vec(vs)), typ)
+                    Op::Bin(BinOp::Concat, Box::new(v), Box::new(Op::Vec(vs)), typ)
                 }
             },
-            (v1, v2) => Operand::Bin(BinOp::Concat, Box::new(v1), Box::new(v2), typ),
+            (v1, v2) => Op::Bin(BinOp::Concat, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a + b),
-            (Operand::Range(l), Operand::Range(r)) => Operand::Range(l + r),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Range(l + CRange::singleton(r as usize)),
-            (Operand::Vec(l), Operand::Vec(r)) => {
+            (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
+            (Op::Range(l), Op::Range(r)) => Op::Range(l + r),
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Range(l + CRange::singleton(r as usize)),
+            (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::add(l, r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::add(l, r, t.clone()))
                     .collect())
             },
-            (Operand::Vec(l), Operand::Range(r)) => {
+            (Op::Vec(l), Op::Range(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::add(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::add(l, r.into(), t.clone()))
                     .collect())
             },
-            (Operand::Range(l), Operand::Vec(r)) => {
+            (Op::Range(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::add(l.into(), r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::add(l.into(), r, t.clone()))
                     .collect())
             },
             // Commuting conversions
-            (Operand::Eval(box l), Operand::Eval(box r)) =>
-                Operand::Eval(Box::new(Operand::add(l, r, typ))),
-            (Operand::Coef(box l), Operand::Coef(box r)) =>
-                Operand::Coef(Box::new(Operand::add(l, r, typ))),
-            (v1, v2) => Operand::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
+            (Op::Eval(box l), Op::Eval(box r)) =>
+                Op::Eval(Box::new(Op::add(l, r, typ))),
+            (Op::Coef(box l), Op::Coef(box r)) =>
+                Op::Coef(Box::new(Op::add(l, r, typ))),
+            (v1, v2) => Op::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a - b),
-            (Operand::Range(l), Operand::Range(r)) => Operand::Range(l - r),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Range(l - CRange::singleton(r as usize)),
-            (Operand::Vec(l), Operand::Vec(r)) => {
+            (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
+            (Op::Range(l), Op::Range(r)) => Op::Range(l - r),
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Range(l - CRange::singleton(r as usize)),
+            (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::sub(l, r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::sub(l, r, t.clone()))
                     .collect())
             },
-            (Operand::Vec(l), Operand::Range(r)) => {
+            (Op::Vec(l), Op::Range(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::sub(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::sub(l, r.into(), t.clone()))
                     .collect())
             },
-            (Operand::Range(l), Operand::Vec(r)) => {
+            (Op::Range(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::sub(l.into(), r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::sub(l.into(), r, t.clone()))
                     .collect())
             },
             // Commuting conversions
-            (Operand::Eval(box l), Operand::Eval(box r)) =>
-                Operand::Eval(Box::new(Operand::sub(l, r, typ))),
-            (Operand::Coef(box l), Operand::Coef(box r)) =>
-                Operand::Coef(Box::new(Operand::sub(l, r, typ))),
-            (v1, v2) => Operand::Bin(BinOp::Sub, Box::new(v1), Box::new(v2), typ),
+            (Op::Eval(box l), Op::Eval(box r)) =>
+                Op::Eval(Box::new(Op::sub(l, r, typ))),
+            (Op::Coef(box l), Op::Coef(box r)) =>
+                Op::Coef(Box::new(Op::sub(l, r, typ))),
+            (v1, v2) => Op::Bin(BinOp::Sub, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a * b),
-            (Operand::Range(l), Operand::Range(r)) => Operand::Range(l * r),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Range(l * CRange::singleton(r as usize)),
-            (Operand::Vec(l), Operand::Vec(r)) => {
+            (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
+            (Op::Range(l), Op::Range(r)) => Op::Range(l * r),
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Range(l * CRange::singleton(r as usize)),
+            (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::mul(l, r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::mul(l, r, t.clone()))
                     .collect())
             },
-            (Operand::Vec(l), Operand::Range(r)) => {
+            (Op::Vec(l), Op::Range(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::mul(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::mul(l, r.into(), t.clone()))
                     .collect())
             },
-            (Operand::Range(r), Operand::Vec(l)) => {
+            (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::mul(r.into(), l, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::mul(r.into(), l, t.clone()))
                     .collect())
             },
-           (Operand::Vec(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+           (Op::Vec(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter()
-                    .map(|l| Operand::mul(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter()
+                    .map(|l| Op::mul(l, r.into(), t.clone()))
                     .collect())
             },
             // Commuting conversions
-            (Operand::Coef(box l), Operand::Coef(box r)) => {
+            (Op::Coef(box l), Op::Coef(box r)) => {
                 let (_, n) = typ.clone().into_vec();
-                Operand::coef(Operand::mul(Operand::pad_zeroes(l, n), Operand::pad_zeroes(r, n), typ))
+                Op::coef(Op::mul(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
             },
             // Default case, constructor
-            (v1, v2) => Operand::Bin(BinOp::Mul, Box::new(v1), Box::new(v2), typ),
+            (v1, v2) => Op::Bin(BinOp::Mul, Box::new(v1), Box::new(v2), typ),
         }
     }
 
-    pub fn coef(op: Self) -> Operand<C> {
+    pub fn coef(op: Self) -> Op<C> {
         match op {
-            Operand::Eval(box op) => op,
-            _ => Operand::Coef(Box::new(op)),
+            Op::Eval(box op) => op,
+            _ => Op::Coef(Box::new(op)),
         }
     }
 
-    pub fn eval(op: Self) -> Operand<C> {
+    pub fn eval(op: Self) -> Op<C> {
         match op {
-            Operand::Coef(box op) => op,
-            Operand::Bin(op @ (BinOp::Mul | BinOp::Div | BinOp::Rem), box op1, box op2, typ) =>
-                Operand::bin(op, Operand::eval(op1), Operand::eval(op2), typ),
-            op => Operand::Eval(Box::new(op)),
+            Op::Coef(box op) => op,
+            Op::Bin(op @ (BinOp::Mul | BinOp::Div | BinOp::Rem), box op1, box op2, typ) =>
+                Op::bin(op, Op::eval(op1), Op::eval(op2), typ),
+            op => Op::Eval(Box::new(op)),
         }
     }
 
-    pub fn zero(typ: &ATyp) -> Operand<C> {
+    pub fn zero(typ: &ATyp) -> Op<C> {
         match typ {
-            ATyp::Fin(_) => Operand::Value(Value::Index(0)),
+            ATyp::Fin(_) => Op::Value(Value::Index(0)),
             ATyp::Vec(box typ, n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
-                    vs.push(Operand::zero(typ));
+                    vs.push(Op::zero(typ));
                 }
-                Operand::Vec(vs)
+                Op::Vec(vs)
             },
-            ATyp::Bool => Operand::Value(Value::Bool(false)),
-            ATyp::Scalar => Operand::Value(Value::Scalar(C::FOps::zero())),
-            ATyp::G1 => Operand::Value(Value::G1(C::G1Ops::zero())),
-            ATyp::G2 => Operand::Value(Value::G2(C::G2Ops::zero())),
-            ATyp::GT => Operand::Value(Value::GT(C::POps::zero())),
-            ATyp::G1Affine => Operand::Value(Value::G1Affine(C::G1Ops::zero().into())),
-            ATyp::G2Affine => Operand::Value(Value::G2Affine(C::G2Ops::zero().into())),
+            ATyp::Bool => Op::Value(Value::Bool(false)),
+            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::zero())),
+            ATyp::G1 => Op::Value(Value::G1(C::G1Ops::zero())),
+            ATyp::G2 => Op::Value(Value::G2(C::G2Ops::zero())),
+            ATyp::GT => Op::Value(Value::GT(C::POps::zero())),
+            ATyp::G1Affine => Op::Value(Value::G1Affine(C::G1Ops::zero().into())),
+            ATyp::G2Affine => Op::Value(Value::G2Affine(C::G2Ops::zero().into())),
         }
     }
 
-    fn pad_zeroes(v: Operand<C>, n: usize) -> Operand<C> {
+    fn pad_zeroes(v: Op<C>, n: usize) -> Op<C> {
         let typ = v.typ();
         let (t, m) = typ.into_vec();
         if m < n {
-            Operand::concat(v, Operand::vec(vec![Operand::zero(&t); n - m]), ATyp::vec(t, n))
+            Op::concat(v, Op::vec(vec![Op::zero(&t); n - m]), ATyp::vec(t, n))
         } else {
             v
         }
@@ -310,302 +310,302 @@ impl<C: ArkConfig> Operand<C> {
 
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a / b),
-            (Operand::Range(l), Operand::Range(r)) => Operand::Range(l / r),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Range(l / CRange::singleton(r as usize)),
-            (Operand::Vec(l), Operand::Vec(r)) => {
+            (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
+            (Op::Range(l), Op::Range(r)) => Op::Range(l / r),
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Range(l / CRange::singleton(r as usize)),
+            (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::div(l, r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::div(l, r, t.clone()))
                     .collect())
             },
-            (Operand::Vec(l), Operand::Range(r)) => {
+            (Op::Vec(l), Op::Range(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::div(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::div(l, r.into(), t.clone()))
                     .collect())
             },
-            (Operand::Range(r), Operand::Vec(l)) => {
+            (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::div(r.into(), l, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::div(r.into(), l, t.clone()))
                     .collect())
             },
-           (Operand::Vec(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+           (Op::Vec(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter()
-                    .map(|l| Operand::div(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter()
+                    .map(|l| Op::div(l, r.into(), t.clone()))
                     .collect())
             },
             // Commuting conversions
-            (Operand::Coef(box l), Operand::Coef(box r)) => {
+            (Op::Coef(box l), Op::Coef(box r)) => {
                 let (_, n) = typ.clone().into_vec();
-                Operand::coef(Operand::div(Operand::pad_zeroes(l, n), Operand::pad_zeroes(r, n), typ))
+                Op::coef(Op::div(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
             },
             // Default case, constructor
-            (v1, v2) => Operand::Bin(BinOp::Div, Box::new(v1), Box::new(v2), typ)
+            (v1, v2) => Op::Bin(BinOp::Div, Box::new(v1), Box::new(v2), typ)
         }
     }
 
     pub fn rem(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a % b),
-            (Operand::Range(l), Operand::Range(r)) => Operand::Range(l % r),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Range(l % CRange::singleton(r as usize)),
-            (Operand::Vec(l), Operand::Vec(r)) => {
+            (Op::Value(a), Op::Value(b)) => Op::Value(a % b),
+            (Op::Range(l), Op::Range(r)) => Op::Range(l % r),
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Range(l % CRange::singleton(r as usize)),
+            (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::rem(l, r, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::rem(l, r, t.clone()))
                     .collect())
             },
-            (Operand::Vec(l), Operand::Range(r)) => {
+            (Op::Vec(l), Op::Range(r)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::rem(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::rem(l, r.into(), t.clone()))
                     .collect())
             },
-            (Operand::Range(r), Operand::Vec(l)) => {
+            (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Operand::rem(r.into(), l, t.clone()))
+                Op::Vec(l.into_iter().zip(r.into_iter())
+                    .map(|(l, r)| Op::rem(r.into(), l, t.clone()))
                     .collect())
             },
-           (Operand::Vec(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Vec(l)) => {
+           (Op::Vec(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(l.into_iter()
-                    .map(|l| Operand::rem(l, r.into(), t.clone()))
+                Op::Vec(l.into_iter()
+                    .map(|l| Op::rem(l, r.into(), t.clone()))
                     .collect())
             },
             // Commuting conversions
-            (Operand::Coef(box l), Operand::Coef(box r)) => {
+            (Op::Coef(box l), Op::Coef(box r)) => {
                 let (_, n) = typ.clone().into_vec();
-                Operand::coef(Operand::rem(Operand::pad_zeroes(l, n), Operand::pad_zeroes(r, n), typ))
+                Op::coef(Op::rem(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
             },
             // Default case, constructor
-            (v1, v2) => Operand::Bin(BinOp::Rem, Box::new(v1), Box::new(v2), typ)
+            (v1, v2) => Op::Bin(BinOp::Rem, Box::new(v1), Box::new(v2), typ)
         }
     }
 
-    pub fn one(typ: &ATyp) -> Operand<C> {
+    pub fn one(typ: &ATyp) -> Op<C> {
         match typ {
-            ATyp::Fin(_) => Operand::Value(Value::Index(1)),
+            ATyp::Fin(_) => Op::Value(Value::Index(1)),
             ATyp::Vec(box typ, n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
-                    vs.push(Operand::one(typ));
+                    vs.push(Op::one(typ));
                 }
-                Operand::Vec(vs)
+                Op::Vec(vs)
             },
-            ATyp::Scalar => Operand::Value(Value::Scalar(C::FOps::one())),
-            _ => unreachable!("UncaughtError: Operand::one() not implemented for type {}", typ),
+            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::one())),
+            _ => unreachable!("UncaughtError: Op::one() not implemented for type {}", typ),
         }
     }
 
     pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Self {
         match v2 {
-            Operand::Value(Value::Index(r)) => {
+            Op::Value(Value::Index(r)) => {
                 let mut exp: u64 = r;
-                let mut base = Operand::one(&typ);
+                let mut base = Op::one(&typ);
                 while exp > 0 {
                     if exp % 2 == 1 {
-                        base = Operand::mul(v1.clone(), base.clone(), typ.clone());
+                        base = Op::mul(v1.clone(), base.clone(), typ.clone());
                     }
-                    base = Operand::mul(base.clone(), base.clone(), typ.clone());
+                    base = Op::mul(base.clone(), base.clone(), typ.clone());
                     exp /= 2;
                 };
                 base
             },
-            Operand::Range(r) => {
+            Op::Range(r) => {
                 let (t, _) = typ.into_vec();
-                Operand::Vec(r.into_iter()
-                    .map(|r| Operand::pow(v1.clone(), r.into(), t.clone()))
+                Op::Vec(r.into_iter()
+                    .map(|r| Op::pow(v1.clone(), r.into(), t.clone()))
                     .collect())
             },
-            v2 => Operand::Bin(BinOp::Pow, Box::new(v1), Box::new(v2), typ),
+            v2 => Op::Bin(BinOp::Pow, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn dot(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a.dot(b)),
-            (Operand::Range(l), Operand::Range(r)) =>
-                Operand::Value(Value::Index(
+            (Op::Value(a), Op::Value(b)) => Op::Value(a.dot(b)),
+            (Op::Range(l), Op::Range(r)) =>
+                Op::Value(Value::Index(
                     l.into_iter()
                     .zip(r.into_iter())
                     .map(|(a, b)| (a * b) as u64)
                     .sum())),
-            (Operand::Range(l), Operand::Value(Value::Index(r)))
-            | (Operand::Value(Value::Index(r)), Operand::Range(l)) =>
-                Operand::Value(Value::Index(
+            (Op::Range(l), Op::Value(Value::Index(r)))
+            | (Op::Value(Value::Index(r)), Op::Range(l)) =>
+                Op::Value(Value::Index(
                     l.into_iter()
                     .map(|a| (a * r as usize) as u64)
                     .sum())),
             // Default case, constructor
-            (v1, v2) => Operand::Bin(BinOp::Dot, Box::new(v1), Box::new(v2), typ),
+            (v1, v2) => Op::Bin(BinOp::Dot, Box::new(v1), Box::new(v2), typ),
         }
     }
 
-    pub fn not(v: Self) -> Operand<C> {
+    pub fn not(v: Self) -> Op<C> {
         match v {
-            Operand::Not(box v) => v,
-            _ => Operand::Not(Box::new(v)),
+            Op::Not(box v) => v,
+            _ => Op::Not(Box::new(v)),
         }
     }
 
     pub fn equ(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
-            (Operand::Range(l), Operand::Range(r)) => Operand::Value(Value::Bool(l == r)),
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(Value::Bool(a == b)),
-            (v1, v2) => Operand::Bin(BinOp::Equ, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (Op::Range(l), Op::Range(r)) => Op::Value(Value::Bool(l == r)),
+            (Op::Value(a), Op::Value(b)) => Op::Value(Value::Bool(a == b)),
+            (v1, v2) => Op::Bin(BinOp::Equ, Box::new(v1), Box::new(v2), ATyp::Bool),
         }
     }
 
     pub fn and(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
-            (Operand::Value(Value::Bool(false)), _)
-            | (_, Operand::Value(Value::Bool(false))) => Operand::bfalse(),
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a & b),
-            (v1, v2) => Operand::Bin(BinOp::And, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (Op::Value(Value::Bool(false)), _)
+            | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
+            (Op::Value(a), Op::Value(b)) => Op::Value(a & b),
+            (v1, v2) => Op::Bin(BinOp::And, Box::new(v1), Box::new(v2), ATyp::Bool),
         }
     }
 
     pub fn btrue() -> Self {
-        Operand::Value(Value::Bool(true))
+        Op::Value(Value::Bool(true))
     }
     pub fn bfalse() -> Self {
-        Operand::Value(Value::Bool(false))
+        Op::Value(Value::Bool(false))
     }
 
     pub fn or(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
-            (Operand::Value(Value::Bool(true)), _)
-            | (_, Operand::Value(Value::Bool(true))) => Operand::btrue(),
-            (Operand::Value(a), Operand::Value(b)) => Operand::Value(a | b),
-            (v1, v2) => Operand::Bin(BinOp::Or, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (Op::Value(Value::Bool(true)), _)
+            | (_, Op::Value(Value::Bool(true))) => Op::btrue(),
+            (Op::Value(a), Op::Value(b)) => Op::Value(a | b),
+            (v1, v2) => Op::Bin(BinOp::Or, Box::new(v1), Box::new(v2), ATyp::Bool),
         }
     }
 
     pub fn contains(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
-            (Operand::Range(l), Operand::Value(Value::Index(r))) =>
-                Operand::Value(Value::Bool(l.contains(r as usize))),
-            (Operand::Vec(vs), v2) =>
-                vs.iter().map(|v| Operand::equ(v.clone(), v2.clone()))
-                    .reduce(|a, b| Operand::or(a, b))
-                    .unwrap_or(Operand::Value(Value::Bool(false))),
-            (v1, v2) => Operand::Bin(BinOp::Contains, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (Op::Range(l), Op::Value(Value::Index(r))) =>
+                Op::Value(Value::Bool(l.contains(r as usize))),
+            (Op::Vec(vs), v2) =>
+                vs.iter().map(|v| Op::equ(v.clone(), v2.clone()))
+                    .reduce(|a, b| Op::or(a, b))
+                    .unwrap_or(Op::Value(Value::Bool(false))),
+            (v1, v2) => Op::Bin(BinOp::Contains, Box::new(v1), Box::new(v2), ATyp::Bool),
         }
     }
 
-    pub fn vec(vs: Vec<Operand<C>>) -> Operand<C> {
-        Operand::Vec(vs)
+    pub fn vec(vs: Vec<Op<C>>) -> Op<C> {
+        Op::Vec(vs)
     }
-    pub fn underscore(n: &NodeIndex, typ: ATyp) -> Operand<C> {
-        Operand::Underscore(*n, typ)
+    pub fn underscore(n: &NodeIndex, typ: ATyp) -> Op<C> {
+        Op::Underscore(*n, typ)
     }
-    pub fn var(v: &Vid, n: &NodeIndex, typ: ATyp) -> Operand<C> {
-        Operand::Var(v.clone(), *n, typ)
+    pub fn var(v: &Vid, n: &NodeIndex, typ: ATyp) -> Op<C> {
+        Op::Var(v.clone(), *n, typ)
     }
-    pub fn range(r: CRange) -> Operand<C> {
-        Operand::Range(r)
-    }
-
-    pub fn challenge(typ: ATyp) -> Operand<C> {
-        Operand::Challenge(typ)
-    }
-    pub fn random(typ: ATyp) -> Operand<C> {
-        Operand::Random(typ)
-    }
-    pub fn hash(op: Operand<C>) -> Operand<C> {
-        Operand::Hash(Box::new(op))
+    pub fn range(r: CRange) -> Op<C> {
+        Op::Range(r)
     }
 
-    pub fn check(op: Operand<C>) -> Operand<C> {
-        Operand::Check(Box::new(op))
+    pub fn challenge(typ: ATyp) -> Op<C> {
+        Op::Challenge(typ)
+    }
+    pub fn random(typ: ATyp) -> Op<C> {
+        Op::Random(typ)
+    }
+    pub fn hash(op: Op<C>) -> Op<C> {
+        Op::Hash(Box::new(op))
+    }
+
+    pub fn check(op: Op<C>) -> Op<C> {
+        Op::Check(Box::new(op))
     }
 
     pub fn dependencies(&self) -> Vec<(NodeIndex, Option<Vid>)> {
         match self {
-            Operand::Underscore(n, _) => vec![(*n, None)],
-            Operand::Bin(_, box a, box b, _)
-            | Operand::Ram(box a, box b) =>
+            Op::Underscore(n, _) => vec![(*n, None)],
+            Op::Bin(_, box a, box b, _)
+            | Op::Ram(box a, box b) =>
                 a.dependencies().into_iter()
                     .chain(b.dependencies().into_iter())
                     .collect(),
-            Operand::Var(v, n, _) => vec![(*n, Some(v.clone()))],
-            Operand::Vec(vs) =>
+            Op::Var(v, n, _) => vec![(*n, Some(v.clone()))],
+            Op::Vec(vs) =>
                 vs.into_iter()
                     .flat_map(|v| v.dependencies())
                     .collect(),
-            Operand::Not(box v)
-            | Operand::Coef(box v)
-            | Operand::Check(box v)
-            | Operand::Hash(box v)
-            | Operand::Eval(box v) => v.dependencies(),
-            Operand::Value(_)
-            | Operand::Gen(_)
-            | Operand::Random(_)
-            | Operand::Challenge(_)
-            | Operand::Range(_) => vec![],
+            Op::Not(box v)
+            | Op::Coef(box v)
+            | Op::Check(box v)
+            | Op::Hash(box v)
+            | Op::Eval(box v) => v.dependencies(),
+            Op::Value(_)
+            | Op::Gen(_)
+            | Op::Random(_)
+            | Op::Challenge(_)
+            | Op::Range(_) => vec![],
         }
     }
 }
 
-impl<C: ArkConfig> fmt::Display for Operand<C> {
+impl<C: ArkConfig> fmt::Display for Op<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Operand::Value(x) => write!(f, "{}", x),
-            Operand::Bin(op, box a, box b, _) => write!(f, "({} {} {})", a, op, b),
-            Operand::Eval(box v) => write!(f, "(eval {})", v),
-            Operand::Coef(box v) => write!(f, "(coef {})", v),
-            Operand::Hash(box v) => write!(f, "(hash {})", v),
-            Operand::Check(box v) => write!(f, "(check {})", v),
-            Operand::Challenge(t) => write!(f, "challenge<{}>", t),
-            Operand::Random(t) => write!(f, "random<{}>", t),
-            Operand::Ram(box v, r) => write!(f, "{}[{}]", v, r),
-            Operand::Vec(vs) => {
+            Op::Value(x) => write!(f, "{}", x),
+            Op::Bin(op, box a, box b, _) => write!(f, "({} {} {})", a, op, b),
+            Op::Eval(box v) => write!(f, "(eval {})", v),
+            Op::Coef(box v) => write!(f, "(coef {})", v),
+            Op::Hash(box v) => write!(f, "(hash {})", v),
+            Op::Check(box v) => write!(f, "(check {})", v),
+            Op::Challenge(t) => write!(f, "challenge<{}>", t),
+            Op::Random(t) => write!(f, "random<{}>", t),
+            Op::Ram(box v, r) => write!(f, "{}[{}]", v, r),
+            Op::Vec(vs) => {
                 write!(f, "[{}", vs[0])?;
                 for v in vs.iter().skip(1) {
                     write!(f, ", {}", v)?;
                 }
                 write!(f, "]")
             },
-            Operand::Gen(t) => write!(f, "gen<{}>", t),
-            Operand::Not(v) => write!(f, "!{}", v),
-            Operand::Range(r) => write!(f, "{}", r),
-            Operand::Underscore(_, _) => write!(f, "_"),
-            Operand::Var(v, _, _) => write!(f, "{}", v),
+            Op::Gen(t) => write!(f, "gen<{}>", t),
+            Op::Not(v) => write!(f, "!{}", v),
+            Op::Range(r) => write!(f, "{}", r),
+            Op::Underscore(_, _) => write!(f, "_"),
+            Op::Var(v, _, _) => write!(f, "{}", v),
         }
     }
 }
 
-impl<C: ArkConfig> From<Value<C>> for Operand<C> {
+impl<C: ArkConfig> From<Value<C>> for Op<C> {
     fn from(v: Value<C>) -> Self {
-        Operand::Value(v)
+        Op::Value(v)
     }
 }
 
-impl<C: ArkConfig> From<u64> for Operand<C> {
+impl<C: ArkConfig> From<u64> for Op<C> {
     fn from(v: u64) -> Self {
-        Operand::Value(Value::Index(v))
+        Op::Value(Value::Index(v))
     }
 }
 
-impl<C: ArkConfig> From<usize> for Operand<C> {
+impl<C: ArkConfig> From<usize> for Op<C> {
     fn from(v: usize) -> Self {
-        Operand::Value(Value::Index(v as u64))
+        Op::Value(Value::Index(v as u64))
     }
 }
 
-impl<C: ArkConfig> From<CRange> for Operand<C> {
+impl<C: ArkConfig> From<CRange> for Op<C> {
     fn from(r: CRange) -> Self {
-        Operand::Range(r)
+        Op::Range(r)
     }
 }
 

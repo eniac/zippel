@@ -3,7 +3,7 @@ mod edge;
 mod op;
 mod principal;
 
-pub use crate::graph::op::Operand;
+pub use crate::graph::op::Op;
 pub use crate::graph::node::Node;
 pub use crate::graph::edge::{EdgeType, Edge};
 pub use crate::graph::principal::Principal;
@@ -62,7 +62,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.add_edge(source, sink, edge);
     }
 
-    fn add_edges(&mut self, edge_type: EdgeType, sink: NodeIndex, source: Operand<C>) {
+    fn add_edges(&mut self, edge_type: EdgeType, sink: NodeIndex, source: Op<C>) {
         source.dependencies().into_iter().for_each(|(n, opt)| {
             self.add_edge(n, sink, Edge::new(edge_type.clone(), opt));
         });
@@ -141,7 +141,7 @@ impl<C: ArkConfig> PDag<C> {
                     TypeError::decl(&sig.name,
                         TypeError::ark(&kctx, &vctx, &CExp::var(id), typ))
                 })?;
-                vars.insert(id, &Operand::var(id, &start, at));
+                vars.insert(id, &Op::var(id, &start, at));
                 vctx.insert(id, typ);
             }
             // Typecheck the body with the type signature
@@ -154,14 +154,14 @@ impl<C: ArkConfig> PDag<C> {
 
                     // Add the body to the Graph
                     let op = g.add_exp(body, &mut start, EdgeType::Data, &kctx, &fctx, &vctx, &vars)?;
-                    if !matches!(op, Operand::Underscore(_, _)) {
+                    if !matches!(op, Op::Underscore(_, _)) {
                         let nr = g.add_node(Node::ret(&op));
                         g.add_edges(EdgeType::Data, nr, op);
                     }
                 },
                 CBody::Func { body } => {
                     let op = g.add_exp(body, &mut start, EdgeType::Data, &kctx, &fctx, &vctx, &vars)?;
-                    if !matches!(op, Operand::Underscore(_, _)) {
+                    if !matches!(op, Op::Underscore(_, _)) {
                         let nr = g.add_node(Node::ret(&op));
                         g.add_edges(EdgeType::Data, nr, op);
                     }
@@ -177,17 +177,17 @@ impl<C: ArkConfig> PDag<C> {
         transcr: &mut NodeIndex,
         edge_type: EdgeType,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, Operand<C>>) -> Result<Operand<C>, GraphError> {
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, Op<C>>) -> Result<Op<C>, GraphError> {
         // Type inference for [self]
         let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
-        // Convert [CExp] to [Operand] while creating the graph
+        // Convert [CExp] to [Op] while creating the graph
         match exp.clone() {
             // Literals get appended to the last node [self.it]
             CExp::Lit(n) =>
-                Ok(Operand::Value(Value::Index(n as u64))),
+                Ok(Op::Value(Value::Index(n as u64))),
 
             CExp::Bool(b) =>
-                Ok(Operand::Value(Value::Bool(b))),
+                Ok(Op::Value(Value::Bool(b))),
 
             // Variables are edges, no new nodes are added
             CExp::Var(id) => vars.get(&id)
@@ -204,7 +204,7 @@ impl<C: ArkConfig> PDag<C> {
                 // Add edge from [ncoef] to [child]
                 self.add_edges(edge_type, ncoef, child);
 
-                Ok(Operand::Underscore(ncoef, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                Ok(Op::Underscore(ncoef, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ)
@@ -220,7 +220,7 @@ impl<C: ArkConfig> PDag<C> {
                 // Add edge from [ncoef] to [child]
                 self.add_edges(edge_type, neval, child);
 
-                Ok(Operand::Underscore(neval, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                Ok(Op::Underscore(neval, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ)
@@ -230,7 +230,7 @@ impl<C: ArkConfig> PDag<C> {
 
             // Create a new [vec] value
             CExp::Vec(vs) =>
-                Ok(Operand::vec(vs.0.traverse1(&mut |v|
+                Ok(Op::vec(vs.0.traverse1(&mut |v|
                             self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars))?)),
 
             // MLE is a noop?
@@ -269,32 +269,32 @@ impl<C: ArkConfig> PDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?;
 
-                let bop = Operand::bin(op, vl.clone(), vr.clone(), atyp.clone());
+                let bop = Op::bin(op, vl.clone(), vr.clone(), atyp.clone());
 
                 // Maybe there will be no node
-                if let Operand::Bin(op, box vl, box vr, atyp) = bop {
+                if let Op::Bin(op, box vl, box vr, atyp) = bop {
                     // Add new node
                     let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp));
 
                     // Add edges from [nbin] to [vl] and [vr]
                     self.add_edges(edge_type, nbin, vl);
                     self.add_edges(edge_type, nbin, vr);
-                    Ok(Operand::Underscore(nbin, atyp))
+                    Ok(Op::Underscore(nbin, atyp))
                 } else {
                     Ok(bop)
                 }
             },
 
             CExp::Not(box a) =>
-                Ok(Operand::not(self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?)),
+                Ok(Op::not(self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?)),
 
             // Create a [range] value, no new nodes added
-            CExp::Range(r) => Ok(Operand::range(r)),
+            CExp::Range(r) => Ok(Op::range(r)),
 
             CExp::Map(box l, x, box e) => {
                 // Type of [e]
                 let te = e.infer(kctx, &fctx.keys(), vctx)?;
-                // Operand for [e]
+                // Op for [e]
                 let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 let ate = ATyp::from_ctyp(&te, kctx).ok_or_else(|| {
                     TypeError::next(
@@ -304,27 +304,27 @@ impl<C: ArkConfig> PDag<C> {
 
                 // Get the size [n] from type [te]
                 let (_, n) = ate.into_vec();
-                // Operands are saved here
+                // Ops are saved here
                 let mut res = Vec::with_capacity(n);
-                // Create operands
+                // Create operations
                 for i in 0..n {
                     // Add oe[i] to vars and vctx
                     let mut vars = vars.clone();
                     let mut vctx = vctx.clone();
-                    vars.insert(&x, &Operand::ram(oe.clone(), Operand::index(i)));
+                    vars.insert(&x, &Op::ram(oe.clone(), Op::index(i)));
                     vctx.insert(&x, &te);
                     // Add subexpression
                     let ol = self.add_exp(l.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     res.push(ol);
                 }
-                Ok(Operand::vec(res))
+                Ok(Op::vec(res))
             },
 
             CExp::Ram(box a, box b) => {
                 // Add children
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                Ok(Operand::ram(oa, ob))
+                Ok(Op::ram(oa, ob))
             },
             CExp::Challenge(_) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
@@ -337,10 +337,10 @@ impl<C: ArkConfig> PDag<C> {
                 self.add_edge(*transcr, nchallenge, Edge::transcript());
                 // Update transcript node
                 *transcr = nchallenge;
-                Ok(Operand::Underscore(nchallenge, at))
+                Ok(Op::Underscore(nchallenge, at))
             },
             CExp::Gen(_) =>
-                Ok(Operand::Gen(
+                Ok(Op::Gen(
                         ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                             TypeError::next(
                                 TypeError::exp(kctx, vctx, &exp),
@@ -353,7 +353,7 @@ impl<C: ArkConfig> PDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?;
                 let nrand = self.add_node(Node::random(&at));
-                Ok(Operand::Underscore(nrand, at))
+                Ok(Op::Underscore(nrand, at))
             },
             CExp::App(fid, params) => {
                 // type inference for each parameter
@@ -386,7 +386,7 @@ impl<C: ArkConfig> PDag<C> {
                 subs.tid_subst(&mut body);
 
                 // First add the arguments to the graph
-                let oparams: Vec<Operand<C>> = params.into_iter()
+                let oparams: Vec<Op<C>> = params.into_iter()
                     .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
                     .collect::<Result<_, _>>()?;
 
@@ -394,7 +394,7 @@ impl<C: ArkConfig> PDag<C> {
                 let vctx = sig.args.to_ctx();
                 let vars =
                     sig.args.iter().zip(oparams.iter())
-                    .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, Operand<C>>>();
+                    .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, Op<C>>>();
 
                 // Add the body to the graph
                 self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
@@ -444,7 +444,7 @@ impl<C: ArkConfig> PDag<C> {
                 let nassert = self.add_node(Node::assert(&oa));
                 // Add edges
                 self.add_edges(edge_type, nassert, oa);
-                Ok(Operand::Underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                Ok(Op::Underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ))
@@ -456,7 +456,7 @@ impl<C: ArkConfig> PDag<C> {
                 let nverify = self.add_node(Node::verify(&oa));
                 self.add_edges(edge_type, nverify, oa);
                 self.add_edge(*transcr, nverify, Edge::transcript());
-                Ok(Operand::Underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                Ok(Op::Underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ))

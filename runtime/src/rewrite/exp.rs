@@ -375,7 +375,7 @@ impl<C: ArkConfig> ExpSimpl<C> {
         }
     }
 
-    pub fn one(typ: &ATyp) -> Operand<C> {
+    pub fn one(typ: &ATyp) -> Op<C> {
         match typ {
             ATyp::Fin(_) => ExpSimpl::Exp(CExp::Value(Value::Index(1))),
             ATyp::Vec(box typ, n) => {
@@ -434,7 +434,7 @@ impl<C: ArkConfig> ExpSimpl<C> {
         }
     }
 
-    pub fn not(v: Self) -> Operand<C> {
+    pub fn not(v: Self) -> Op<C> {
         match v {
             CExp::Not(box v) => v,
             _ => ExpSimpl::Exp(CExp::Not(Box::new(v))),
@@ -486,30 +486,30 @@ impl<C: ArkConfig> ExpSimpl<C> {
         }
     }
 
-    pub fn vec(vs: Vec<Operand<C>>) -> Operand<C> {
+    pub fn vec(vs: Vec<Op<C>>) -> Op<C> {
         CExp::Vec(vs)
     }
-    pub fn underscore(n: &NodeIndex, typ: ATyp) -> Operand<C> {
+    pub fn underscore(n: &NodeIndex, typ: ATyp) -> Op<C> {
         CExp::Underscore(*n, typ)
     }
-    pub fn var(v: &Vid, n: &NodeIndex, typ: ATyp) -> Operand<C> {
+    pub fn var(v: &Vid, n: &NodeIndex, typ: ATyp) -> Op<C> {
         ExpSimpl::Exp(CExp::Var(v.clone()), *n, typ)
     }
-    pub fn range(r: CRange) -> Operand<C> {
+    pub fn range(r: CRange) -> Op<C> {
         CExp::Range(r)
     }
 
-    pub fn challenge(typ: ATyp) -> Operand<C> {
+    pub fn challenge(typ: ATyp) -> Op<C> {
         CExp::Challenge(typ)
     }
-    pub fn random(typ: ATyp) -> Operand<C> {
+    pub fn random(typ: ATyp) -> Op<C> {
         CExp::Random(typ)
     }
-    pub fn hash(op: Operand<C>) -> Operand<C> {
+    pub fn hash(op: Op<C>) -> Op<C> {
         CExp::Hash(Box::new(op))
     }
 
-    pub fn check(op: Operand<C>) -> Operand<C> {
+    pub fn check(op: Op<C>) -> Op<C> {
         CExp::Check(Box::new(op))
     }
 

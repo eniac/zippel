@@ -2,7 +2,7 @@ use lang::ast::{BinOp, CSig};
 use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
-use crate::graph::Operand;
+use crate::graph::Op;
 use crate::arkworks::{ATyp, ArkConfig};
 use crate::graph::Principal;
 use std::fmt;
@@ -13,9 +13,9 @@ pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
     Inp(CSig),
     /// A return value
-    Return(Operand<C>),
+    Return(Op<C>),
     /// Operation node
-    Op(Operand<C>, Principal, A),
+    Op(Op<C>, Principal, A),
 }
 
 /// A node in the DAG with no annotations
@@ -26,31 +26,31 @@ impl<C: ArkConfig> Node<C, Nothing> {
         Node::Inp(sig)
     }
 
-    pub fn coef(op: &Operand<C>) -> Self {
-        Node::Op(Operand::coef(op.clone()), Principal::Any, Nothing)
+    pub fn coef(op: &Op<C>) -> Self {
+        Node::Op(Op::coef(op.clone()), Principal::Any, Nothing)
     }
-    pub fn eval(op: &Operand<C>) -> Self {
-        Node::Op(Operand::eval(op.clone()), Principal::Any, Nothing)
+    pub fn eval(op: &Op<C>) -> Self {
+        Node::Op(Op::eval(op.clone()), Principal::Any, Nothing)
     }
-    pub fn bin(op: BinOp, a: &Operand<C>, b: &Operand<C>, typ: &ATyp) -> Self {
-        Node::Op(Operand::bin(op, a.clone(), b.clone(), typ.clone()), Principal::Any, Nothing)
+    pub fn bin(op: BinOp, a: &Op<C>, b: &Op<C>, typ: &ATyp) -> Self {
+        Node::Op(Op::bin(op, a.clone(), b.clone(), typ.clone()), Principal::Any, Nothing)
     }
     pub fn challenge(typ: &ATyp) -> Self {
-        Node::Op(Operand::challenge(typ.clone()), Principal::Verifier, Nothing)
+        Node::Op(Op::challenge(typ.clone()), Principal::Verifier, Nothing)
     }
     pub fn random(typ: &ATyp) -> Self {
-        Node::Op(Operand::random(typ.clone()), Principal::Any, Nothing)
+        Node::Op(Op::random(typ.clone()), Principal::Any, Nothing)
     }
-    pub fn hash(op: &Operand<C>) -> Self {
-        Node::Op(Operand::hash(op.clone()), Principal::Verifier, Nothing)
+    pub fn hash(op: &Op<C>) -> Self {
+        Node::Op(Op::hash(op.clone()), Principal::Verifier, Nothing)
     }
-    pub fn assert(op: &Operand<C>) -> Self {
-        Node::Op(Operand::check(op.clone()), Principal::Prover, Nothing)
+    pub fn assert(op: &Op<C>) -> Self {
+        Node::Op(Op::check(op.clone()), Principal::Prover, Nothing)
     }
-    pub fn verify(op: &Operand<C>) -> Self {
-        Node::Op(Operand::check(op.clone()), Principal::Verifier, Nothing)
+    pub fn verify(op: &Op<C>) -> Self {
+        Node::Op(Op::check(op.clone()), Principal::Verifier, Nothing)
     }
-    pub fn ret(op: &Operand<C>) -> Self {
+    pub fn ret(op: &Op<C>) -> Self {
         Node::Return(op.clone())
     }
 }
