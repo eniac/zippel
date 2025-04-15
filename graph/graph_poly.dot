@@ -1,0 +1,16 @@
+digraph {
+    0 [ label = "poly_add<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32>" ]
+    1 [ label = "(a  ++  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) @ Any" ]
+    2 [ label = "(eval _) @ Any" ]
+    3 [ label = "(b  ++  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) @ Any" ]
+    4 [ label = "(eval _) @ Any" ]
+    5 [ label = "(_  *  _) @ Any" ]
+    6 [ label = "(coef _) @ Any" ]
+    0 -> 1 [ label = "data a" color = "black"]
+    1 -> 2 [ label = "data" color = "black"]
+    0 -> 3 [ label = "data b" color = "black"]
+    3 -> 4 [ label = "data" color = "black"]
+    2 -> 5 [ label = "data" color = "black"]
+    4 -> 5 [ label = "data" color = "black"]
+    5 -> 6 [ label = "data" color = "black"]
+}

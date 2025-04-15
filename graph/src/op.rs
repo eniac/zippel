@@ -2,10 +2,9 @@ use lang::typ::range::CRange;
 use lang::typ::{CTyp, TypeError, Nothing, Typeable, Kind};
 use lang::ast::{CExp, BinOp, CSig, CBody};
 use lang::id::{Tid, Vid};
-use crate::arkworks::{Value, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
-use crate::graph::Edge;
+use backend::{Value, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
+use crate::Edge;
 
-use share::Ctx;
 use petgraph::graph::NodeIndex;
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
 use std::fmt;

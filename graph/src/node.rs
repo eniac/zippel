@@ -2,9 +2,8 @@ use lang::ast::{BinOp, CSig};
 use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
-use crate::graph::Op;
-use crate::arkworks::{ATyp, ArkConfig};
-use crate::graph::Principal;
+use crate::{Op, Principal};
+use backend::{ATyp, ArkConfig};
 use std::fmt;
 
 /// A node in the DAG

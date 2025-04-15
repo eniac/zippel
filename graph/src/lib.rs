@@ -1,14 +1,15 @@
+#![feature(box_patterns)]
 mod node;
 mod edge;
 mod op;
 mod principal;
 
-pub use crate::graph::op::Op;
-pub use crate::graph::node::Node;
-pub use crate::graph::edge::{EdgeType, Edge};
-pub use crate::graph::principal::Principal;
-pub use crate::arkworks::{ArkConfig, Value, ATyp};
+pub use op::Op;
+pub use node::Node;
+pub use edge::{EdgeType, Edge};
+pub use principal::Principal;
 
+use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
@@ -487,7 +488,7 @@ impl<A, E: fmt::Display> PrettyResult<A, E> {
 }
 
 #[cfg(test)] use lang::ast::module::UModule;
-#[cfg(test)] use crate::arkworks::ArkBls12_381;
+#[cfg(test)] use backend::ArkBls12_381;
 #[test]
 fn graph_from_module_sum() {
     let ex = r#"
@@ -515,7 +516,7 @@ fn graph_from_module_foo() {
             c <- challenge<F>;
             a <- r * c;
             b <- r + c + s;
-            verify(b == b);
+            verify(a * s == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);

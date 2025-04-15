@@ -519,6 +519,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "backend"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "arbtest",
+ "ark-bls12-377 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-bls12-381 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-bn254 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-curve25519",
+ "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-ed-on-cp6-782",
+ "ark-ed25519",
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-mnt4-298 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-mnt4-753 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-pallas",
+ "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-secp256k1",
+ "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-std",
+ "ark-vesta",
+ "lang",
+ "num-bigint",
+ "rand",
+ "rayon",
+ "share",
+ "spongefish",
+ "thiserror 2.0.12",
+ "zeroize",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -838,6 +870,21 @@ dependencies = [
  "cfg-if",
  "libc",
  "wasi",
+]
+
+[[package]]
+name = "graph"
+version = "0.1.0"
+dependencies = [
+ "arbitrary",
+ "arbtest",
+ "backend",
+ "lang",
+ "num-bigint",
+ "petgraph",
+ "rayon",
+ "share",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -1352,31 +1399,14 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
- "ark-bls12-377 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-bls12-381 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-bn254 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-curve25519",
- "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-ed-on-cp6-782",
- "ark-ed25519",
- "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-mnt4-298 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-mnt4-753 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-pallas",
- "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-secp256k1",
- "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
- "ark-std",
- "ark-vesta",
+ "backend",
+ "graph",
  "lang",
- "num-bigint",
  "petgraph",
  "rand",
  "rayon",
  "share",
- "spongefish",
  "thiserror 2.0.12",
- "zeroize",
 ]
 
 [[package]]

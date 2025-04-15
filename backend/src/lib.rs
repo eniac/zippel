@@ -1,7 +1,10 @@
+#![feature(box_patterns)]
 pub mod config;
 pub mod values;
 pub mod types;
+pub mod nothing;
 
+pub use nothing::{NoField, NoCurve, NoPairing};
 pub use values::Value;
 pub use types::ATyp;
 pub use config::{

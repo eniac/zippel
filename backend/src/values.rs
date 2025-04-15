@@ -1831,7 +1831,7 @@ impl<C: ArkConfig> Hash for Value<C> {
     }
 }
 
-#[cfg(test)] use crate::arkworks::ArkBls12_381;
+#[cfg(test)] use crate::ArkBls12_381;
 #[cfg(test)] use share::assert_deq;
 #[cfg(test)] use ark_std::test_rng;
 
