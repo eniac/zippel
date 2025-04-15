@@ -23,6 +23,9 @@ pub enum TypeError {
     #[error("{0}\n\n{1}")]
     Next(Box<TypeError>, Box<TypeError>),
 
+    #[error("TypeError: Specification relation must be pure (no transcript and randomness):\n{0}")]
+    NotPureRel(CExp),
+
     #[error("TypeError: Cannot find an Arkworks type for {0}, {1} |- {2} : {3}")]
     Ark(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
@@ -99,6 +102,9 @@ impl<'a> TypeError {
     }
     pub fn unify(a: Self, u: UnifyError) -> Self {
         TypeError::next(a, TypeError::from(u))
+    }
+    pub fn not_pure_rel(e: &CExp) -> Self {
+        TypeError::NotPureRel(e.clone())
     }
     pub fn lub(a: Self, l: LubError) -> Self {
         TypeError::next(a, TypeError::from(l))

@@ -569,6 +569,24 @@ impl<N> Exp<N> {
     pub fn not(a: Self) -> Self {
         Exp::Not(Box::new(a))
     }
+    pub fn is_pure(&self) -> bool {
+        match self {
+            Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Gen(_) | Exp::Range(_) => true,
+            Exp::Coef(box p) => p.is_pure(),
+            Exp::Mle(box p) => p.is_pure(),
+            Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
+            Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
+            Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
+            Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
+            Exp::Let(_, box a, box b) => a.is_pure() && b.is_pure(),
+            Exp::Log(_, box _, box _) => false,
+            Exp::Challenge(_) | Exp::Random(_) => false,
+            Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
+            Exp::Eval(box a) => a.is_pure(),
+            Exp::Not(box a) => a.is_pure(),
+            Exp::Assert(_) | Exp::Verify(_) => false,
+        }
+    }
 }
 
 impl CExp {

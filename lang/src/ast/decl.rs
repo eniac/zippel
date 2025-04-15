@@ -101,7 +101,7 @@ pub type CBody = Body<usize>;
 /// Untyped decl with symbolic sizes
 pub type UDecl =  Decl<Size>;
 
-/// Concrete sized decl
+/// Concrete sized decl                    // Rela
 pub type CDecl = Decl<usize>;
 
 /// Untyped declarations with symbolic sizes
@@ -158,6 +158,13 @@ impl CBody {
         let mut vctx = sig.args.to_ctx();
         match self {
             Body::Proto { body, relation } => {
+                // Relation must be pure (no side-effects)
+                if !relation.is_pure() {
+                    return Err(TypeError::decl(&sig.name,
+                            TypeError::not_pure_rel(relation)));
+                }
+
+                // Type infer relation and body
                 let tr = relation.infer(&kctx, &fctx, &vctx)?;
                 let br = body.infer(&kctx, &fctx, &vctx)?;
                 if tr == CTyp::Bool && br == CTyp::Bool {
