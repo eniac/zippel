@@ -529,7 +529,7 @@ fn graph_from_module_foo() {
 #[test]
 fn graph_from_module_poly() {
     let ex = r#"
-        fn poly_add<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32> {
+        fn poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32> {
             a * b
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
