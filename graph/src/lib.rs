@@ -7,7 +7,6 @@ mod principal;
 pub use op::Op;
 pub use node::Node;
 pub use edge::{EdgeType, Edge};
-pub use principal::Principal;
 
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
@@ -60,6 +59,15 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Edge deduplication
     fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Edge) {
+        if let Some(e) = self.0.find_edge(source, sink) {
+            // If the old edge exists, check its weight
+            if self.0[e] != edge {
+                // If the weights are different, add a new edge
+                self.0.add_edge(source, sink, edge);
+            }
+            return;
+        }
+        // If the edge does not exist, add it
         self.0.add_edge(source, sink, edge);
     }
 
@@ -67,7 +75,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         source.dependencies().into_iter().for_each(|(n, opt)| {
             self.add_edge(n, sink, Edge::new(edge_type.clone(), opt));
         });
-    }
+}
 
     /// Add a node to the graph (no deduplication)
     fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
@@ -78,6 +86,48 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
+    pub fn trans_clos_op(&self, op: Op<C>) -> Op<C> {
+        match op {
+            Op::Underscore(n, _) => self.trans_clos_node(n),
+            Op::Var(v, n, typ) =>
+                match self.0[n] {
+                    Node::Inp(_) => Op::Var(v, n, typ),
+                    _ => self.trans_clos_node(n),
+                }
+            Op::Bin(op, box a, box b, typ) => {
+                let oa = self.trans_clos_op(a);
+                let ob = self.trans_clos_op(b);
+                Op::Bin(op, Box::new(oa), Box::new(ob), typ)
+            },
+            Op::Ram(box a, box b) => {
+                let oa = self.trans_clos_op(a);
+                let ob = self.trans_clos_op(b);
+                Op::Ram(Box::new(oa), Box::new(ob))
+            },
+            Op::Value(v) => Op::Value(v),
+            Op::Gen(typ) => Op::Gen(typ),
+            Op::Range(r) => Op::Range(r),
+            Op::Not(box op) => Op::Not(Box::new(self.trans_clos_op(op))),
+            Op::Vec(vs) =>
+                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
+                    .collect::<Vec<_>>()),
+            Op::Random(typ) => Op::Random(typ),
+            Op::Challenge(typ) => Op::Challenge(typ),
+            Op::Check(box op) => Op::Check(Box::new(self.trans_clos_op(op))),
+            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(v))),
+            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(v)))
+        }
+    }
+
+    pub fn trans_clos_node(&self, node: NodeIndex) -> Op<C> {
+        match &self.0[node] {
+            Node::Op(op, _)
+            | Node::Transcr(op, _) => self.trans_clos_op(op.clone()),
+            Node::Inp(_) => unreachable!()
+        }
+    }
+
+
     /// Write graph to PDF
     pub fn write_pdf<'a>(&self, filename: &str) -> std::io::Result<()>
     where
@@ -85,6 +135,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
     {
         // Write graphviz file
         let fdot: String = format!("{}.dot", filename.to_string());
+        // Remove old file if there
+        std::fs::remove_file(&fdot).ok();
+
         // Create graphviz object
         let graphviz =  Dot::with_attr_getters(
                 &self.0,
@@ -95,7 +148,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
                             EdgeType::Transcript => "color = \"red\"",
                             EdgeType::Implicit => "color = \"blue\"",
                         }.to_string(),
-                &|_, _| String::new()
+                &|_, n|
+                        match n.1 {
+                            Node::Inp(_) => "shape = \"box\"".to_string(),
+                            Node::Transcr(_, _) => "color = \"red\"".to_string(),
+                            _ => "shape = \"ellipse\"".to_string(),
+                        }.to_string()
             );
 
         // Write to file
@@ -422,20 +480,25 @@ impl<C: ArkConfig> UDag<C> {
                 let tl = l.infer(kctx, &fctx.keys(), vctx)?;
                 // Add left-hand side as node
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                // Add hash node
-                let nl = self.add_node(Node::hash(&ol));
-                // Add transcript edge to [nl]
-                self.add_edge(*transcr, nl, Edge::transcript_var(id.clone()));
-                // Update transcript node
-                *transcr = nl;
+                // Record transcript interaction
+                match ol {
+                    Op::Underscore(n, _) => {
+                        self.add_edge(*transcr, n, Edge::transcript_var(id.clone()));
+                        self.0.node_weight_mut(n).unwrap().set_transcript();
+                        *transcr = n;
+                    },
+                    _ => {
+                        // Add new node
+                        let nl = self.add_node(Node::transcr(&ol));
+                        self.add_edge(*transcr, nl, Edge::transcript_var(id.clone()));
+                        *transcr = nl;
+                    }
+                }
                 // Add [id] to the variable context
                 let mut vctx = vctx.clone();
                 vctx.insert(&id, &tl);
                 let mut vars = vars.clone();
                 vars.insert(&id, &ol);
-
-                // Add edge to hash
-                self.add_edges(edge_type, nl, ol);
                 // Add right-hand side as Node
                 self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
             },
@@ -511,16 +574,26 @@ fn graph_from_module_sum() {
 #[test]
 fn graph_from_module_foo() {
     let ex = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
             let r = random<F>;
             c <- challenge<F>;
             a <- r * c;
             b <- r + c + s;
-            verify(a * s == b);
+            x <- v[1..5];
+            verify(a * s == b * x[3]);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
     let g = PrettyResult(UDag::<ArkBls12_381>::from_module(m)).pretty_unwrap();
+
+    // Test transitive closur
+    for n in g.0.node_indices() {
+        if g.0[n].is_op() {
+            println!("Transitive closure for node {} = {}", n.index(), g.trans_clos_node(n));
+        }
+    }
+
+    // Output graph
     g.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });

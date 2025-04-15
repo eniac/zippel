@@ -1,5 +1,5 @@
 digraph {
-    0 [ label = "poly_add<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32>" ]
+    0 [ label = "poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32>" ]
     1 [ label = "(a  ++  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) @ Any" ]
     2 [ label = "(eval _) @ Any" ]
     3 [ label = "(b  ++  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) @ Any" ]

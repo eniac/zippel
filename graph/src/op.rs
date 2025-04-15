@@ -52,9 +52,6 @@ pub enum Op<C: ArkConfig> {
     /// Convert from lagrange domain to evaluation domain
     Eval(Box<Op<C>>),
 
-    /// Hash operation into a cryptographic transcript
-    Hash(Box<Op<C>>),
-
     /// Assertion or verification check
     Check(Box<Op<C>>),
 }
@@ -90,7 +87,6 @@ impl<C: ArkConfig> Op<C> {
             Op::Challenge(t) => t.clone(),
             Op::Coef(box op) => op.typ(),
             Op::Eval(box op) => op.typ(),
-            Op::Hash(_) => ATyp::Scalar,
             Op::Check(box op) => op.typ(),
         }
     }
@@ -521,9 +517,6 @@ impl<C: ArkConfig> Op<C> {
     pub fn random(typ: ATyp) -> Op<C> {
         Op::Random(typ)
     }
-    pub fn hash(op: Op<C>) -> Op<C> {
-        Op::Hash(Box::new(op))
-    }
 
     pub fn check(op: Op<C>) -> Op<C> {
         Op::Check(Box::new(op))
@@ -545,7 +538,6 @@ impl<C: ArkConfig> Op<C> {
             Op::Not(box v)
             | Op::Coef(box v)
             | Op::Check(box v)
-            | Op::Hash(box v)
             | Op::Eval(box v) => v.dependencies(),
             Op::Value(_)
             | Op::Gen(_)
@@ -563,7 +555,6 @@ impl<C: ArkConfig> fmt::Display for Op<C> {
             Op::Bin(op, box a, box b, _) => write!(f, "({} {} {})", a, op, b),
             Op::Eval(box v) => write!(f, "(eval {})", v),
             Op::Coef(box v) => write!(f, "(coef {})", v),
-            Op::Hash(box v) => write!(f, "(hash {})", v),
             Op::Check(box v) => write!(f, "(check {})", v),
             Op::Challenge(t) => write!(f, "challenge<{}>", t),
             Op::Random(t) => write!(f, "random<{}>", t),
