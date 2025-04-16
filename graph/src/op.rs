@@ -571,14 +571,17 @@ where
             Op::Eval(box v) => allocator.concat([
                 allocator.text("(eval "),
                 v.pretty(allocator),
+                allocator.text(")"),
             ]),
             Op::Coef(box v) => allocator.concat([
                 allocator.text("(coef "),
                 v.pretty(allocator),
+                allocator.text(")"),
             ]),
             Op::Check(box v) => allocator.concat([
                 allocator.text("(check "),
                 v.pretty(allocator),
+                allocator.text(")"),
             ]),
             Op::Challenge(t) => allocator.text(format!("challenge<{}>", t)),
             Op::Random(t) => allocator.text(format!("random<{}>", t)),
