@@ -1,10 +1,10 @@
 use lang::typ::{CTyp, Kind};
 use lang::typ::range::CRange;
 use lang::id::Tid;
-use share::Ctx;
+use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use std::fmt;
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum ATyp {
     Bool,
     Fin(CRange),
@@ -82,5 +82,20 @@ impl fmt::Display for ATyp {
             ATyp::G2 => write!(f, "G2"),
             ATyp::GT => write!(f, "GT")
         }
+    }
+}
+
+impl<'a, D, A> Pretty<'a, D, A> for ATyp
+where
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
     }
 }

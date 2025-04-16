@@ -49,6 +49,12 @@ impl<T, N> Arg<T, N> {
     pub fn private<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
         Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
     }
+    pub fn is_private(&self) -> bool {
+        self.qualifier.is_private()
+    }
+    pub fn is_public(&self) -> bool {
+        self.qualifier.is_public()
+    }
 }
 
 impl<T, N> Args<T, N> {

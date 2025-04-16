@@ -70,7 +70,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
                     Op::var(&v, &n, typ)
                 } else {
                     match self.0.0[n] {
-                        Node::Inp(_) => Op::Var(v, n, typ),
+                        Node::Inp(_, _) => Op::Var(v, n, typ),
                         _ => self.trans_clos_node(n, clos),
                     }
                 },
@@ -116,7 +116,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
                 // Return the variable
                 Op::var(&Vid::from(format!("#{}", node.index())), &node, op.typ())
             },
-            Node::Inp(_) => unreachable!()
+            Node::Inp(_, _) => unreachable!()
         }
     }
 

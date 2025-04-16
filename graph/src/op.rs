@@ -115,14 +115,22 @@ impl<C: ArkConfig> Op<C> {
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self {
         match (v, i) {
+            // a[r1][r2] = a[r1.compose(r2)]
             (Op::Ram(box v, box Op::Range(l)), Op::Range(r)) =>
                 Op::ram(v, Op::range(l.compose(&r))),
+            // a[r1][i] = a[r1.compose_index(i)]
             (Op::Ram(box v, box Op::Range(r)), Op::Value(Value::Index(i))) =>
                 Op::ram(v, r.compose_index(i as usize).into()),
+            // [e0, e1, ..., en][i] = e_i
             (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i as usize].clone(),
+            // [e0, e1, ..., en][r] = [e_i for i in r]
             (Op::Vec(vs), Op::Range(r)) =>
                 Op::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
+            // r[r2] = r.compose(r2)
             (Op::Range(r), Op::Value(Value::Index(i))) => r.compose_index(i as usize).into(),
+            // v[v2]
+            (Op::Value(a), Op::Value(b)) => Op::Value(Value::ram(a, b)),
+            // Default constructor
             (v, i) => Op::Ram(Box::new(v), Box::new(i)),
         }
     }
@@ -130,10 +138,12 @@ impl<C: ArkConfig> Op<C> {
     /// Concatenation simplifications
     pub fn concat(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // [e0, e1, ..., en] + [e_n+1, e_n+2, ..., e_m] = [e0, e1, ..., e_m]
             (Op::Vec(mut vs1), Op::Vec(vs2)) => {
                 vs1.extend(vs2);
                 Op::Vec(vs1)
             },
+            // [e0, e1, ..., en] + e = [e0, e1, ..., e_n, e]
             (Op::Vec(mut vs), v) | (v, Op::Vec(mut vs)) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.typ() == t {
@@ -143,38 +153,55 @@ impl<C: ArkConfig> Op<C> {
                     Op::Bin(BinOp::Concat, Box::new(v), Box::new(Op::Vec(vs)), typ)
                 }
             },
+            // v1 + v2 = v1.concat(v2)
+            (Op::Value(a), Op::Value(mut b)) => {
+                Value::concat(a, &mut b);
+                Op::Value(b)
+            }
+            // Default constructor
             (v1, v2) => Op::Bin(BinOp::Concat, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v1 + v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
+            // e + v = v + e
+            (Op::Vec(l), Op::Value(mut v))
+            | (Op::Value(mut v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                Op::vec(v.into_vec_mut().into_iter()
+                    .zip(l.into_iter())
+                    .map(|(v, l)| Op::add(v.clone().into(), l.into(), t.clone()))
+                    .collect())
+            },
+            // r1 + r2 = r1 + r2
             (Op::Range(l), Op::Range(r)) => Op::Range(l + r),
+            // r1 + i = r1 + i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
                 Op::Range(l + CRange::singleton(r as usize)),
+
+            // [e0, e1, ... en] + [e0', e1', ... em'] = [e0 + e0', e1 + e1', ... en + em']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::add(l, r, t.clone()))
                     .collect())
             },
-            (Op::Vec(l), Op::Range(r)) => {
+            // [e0, e1, ... en] + r = [e0 + r0, e1 + r1, ... en + rn]
+            (Op::Vec(l), Op::Range(r))
+            | (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::add(l, r.into(), t.clone()))
                     .collect())
             },
-            (Op::Range(l), Op::Vec(r)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Op::add(l.into(), r, t.clone()))
-                    .collect())
-            },
-            // Commuting conversions
+            // Commuting conversion (eval a + eval b) = eval (a + b)
             (Op::Eval(box l), Op::Eval(box r)) =>
                 Op::Eval(Box::new(Op::add(l, r, typ))),
+            // Commuting conversion (coef a + coef b) = coef (a + b)
             (Op::Coef(box l), Op::Coef(box r)) =>
                 Op::Coef(Box::new(Op::add(l, r, typ))),
             (v1, v2) => Op::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
@@ -183,207 +210,178 @@ impl<C: ArkConfig> Op<C> {
 
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v1 - v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
+            // e - v = v - e
+            (Op::Vec(l), Op::Value(mut v))
+            | (Op::Value(mut v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                Op::vec(v.into_vec_mut().into_iter()
+                    .zip(l.into_iter())
+                    .map(|(v, l)| Op::sub(v.clone().into(), l.into(), t.clone()))
+                    .collect())
+            },
+            // r1 - r2 = r1 - r2
             (Op::Range(l), Op::Range(r)) => Op::Range(l - r),
+            // r1 - i = r1 - i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
                 Op::Range(l - CRange::singleton(r as usize)),
+
+            // [e0, e1, ... en] - [e0', e1', ... em'] = [e0 - e0', e1 - e1', ... en - em']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::sub(l, r, t.clone()))
                     .collect())
             },
-            (Op::Vec(l), Op::Range(r)) => {
+            // [e0, e1, ... en] - r = [e0 - r0, e1 - r1, ... en - rn]
+            (Op::Vec(l), Op::Range(r))
+            | (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::sub(l, r.into(), t.clone()))
                     .collect())
             },
-            (Op::Range(l), Op::Vec(r)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Op::sub(l.into(), r, t.clone()))
-                    .collect())
-            },
-            // Commuting conversions
+            // Commuting conversion (eval a - eval b) = eval (a - b)
             (Op::Eval(box l), Op::Eval(box r)) =>
                 Op::Eval(Box::new(Op::sub(l, r, typ))),
+            // Commuting conversion (coef a - coef b) = coef (a - b)
             (Op::Coef(box l), Op::Coef(box r)) =>
                 Op::Coef(Box::new(Op::sub(l, r, typ))),
-            (v1, v2) => Op::Bin(BinOp::Sub, Box::new(v1), Box::new(v2), typ),
+            (v1, v2) => Op::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v1 * v2 = v1.mul(v2)
             (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
+            // [e0, ..., en] * v = [e0 * v0, e1 * v1, ..., en * vn]
+            (Op::Vec(l), Op::Value(mut v))
+            | (Op::Value(mut v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                if v.is_vec() {
+                    Op::vec(v.into_vec_mut().into_iter()
+                        .zip(l.into_iter())
+                        .map(|(v, l)| Op::mul(v.clone().into(), l.into(), t.clone()))
+                        .collect())
+                } else {
+                    Op::vec(l.into_iter()
+                        .map(|l| Op::mul(v.clone().into(), l.into(), t.clone())).collect())
+                }
+            },
+            // r1 * r2 = r1 * r2
             (Op::Range(l), Op::Range(r)) => Op::Range(l * r),
+            // r1 * i = r1 * i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
                 Op::Range(l * CRange::singleton(r as usize)),
+            // [e0, e1, ... en] * [e0', e1', ... en'] = [e0 * e0', e1 * e1', ... en * en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::mul(l, r, t.clone()))
                     .collect())
             },
-            (Op::Vec(l), Op::Range(r)) => {
+            // [e0, e1, ... en] * r = [e0 * r0, e1 * r1, ... en * rn]
+            (Op::Vec(l), Op::Range(r))
+            | (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::mul(l, r.into(), t.clone()))
                     .collect())
             },
-            (Op::Range(r), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Op::mul(r.into(), l, t.clone()))
-                    .collect())
-            },
-           (Op::Vec(l), Op::Value(Value::Index(r)))
-            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter()
-                    .map(|l| Op::mul(l, r.into(), t.clone()))
-                    .collect())
-            },
-            // Commuting conversions
-            (Op::Coef(box l), Op::Coef(box r)) => {
-                let (_, n) = typ.clone().into_vec();
-                Op::coef(Op::mul(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
-            },
-            // Default case, constructor
+            // Default constructor
             (v1, v2) => Op::Bin(BinOp::Mul, Box::new(v1), Box::new(v2), typ),
-        }
-    }
-
-    pub fn coef(op: Self) -> Op<C> {
-        match op {
-            Op::Eval(box op) => op,
-            _ => Op::Coef(Box::new(op)),
-        }
-    }
-
-    pub fn eval(op: Self) -> Op<C> {
-        match op {
-            Op::Coef(box op) => op,
-            Op::Bin(op @ (BinOp::Mul | BinOp::Div | BinOp::Rem), box op1, box op2, typ) =>
-                Op::bin(op, Op::eval(op1), Op::eval(op2), typ),
-            op => Op::Eval(Box::new(op)),
-        }
-    }
-
-    pub fn zero(typ: &ATyp) -> Op<C> {
-        match typ {
-            ATyp::Fin(_) => Op::Value(Value::Index(0)),
-            ATyp::Vec(box typ, n) => {
-                let mut vs = vec![];
-                for _ in 0..*n {
-                    vs.push(Op::zero(typ));
-                }
-                Op::Vec(vs)
-            },
-            ATyp::Bool => Op::Value(Value::Bool(false)),
-            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::zero())),
-            ATyp::G1 => Op::Value(Value::G1(C::G1Ops::zero())),
-            ATyp::G2 => Op::Value(Value::G2(C::G2Ops::zero())),
-            ATyp::GT => Op::Value(Value::GT(C::POps::zero())),
-            ATyp::G1Affine => Op::Value(Value::G1Affine(C::G1Ops::zero().into())),
-            ATyp::G2Affine => Op::Value(Value::G2Affine(C::G2Ops::zero().into())),
-        }
-    }
-
-    fn pad_zeroes(v: Op<C>, n: usize) -> Op<C> {
-        let typ = v.typ();
-        let (t, m) = typ.into_vec();
-        if m < n {
-            Op::concat(v, Op::vec(vec![Op::zero(&t); n - m]), ATyp::vec(t, n))
-        } else {
-            v
         }
     }
 
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v1 / v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
+            // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
+            (Op::Vec(l), Op::Value(mut v))
+            | (Op::Value(mut v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                if v.is_vec() {
+                    Op::vec(v.into_vec_mut().into_iter()
+                        .zip(l.into_iter())
+                        .map(|(v, l)| Op::div(v.clone().into(), l.into(), t.clone()))
+                        .collect())
+                } else {
+                    Op::vec(l.into_iter()
+                        .map(|l| Op::div(v.clone().into(), l.into(), t.clone())).collect())
+                }
+            },
+            // r1 / r2 = r1 / r2
             (Op::Range(l), Op::Range(r)) => Op::Range(l / r),
+            // r1 / i = r1 / i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
                 Op::Range(l / CRange::singleton(r as usize)),
+            // [e0, e1, ... en] / [e0', e1', ... en'] = [e0 / e0', e1 / e1', ... en / en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::div(l, r, t.clone()))
                     .collect())
             },
-            (Op::Vec(l), Op::Range(r)) => {
+            // [e0, e1, ... en] / r = [e0 / r0, e1 / r1, ... en / rn]
+            (Op::Vec(l), Op::Range(r))
+            | (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::div(l, r.into(), t.clone()))
                     .collect())
             },
-            (Op::Range(r), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Op::div(r.into(), l, t.clone()))
-                    .collect())
-            },
-           (Op::Vec(l), Op::Value(Value::Index(r)))
-            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter()
-                    .map(|l| Op::div(l, r.into(), t.clone()))
-                    .collect())
-            },
-            // Commuting conversions
-            (Op::Coef(box l), Op::Coef(box r)) => {
-                let (_, n) = typ.clone().into_vec();
-                Op::coef(Op::div(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
-            },
-            // Default case, constructor
-            (v1, v2) => Op::Bin(BinOp::Div, Box::new(v1), Box::new(v2), typ)
+            // Default constructor
+            (v1, v2) => Op::Bin(BinOp::Div, Box::new(v1), Box::new(v2), typ),
         }
     }
 
     pub fn rem(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v1 % v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a % b),
+            // [e0, ..., en] % v = [e0 % v0, e1 % v1, ..., en % vn]
+            (Op::Vec(l), Op::Value(mut v))
+            | (Op::Value(mut v), Op::Vec(l)) => {
+                let (t, _) = typ.clone().into_vec();
+                if v.is_vec() {
+                    Op::vec(v.into_vec_mut().into_iter()
+                        .zip(l.into_iter())
+                        .map(|(v, l)| Op::rem(v.clone().into(), l.into(), t.clone()))
+                        .collect())
+                } else {
+                    Op::vec(l.into_iter()
+                        .map(|l| Op::rem(v.clone().into(), l.into(), t.clone())).collect())
+                }
+            },
+            // r1 % r2 = r1 % r2
             (Op::Range(l), Op::Range(r)) => Op::Range(l % r),
+            // r1 % i = r1 % i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
-                Op::Range(l % CRange::singleton(r as usize)),
+                Op::Range(l / CRange::singleton(r as usize)),
+            // [e0, e1, ... en] % [e0', e1', ... en'] = [e0 % e0', e1 % e1', ... en % en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::rem(l, r, t.clone()))
                     .collect())
             },
-            (Op::Vec(l), Op::Range(r)) => {
+            // [e0, e1, ... en] % r = [e0 % r0, e1 % r1, ... en % rn]
+            (Op::Vec(l), Op::Range(r))
+            | (Op::Range(r), Op::Vec(l)) => {
                 let (t, _) = typ.into_vec();
                 Op::Vec(l.into_iter().zip(r.into_iter())
                     .map(|(l, r)| Op::rem(l, r.into(), t.clone()))
                     .collect())
             },
-            (Op::Range(r), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)| Op::rem(r.into(), l, t.clone()))
-                    .collect())
-            },
-           (Op::Vec(l), Op::Value(Value::Index(r)))
-            | (Op::Value(Value::Index(r)), Op::Vec(l)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(l.into_iter()
-                    .map(|l| Op::rem(l, r.into(), t.clone()))
-                    .collect())
-            },
-            // Commuting conversions
-            (Op::Coef(box l), Op::Coef(box r)) => {
-                let (_, n) = typ.clone().into_vec();
-                Op::coef(Op::rem(Op::pad_zeroes(l, n), Op::pad_zeroes(r, n), typ))
-            },
-            // Default case, constructor
-            (v1, v2) => Op::Bin(BinOp::Rem, Box::new(v1), Box::new(v2), typ)
+            // Default constructor
+            (v1, v2) => Op::Bin(BinOp::Rem, Box::new(v1), Box::new(v2), typ),
         }
     }
 
@@ -428,17 +426,19 @@ impl<C: ArkConfig> Op<C> {
 
     pub fn dot(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
-            (Op::Value(a), Op::Value(b)) => Op::Value(a.dot(b)),
+            // v1 . v2 = v1.dot(v2)
+            (Op::Value(a), Op::Value(b)) => Op::Value(Value::dot(a, b)),
+            // r1 . r2 = r1 . r2
             (Op::Range(l), Op::Range(r)) =>
                 Op::Value(Value::Index(
                     l.into_iter()
                     .zip(r.into_iter())
                     .map(|(a, b)| (a * b) as u64)
                     .sum())),
+            // r1 * i = r1 * i
             (Op::Range(l), Op::Value(Value::Index(r)))
             | (Op::Value(Value::Index(r)), Op::Range(l)) =>
-                Op::Value(Value::Index(
-                    l.into_iter()
+                Op::Value(Value::Index(l.into_iter()
                     .map(|a| (a * r as usize) as u64)
                     .sum())),
             // Default case, constructor
@@ -446,6 +446,49 @@ impl<C: ArkConfig> Op<C> {
         }
     }
 
+    pub fn coef(op: Self) -> Op<C> {
+        match op {
+            Op::Eval(box op) => op,
+            _ => Op::Coef(Box::new(op)),
+        }
+    }
+
+    pub fn eval(op: Self) -> Op<C> {
+        match op {
+            Op::Coef(box op) => op,
+            op => Op::Eval(Box::new(op)),
+        }
+    }
+
+    pub fn zero(typ: &ATyp) -> Op<C> {
+        match typ {
+            ATyp::Fin(_) => Op::Value(Value::Index(0)),
+            ATyp::Vec(box typ, n) => {
+                let mut vs = vec![];
+                for _ in 0..*n {
+                    vs.push(Op::zero(typ));
+                }
+                Op::Vec(vs)
+            },
+            ATyp::Bool => Op::Value(Value::Bool(false)),
+            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::zero())),
+            ATyp::G1 => Op::Value(Value::G1(C::G1Ops::zero())),
+            ATyp::G2 => Op::Value(Value::G2(C::G2Ops::zero())),
+            ATyp::GT => Op::Value(Value::GT(C::POps::zero())),
+            ATyp::G1Affine => Op::Value(Value::G1Affine(C::G1Ops::zero().into())),
+            ATyp::G2Affine => Op::Value(Value::G2Affine(C::G2Ops::zero().into())),
+        }
+    }
+
+    fn pad_zeroes(v: Op<C>, n: usize) -> Op<C> {
+        let typ = v.typ();
+        let (t, m) = typ.into_vec();
+        if m < n {
+            Op::concat(v, Op::vec(vec![Op::zero(&t); n - m]), ATyp::vec(t, n))
+        } else {
+            v
+        }
+    }
     pub fn not(v: Self) -> Op<C> {
         match v {
             Op::Not(box v) => v,

@@ -2,8 +2,7 @@
 mod node;
 mod dep;
 mod op;
-mod principal;
-mod trans_clos;
+mod analyses;
 
 pub use op::Op;
 pub use node::Node;
@@ -13,12 +12,11 @@ use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
-use lang::typ::{Nothing, CTyp, CTyps, Kind};
+use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
-use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
-use petgraph::{dot::Dot, graph::NodeIndex, Direction, Graph};
+use petgraph::{dot::Dot, graph::NodeIndex, Graph};
 use std::process::Command;
 use std::fmt;
 use std::path::PathBuf;
@@ -61,9 +59,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Dep deduplication
     fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         if let Some(e) = self.0.find_edge(source, sink) {
-            // If the old edge exists, check its weight
-            if self.0[e] != edge {
-                // If the weights are different, add a new edge
+            // If the old edge exists, check its type
+            if self.0[e].edge_type() != edge.edge_type() {
+                // If the edges have different types, add new edge
                 self.0.add_edge(source, sink, edge);
             }
             return;
@@ -111,7 +109,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                         }.to_string(),
                 &|_, n|
                         match n.1 {
-                            Node::Inp(_) => "shape = \"box\"".to_string(),
+                            Node::Inp(_, _) => "shape = \"box\"".to_string(),
                             Node::Transcr(_, _) => "color = \"red\"".to_string(),
                             _ => "shape = \"ellipse\"".to_string(),
                         }.to_string()
@@ -149,13 +147,28 @@ impl<C: ArkConfig> UDag<C> {
             m.iter().map(|(sig, body)|
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
         for (sig, body) in m.into_iter() {
-            // Initial node is the function signature
-            let mut start = g.add_node(Node::inp(sig.clone()));
             // Kind context
             let kctx = sig.typevars.to_ctx();
             // Add arguments to [vctx] and [vars]
             let mut vars = Ctx::new();
             let mut vctx = Ctx::new();
+
+            // Cast the signature to a arguments and insert to [start] node
+            let mut asig: Ctx<Vid, (Qualifier, ATyp)> = Ctx::new();
+            for arg in sig.args.iter() {
+                let atyp =
+                    ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(|| {
+                        TypeError::decl(&sig.name,
+                             TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ))
+                        })?;
+                // Add argument to [asig]
+                asig.insert(&arg.id, &(arg.qualifier.clone(), atyp));
+            }
+            // Start node
+            let mut start = g.add_node(Node::inp(sig.name.clone(), asig));
+
+
+            // Initial node is the function signature
             for Arg { id, typ, .. } in sig.args.iter() {
                 let at = ATyp::from_ctyp(typ, &kctx).ok_or_else(|| {
                     TypeError::decl(&sig.name,
@@ -263,8 +276,9 @@ impl<C: ArkConfig> UDag<C> {
 
                 // Convert polynomials to vectors
                 match (&typ, ta, tb, op) {
+                    // Polynomial multiplication and division
                     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r),
-                        op @(BinOp::Mul | BinOp::Div | BinOp::Rem)) =>
+                        op @(BinOp::Mul | BinOp::Div)) =>
                         if &l < n && &r < n {
                             // Pad with zeroes
                             let ex_a = CExp::eval(CExp::concat(a, CExp::zeroes(*n - l)));
@@ -275,6 +289,16 @@ impl<C: ArkConfig> UDag<C> {
                             return self.add_exp(CExp::coef(CExp::bin(op, CExp::eval(a), CExp::eval(b))),
                                 transcr, edge_type, kctx, fctx, vctx, vars);
                         },
+                    // Polynomial remainder
+                    (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r), BinOp::Rem) =>
+                        unimplemented!("Polynomial remainder"),
+                    // Polynomial exponentiation
+                    (CTyp::Uni(_, n), CTyp::Uni(_, l), _, BinOp::Pow) => {
+                        // Pad with zeroes
+                        let ex = CExp::eval(CExp::concat(a, CExp::zeroes(*n - l)));
+                        return self.add_exp(CExp::coef(CExp::pow(ex, b)),
+                            transcr, edge_type, kctx, fctx, vctx, vars);
+                    },
                     _ => ()
                 };
 
@@ -515,7 +539,7 @@ fn graph_sum() {
 
 #[test]
 fn graph_foo() {
-    use trans_clos::TransClos;
+    use analyses::TransClos;
     let ex = r#"
         proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
             let r = random<F>;

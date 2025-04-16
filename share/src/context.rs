@@ -106,6 +106,9 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
+    pub fn first(&self) -> Option<(&K, &V)> {
+        self.0.iter().next()
+    }
     pub fn any<FF>(&self, f: FF) -> bool where FF: Fn(&K, &V) -> bool {
         self.find(f).is_some()
     }

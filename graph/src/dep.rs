@@ -45,6 +45,19 @@ impl Dep {
     pub fn is_implicit(&self) -> bool {
         self.0 == DepType::Implicit
     }
+    pub fn edge_type(&self) -> DepType {
+        self.0
+    }
+    pub fn has_var(&self, var: &Vid) -> bool {
+        match &self.1 {
+            Some(v) => v == var,
+            None => false,
+        }
+    }
+    pub fn get_var(&self) -> Option<Vid> {
+        let Dep(_, v) = self;
+        v.clone()
+    }
 }
 
 impl fmt::Display for DepType {

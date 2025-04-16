@@ -6,10 +6,19 @@ use std::fmt;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::parser::*;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Qualifier {
     Private,
     Public
+}
+
+impl Qualifier {
+    pub fn is_private(&self) -> bool {
+        matches!(self, Qualifier::Private)
+    }
+    pub fn is_public(&self) -> bool {
+        matches!(self, Qualifier::Public)
+    }
 }
 
 /// Secret <= Private <= Public
