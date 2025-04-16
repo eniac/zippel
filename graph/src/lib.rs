@@ -495,7 +495,7 @@ impl<C: ArkConfig> UDag<C> {
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
 #[test]
-fn graph_from_module_sum() {
+fn graph_sum() {
     let ex = r#"
         fn sum<N: 1..4, F: Field>(public a: [F; 2^N]) -> F {
             sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])
@@ -514,7 +514,7 @@ fn graph_from_module_sum() {
 }
 
 #[test]
-fn graph_from_module_foo() {
+fn graph_foo() {
     use trans_clos::TransClos;
     let ex = r#"
         proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
@@ -540,7 +540,7 @@ fn graph_from_module_foo() {
 }
 
 #[test]
-fn graph_from_module_poly() {
+fn graph_poly() {
     let ex = r#"
         fn poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32> {
             a * b
