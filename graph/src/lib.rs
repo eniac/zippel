@@ -58,6 +58,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Dep deduplication
     fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
+        /*
         if let Some(e) = self.0.find_edge(source, sink) {
             // If the old edge exists, check its type
             if self.0[e].edge_type() != edge.edge_type() {
@@ -67,6 +68,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             return;
         }
         // If the edge does not exist, add it
+        */
         self.0.add_edge(source, sink, edge);
     }
 

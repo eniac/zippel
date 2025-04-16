@@ -368,31 +368,31 @@ pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
 /// Concrete Zippel arkworks configurations
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkBls12_381 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkBn254 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkMNT4_298 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkCurve25519 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkSecp256k1 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkPallas {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkVesta {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkEd25519 {}
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq)]
 pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
 
 pub type ArkField17 = ArkFieldN<F17>;

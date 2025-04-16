@@ -378,18 +378,19 @@ impl<'pest> FromPest<'pest> for Range<Size> {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-            Rule::range => {
+            Rule::range => Range::from_pest(&mut pair.into_inner()),
+            Rule::step_r => {
                 let mut inner = pair.into_inner();
-                if inner.len() == 3 {
-                    let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    Ok(Range { start, step, end })
-                } else {
-                    let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                    Ok(Range { start, step: Size::one(), end })
-                }
+                let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                Ok(Range { start, step, end })
+            },
+            Rule::unit_r => {
+                let mut inner = pair.into_inner();
+                let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                Ok(Range { start, step: Size::one(), end })
             },
             _ => unreachable!()
         }
@@ -404,6 +405,7 @@ fn range_parser() {
 
     pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
     assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::from(2), end: Size::from(2) ^ Size::from("N") });
+
 }
 
 #[test]

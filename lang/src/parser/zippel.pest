@@ -24,7 +24,9 @@ keyword = {"let" | "fn" | "proto" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 
 /// Ranges appear in types and expressions
-range = { size_ty ~ ("," ~ size_ty)? ~ ".." ~ size_ty }
+range = { step_r | unit_r }
+    step_r = { size_ty ~ "," ~ size_ty ~ ".." ~ size_ty }
+    unit_r = { size_ty ~ ".." ~ size_ty }
 
 /// Type-level size arithmetic
 size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
