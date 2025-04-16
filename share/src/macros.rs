@@ -21,3 +21,13 @@ macro_rules! assert_deq {
         }
     }};
 }
+
+#[macro_export]
+macro_rules! unwrap {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(err) => panic!("{}", err),
+        }
+    };
+}

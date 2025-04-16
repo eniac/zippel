@@ -21,14 +21,16 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
             allocator.text("{"),
+            allocator.hardline(),
             allocator.intersperse(
                 self.0.iter().map(|(k, v)| {
                     k.clone().pretty(allocator)
-                        .append(allocator.text(" -> "))
+                        .append(allocator.text(": "))
                         .append(v.clone().pretty(allocator))
                 }),
-                ", ",
-            ),
+                allocator.line(),
+            ).group().indent(2),
+            allocator.hardline(),
             allocator.text("}"),
         ])
     }

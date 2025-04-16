@@ -3,9 +3,9 @@ use lang::typ::{CTyp, TypeError, Nothing, Typeable, Kind};
 use lang::ast::{CExp, BinOp, CSig, CBody};
 use lang::id::{Tid, Vid};
 use backend::{Value, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
-use crate::Edge;
 
 use petgraph::graph::NodeIndex;
+use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
 use std::fmt;
 
@@ -548,30 +548,73 @@ impl<C: ArkConfig> Op<C> {
     }
 }
 
-impl<C: ArkConfig> fmt::Display for Op<C> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+/// Pretty-printer for Operations
+impl<'a, D, C, A> Pretty<'a, D, A> for Op<C>
+where
+    D: DocAllocator<'a, A>,
+    C: ArkConfig,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Op::Value(x) => write!(f, "{}", x),
-            Op::Bin(op, box a, box b, _) => write!(f, "({} {} {})", a, op, b),
-            Op::Eval(box v) => write!(f, "(eval {})", v),
-            Op::Coef(box v) => write!(f, "(coef {})", v),
-            Op::Check(box v) => write!(f, "(check {})", v),
-            Op::Challenge(t) => write!(f, "challenge<{}>", t),
-            Op::Random(t) => write!(f, "random<{}>", t),
-            Op::Ram(box v, r) => write!(f, "{}[{}]", v, r),
-            Op::Vec(vs) => {
-                write!(f, "[{}", vs[0])?;
-                for v in vs.iter().skip(1) {
-                    write!(f, ", {}", v)?;
-                }
-                write!(f, "]")
+            Op::Value(v) => allocator.text(format!("{}", v)),
+            Op::Bin(op, box a, box b, _) => {
+                allocator.concat(vec![
+                    allocator.text("("),
+                    a.pretty(allocator),
+                    allocator.text(format!(" {} ", op)),
+                    b.pretty(allocator),
+                    allocator.text(")"),
+                ])
             },
-            Op::Gen(t) => write!(f, "gen<{}>", t),
-            Op::Not(v) => write!(f, "!{}", v),
-            Op::Range(r) => write!(f, "{}", r),
-            Op::Underscore(_, _) => write!(f, "_"),
-            Op::Var(v, _, _) => write!(f, "{}", v),
+            Op::Eval(box v) => allocator.concat([
+                allocator.text("(eval "),
+                v.pretty(allocator),
+            ]),
+            Op::Coef(box v) => allocator.concat([
+                allocator.text("(coef "),
+                v.pretty(allocator),
+            ]),
+            Op::Check(box v) => allocator.concat([
+                allocator.text("(check "),
+                v.pretty(allocator),
+            ]),
+            Op::Challenge(t) => allocator.text(format!("challenge<{}>", t)),
+            Op::Random(t) => allocator.text(format!("random<{}>", t)),
+            Op::Ram(box v, box r) => allocator.concat([
+                v.pretty(allocator),
+                allocator.text("["),
+                r.pretty(allocator),
+                allocator.text("]"),
+            ]),
+            Op::Vec(vs) => allocator.concat([
+                allocator.text("["),
+                allocator.intersperse(
+                vs.into_iter().map(|v| v.pretty(allocator)), ", "),
+                allocator.text("]"),
+            ]),
+            Op::Gen(t) => allocator.text(format!("gen<{}>", t)),
+            Op::Not(box v) => allocator.concat([
+                allocator.text("!"),
+                v.pretty(allocator),
+            ]),
+            Op::Range(r) => allocator.text(format!("{}", r)),
+            Op::Underscore(_, _) => allocator.text(format!("_")),
+            Op::Var(v, _, _) => allocator.text(format!("{}", v)),
         }
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+impl<'a, C: ArkConfig> fmt::Display for Op<C>{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Op<C> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+            .1
+            .render_fmt(100, f)
     }
 }
 

@@ -8,4 +8,4 @@ pub use exp::{Exp, Exps, FreeVars, CExp, CExps, UExp, UExps, BinOp};
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
 pub use sig::{Sig, CSig};
 pub use decl::{Body, CBody};
-pub use module::{Module, CModule};
+pub use module::{Module, CModule, UModule};
