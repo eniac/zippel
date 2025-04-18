@@ -97,11 +97,11 @@ impl<N> TidSubst for GTyps<N> {
 }
 
 impl<T, N> Typ<T, N> {
-    pub fn base(b: T) -> Self {
-        Typ::Base(b)
+    pub fn base(b: &T) -> Self where T: Clone {
+        Typ::Base(b.clone())
     }
-    pub fn vec(b: Typ<T, N>, n: N) -> Self {
-        Typ::Vec(Box::new(b), n)
+    pub fn vec(b: &Typ<T, N>, n: N) -> Self where T: Clone, N: Clone {
+        Typ::Vec(Box::new(b.clone()), n)
     }
     pub fn fin(range: Range<N>) -> Self {
         Typ::Fin(range)
@@ -124,19 +124,19 @@ impl<N> GTyp<N> {
     pub fn var(b: &Tid) -> Self {
         Typ::Base(b.clone())
     }
-    pub fn uni(b: Tid, n: N) -> Self {
-        Typ::Uni(b, n)
+    pub fn uni(b: &Tid, n: N) -> Self {
+        Typ::Uni(b.clone(), n)
     }
-    pub fn mle(b: Tid, n: N) -> Self {
-        Typ::Mle(b, n)
+    pub fn mle(b: &Tid, n: N) -> Self {
+        Typ::Mle(b.clone(), n)
     }
 
-    pub fn to_scalar(self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
+    pub fn to_scalar(&self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
-                let k = ctx.get(&b)?;
+                let k = ctx.get(b)?;
                 if k.is_scalar() {
-                    Some(b)
+                    Some(b.clone())
                 } else {
                     None
                 }
@@ -149,11 +149,11 @@ impl<N> GTyp<N> {
         }
     }
 
-    pub fn to_scalar_vec(self, ctx: &Ctx<Tid, Kind>) -> Option<(Tid, N)> {
+    pub fn to_scalar_vec(&self, ctx: &Ctx<Tid, Kind>) -> Option<(Tid, N)> where N: Clone {
         match self {
             Typ::Vec(box t, n) => {
                 let s = t.to_scalar(ctx)?;
-                Some((s, n))
+                Some((s, n.clone()))
             },
             _ => None
         }
@@ -185,7 +185,7 @@ impl<T, N> ToTraversal1<T> for Typ<T, N> {
             Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
             Typ::Vec(box b, n) =>
-                Ok(Typ::vec(b.traverse1(f)?, n)),
+                Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
             Typ::Bool => Ok(Typ::Bool)
         }
@@ -200,7 +200,7 @@ impl<T, N> ToTraversal2<N> for Typ<T, N> {
             Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) =>
-                Ok(Typ::vec(b.traverse2(f)?, f(n)?)),
+                Ok(Typ::Vec(Box::new(b.traverse2(f)?), f(n)?)),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Bool => Ok(Typ::Bool)
         }
@@ -333,13 +333,13 @@ impl<'pest> FromPest<'pest> for UTyp {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::uni(id, size))
+                Ok(Typ::Uni(id, size))
             }
             Rule::mle_ty => {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::mle(id, size))
+                Ok(Typ::Mle(id, size))
             }
             Rule::fin_ty =>
                 Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
@@ -348,7 +348,7 @@ impl<'pest> FromPest<'pest> for UTyp {
                 let mut inner = pair.into_inner();
                 let id = Typ::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::vec(id, size))
+                Ok(Typ::vec(&id, size))
             }
             _ => unreachable!(),
         }
@@ -363,13 +363,13 @@ fn typ_parser() {
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::varstr("A"));
 
     pairs = ZippelParser::parse(Rule::typ, "Uni<X, 2^N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::mle(Tid::from("X"), Size::from(2)));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Mle(Tid::from("X"), Size::from(2)));
 
     pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::vec(Typ::varstr("A"), Size::from("N")));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::vec(&Typ::varstr("A"), Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));

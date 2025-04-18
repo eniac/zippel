@@ -21,7 +21,7 @@ use crate::nothing::{NoCurve, NoPairing};
 // use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
-pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt::Display {
+pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + fmt::Display + Hash {
     type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
     type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
@@ -368,31 +368,31 @@ pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
 
 /// Concrete Zippel arkworks configurations
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkBls12_381 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkBn254 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkMNT4_298 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkCurve25519 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkSecp256k1 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkPallas {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkVesta {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkEd25519 {}
 
-#[derive(Clone, Debug, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Copy, Eq, PartialEq, Hash)]
 pub struct ArkFieldN<F: PrimeField>(PhantomData<F>);
 
 pub type ArkField17 = ArkFieldN<F17>;
@@ -571,13 +571,13 @@ impl<F: PrimeField> ArkConfig for ArkFieldN<F> {
     type POps = ArkPairingConfig<Self::P>;
 }
 
-#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq, Hash)]
 #[modulus = "17"]
 #[generator = "3"]
 pub struct F17Config;
 pub type F17 = Fp64<F17Config>;
 
-#[derive(MontConfig, Clone, Copy, Eq, PartialEq)]
+#[derive(MontConfig, Clone, Copy, Eq, PartialEq, Hash)]
 #[modulus = "65537"]
 #[generator = "3"]
 pub struct F65537Config;

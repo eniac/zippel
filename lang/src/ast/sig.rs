@@ -4,7 +4,7 @@ use crate::typ::unify::{Unify, UnifyError};
 use crate::ast::{GArg, GArgs};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::{ToTraversal1, ToTraversal2};
-use crate::id::{Gen, Fid, Tid, TidSubst};
+use crate::id::{Fresh, Fid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
 
@@ -42,19 +42,18 @@ impl CSig {
         let mut subs = AliasSubsts::new();
 
         // If any type vars are captured by [kctx], shift them
-        let keys = kctx.keys();
+        let mut keys = kctx.keys();
         let mut shifted = self.clone();
         for id in kctx.keys() {
-            shifted.tid_subst(&id, &Tid::gen(&id, &keys));
+            shifted.tid_subst(&id, &Tid::fresh(&id.0, &mut keys));
         }
 
-        // New kind context for type vars, after shifting we know there will be no conflicts
         let kind_ctx = shifted.typevars.to_ctx().union(&kctx);
 
         // Unification of arguments and parameters
         let mut args = Vec::new();
         for (l, r) in shifted.args.iter().zip(typs.iter()) {
-            let typ = CTyp::unify(l.typ.clone(), r.clone(), &kind_ctx, &mut subs)
+            let typ = CTyp::unify(&l.typ, &r, &kind_ctx, &mut subs)
                     .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
             args.push(GArg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
         }

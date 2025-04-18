@@ -6,8 +6,8 @@ use pest::iterators::Pairs;
 use crate::parser::*;
 
 /// Generate a new identifier not in the set
-pub trait Gen: Ord + Sized {
-    fn gen(root: &Self, s: &Set<Self>) -> Self;
+pub trait Fresh: Ord + Sized {
+    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self;
 }
 
 /// Type variable identifier
@@ -59,13 +59,14 @@ impl Default for Tid {
 }
 
 /// Fresh type variable generator
-impl Gen for Tid {
-    fn gen(root: &Self, s: &Set<Self>) -> Self {
-        let (root, mut i) = split_alphanumeric(&root.0);
+impl Fresh for Tid {
+    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self {
+        let (root, mut i) = split_alphanumeric(root);
         loop {
             i += 1;
-            let id = Tid(format!("{}{}",root, i));
+            let id = Tid(format!("{}{}", root, i));
             if !s.contains(&id) {
+                s.insert(id.clone());
                 return id;
             }
         }
@@ -73,13 +74,14 @@ impl Gen for Tid {
 }
 
 /// Fresh variable generator
-impl Gen for Vid {
-    fn gen(root: &Self, s: &Set<Self>) -> Self {
-        let (root, mut i) = split_alphanumeric(&root.0);
+impl Fresh for Vid {
+    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self {
+        let (root, mut i) = split_alphanumeric(root);
         loop {
             i += 1;
-            let id = Vid(format!("{}{}",root, i));
+            let id = Vid(format!("{}{}", root, i));
             if !s.contains(&id) {
+                s.insert(id.clone());
                 return id;
             }
         }
@@ -352,16 +354,16 @@ fn test_special_characters_with_trailing_number() {
 }
 
 #[test]
-fn tid_gen() {
-    let bound = Set::from(vec![Tid("T0".to_string()), Tid("T1".to_string())]);
-    let t = Tid::gen(&Tid::from("T"), &bound);
+fn tid_fresh() {
+    let mut bound = Set::from(vec![Tid("T0".to_string()), Tid("T1".to_string())]);
+    let t = Tid::fresh(&"T", &mut bound);
     assert_eq!(t, Tid("T2".to_string()));
 }
 
 #[test]
-fn vid_gen() {
-    let bound = Set::from(vec![Tid("v".to_string()), Tid("v1".to_string())]);
-    let t = Tid::gen(&Tid::from("v"), &bound);
+fn vid_fresh() {
+    let mut bound = Set::from(vec![Tid("v".to_string()), Tid("v1".to_string())]);
+    let t = Tid::fresh(&"v", &mut bound);
     assert_eq!(t, Tid("v2".to_string()));
 }
 

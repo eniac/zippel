@@ -16,7 +16,7 @@ use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
-use petgraph::{dot::Dot, graph::NodeIndex, Graph};
+use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex}, Direction, Graph};
 use std::process::Command;
 use std::fmt;
 use std::path::PathBuf;
@@ -76,7 +76,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         source.dependencies().into_iter().for_each(|(n, opt)| {
             self.add_edge(n, sink, Dep::new(edge_type.clone(), opt));
         });
-}
+    }
 
     /// Add a node to the graph (no deduplication)
     fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
@@ -87,7 +87,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
-
+    pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
+        self.0.edges_directed(n, dir)
+            .find(|edge| edge.weight().is_transcript())
+    }
 
     /// Write graph to PDF
     pub fn write_pdf<'a>(&self, filename: &str) -> std::io::Result<()>
@@ -555,14 +558,14 @@ fn graph_foo() {
     println!("{}", m);
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
-    // Test transitive closure
-    let (clos, op) = TransClos::new(&g).clos();
-    println!("Transitive closure = {}\n\n{}", clos, op);
-
     // Output graph
     g.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
+
+    // Test transitive closure
+    let clos = TransClos::new(g).clos();
+    println!("Transitive closure = \n{}", clos);
 }
 
 #[test]

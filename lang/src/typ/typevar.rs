@@ -10,7 +10,10 @@ use std::fmt;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct TypeVar { pub id: Tid, pub kind: Kind }
 impl TypeVar {
-    pub fn new<'a>(id: &'a str, kind: Kind) -> Self {
+    pub fn new(id: &Tid, kind: &Kind) -> Self {
+        TypeVar { id: id.clone(), kind: kind.clone() }
+    }
+    pub fn new_str(id: &str, kind: Kind) -> Self {
         TypeVar { id: Tid::new(id), kind }
     }
 }
@@ -210,12 +213,12 @@ fn typevars_parser() {
     assert_eq!(
         TypeVars::from_pest(&mut pairs),
         Ok(TypeVars::from([
-            TypeVar::new("A", Kind::Field),
-            TypeVar::new("B1", Kind::Group),
-            TypeVar::new("B2", Kind::Group),
-            TypeVar::new("D", Kind::scalar("B2")),
-            TypeVar::new("E", Kind::pairing("B1", "B2")),
-            TypeVar::new("F", Kind::range(0, 1, 10))
+            TypeVar::new_str("A", Kind::Field),
+            TypeVar::new_str("B1", Kind::Group),
+            TypeVar::new_str("B2", Kind::Group),
+            TypeVar::new_str("D", Kind::scalar("B2")),
+            TypeVar::new_str("E", Kind::pairing("B1", "B2")),
+            TypeVar::new_str("F", Kind::range(0, 1, 10))
         ]))
     );
 

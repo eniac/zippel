@@ -6,7 +6,7 @@ use bumpalo::Bump;
 
 use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
-use crate::ast::{Exp, FreeVars, CExp, CSig, Sig, GArgs};
+use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Fid, Vid};
 use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal};
 use crate::typ::infer::{Typeable, TypeError};
@@ -155,7 +155,7 @@ impl CBody {
         // Kind context
         let kctx = sig.typevars.to_ctx();
         // Add arguments to [vctx] and [vars]
-        let mut vctx = sig.args.to_ctx();
+        let vctx = sig.args.to_ctx();
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be pure (no side-effects)
@@ -473,7 +473,7 @@ fn proto_parser() {
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::proto(
         Fid::from("test"),
-        TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+        TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
         GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
         UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
         UExp::letx(Vid::from("x"), UExp::from(3) * UExp::varstr("a"),
@@ -493,10 +493,10 @@ fn fn_parser1() {
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
         Fid::from("test"),
         TypeVars(vec![
-            TypeVar::new("F", Kind::Field),
-            TypeVar::new("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
+            TypeVar::new_str("F", Kind::Field),
+            TypeVar::new_str("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
         ]),
-        GArgs::from([GArg::private("a", GTyp::vec(GTyp::varstr("F"), Size::from("N")))]),
+        GArgs::from([GArg::private("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
         GTyp::varstr("F"),
         UExp::letx(Vid::from("x"), UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
             UExp::varstr("x") + UExp::varstr("x"))
@@ -516,7 +516,7 @@ fn fn_parser2() {
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
         Fid::from("test"),
-        TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+        TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
         GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
         GTyp::varstr("F"),
         UExp::letx(Vid::from("v"), UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
@@ -543,7 +543,7 @@ fn decls_parser() {
     assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), Decls(vec![
         UDecl::proto(
             Fid::from("test"),
-            TypeVars(vec![TypeVar::new("F", Kind::Field)]),
+            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
             GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
             UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
             UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::varstr("a")),
@@ -552,10 +552,10 @@ fn decls_parser() {
         UDecl::func(
             Fid::from("test"),
             TypeVars(vec![
-                TypeVar::new("F", Kind::Field),
-                TypeVar::new("N", Kind::Range(Range { start:0, step:1, end: 10 })),
+                TypeVar::new_str("F", Kind::Field),
+                TypeVar::new_str("N", Kind::Range(Range { start:0, step:1, end: 10 })),
             ]),
-            GArgs::from([GArg::public("a", GTyp::vec(GTyp::varstr("F"), Size::from("N")))]),
+            GArgs::from([GArg::public("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
             GTyp::varstr("F"),
             UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
                 UExp::varstr("x") + UExp::varstr("x"))

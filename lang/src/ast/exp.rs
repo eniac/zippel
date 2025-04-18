@@ -11,7 +11,7 @@ use share::traversal::ToTraversal1;
 use share::{Set, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::Size;
 use crate::typ::range::{Range, RangeTraversal};
-use crate::id::{Gen, Tid, TidSubst, Fid, Vid};
+use crate::id::{Tid, TidSubst, Fid, Vid};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.

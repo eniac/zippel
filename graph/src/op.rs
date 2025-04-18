@@ -65,12 +65,12 @@ impl<C: ArkConfig> Op<C> {
             Op::Gen(t) => t.clone(),
             Op::Underscore(_, t) => t.clone(),
             Op::Var(_, _, t) => t.clone(),
-            Op::Range(r) => ATyp::vec(ATyp::Fin(r.clone()), r.len()),
+            Op::Range(r) => ATyp::vec(&ATyp::fin(r), r.len()),
             Op::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
                     (ATyp::Vec(box typ, _), ATyp::Fin(_)) => typ,
                     (ATyp::Vec(box typ, _), ATyp::Vec(box ATyp::Fin(_), m)) =>
-                        ATyp::vec(typ, m),
+                        ATyp::vec(&typ, m),
                     (a, b) =>
                         panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
                 }
@@ -81,7 +81,7 @@ impl<C: ArkConfig> Op<C> {
                         panic!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ());
                     }
                 }
-                ATyp::vec(typ, vs.len())
+                ATyp::vec(&typ, vs.len())
             }
             Op::Random(t) => t.clone(),
             Op::Challenge(t) => t.clone(),
@@ -484,11 +484,12 @@ impl<C: ArkConfig> Op<C> {
         let typ = v.typ();
         let (t, m) = typ.into_vec();
         if m < n {
-            Op::concat(v, Op::vec(vec![Op::zero(&t); n - m]), ATyp::vec(t, n))
+            Op::concat(v, Op::vec(vec![Op::zero(&t); n - m]), ATyp::vec(&t, n))
         } else {
             v
         }
     }
+
     pub fn not(v: Self) -> Op<C> {
         match v {
             Op::Not(box v) => v,
@@ -563,6 +564,13 @@ impl<C: ArkConfig> Op<C> {
 
     pub fn check(op: Op<C>) -> Op<C> {
         Op::Check(Box::new(op))
+    }
+
+    pub fn is_underscore(&self) -> bool {
+        match self {
+            Op::Underscore(_, _) => true,
+            _ => false,
+        }
     }
 
     pub fn dependencies(&self) -> Vec<(NodeIndex, Option<Vid>)> {
@@ -646,7 +654,7 @@ where
                 v.pretty(allocator),
             ]),
             Op::Range(r) => allocator.text(format!("{}", r)),
-            Op::Underscore(_, _) => allocator.text(format!("_")),
+            Op::Underscore(n, _) => allocator.text(format!("#{}", n.index())),
             Op::Var(v, _, _) => allocator.text(format!("{}", v)),
         }
     }

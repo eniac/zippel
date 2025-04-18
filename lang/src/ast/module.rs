@@ -1,4 +1,4 @@
-use crate::ast::{Arg, Args, Sig, Body, CBody, CSig};
+use crate::ast::{Sig, Body, CSig};
 use crate::ast::decl::UDecls;
 
 use std::fmt;

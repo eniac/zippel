@@ -1339,12 +1339,12 @@ impl<C: ArkConfig> Value<C> {
             Value::G1Affine(_) => ATyp::G1,
             Value::G2Affine(_) => ATyp::G2,
             Value::GT(_) => ATyp::GT,
-            Value::VecScalar(v) => ATyp::vec(ATyp::Scalar, v.len()),
-            Value::VecG1(v) => ATyp::vec(ATyp::G1, v.len()),
-            Value::VecG2(v) => ATyp::vec(ATyp::G2, v.len()),
-            Value::VecG1Affine(v) => ATyp::vec(ATyp::G1Affine, v.len()),
-            Value::VecG2Affine(v) => ATyp::vec(ATyp::G2Affine, v.len()),
-            Value::VecGT(v) => ATyp::vec(ATyp::GT, v.len()),
+            Value::VecScalar(v) => ATyp::vec(&ATyp::Scalar, v.len()),
+            Value::VecG1(v) => ATyp::vec(&ATyp::G1, v.len()),
+            Value::VecG2(v) => ATyp::vec(&ATyp::G2, v.len()),
+            Value::VecG1Affine(v) => ATyp::vec(&ATyp::G1Affine, v.len()),
+            Value::VecG2Affine(v) => ATyp::vec(&ATyp::G2Affine, v.len()),
+            Value::VecGT(v) => ATyp::vec(&ATyp::GT, v.len()),
             Value::VecIndex(v) => {
                 let min = *v.iter().min().unwrap() as usize;
                 let max = *v.iter().max().unwrap() as usize;
@@ -1822,12 +1822,6 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 write!(f, "]")
             },
         }
-    }
-}
-
-impl<C: ArkConfig> Hash for Value<C> {
-    fn hash<H: Hasher>(&self, h: &mut H) {
-        unimplemented!();
     }
 }
 

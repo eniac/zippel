@@ -281,11 +281,11 @@ impl<'a> fmt::Display for GtZ {
 #[test]
 fn principal_foo() {
     let ex = r#"
-        proto foo<F: Field>(private s: F) where s == s {
+        proto foo<F: Field>(private s: F, private s': F) where s == s {
             let r = random<F>;
             c <- challenge<F>;
-            a <- r * c;
-            b <- r + c + s;
+            a <- r + s;
+            b <- r + s';
             verify(b == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
@@ -317,8 +317,8 @@ fn principal_bar() {
         proto bar<F: Field>(private s: Fin<0..10>) where s == s {
             let r = random<F>;
             c <- challenge<F>;
-            a <- r * c;
-            b <- r + (c ^ s);
+            a <- r * s;
+            b <- r + s + c;
             verify(a == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
