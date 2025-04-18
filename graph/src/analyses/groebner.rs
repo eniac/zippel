@@ -12,183 +12,208 @@ use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig};
 use std::hash::{DefaultHasher, Hash};
 use std::fmt;
+use std::ops::Neg;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Zero, BigInteger, PrimeField};
 
-/// Abstract interpretation of each Zippel expression into the boolean field.
-/// If we know an Bit we can also know something about the underlying value.
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub enum Bit {
-    Value(bool),
-    Vec(Vec<Bit>),
-    Add(Box<Bit>, Box<Bit>),
-    Mul(Box<Bit>, Box<Bit>),
-    Neg(Box<Bit>),
-    Var(Vid),
-    Underscore(usize),
+use symbolica::{
+    atom::{Atom, AtomCore, Num, Symbol},
+    coefficient::Coefficient,
+    domains::{finite_field::Z2, finite_field::Zp64, Ring},
+    parse,
+    poly::{groebner::GroebnerBasis, polynomial::MultivariatePolynomial, LexOrder},
+    symbol
+};
+
+/// Abstract interpretation of each Zippel expression into the boolean field (F2).
+/// If v = 0 -> bit(v) = false, otherwise bit(v) = true
+/// This is used to construct a Groebner basis from the graph as polynomials over
+/// the boolean field.
+/// Construct a Groebner basis from a graph, by first taking the transitive
+/// closure of the graph, building a set of equations of polynomials. Non-polynomial
+/// terms are replaced with variables in [npterms].
+pub struct Groebner<C: ArkConfig> {
+    equ: Vec<MultivariatePolynomial<Z2, u8>>,
+    z2: Z2,
+    npterms: Ctx<usize, Op<C>>,
+    vctx: Ctx<Vid, ATyp>,
+    uctx: Set<usize>,
 }
 
-impl Bit {
-    pub fn vec(v: Vec<Bit>) -> Self {
-        Bit::Vec(v.iter().map(|v| v.clone()).collect())
+impl<C: ArkConfig> Groebner<C> {
+    pub fn new<A: Clone>(tc: TransClos<C, A>) -> Self {
+        let mut s = Groebner {
+            equ: Vec::new(),
+            z2: Z2::new(),
+            npterms: Ctx::new(),
+            vctx: Ctx::new(),
+            uctx: tc.closure().iter().map(|(i, _)| *i).collect(),
+        };
+
+        for (i, op) in tc.closure().iter() {
+            s.from_op(*i, op.clone());
+        }
+        s
     }
-    pub fn add(a: Bit, b: Bit) -> Self {
-        Bit::Add(Box::new(a), Box::new(b))
+
+    pub fn compute(&self, print_stats: bool) -> GroebnerBasis<Z2, u8, LexOrder> {
+        GroebnerBasis::new(&self.equ, print_stats)
     }
-    pub fn sub(a: Bit, b: Bit) -> Self {
-        Bit::Add(Box::new(a), Box::new(b.neg()))
-    }
-    pub fn mul(a: Bit, b: Bit) -> Self {
-        Bit::Mul(Box::new(a), Box::new(b))
-    }
-    pub fn var(v: Vid) -> Self {
-        Bit::Var(v.clone())
-    }
-    pub fn underscore(n: usize) -> Self {
-        Bit::Underscore(n)
-    }
-    pub fn neg(self) -> Self {
-        match self {
-            Bit::Value(b) => Bit::Value(!b),
-            Bit::Vec(v) => Bit::Vec(v.into_iter().map(|v| v.neg()).collect()),
-            Bit::Add(box a, box b) => Bit::add(a.neg(), b.neg()),
-            Bit::Neg(box a) => a,
-            op => Bit::Neg(Box::new(op)),
+
+    fn to_z2(&self, value: &Value<C>) -> Atom {
+        if value.is_zero() {
+            parse!("0").unwrap()
+        } else {
+            parse!("1").unwrap()
         }
     }
-}
 
-/// Abstract interpretation of each Zippel value into the boolean field.
-impl<C: ArkConfig> From<Value<C>> for Bit {
-    fn from(value: Value<C>) -> Self {
-        match value {
-            Value::Bool(b) => Bit::Value(b),
-            Value::Index(i) => Bit::Value(!i == 0),
-            Value::Scalar(s) =>
-                Bit::Value(!s.is_zero()),
-            Value::G1(g) => Bit::Value(!g.into_affine().is_zero()),
-            Value::G2(g) => Bit::Value(!g.into_affine().is_zero()),
-            Value::G1Affine(g) => Bit::Value(!g.is_zero()),
-            Value::G2Affine(g) => Bit::Value(!g.is_zero()),
-            Value::GT(g) => Bit::Value(!g.is_zero()),
-            v => {
-                let mut v = v;
-                Bit::Vec(v.into_vec_mut().iter().map(|v| v.clone().into()).collect())
+    fn new_uvar(&mut self) -> Atom {
+        if let Some(i) = self.uctx.clone().last() {
+            self.uctx.insert(i + 1);
+            symbol!(format!("#{}", i + 1)).into()
+        } else {
+            self.uctx.insert(0);
+            symbol!(format!("#{}", 0)).into()
+        }
+    }
+
+    fn to_atom(&mut self, i: usize, op: Op<C>) -> Atom {
+        println!("To atom: {}", op);
+        match &op {
+            Op::Var(v, _, t) => {
+                self.vctx.insert(v, t);
+                symbol!(v.to_string()).into()
+            },
+            Op::Underscore(n, _) => {
+                self.uctx.insert(n.index());
+                symbol!(format!("#{}", n.index())).into()
+            },
+            Op::Range(r) =>
+                if r.len() == 1 && r.contains(0) {
+                    parse!("0").unwrap()
+                } else {
+                    parse!("1").unwrap()
+                },
+            Op::Value(v) =>
+                self.to_z2(v),
+            _ => unreachable!("Unsupported operation: {}", op),
+        }
+    }
+
+    fn add_equ(&mut self, a: Atom, b: Atom) {
+        // Add the equation to the set
+        let pa = a.to_polynomial(&Z2::new(), None);
+        let pb = b.to_polynomial(&Z2::new(), None).neg();
+        self.equ.push(pa + pb);
+    }
+
+    fn from_op(&mut self, i: usize, op: Op<C>) {
+        match op {
+            // Polynomial operations
+            Op::Bin(BinOp::Add | BinOp::And, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                let v: Atom = symbol!(format!("#{}", i)).into();
+                self.add_equ(v, oa + ob);
+            },
+            Op::Bin(BinOp::Sub, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                let v: Atom = symbol!(format!("#{}", i)).into();
+                self.add_equ(v, oa - ob);
+            },
+            Op::Bin(BinOp::Mul | BinOp::Or, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                let v: Atom = symbol!(format!("#{}", i)).into();
+                self.add_equ(v, oa * ob);
+            },
+            Op::Bin(BinOp::Div, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                // Create a new variable
+                let v = self.new_uvar();
+                // Add v * ob = oa
+                self.add_equ(v * ob, oa);
+            },
+            Op::Bin(BinOp::Rem, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                // Create a new variables
+                let vq = self.new_uvar();
+                let vr = self.new_uvar();
+                // Add vq * ob + vr = oa
+                self.add_equ(vq * ob + vr, oa);
+            },
+            Op::Bin(BinOp::Equ, box a, box b, typ) => {
+                let oa = self.to_atom(i, a);
+                let ob = self.to_atom(i, b);
+                // Add oa = ob
+                self.add_equ(oa, ob);
+            },
+            // Unsure what to do with these, I think from the view of information
+            // theory those are identities?
+            Op::Coef(box a) | Op::Eval(box a) | Op::Check(box a) => self.from_op(i, a),
+            Op::Not(box a) => {
+                let oa = self.to_atom(i, a);
+                let v = self.new_uvar();
+                let one = parse!("1").unwrap();
+                // v = 1 - a;
+                self.add_equ(v, one - oa);
+            },
+            op => {
+                println!("Adding {} -> {}", i+1, op);
+                // Create a new variable for an NP term
+                self.npterms.insert(&i, &op);
             }
         }
     }
 }
 
-/// Construct a Groebner basis from a graph, by first taking the transitive
-/// closure of the graph, building a set of equations, and then computing the Groebner basis. Non-polynomial
-/// terms are replaced with variables.
-pub struct Groebner<C: ArkConfig> {
-    equ: Vec<Bit>,
-    npterms: Ctx<usize, Op<C>>,
-    vars: Set<Vid>
-}
+#[cfg(test)] use lang::ast::UModule;
+#[cfg(test)] use share::unwrap;
+#[cfg(test)] use backend::ArkBls12_381;
+#[test]
+fn groebner_foo() {
+    let ex = r#"
+        proto foo<F: Field>(private s: F, private s': F) where s == s' {
+            let r = random<F>;
+            c <- challenge<F>;
+            a <- r * s;
+            b <- r * s';
+            verify(a == b);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
-impl<C: ArkConfig> Groebner<C> {
-    pub fn new() -> Self {
-        Groebner {
-            equ: Vec::new(),
-            npterms: Ctx::new(),
-            vars: Set::new(),
-        }
+    g.write_pdf("groebner_poly").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+    // Compute transitive closure
+    let tc = TransClos::new(g);
+
+    println!("Transitive closure: {}", tc.closure());
+
+    // Create an object computing the Groebner basis
+    let groebner = Groebner::new(tc);
+
+    // Compute the Groebner basis
+    let basis = groebner.compute(true);
+
+    println!("Polynomial equations: ");
+    for eq in groebner.equ.iter() {
+        println!("\t{}", eq);
     }
 
-    pub fn from_dag<A: Clone>(dag: Dag<C, A>) -> Self {
-        let mut groebner = Groebner::new();
-
-        // Transitive closure
-        let clos = TransClos::new(dag).clos();
-
-        for (v, op) in clos.into_iter() {
-            // Make an op out of the variable [v]
-            let ov = Op::Underscore(NodeIndex::new(v), op.typ());
-
-            groebner.add_equ(ov, op);
-        }
+    println!("Groebner basis: ");
+    for eq in basis.system {
+        println!("\t{}", eq);
     }
 
-    /// Add an equation to the system
-    pub fn add_equ(&mut self, l: Bit, r: Bit) {
-        self.equ.push(Bit::sub(l, r));
-    }
-
-    pub fn add_def(&mut self, def: Bit) {
-        let v = Vid::fresh("v", &mut self.vars);
-        // Add the definition to the set of equations
-        self.npterms.insert(&, &def);
-        self.max_node += 1;
-    }
-
-    pub fn from_op(&mut self, op: Op<C>) -> Bit {
-        match op {
-            // Polynomial operations
-            Op::Bin(BinOp::Add | BinOp::And, box a, box b, typ) => {
-                let oa = self.from_op(a)?;
-                let ob = self.from_op(b)?;
-                self.add_def(Bit::add(oa, ob));
-            },
-            Op::Bin(BinOp::Sub, box a, box b, typ) => {
-                let oa = self.from_op(a)?;
-                let ob = self.from_op(b)?;
-                Some(Bit::sub(oa, ob))
-            },
-            Op::Bin(BinOp::Mul | BinOp::Or, box a, box b, typ) => {
-                let oa = self.from_op(a)?;
-                let ob = self.from_op(b)?;
-                Some(Bit::mul(oa, ob))
-            },
-            Op::Bin(BinOp::Div, box a, box b, typ) => {
-                let oa = self.from_op(a)?;
-                let ob = self.from_op(b)?;
-                self.max_node += 1;
-                // Create a new variable
-                let ov = Bit::underscore(self.max_node);
-                // Add ov * ob = oa
-                self.add_equ(Bit::mul(ov, ob), oa);
-                None
-            },
-            Op::Bin(BinOp::Rem, box a, box b, typ) => {
-                let oa = self.from_op(a);
-                let ob = self.from_op(b);
-                // Create a two new variables, the remainder and quotient
-                let or = Bit::Var(Vid::fresh("r", &mut self.vars));
-                let oq = Bit::Var(Vid::fresh("q", &mut self.vars));
-                // Add oq * ob + or = oa
-                self.add_equ(Bit::add(Bit::mul(oq, ob), or), oa);
-                oa
-            },
-            Op::Bin(BinOp::Equ, box a, box b, typ) => {
-                let oa = self.from_op(a);
-                let ob = self.from_op(b);
-                self.add_equ(oa, ob);
-                Bit::Value(true) // ???
-            },
-            Op::Bin(op @ (BinOp::Pow | BinOp::Dot), box a, box b, typ) => {
-                self.max_node += 1;
-                self.npterms.insert(&self.max_node, &Op::bin(op, a, b, typ));
-                // Create a new variable
-                let ov = Bit::underscore(self.max_node);
-                // Add to non-polymomial terms
-                ov
-            },
-            // Unsure what to do with these, I think from the view of information
-            // theory those are identities?
-            Op::Coef(box a) | Op::Eval(box a) => self.from_op(a),
-            Op::Not(box a) => self.from_op(a).neg(),
-            Op::Ram(box a, _) => self.from_op(a),
-            Op::Vec(vs) =>
-                Bit::Vec(vs.into_iter().map(|v| self.from_op(v)).collect()),
-            Op::Underscore(n, _) => Bit::Underscore(n),
-            Op::Var(v, n, _) => Bit::Var(v),
-            Op::Value(v) => v.into(),
-            Op::Range(r) => Bit::Vec(r.into_iter().map(|v| Bit::Value(v.is_zero())).collect()),
-            Op::Check(box op) => self.from_op(op),
-        }
+    println!("NP Variables: ");
+    for (i, op) in groebner.npterms.iter() {
+        println!("\t#{} = {}", i, op);
     }
 }
-
 

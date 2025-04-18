@@ -5,7 +5,6 @@ use petgraph::{
     Graph,
     Direction,
 };
-use lang::id::Vid;
 use share::Ctx;
 use backend::ArkConfig;
 
@@ -17,11 +16,10 @@ pub struct TransClos<C: ArkConfig, A> {
 
 impl<C: ArkConfig, A> TransClos<C, A> {
     pub fn new(dag: Dag<C, A>) -> Self where A: Clone {
-        let mut clos = Ctx::new();
         // Maximum node
         let last = dag.max_node();
         // Empty transitive closure
-        let mut s = Self { dag, clos };
+        let mut s = Self { dag, clos: Ctx::new() };
         // Compute transitive closure
         let op = s.trans_clos_node(last);
         if !op.is_underscore() {
@@ -30,8 +28,8 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         s
     }
 
-    pub fn closure(self) -> Ctx<usize, Op<C>> {
-        self.clos
+    pub fn closure(&self) -> &Ctx<usize, Op<C>> {
+        &self.clos
     }
 
     pub fn max_node(&self) -> usize {
@@ -49,16 +47,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             Op::Bin(op, box a, box b, typ) => {
                 let oa = self.trans_clos_op(a);
                 let ob = self.trans_clos_op(b);
-                let obin = Op::bin(op, oa, ob, typ.clone());
-                // Look for the binary operation in the context
-                if let Some((n, _)) = self.clos.iter().find(|(_, op)| op == &&obin) {
-                    return Op::underscore(&NodeIndex::new(*n), typ);
-                } else {
-                    let mut m = self.max_node();
-                    m += 1;
-                    self.clos.insert(&m, &obin);
-                    return Op::underscore(&NodeIndex::new(m), typ);
-                }
+                Op::bin(op, oa, ob, typ.clone())
             },
             Op::Ram(box a, box b) => {
                 let oa = self.trans_clos_op(a);
@@ -71,33 +60,52 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             Op::Vec(vs) =>
                 Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
                     .collect::<Vec<_>>()),
-            Op::Check(box op) => Op::Check(Box::new(self.trans_clos_op(op))),
+            Op::Check(box op) => self.trans_clos_op(op),
             Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(v))),
             Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(v))),
             op => op
         }
     }
 
+    fn find_or_insert(&mut self, n: NodeIndex, op: Op<C>) -> Op<C> {
+        // Check if the node is already in the context
+        if let Some(op) = self.clos.get(&n.index()) {
+            return Op::underscore(&n, op.typ());
+        }
+        // Otherwise add it
+        self.clos.insert(&n.index(), &op);
+        Op::underscore(&n, op.typ())
+    }
+
     fn trans_clos_node(&mut self, node: NodeIndex) -> Op<C> {
+        // Check if the node is already in the context
+        if let Some(op) = self.clos.get(&node.index()) {
+            return Op::underscore(&node, op.typ());
+        }
+        // Otherwise add it
         match &self.dag.0[node] {
             Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), _) => {
                 self.clos.insert(&node.index(), &op.clone());
                 Op::underscore(&node, op.typ())
             },
-            Node::Op(op, _) => self.trans_clos_op(op.clone()),
+            Node::Op(op, _) => {
+                let obin = self.trans_clos_op(op.clone());
+                self.find_or_insert(node, obin.clone())
+            },
             Node::Transcr(op, _) => {
                 // Add the node to the context
                 let op = self.trans_clos_op(op.clone());
-                self.clos.insert(&node.index(), &op.clone());
+                let op = self.find_or_insert(node, op.clone());
 
                 // Add the transcript parent to the context if it does not exist
                 let tr_edge =
                     self.dag.transcript_edge(node, Direction::Incoming).unwrap();
 
-                if !self.clos.contains(&tr_edge.source().index()) {
+                // Input nodes are already in the transitive closure
+                if !self.dag.0[tr_edge.source()].is_input() {
                     self.trans_clos_node(tr_edge.source());
                 }
-                Op::underscore(&node, op.typ())
+                op
             },
             Node::Inp(_, _) => unreachable!()
         }
@@ -111,13 +119,11 @@ impl<C: ArkConfig, A> TransClos<C, A> {
 #[test]
 fn trans_clos_foo() {
     let ex = r#"
-        proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
+        proto foo<F: Field>(private s: F, private s': F) where s == s' {
             let r = random<F>;
-            c <- challenge<F>;
-            a <- r * c;
-            b <- r + c + s;
-            x <- v[1..5];
-            verify(a * s == b * x[3]);
+            a <- r * s;
+            b <- r * s';
+            verify(a == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));

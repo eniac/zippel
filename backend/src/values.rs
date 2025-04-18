@@ -5,8 +5,9 @@ use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
 use core::hash::{Hash, Hasher};
+use ark_ff::Zero;
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
 
 use crate::{ATyp, ArkConfig, ArkScalarOps, ArkGroupOps, ArkPairingOps};
 
@@ -1567,6 +1568,28 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2Affine(_) => true,
             Value::VecIndex(_) => true,
             _ => false,
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Value::Scalar(a) => a.is_zero(),
+            Value::Index(a) => *a == 0,
+            Value::Bool(a) => !*a,
+            Value::G1(a) => a.is_zero(),
+            Value::G2(a) => a.is_zero(),
+            Value::GT(a) => a.is_zero(),
+            Value::G1Affine(a) => a.is_zero(),
+            Value::G2Affine(a) => a.is_zero(),
+            Value::VecScalar(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecG1(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecG2(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecGT(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecG1Affine(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecG2Affine(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::VecIndex(a) => a.par_iter().all(|a| *a == 0),
+            Value::VecBool(a) => a.par_iter().all(|a| !*a),
+            Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
         }
     }
 }

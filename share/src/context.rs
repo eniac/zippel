@@ -28,7 +28,7 @@ where
                         .append(allocator.text(": "))
                         .append(v.clone().pretty(allocator))
                 }),
-                allocator.line(),
+                allocator.hardline(),
             ).group().indent(2),
             allocator.hardline(),
             allocator.text("}"),
@@ -380,7 +380,11 @@ impl<V: Ord> Set<V> {
         ins
     }
     pub fn first(&self) -> Option<&V> {
-        self.0.iter().next()
+        self.0.first()
+    }
+
+    pub fn last(&self) -> Option<&V> {
+        self.0.last()
     }
     pub fn contains(&self, k: &V) -> bool {
         self.0.contains(k)

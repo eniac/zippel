@@ -30,6 +30,12 @@ impl<C: ArkConfig, N> Node<C, N> {
             _ => false,
         }
     }
+    pub fn is_input(&self) -> bool {
+        match self {
+            Node::Inp(_, _) => true,
+            _ => false,
+        }
+    }
     pub fn set_transcript(&mut self) where N: Clone {
         match &self {
             Node::Op(op, ann) => *self = Node::Transcr(op.clone(), ann.clone()),

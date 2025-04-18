@@ -13,6 +13,7 @@ share = { path = "../share" }
 lang = { path = "../lang" }
 ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ec =  { git = "https://github.com/arkworks-rs/algebra.git" }
+symbolica = "0.16.0"
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }
