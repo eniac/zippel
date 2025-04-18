@@ -87,6 +87,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
+    pub fn max_node(&self) -> NodeIndex {
+        self.0.node_indices().last().unwrap()
+    }
+
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
@@ -564,8 +568,8 @@ fn graph_foo() {
     });
 
     // Test transitive closure
-    let clos = TransClos::new(g).clos();
-    println!("Transitive closure = \n{}", clos);
+    let tc = TransClos::new(g);
+    println!("Transitive closure = \n{}", tc.closure());
 }
 
 #[test]

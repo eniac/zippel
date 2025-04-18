@@ -1,82 +1,102 @@
-use crate::{Op, Node, Dag, Dep};
+use crate::{Op, Node, Dag};
 use petgraph::{
-    graph::{EdgeReference, NodeIndex},
+    graph::NodeIndex,
     visit::EdgeRef,
     Graph,
     Direction,
 };
 use lang::id::Vid;
-use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::Ctx;
 use backend::ArkConfig;
-use std::fmt;
 
 /// Transitive closure on a DAG
-pub struct TransClos<C: ArkConfig, A> (Dag<C, A>);
+pub struct TransClos<C: ArkConfig, A> {
+    dag: Dag<C, A>,
+    clos: Ctx<usize, Op<C>>
+}
 
 impl<C: ArkConfig, A> TransClos<C, A> {
     pub fn new(dag: Dag<C, A>) -> Self where A: Clone {
-        TransClos(dag)
-    }
-    pub fn clos(&self) -> Ctx<usize, Op<C>> {
         let mut clos = Ctx::new();
-        let last = self.0.0.node_indices().last().unwrap();
-        let op = self.trans_clos_node(last, &mut clos);
+        // Maximum node
+        let last = dag.max_node();
+        // Empty transitive closure
+        let mut s = Self { dag, clos };
+        // Compute transitive closure
+        let op = s.trans_clos_node(last);
         if !op.is_underscore() {
-            clos.insert(&last.index(), &op);
+            s.clos.insert(&last.index(), &op);
         }
-        clos
+        s
     }
-    pub fn trans_clos_op(&self, op: Op<C>, clos: &mut Ctx<usize, Op<C>>) -> Op<C> {
+
+    pub fn closure(self) -> Ctx<usize, Op<C>> {
+        self.clos
+    }
+
+    pub fn max_node(&self) -> usize {
+        self.dag.max_node().index().max(*self.clos.keys().iter().max().unwrap_or(&0))
+    }
+
+    fn trans_clos_op(&mut self, op: Op<C>) -> Op<C> {
         match op {
-            Op::Underscore(n, _) => self.trans_clos_node(n, clos),
+            Op::Underscore(n, _) => self.trans_clos_node(n),
             Op::Var(v, n, typ) =>
-                match self.0.0[n] {
+                match self.dag.0[n] {
                     Node::Inp(_, _) => Op::Var(v, n, typ),
-                    _ => self.trans_clos_node(n, clos),
+                    _ => self.trans_clos_node(n),
                 },
             Op::Bin(op, box a, box b, typ) => {
-                let oa = self.trans_clos_op(a, clos);
-                let ob = self.trans_clos_op(b, clos);
-                Op::Bin(op, Box::new(oa), Box::new(ob), typ)
+                let oa = self.trans_clos_op(a);
+                let ob = self.trans_clos_op(b);
+                let obin = Op::bin(op, oa, ob, typ.clone());
+                // Look for the binary operation in the context
+                if let Some((n, _)) = self.clos.iter().find(|(_, op)| op == &&obin) {
+                    return Op::underscore(&NodeIndex::new(*n), typ);
+                } else {
+                    let mut m = self.max_node();
+                    m += 1;
+                    self.clos.insert(&m, &obin);
+                    return Op::underscore(&NodeIndex::new(m), typ);
+                }
             },
             Op::Ram(box a, box b) => {
-                let oa = self.trans_clos_op(a, clos);
-                let ob = self.trans_clos_op(b, clos);
+                let oa = self.trans_clos_op(a);
+                let ob = self.trans_clos_op(b);
                 Op::Ram(Box::new(oa), Box::new(ob))
             },
             Op::Value(v) => Op::Value(v),
             Op::Range(r) => Op::Range(r),
-            Op::Not(box op) => Op::Not(Box::new(self.trans_clos_op(op, clos))),
+            Op::Not(box op) => Op::Not(Box::new(self.trans_clos_op(op))),
             Op::Vec(vs) =>
-                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v, clos))
+                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
                     .collect::<Vec<_>>()),
-            Op::Check(box op) => Op::Check(Box::new(self.trans_clos_op(op, clos))),
-            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(v, clos))),
-            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(v, clos))),
+            Op::Check(box op) => Op::Check(Box::new(self.trans_clos_op(op))),
+            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(v))),
+            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(v))),
             op => op
         }
     }
 
-    pub fn trans_clos_node(&self, node: NodeIndex, clos: &mut Ctx<usize, Op<C>>) -> Op<C> {
-        match &self.0.0[node] {
+    fn trans_clos_node(&mut self, node: NodeIndex) -> Op<C> {
+        match &self.dag.0[node] {
             Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), _) => {
-                clos.insert(&node.index(), &op.clone());
+                self.clos.insert(&node.index(), &op.clone());
                 Op::underscore(&node, op.typ())
             },
-            Node::Op(op, _) => self.trans_clos_op(op.clone(), clos),
+            Node::Op(op, _) => self.trans_clos_op(op.clone()),
             Node::Transcr(op, _) => {
                 // Add the node to the context
-                let op = self.trans_clos_op(op.clone(), clos);
-                clos.insert(&node.index(), &op.clone());
+                let op = self.trans_clos_op(op.clone());
+                self.clos.insert(&node.index(), &op.clone());
 
                 // Add the transcript parent to the context if it does not exist
                 let tr_edge =
-                    self.0.transcript_edge(node, Direction::Incoming).unwrap();
+                    self.dag.transcript_edge(node, Direction::Incoming).unwrap();
 
-                if !clos.contains(&tr_edge.source().index()) {
-                    self.trans_clos_node(tr_edge.source(), clos);
+                if !self.clos.contains(&tr_edge.source().index()) {
+                    self.trans_clos_node(tr_edge.source());
                 }
-                // Return the variable
                 Op::underscore(&node, op.typ())
             },
             Node::Inp(_, _) => unreachable!()
@@ -103,10 +123,11 @@ fn trans_clos_foo() {
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let clos = TransClos::new(g).clos();
+    let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", clos);
-
-    // There are 5 log operations (including the last verification check) + 1 random operation = 6
-    assert_eq!(clos.len(), 6);
+    println!("Transitive closure: {}", tc.clos);
+    for (_, op) in tc.clos.iter() {
+        assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
+        assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
+    }
 }
