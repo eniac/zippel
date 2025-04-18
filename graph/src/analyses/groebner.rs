@@ -79,7 +79,6 @@ impl<C: ArkConfig> Groebner<C> {
     }
 
     fn to_atom(&mut self, i: usize, op: Op<C>) -> Atom {
-        println!("To atom: {}", op);
         match &op {
             Op::Var(v, _, t) => {
                 self.vctx.insert(v, t);
@@ -111,25 +110,25 @@ impl<C: ArkConfig> Groebner<C> {
     fn from_op(&mut self, i: usize, op: Op<C>) {
         match op {
             // Polynomial operations
-            Op::Bin(BinOp::Add | BinOp::And, box a, box b, typ) => {
+            Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 let v: Atom = symbol!(format!("#{}", i)).into();
                 self.add_equ(v, oa + ob);
             },
-            Op::Bin(BinOp::Sub, box a, box b, typ) => {
+            Op::Bin(BinOp::Sub, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 let v: Atom = symbol!(format!("#{}", i)).into();
                 self.add_equ(v, oa - ob);
             },
-            Op::Bin(BinOp::Mul | BinOp::Or, box a, box b, typ) => {
+            Op::Bin(BinOp::Mul | BinOp::Or | BinOp::Dot, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 let v: Atom = symbol!(format!("#{}", i)).into();
                 self.add_equ(v, oa * ob);
             },
-            Op::Bin(BinOp::Div, box a, box b, typ) => {
+            Op::Bin(BinOp::Div, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 // Create a new variable
@@ -137,7 +136,7 @@ impl<C: ArkConfig> Groebner<C> {
                 // Add v * ob = oa
                 self.add_equ(v * ob, oa);
             },
-            Op::Bin(BinOp::Rem, box a, box b, typ) => {
+            Op::Bin(BinOp::Rem, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 // Create a new variables
@@ -146,7 +145,7 @@ impl<C: ArkConfig> Groebner<C> {
                 // Add vq * ob + vr = oa
                 self.add_equ(vq * ob + vr, oa);
             },
-            Op::Bin(BinOp::Equ, box a, box b, typ) => {
+            Op::Bin(BinOp::Equ, box a, box b, _) => {
                 let oa = self.to_atom(i, a);
                 let ob = self.to_atom(i, b);
                 // Add oa = ob
@@ -163,7 +162,6 @@ impl<C: ArkConfig> Groebner<C> {
                 self.add_equ(v, one - oa);
             },
             op => {
-                println!("Adding {} -> {}", i+1, op);
                 // Create a new variable for an NP term
                 self.npterms.insert(&i, &op);
             }
@@ -180,8 +178,8 @@ fn groebner_foo() {
         proto foo<F: Field>(private s: F, private s': F) where s == s' {
             let r = random<F>;
             c <- challenge<F>;
-            a <- r * s;
-            b <- r * s';
+            a <- r * c;
+            b <- r  + c + s;
             verify(a == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
@@ -194,6 +192,7 @@ fn groebner_foo() {
     let tc = TransClos::new(g);
 
     println!("Transitive closure: {}", tc.closure());
+    println!("Public nodes: {}", tc.public());
 
     // Create an object computing the Groebner basis
     let groebner = Groebner::new(tc);

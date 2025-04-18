@@ -5,13 +5,14 @@ use petgraph::{
     Graph,
     Direction,
 };
-use share::Ctx;
+use share::{Set, Ctx};
 use backend::ArkConfig;
 
 /// Transitive closure on a DAG
 pub struct TransClos<C: ArkConfig, A> {
     dag: Dag<C, A>,
-    clos: Ctx<usize, Op<C>>
+    clos: Ctx<usize, Op<C>>,
+    public: Set<usize>,
 }
 
 impl<C: ArkConfig, A> TransClos<C, A> {
@@ -19,7 +20,11 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         // Maximum node
         let last = dag.max_node();
         // Empty transitive closure
-        let mut s = Self { dag, clos: Ctx::new() };
+        let mut s = Self {
+            dag,
+            clos: Ctx::new(),
+            public: Set::new()
+        };
         // Compute transitive closure
         let op = s.trans_clos_node(last);
         if !op.is_underscore() {
@@ -30,6 +35,10 @@ impl<C: ArkConfig, A> TransClos<C, A> {
 
     pub fn closure(&self) -> &Ctx<usize, Op<C>> {
         &self.clos
+    }
+
+    pub fn public(&self) -> &Set<usize> {
+        &self.public
     }
 
     pub fn max_node(&self) -> usize {
@@ -97,6 +106,9 @@ impl<C: ArkConfig, A> TransClos<C, A> {
                 let op = self.trans_clos_op(op.clone());
                 let op = self.find_or_insert(node, op.clone());
 
+                // Add it to public nodes
+                self.public.insert(node.index());
+
                 // Add the transcript parent to the context if it does not exist
                 let tr_edge =
                     self.dag.transcript_edge(node, Direction::Incoming).unwrap();
@@ -136,4 +148,5 @@ fn trans_clos_foo() {
         assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
         assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
     }
+    println!("Public nodes: {}", tc.public);
 }
