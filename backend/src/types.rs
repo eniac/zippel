@@ -58,15 +58,29 @@ impl ATyp {
         matches!(self, ATyp::G1 | ATyp::G2 | ATyp::G1Affine | ATyp::G2Affine | ATyp::GT)
     }
 
+    pub fn size(&self) -> usize {
+        match self {
+            ATyp::Bool => 1,
+            ATyp::Fin(_) => 1,
+            ATyp::Vec(t, n) => t.size() * n,
+            ATyp::Scalar => 1,
+            ATyp::G1Affine => 1,
+            ATyp::G2Affine => 1,
+            ATyp::G1 => 1,
+            ATyp::G2 => 1,
+            ATyp::GT => 1
+        }
+    }
+
     // Convert from Generic types to arkworks types
     pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
         match typ {
             CTyp::Base(b) => {
-                let k = kctx.get(b).unwrap();
+                let k = kctx.get(b)?;
                 match k {
                     Kind::Field => Some(ATyp::Scalar),
                     Kind::Group => {
-                        // For all other groups that form a pairing
+                        // If this is a pairing assign the right pairing types
                         for (og, _) in kctx.iter().filter(|(t, k)| k.is_group() && *t != b) {
                             if let Some((_, Kind::Pairing(x, y))) = kctx.find_one(|t, k| k.is_pairing(&og, t)) {
                                 if &x == b {
@@ -76,7 +90,8 @@ impl ATyp {
                                 }
                             }
                         }
-                        None
+                        // Otherwise, return the group type
+                        Some(ATyp::G1)
                     },
                     Kind::Pairing(_, _) => Some(ATyp::GT),
                     Kind::Scalar(_) => Some(ATyp::Scalar),

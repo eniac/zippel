@@ -1,5 +1,3 @@
-// mod model;
-// pub use model::AsymptoticCostModel;
 use backend::{ATyp, ArkConfig};
 use graph::Op;
 

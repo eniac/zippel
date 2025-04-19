@@ -4,6 +4,8 @@ mod dep;
 mod op;
 mod analyses;
 
+pub use analyses::*;
+
 pub use op::Op;
 pub use node::Node;
 pub use dep::{DepType, Dep};
@@ -174,7 +176,6 @@ impl<C: ArkConfig> UDag<C> {
             }
             // Start node
             let mut start = g.add_node(Node::inp(sig.name.clone(), asig));
-
 
             // Initial node is the function signature
             for Arg { id, typ, .. } in sig.args.iter() {
