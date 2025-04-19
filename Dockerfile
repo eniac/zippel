@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     gpg \
     m4 \
+    git \
     pkg-config \
     python3 \
     python3-pip \
