@@ -112,6 +112,30 @@ impl<C: ArkConfig> Op<C> {
         Op::Value(Value::Index(i as u64))
     }
 
+    pub fn leaks(&self, var: &Vid) -> bool {
+        match self {
+            Op::Value(_) => false,
+            Op::Bin(op, box a, box b, typ) =>
+                match op {
+                    BinOp::Mul if typ.is_group() => false, // Scalar multiplication is hidding
+                    BinOp::Pow if !typ.is_fin() => false,  // Exponentiation is hidding
+                    _ => a.leaks(var) || b.leaks(var),
+                },
+            Op::Not(box v) => v.leaks(var),
+            Op::Gen(_) => false,
+            Op::Underscore(_, _) => false,
+            Op::Var(v, _, _) => v == var,
+            Op::Range(_) => false,
+            Op::Ram(box l, box r) => l.leaks(var) || r.leaks(var),
+            Op::Vec(vs) => vs.iter().any(|v| v.leaks(var)),
+            Op::Random(_) => false,
+            Op::Challenge(_) => false,
+            Op::Coef(box op) => op.leaks(var),
+            Op::Eval(box op) => op.leaks(var),
+            Op::Check(box op) => op.leaks(var),
+        }
+    }
+
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self {
         match (v, i) {

@@ -114,7 +114,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
                         match e.weight().0 {
                             DepType::Data => "color = \"black\"",
                             DepType::Transcript => "color = \"red\"",
-                            DepType::Implicit => "color = \"blue\"",
                         }.to_string(),
                 &|_, n|
                         match n.1 {
@@ -188,26 +187,12 @@ impl<C: ArkConfig> UDag<C> {
             }
             // Typecheck the body with the type signature
             body.typecheck(sig, &fctx.keys())?;
-            // Take cases on the type of declaration
-            match body {
-                CBody::Proto { relation, body } => {
-                    // Add the relation to the graph
-                    g.add_exp(relation, &mut start, DepType::Implicit, &kctx, &fctx, &vctx, &vars)?;
 
-                    // Add the body to the Graph
-                    let op = g.add_exp(body, &mut start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
-                    if !matches!(op, Op::Underscore(_, _)) {
-                        let nr = g.add_node(Node::ret(&op));
-                        g.add_edges(DepType::Data, nr, op);
-                    }
-                },
-                CBody::Func { body } => {
-                    let op = g.add_exp(body, &mut start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
-                    if !matches!(op, Op::Underscore(_, _)) {
-                        let nr = g.add_node(Node::ret(&op));
-                        g.add_edges(DepType::Data, nr, op);
-                    }
-                }
+            // Add the body to the Graph
+            let op = g.add_exp(body.body(), &mut start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
+            if !matches!(op, Op::Underscore(_, _)) {
+                let nr = g.add_node(Node::ret(&op));
+                g.add_edges(DepType::Data, nr, op);
             };
         }
         Ok(g)

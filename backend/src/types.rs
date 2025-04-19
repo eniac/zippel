@@ -38,6 +38,26 @@ impl ATyp {
         }
     }
 
+    pub fn is_scalar(&self) -> bool {
+        matches!(self, ATyp::Scalar)
+    }
+
+    pub fn is_vec(&self) -> bool {
+        matches!(self, ATyp::Vec(_, _))
+    }
+
+    pub fn is_fin(&self) -> bool {
+        matches!(self, ATyp::Fin(_))
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(self, ATyp::Bool)
+    }
+
+    pub fn is_group(&self) -> bool {
+        matches!(self, ATyp::G1 | ATyp::G2 | ATyp::G1Affine | ATyp::G2Affine | ATyp::GT)
+    }
+
     // Convert from Generic types to arkworks types
     pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
         match typ {

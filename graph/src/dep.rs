@@ -5,7 +5,6 @@ use lang::id::Vid;
 pub enum DepType {
     Data,
     Transcript,
-    Implicit,
 }
 
 /// Represents edges of graphs in the Zippel language
@@ -32,18 +31,11 @@ impl Dep {
         Dep(DepType::Data, None)
     }
 
-    pub fn implicit() -> Dep {
-        Dep(DepType::Implicit, None)
-    }
-
     pub fn is_data(&self) -> bool {
         self.0 == DepType::Data
     }
     pub fn is_transcript(&self) -> bool {
         self.0 == DepType::Transcript
-    }
-    pub fn is_implicit(&self) -> bool {
-        self.0 == DepType::Implicit
     }
     pub fn edge_type(&self) -> DepType {
         self.0
@@ -65,7 +57,6 @@ impl fmt::Display for DepType {
         match self {
             DepType::Data => write!(f, "data"),
             DepType::Transcript => write!(f, "transcript"),
-            DepType::Implicit => write!(f, "implicit"),
         }
     }
 }

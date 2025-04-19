@@ -1,4 +1,5 @@
 use crate::{Op, Node, Dag};
+use lang::typ::Qualifier;
 use petgraph::{
     graph::NodeIndex,
     visit::EdgeRef,
@@ -11,24 +12,33 @@ use backend::ArkConfig;
 /// Transitive closure on a DAG
 pub struct TransClos<C: ArkConfig, A> {
     dag: Dag<C, A>,
-    clos: Ctx<usize, Op<C>>,
-    public: Set<usize>,
+    pub clos: Ctx<usize, Op<C>>,
+    pub public: Set<String>,
+    pub private: Set<String>,
 }
 
 impl<C: ArkConfig, A> TransClos<C, A> {
     pub fn new(dag: Dag<C, A>) -> Self where A: Clone {
         // Maximum node
         let last = dag.max_node();
+
+        let node_indices = dag.0.node_indices()
+            .filter(|n| dag.0[*n].is_op())
+            .collect::<Vec<_>>();
+
         // Empty transitive closure
         let mut s = Self {
             dag,
             clos: Ctx::new(),
-            public: Set::new()
+            public: Set::new(),
+            private: Set::new(),
         };
         // Compute transitive closure
-        let op = s.trans_clos_node(last);
-        if !op.is_underscore() {
-            s.clos.insert(&last.index(), &op);
+        for node in node_indices {
+            let op = s.trans_clos_node(node);
+            if !op.is_underscore() {
+                s.clos.insert(&last.index(), &op);
+            }
         }
         s
     }
@@ -37,7 +47,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         &self.clos
     }
 
-    pub fn public(&self) -> &Set<usize> {
+    pub fn public(&self) -> &Set<String> {
         &self.public
     }
 
@@ -50,7 +60,14 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             Op::Underscore(n, _) => self.trans_clos_node(n),
             Op::Var(v, n, typ) =>
                 match self.dag.0[n] {
-                    Node::Inp(_, _) => Op::Var(v, n, typ),
+                    Node::Inp(_, ref args) => {
+                        match args.get(&v) {
+                            Some((Qualifier::Public, _)) => self.public.insert(v.0.clone()),
+                            Some((Qualifier::Private, _)) => self.private.insert(v.0.clone()),
+                            _ => false
+                        };
+                        Op::Var(v, n, typ)
+                    },
                     _ => self.trans_clos_node(n),
                 },
             Op::Bin(op, box a, box b, typ) => {
@@ -107,7 +124,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
                 let op = self.find_or_insert(node, op.clone());
 
                 // Add it to public nodes
-                self.public.insert(node.index());
+                self.public.insert(format!("#{}", node.index()));
 
                 // Add the transcript parent to the context if it does not exist
                 let tr_edge =
