@@ -10,14 +10,24 @@ use petgraph::{
     Direction,
 };
 use ark_ff::{Field, PrimeField};
+use std::marker::PhantomData;
 
 /// Implement this trait to give costs to operations in the DAG.
 pub trait CostModel<C: ArkConfig> {
     fn cost(op: &Op<C>, nthreads: usize) -> f64;
 }
 
+/// A cost of an operation in the DAG.
+pub struct Cost(pub f64);
+
+/// A DAG annotated with operation costs
+pub type CDag<C> = Dag<C, Cost>;
+
 /// An implementation, asymptotic cost model that estimates the cost of operations based on their types.
-pub struct AsymptoticCost<C: ArkConfig>(pub Dag<C, f64>);
+pub struct AsymptoticCost<C: ArkConfig> {
+    threads: usize,
+    _phantom: PhantomData<C>
+}
 
 impl<C: ArkConfig> AsymptoticCost<C> {
     const INT_ADD: f64 = 1.0;
@@ -26,24 +36,31 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const SCALAR_MUL: f64 = Self::SCALAR_ADD * 2.0;
     const SCALAR_INV: f64 = Self::SCALAR_ADD * 8.0;
     const G_SCALAR_MUL: f64 = C::F::MODULUS_BIT_SIZE.pow(2) as f64;
-    const G_ADD: f64 = 16 as f64 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE.pow(2) as f64);
-    const G_AFFINE_ADD: f64 = 16 as f64 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
+    const G_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
+    const G_AFFINE_ADD: f64 = 32.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
-    /// Creates a new `AsymptoticCost`.
-    pub fn new<A>(dag: Dag<C, A>, nthreads: usize) -> Self {
-        AsymptoticCost(Dag(dag.0.map(|_, node|
-                match node {
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Op(op, _) => {
-                        let cost = Self::cost(&op, nthreads);
-                        Node::Op(op.clone(), cost)
-                    },
-                    Node::Transcr(op, _) => {
-                        let cost = Self::cost(&op, nthreads);
-                        Node::Transcr(op.clone(), cost)
-                    }
+    pub fn new(threads: usize) -> Self {
+        Self {
+            threads,
+            _phantom: PhantomData
+        }
+    }
+
+    /// Annotate a DAG with costs
+    pub fn run(self, dag: UDag<C>) -> CDag<C> {
+        Dag(dag.0.map(|_, node|
+            match node {
+                Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                Node::Op(op, _) => {
+                    let cost = Self::cost(&op, self.threads);
+                    Node::Op(op.clone(), cost)
                 },
-                |_, e| e.clone())))
+                Node::Transcr(op, _) => {
+                    let cost = Self::cost(&op, self.threads);
+                    Node::Transcr(op.clone(), cost)
+                }
+            },
+            |_, e| e.clone()))
     }
 
     pub fn cost_add(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
@@ -147,11 +164,11 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
             | Op::Gen(_)
             | Op::Underscore(_, _)
             | Op::Var(_, _, _)
-            | Op::Random(_) => {},
+            | Op::Random(_) => cost += 1.0,
             Op::Range(r) => cost += r.len() as f64 * Self::INT_ADD,
             Op::Ram(box l, box r) => cost += Self::cost(l, nthreads) + Self::cost(r, nthreads),
             Op::Vec(vs) => cost += vs.iter().fold(0.0, |acc, v| { acc + Self::cost(v, nthreads) }) / nthreads as f64,
-            Op::Challenge(t) => cost += Self::SCALAR_ADD,
+            Op::Challenge(_) => cost += Self::SCALAR_ADD,
             Op::Coef(box op) | Op::Eval(box op) => {
                 let n = op.typ().size() as f64;
                 cost += Self::cost(op, nthreads) +
@@ -159,7 +176,6 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
             },
             Op::Check(box op) => cost += Self::cost(op, nthreads),
         };
-        println!("Cost of {} with type {} is {}", op, op.typ(), cost);
         cost
     }
 }
@@ -181,10 +197,11 @@ fn asymptotic_cost_foo() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
-    // Compute transitive closure
-    let cm = AsymptoticCost::new(g, 16);
+    // Compute asymptotic costs
+    let cm = AsymptoticCost::new(16);
+    let cg = cm.run(g);
 
-    cm.0.write_pdf("cost_foo").unwrap_or_else(|e| {
+    cg.write_pdf("cost_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }

@@ -3,6 +3,7 @@ mod node;
 mod dep;
 mod op;
 mod analyses;
+pub mod scheduler;
 
 pub use analyses::*;
 
@@ -96,6 +97,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
+    }
+
+    pub fn erase_ann(self) -> UDag<C> {
+        Dag(self.0.map(
+            |_, node|
+                match node {
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Op(op, _) => Node::Op(op.clone(), Nothing),
+                    Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+                },
+            |_, e| e.clone()))
     }
 
     /// Write graph to PDF

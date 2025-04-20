@@ -279,10 +279,10 @@ impl Lub for ATyp {
 impl fmt::Display for ATyp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ATyp::Bool => write!(f, "bool"),
-            ATyp::Fin(r) => write!(f, "fin({})", r),
-            ATyp::Vec(t, n) => write!(f, "{}[{}]", t, n),
-            ATyp::Scalar => write!(f, "scalar"),
+            ATyp::Bool => write!(f, "Bool"),
+            ATyp::Fin(r) => write!(f, "Fin({})", r),
+            ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
+            ATyp::Scalar => write!(f, "Scalar"),
             ATyp::G1Affine => write!(f, "G1Affine"),
             ATyp::G2Affine => write!(f, "G2Affine"),
             ATyp::G1 => write!(f, "G1"),
