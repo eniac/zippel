@@ -3,6 +3,7 @@ mod node;
 mod dep;
 mod op;
 mod analyses;
+pub mod scheduler;
 
 pub use analyses::*;
 
@@ -18,7 +19,7 @@ use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
-use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex}, Direction, Graph};
+use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices}, Direction, Graph};
 use std::process::Command;
 use std::fmt;
 use std::path::PathBuf;
@@ -89,13 +90,40 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
+    pub fn node_indices(&self) -> NodeIndices {
+        self.0.node_indices()
+    }
+
     pub fn max_node(&self) -> NodeIndex {
         self.0.node_indices().last().unwrap()
+    }
+
+    pub fn map_annotations<B, F: Fn(&Op<C>, &A) -> B>(&self, f: F) -> Dag<C, B> {
+        Dag(self.0.map(
+            |_, node|
+                match node {
+                    Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
+                    Node::Transcr(op, ann) => Node::Transcr(op.clone(), f(op, ann)),
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone())
+                },
+                |_, e| e.clone()
+        ))
     }
 
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
+    }
+
+    pub fn erase_ann(self) -> UDag<C> {
+        Dag(self.0.map(
+            |_, node|
+                match node {
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Op(op, _) => Node::Op(op.clone(), Nothing),
+                    Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+                },
+            |_, e| e.clone()))
     }
 
     /// Write graph to PDF

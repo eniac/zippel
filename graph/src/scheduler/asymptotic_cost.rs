@@ -2,16 +2,12 @@ use ark_ec::CurveGroup;
 use lang::ast::BinOp;
 
 use backend::{ATyp, ArkConfig};
-use crate::{Op, Node, Dag};
+use crate::Op;
+use crate::scheduler::{Cost, CostModel};
 use ark_ff::{Field, PrimeField};
-
-/// Implement this trait to give costs to operations in the DAG.
-pub trait CostModel<C: ArkConfig> {
-    fn cost(op: &Op<C>, nthreads: usize) -> f64;
-}
-
+use std::marker::PhantomData;
 /// An implementation, asymptotic cost model that estimates the cost of operations based on their types.
-pub struct AsymptoticCost<C: ArkConfig>(pub Dag<C, f64>);
+pub struct AsymptoticCost<C: ArkConfig>(PhantomData<C>);
 
 impl<C: ArkConfig> AsymptoticCost<C> {
     const INT_ADD: f64 = 1.0;
@@ -23,21 +19,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
     const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
-    /// Creates a new `AsymptoticCost`.
-    pub fn new<A>(dag: Dag<C, A>, nthreads: usize) -> Self {
-        AsymptoticCost(Dag(dag.0.map(|_, node|
-                match node {
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Op(op, _) => {
-                        let cost = Self::cost(&op, nthreads);
-                        Node::Op(op.clone(), cost)
-                    },
-                    Node::Transcr(op, _) => {
-                        let cost = Self::cost(&op, nthreads);
-                        Node::Transcr(op.clone(), cost)
-                    }
-                },
-                |_, e| e.clone())))
+    pub fn new() -> Self {
+        Self(PhantomData)
     }
 
     pub fn cost_add(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
@@ -118,12 +101,12 @@ impl<C: ArkConfig> AsymptoticCost<C> {
 }
 
 impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
-    fn cost(op: &Op<C>, nthreads: usize) -> f64 {
+    fn cost(&self, op: &Op<C>, nthreads: usize) -> Cost {
         let mut cost = 0.0;
         match op {
             Op::Bin(op, box l, box r, _) => {
-                cost += Self::cost(l, nthreads);
-                cost += Self::cost(r, nthreads);
+                cost += self.cost(l, nthreads).0;
+                cost += self.cost(r, nthreads).0;
                 match (op, l.typ(), r.typ()) {
                     (BinOp::Add | BinOp::Sub | BinOp::Equ, lt, rt) => cost += Self::cost_add(&lt, &rt, nthreads),
                     (BinOp::Mul, lt, rt) => cost += Self::cost_mul(&lt, &rt, nthreads),
@@ -141,43 +124,19 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
             | Op::Var(_, _, _)
             | Op::Random(_) => cost += 1.0,
             Op::Range(r) => cost += r.len() as f64 * Self::INT_ADD,
-            Op::Ram(box l, box r) => cost += Self::cost(l, nthreads) + Self::cost(r, nthreads),
-            Op::Vec(vs) => cost += vs.iter().fold(0.0, |acc, v| { acc + Self::cost(v, nthreads) }) / nthreads as f64,
+            Op::Ram(box l, box r) =>
+                cost += self.cost(l, nthreads).0 + self.cost(r, nthreads).0,
+            Op::Vec(vs) =>
+                cost += vs.iter().fold(0.0, |acc, v| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
             Op::Challenge(t) => cost += Self::SCALAR_ADD * t.size() as f64,
             Op::Coef(box op) | Op::Eval(box op) => {
                 let n = op.typ().size() as f64;
-                cost += Self::cost(op, nthreads) +
+                cost += self.cost(op, nthreads).0 +
                     (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
             },
-            Op::Check(box op) => cost += Self::cost(op, nthreads),
+            Op::Check(box op) => cost += self.cost(op, nthreads).0,
         };
-        println!("Cost of {} with type {} is {}", op, op.typ(), cost);
-        cost
+        cost.into()
     }
 }
 
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use share::unwrap;
-#[cfg(test)] use crate::UDag;
-#[cfg(test)] use backend::ArkBls12_381;
-#[test]
-fn asymptotic_cost_foo() {
-    let ex = r#"
-        proto foo<G: Group, F: Scalar<G>>(private s: [F; 1000], private g: [G; 1000]) where s == s {
-            let r = random<F>;
-            a <- r * s;
-            b <- r * g;
-            let x = a . b;
-            let y = s . g;
-            verify(x == r * y);
-        }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-
-    // Compute transitive closure
-    let cm = AsymptoticCost::new(g, 16);
-
-    cm.0.write_pdf("cost_foo").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-}

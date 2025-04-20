@@ -43,13 +43,6 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
-    pub fn set_annotation(&mut self, ann: N) {
-        match self {
-            Node::Op(_, a) => *a = ann,
-            Node::Transcr(_, a) => *a = ann,
-            _ => {}
-        }
-    }
 }
 
 impl<C: ArkConfig> Node<C, Nothing> {
@@ -82,6 +75,14 @@ impl<C: ArkConfig> Node<C, Nothing> {
     }
     pub fn ret(op: &Op<C>) -> Self {
         Node::Op(op.clone(), Nothing)
+    }
+
+    pub fn with_annotation<M>(&self, ann: M) -> Node<C, M> {
+        match self {
+            Node::Op(op, _) => Node::Op(op.clone(), ann),
+            Node::Transcr(op, _) => Node::Transcr(op.clone(), ann),
+            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone())
+        }
     }
 }
 

@@ -14,6 +14,9 @@ lang = { path = "../lang" }
 ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ec =  { git = "https://github.com/arkworks-rs/algebra.git" }
 symbolica = "0.16.0"
+log = "0.4.27"
+good_lp = { version = "1.13.0", features = ["lp-solvers", ], default-features = false}
+grb = { version = "3.0.1", features = ["gurobi12"], default-features = false }
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }

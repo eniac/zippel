@@ -1,5 +1,5 @@
 # Indicate the Gurobi reference image
-FROM gurobi/optimizer:latest
+FROM gurobi/optimizer:12.0.1
 
 RUN apt-get update && apt-get install -y \
     curl \

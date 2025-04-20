@@ -7,7 +7,8 @@ use petgraph::{
 };
 use lang::id::{Fresh, Vid};
 use lang::ast::{BinOp, CArg};
-use crate::analyses::{TransClos, Principal};
+use crate::analyses::principal::Principal;
+use crate::analyses::TransClos;
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig};
 use std::hash::{DefaultHasher, Hash};

@@ -1,0 +1,2 @@
+[env]
+GUROBI_LIBNAME="gurobi120"
