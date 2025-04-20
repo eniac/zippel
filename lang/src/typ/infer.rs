@@ -76,9 +76,6 @@ pub enum TypeError {
     #[error("FuncNotFound: No matching definition found for function:\n{0} |- {1} ( {2} )")]
     FuncNotFound(Set<CSig>, Fid, CTyps),
 
-    #[error("ContainsError: Expects an element and a vector:\n{0}, {1} |- contains( {2}: {3} , {4}: {5} )")]
-    Contains(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
-
     #[error("BoolError: Expected boolean expression:\n{0}, {1} |- {2}")]
     Bool(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
@@ -161,9 +158,6 @@ impl<'a> TypeError {
     }
     pub fn func_not_found(fctx: &Set<CSig>, id: &Fid, params: CTyps) -> Self {
         TypeError::FuncNotFound(fctx.clone(), id.clone(), params)
-    }
-    pub fn contains(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
-        TypeError::Contains(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
     }
     pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Fid, t: &CTyp, r: &CTyp) -> Self {
         TypeError::FuncRet(kctx.clone(), vctx.clone(), e.clone(), id.clone(), t.clone(), r.clone())
@@ -407,22 +401,6 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Bin(BinOp::Contains, box a, box b) => {
-                let ta = a.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let tb = b.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (ta, tb) {
-                    (x, CTyp::Vec(box a, _)) => {
-                        CTyp::lub_equ(&x, &a, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        Ok(CTyp::bool())
-                    },
-                    (ta, tb) => Err(TypeError::contains(kctx, &vctx, a, ta, b, tb))
-                }
-            }
-
             // Range expression
             CExp::Range(r) => {
                 // Infer the type of the range expression as a vector of sizes
@@ -577,16 +555,6 @@ impl Typeable for CExp {
                 }
             }
 
-
-            CExp::Not(box a) => {
-                let ta = a.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                if ta == CTyp::Bool {
-                    Ok(CTyp::Bool)
-                } else {
-                    Err(TypeError::bool(kctx, vctx, &self))
-                }
-            },
             CExp::Assert(box a) | CExp::Verify(box a)=> {
                 let t = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;

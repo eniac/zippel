@@ -324,9 +324,6 @@ impl<C: ArkConfig> UDag<C> {
                 }
             },
 
-            CExp::Not(box a) =>
-                Ok(Op::not(self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?)),
-
             // Create a [range] value, no new nodes added
             CExp::Range(r) => Ok(Op::range(r)),
 

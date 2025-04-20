@@ -2,13 +2,7 @@ use ark_ec::CurveGroup;
 use lang::ast::BinOp;
 
 use backend::{ATyp, ArkConfig};
-use crate::{Op, Node, Dag, UDag, Dep};
-use petgraph::{
-    graph::{EdgeReference, NodeIndex},
-    visit::EdgeRef,
-    Graph,
-    Direction,
-};
+use crate::{Op, Node, Dag};
 use ark_ff::{Field, PrimeField};
 
 /// Implement this trait to give costs to operations in the DAG.
@@ -58,7 +52,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::G2, ATyp::G2Affine) | (ATyp::G2Affine, ATyp::G2) => Self::G_AFFINE_ADD,
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64),
-            (a, b) => unreachable!(),
+            (_, _) => unreachable!(),
         }
     }
 
@@ -72,7 +66,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Vec(box lt, n), rt)
             | (lt, ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_mul(lt, rt, nthreads) / (nthreads as f64),
-            (a, b) => unreachable!(),
+            (_, _) => unreachable!(),
         }
     }
 
@@ -86,7 +80,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
            (ATyp::Vec(box lt, n), rt)
             | (lt, ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_div(lt, rt, nthreads) / (nthreads as f64),
-            (a, b) => unreachable!(),
+            (_, _) => unreachable!(),
         }
     }
 
@@ -95,10 +89,10 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             // MSM
             (ATyp::Vec(box lt, n), ATyp::Vec(box rt, _))
                 if (lt.is_scalar() && rt.is_group()) || (lt.is_group() && rt.is_scalar()) =>
-                (Self::G_SCALAR_MUL * (*n as f64) / ((*n as f64).log2() * (nthreads as f64))),
+                Self::G_SCALAR_MUL * (*n as f64) / ((*n as f64).log2() * (nthreads as f64)),
             (ATyp::Vec(box lt, n), ATyp::Vec(box rt, _)) =>
                 (Self::cost_mul(lt, rt, nthreads) * (*n as f64) / nthreads as f64) * (*n as f64).log2(),
-            (a, b) => Self::cost_mul(lt, rt, nthreads)
+            (_, _) => Self::cost_mul(lt, rt, nthreads)
         }
     }
 
@@ -110,7 +104,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
                 Self::cost_pow(lt, rt, nthreads) * (*n as f64) / nthreads as f64,
             (ATyp::Vec(box lt, n), rt) =>
                 Self::cost_pow(lt, rt, nthreads) * (*n as f64) / nthreads as f64,
-            (a, b) => unreachable!(),
+            (_, _) => unreachable!(),
         }
     }
     pub fn cost_bool(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
@@ -118,7 +112,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Bool, ATyp::Bool) => 1.0,
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_bool(lt, rt, nthreads) / nthreads as f64,
-            (a, b) => unreachable!(),
+            (_, _) => unreachable!(),
         }
     }
 }
@@ -127,7 +121,7 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
     fn cost(op: &Op<C>, nthreads: usize) -> f64 {
         let mut cost = 0.0;
         match op {
-            Op::Bin(op, box l, box r, typ) => {
+            Op::Bin(op, box l, box r, _) => {
                 cost += Self::cost(l, nthreads);
                 cost += Self::cost(r, nthreads);
                 match (op, l.typ(), r.typ()) {
@@ -138,11 +132,9 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
                     (BinOp::And | BinOp::Or, lt, rt) => cost += Self::cost_bool(&lt, &rt, nthreads),
                     (BinOp::Pow, lt, rt) => cost += Self::cost_pow(&lt, &rt, nthreads),
                     (BinOp::Concat, _, _) => {},
-                    (BinOp::Contains, ATyp::Vec(box lt, n), _) => cost += (n as f64),
                     (_, _, _) => unreachable!(),
                 }
             },
-            Op::Not(box op) => cost += Self::cost(op, nthreads),
             Op::Value(_)
             | Op::Gen(_)
             | Op::Underscore(_, _)
@@ -151,7 +143,7 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
             Op::Range(r) => cost += r.len() as f64 * Self::INT_ADD,
             Op::Ram(box l, box r) => cost += Self::cost(l, nthreads) + Self::cost(r, nthreads),
             Op::Vec(vs) => cost += vs.iter().fold(0.0, |acc, v| { acc + Self::cost(v, nthreads) }) / nthreads as f64,
-            Op::Challenge(t) => cost += Self::SCALAR_ADD,
+            Op::Challenge(t) => cost += Self::SCALAR_ADD * t.size() as f64,
             Op::Coef(box op) | Op::Eval(box op) => {
                 let n = op.typ().size() as f64;
                 cost += Self::cost(op, nthreads) +
@@ -166,6 +158,7 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
+#[cfg(test)] use crate::UDag;
 #[cfg(test)] use backend::ArkBls12_381;
 #[test]
 fn asymptotic_cost_foo() {

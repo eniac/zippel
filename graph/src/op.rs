@@ -19,9 +19,6 @@ pub enum Op<C: ArkConfig> {
     /// Binary operations
     Bin(BinOp, Box<Op<C>>, Box<Op<C>>, ATyp),
 
-    /// Boolean not
-    Not(Box<Op<C>>),
-
     /// Generator for a group
     Gen(ATyp),
 
@@ -61,7 +58,6 @@ impl<C: ArkConfig> Op<C> {
         match &self {
             Op::Value(v) => v.typ(),
             Op::Bin(_, _, _, typ) => typ.clone(),
-            Op::Not(_) => ATyp::Bool,
             Op::Gen(t) => t.clone(),
             Op::Underscore(_, t) => t.clone(),
             Op::Var(_, _, t) => t.clone(),
@@ -101,7 +97,6 @@ impl<C: ArkConfig> Op<C> {
             BinOp::Pow => Self::pow(a, b, typ),
             BinOp::Dot => Self::dot(a, b, typ),
             BinOp::Concat => Self::concat(a, b, typ),
-            BinOp::Contains => Self::contains(a, b),
             BinOp::Equ => Self::equ(a, b),
             BinOp::And => Self::and(a, b),
             BinOp::Or => Self::or(a, b),
@@ -121,7 +116,6 @@ impl<C: ArkConfig> Op<C> {
                     BinOp::Pow if !typ.is_fin() => false,  // Exponentiation is hidding
                     _ => a.leaks(var) || b.leaks(var),
                 },
-            Op::Not(box v) => v.leaks(var),
             Op::Gen(_) => false,
             Op::Underscore(_, _) => false,
             Op::Var(v, _, _) => v == var,
@@ -514,13 +508,6 @@ impl<C: ArkConfig> Op<C> {
         }
     }
 
-    pub fn not(v: Self) -> Op<C> {
-        match v {
-            Op::Not(box v) => v,
-            _ => Op::Not(Box::new(v)),
-        }
-    }
-
     pub fn equ(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
             (Op::Range(l), Op::Range(r)) => Op::Value(Value::Bool(l == r)),
@@ -551,18 +538,6 @@ impl<C: ArkConfig> Op<C> {
             | (_, Op::Value(Value::Bool(true))) => Op::btrue(),
             (Op::Value(a), Op::Value(b)) => Op::Value(a | b),
             (v1, v2) => Op::Bin(BinOp::Or, Box::new(v1), Box::new(v2), ATyp::Bool),
-        }
-    }
-
-    pub fn contains(v1: Self, v2: Self) -> Self {
-        match (v1, v2) {
-            (Op::Range(l), Op::Value(Value::Index(r))) =>
-                Op::Value(Value::Bool(l.contains(r as usize))),
-            (Op::Vec(vs), v2) =>
-                vs.iter().map(|v| Op::equ(v.clone(), v2.clone()))
-                    .reduce(|a, b| Op::or(a, b))
-                    .unwrap_or(Op::Value(Value::Bool(false))),
-            (v1, v2) => Op::Bin(BinOp::Contains, Box::new(v1), Box::new(v2), ATyp::Bool),
         }
     }
 
@@ -610,8 +585,7 @@ impl<C: ArkConfig> Op<C> {
                 vs.into_iter()
                     .flat_map(|v| v.dependencies())
                     .collect(),
-            Op::Not(box v)
-            | Op::Coef(box v)
+            Op::Coef(box v)
             | Op::Check(box v)
             | Op::Eval(box v) => v.dependencies(),
             Op::Value(_)
@@ -673,10 +647,6 @@ where
                 allocator.text("]"),
             ]),
             Op::Gen(t) => allocator.text(format!("gen<{}>", t)),
-            Op::Not(box v) => allocator.concat([
-                allocator.text("!"),
-                v.pretty(allocator),
-            ]),
             Op::Range(r) => allocator.text(format!("{}", r)),
             Op::Underscore(n, _) => allocator.text(format!("#{}", n.index())),
             Op::Var(v, _, _) => allocator.text(format!("{}", v)),

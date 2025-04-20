@@ -82,7 +82,6 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             },
             Op::Value(v) => Op::Value(v),
             Op::Range(r) => Op::Range(r),
-            Op::Not(box op) => Op::Not(Box::new(self.trans_clos_op(op))),
             Op::Vec(vs) =>
                 Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
                     .collect::<Vec<_>>()),

@@ -73,14 +73,6 @@ pub enum BinOp {
     ///     ```
     Equ,
 
-    ///     Represents inclusion of an element in a vector
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(x in v);
-    ///     ```
-    Contains,
-
     ///     Represents the logical AND of two boolean expressions.
     ///
     ///     **Zippel Code:**
@@ -206,14 +198,6 @@ pub enum Exp<N> {
     ///     ```
     Challenge(Tid),
 
-    ///     Represents the negation of a boolean expression.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     assert(!true);
-    ///     ```
-    Not(Box<Exp<N>>),
-
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
     ///     **Zippel Code:**
@@ -297,7 +281,6 @@ impl<N> ToTraversal1<N> for Exp<N> {
                         Box::new(x.traverse1(f)?),
                         Box::new(i.traverse1(f)?)
                 )),
-            Exp::Not(a) => Ok(Exp::Not(a.traverse1(&mut |x| x.traverse1(f))?)),
             Exp::Let(x, box a, box b) =>
                 Ok(Exp::Let(x, Box::new(a.traverse1(f)?), Box::new(b.traverse1(f)?))),
             Exp::Log(x, box a, box b) =>
@@ -329,8 +312,7 @@ impl TidSubst for CExp {
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
-            | Exp::Eval(box p)
-            | Exp::Not(box p) => p.tid_subst(from, to),
+            | Exp::Eval(box p) => p.tid_subst(from, to),
             Exp::Vec(v)
             | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
@@ -363,8 +345,7 @@ impl FreeVars for CExp {
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
-            | Exp::Eval(box p)
-            | Exp::Not(box p) => p.freevars(),
+            | Exp::Eval(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
             | Exp::Ram(box a, box b)
@@ -398,8 +379,6 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
             Exp::Eval(box x) =>
                 Ok(Exp::eval(x.range_traverse(f)?)),
-            Exp::Not(box a) =>
-                Ok(Exp::not(a.range_traverse(f)?)),
             Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Log(x, box t, box e) => Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Let(None, box t, box e) => Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?)),
@@ -560,14 +539,8 @@ impl<N> Exp<N> {
     pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
         Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
-    pub fn contains(a: Exp<N>, b: Exp<N>) -> Self {
-        Exp::Bin(BinOp::Contains, Box::new(a), Box::new(b))
-    }
     pub fn app(id: Fid, args: Exps<N>) -> Self {
         Exp::App(id, args)
-    }
-    pub fn not(a: Self) -> Self {
-        Exp::Not(Box::new(a))
     }
     pub fn is_pure(&self) -> bool {
         match self {
@@ -583,7 +556,6 @@ impl<N> Exp<N> {
             Exp::Challenge(_) | Exp::Random(_) => false,
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
             Exp::Eval(box a) => a.is_pure(),
-            Exp::Not(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
         }
     }
@@ -619,7 +591,6 @@ where
             BinOp::Equ => allocator.text(" == "),
             BinOp::And => allocator.text(" && "),
             BinOp::Or => allocator.text(" || "),
-            BinOp::Contains => allocator.text(" in "),
         }
     }
 
@@ -702,10 +673,6 @@ where
                 allocator.text("["),
                 (*i).pretty(allocator),
                 allocator.text("]"),
-            ]),
-            Exp::Not(a) => allocator.concat([
-                allocator.text("!"),
-                (*a).pretty(allocator),
             ]),
             Exp::Let(Some(x), t, e) => allocator.concat([
                 allocator.text("let "),
@@ -949,23 +916,12 @@ impl<'pest> FromPest<'pest> for UExp {
                     let params = Exps::from_pest(&mut inner)?;
                     Ok(Exp::app(func, params))
                 },
-                Rule::contains_bexp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::contains(
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
-                    ))
-                },
                 Rule::eq_bexp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::equ(
                            UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                            UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
-                },
-                Rule::not_bexp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::not(UExp::from_pest(&mut inner)?))
                 },
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();

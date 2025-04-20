@@ -70,6 +70,16 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
     }
 
     pub fn print_leaks(&self) {
+        println!("================================================");
+        println!(" Equations");
+        println!("================================================");
+        // Print the system of equations
+        for p in &self.equ {
+            println!("{} = 0", p);
+        }
+        println!("================================================");
+        println!(" Groebner basis");
+        println!("================================================");
         let groebner = self.compute(false);
 
         let npterms_str =
@@ -231,13 +241,6 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
             // Unsure what to do with these, I think from the view of information
             // theory those are identities?
             Op::Coef(box a) | Op::Eval(box a) | Op::Check(box a) => self.from_op(i, a),
-            Op::Not(box a) => {
-                let oa = self.to_atom(a);
-                let v = self.new_uvar();
-                let one = parse!("1").unwrap();
-                // v = 1 - a;
-                self.add_equ(v, one - oa);
-            },
             Op::Underscore(_, _) => {},
             op => {
                 // Create a new variable for an NP term
@@ -250,6 +253,7 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use backend::ArkBls12_381;
+#[ignore = "Symbolica cannot run more than one test without a license"]
 #[test]
 fn groebner_foo() {
 
@@ -281,6 +285,7 @@ fn groebner_foo() {
     groebner.print_leaks();
 }
 
+#[ignore = "Symbolica cannot run more than one test without a license"]
 #[test]
 fn groebner_bar() {
 
