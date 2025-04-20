@@ -20,8 +20,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const SCALAR_MUL: f64 = Self::SCALAR_ADD * 2.0;
     const SCALAR_INV: f64 = Self::SCALAR_ADD * 8.0;
     const G_SCALAR_MUL: f64 = C::F::MODULUS_BIT_SIZE.pow(2) as f64;
-    const G_ADD: f64 = 16 as f64 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE.pow(2) as f64);
-    const G_AFFINE_ADD: f64 = 16 as f64 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
+    const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
+    const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
     /// Creates a new `AsymptoticCost`.
     pub fn new<A>(dag: Dag<C, A>, nthreads: usize) -> Self {
@@ -139,7 +139,7 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
             | Op::Gen(_)
             | Op::Underscore(_, _)
             | Op::Var(_, _, _)
-            | Op::Random(_) => {},
+            | Op::Random(_) => cost += 1.0,
             Op::Range(r) => cost += r.len() as f64 * Self::INT_ADD,
             Op::Ram(box l, box r) => cost += Self::cost(l, nthreads) + Self::cost(r, nthreads),
             Op::Vec(vs) => cost += vs.iter().fold(0.0, |acc, v| { acc + Self::cost(v, nthreads) }) / nthreads as f64,
