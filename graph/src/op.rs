@@ -560,6 +560,9 @@ impl<C: ArkConfig> Op<C> {
     pub fn random(typ: ATyp) -> Op<C> {
         Op::Random(typ)
     }
+    pub fn generator(typ: ATyp) -> Op<C> {
+        Op::Gen(typ)
+    }
 
     pub fn check(op: Op<C>) -> Op<C> {
         Op::Check(Box::new(op))

@@ -403,13 +403,15 @@ impl<C: ArkConfig> UDag<C> {
                 *transcr = nchallenge;
                 Ok(Op::Underscore(nchallenge, at))
             },
-            CExp::Gen(_) =>
-                Ok(Op::Gen(
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, vctx, &exp),
-                                TypeError::ark(kctx, vctx, &exp, &typ))
-                        })?)),
+            CExp::Gen(_) => {
+                let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ))
+                })?;
+                let ngen = self.add_node(Node::generator(&at));
+                Ok(Op::Underscore(ngen, at))
+            },
             CExp::Random(_) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(

@@ -444,12 +444,7 @@ impl Typeable for CExp {
                 let k = kctx.get(&t).ok_or(
                     TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&t)))?;
 
-                // Only allow challenges/random for field elements
-                if k.is_scalar() {
-                    Ok(CTyp::base(t))
-                } else {
-                    Err(TypeError::challenge(kctx, vctx, t, k))
-                }
+                Ok(CTyp::base(t))
             }
 
             // Group generator

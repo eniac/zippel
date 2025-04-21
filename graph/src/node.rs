@@ -64,6 +64,9 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn random(typ: &ATyp) -> Self {
         Node::Op(Op::random(typ.clone()), Nothing)
     }
+    pub fn generator(typ: &ATyp) -> Self {
+        Node::Op(Op::generator(typ.clone()), Nothing)
+    }
     pub fn transcr(op: &Op<C>) -> Self {
         Node::Transcr(op.clone(), Nothing)
     }
