@@ -20,6 +20,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 
 ENV PATH="$PATH:/root/.cargo/bin"
 
+# To encrypt the license file, run the following command:
+# gpg --symmetric --passphrase=$GUROBI_KEY --output=gurobi.lic.gpg gurobi.lic
 CMD  cd /app && \
      gpg --quiet --batch --yes --decrypt --passphrase=$GUROBI_KEY \
          --output /opt/gurobi/gurobi.lic gurobi.lic.gpg && \
