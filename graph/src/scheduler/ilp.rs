@@ -20,22 +20,48 @@ struct LpSolution {
 }
 
 /// Use Gurobi ILP solver to schedule num_tasks in num_threads
-pub struct GurobiScheduler<C: ArkConfig, CM: CostModel<C>> {
+pub struct GurobiScheduler {
     num_threads: usize,
-    _marker: std::marker::PhantomData<CM>,
-    _marker2: std::marker::PhantomData<C>
+    num_tasks: usize,
+    cost_map: Vec<Vec<f64>>,
+    flow_map: Vec<Vec<bool>>,
 }
 
-impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
-    pub fn new(num_threads: usize) -> Self {
-        GurobiScheduler { num_threads , _marker: std::marker::PhantomData, _marker2: std::marker::PhantomData }
+impl GurobiScheduler {
+    pub fn new<C: ArkConfig, CM: CostModel<C>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM) -> Self {
+        // Create cost map from the DAG
+        let mut cost_map: Vec<Vec<f64>> = vec![vec![0.0; num_threads]; dag.node_count()];
+        for i in dag.node_indices() {
+            for j in 0..num_threads {
+                cost_map[i.index()][j] =
+                    match &dag.0[i] {
+                        Node::Inp(_, _) => 0.0,
+                        Node::Op(op, _)
+                        | Node::Transcr(op, _) => cost_model.cost(&op, j + 1).0.round(), // Round to the nearest integer
+                    }
+            }
+        }
+        println!("Cost map extracted from the dag: {:?}", cost_map);
+
+        // Create flow map from the DAG
+        let mut flow_map: Vec<Vec<bool>> = vec![vec![false; dag.node_count()]; dag.node_count()];
+        for i in dag.node_indices() {
+            for j in dag.node_indices() {
+                if algo::has_path_connecting(&dag.0, i, j, None) && i != j
+                {
+                    flow_map[i.index()][j.index()] = true;
+                }
+            }
+        }
+        println!("Flow map extracted from the dag: {:?}", flow_map);
+        GurobiScheduler { num_threads, num_tasks: dag.node_count(), cost_map, flow_map }
     }
 
-    pub fn default() -> Self {
+    pub fn default<C: ArkConfig, CM: CostModel<C>>(dag: &UDag<C>, cost_model: &CM) -> Self {
         let num_threads: usize = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        Self::new(num_threads)
+        Self::new(num_threads, dag, cost_model)
     }
 
     pub fn num_threads(&self) -> usize {
@@ -43,16 +69,11 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
     }
 
     /// Solve the ILP problem for the execution time using Gurobi ILP solver
-    fn solve_for_exec_time(
-        &self,
-        num_tasks: usize,
-        cost_map: Vec<Vec<f64>>,
-        flow_map: Vec<Vec<bool>>,
-    ) -> LpSolution {
+    fn optimize_runtime(self) -> LpSolution {
         let mut model: Model = Model::new("zippel").unwrap();
         // TODO: compute the maximum big_m for each zippel file
         let big_m: f64 = 10000000.0;
-        let cores_mat_var: Vec<Vec<Var>> = (0..num_tasks)
+        let cores_mat_var: Vec<Vec<Var>> = (0..self.num_tasks)
             .map(|_| {
                 (0..self.num_threads)
                     .map(|_| add_binvar!(model).unwrap())
@@ -60,7 +81,7 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
             })
             .collect();
 
-        let map_mat_var: Vec<Vec<Var>> = (0..num_tasks)
+        let map_mat_var: Vec<Vec<Var>> = (0..self.num_tasks)
             .map(|_| {
                 (0..self.num_threads)
                     .map(|_| add_binvar!(model).unwrap())
@@ -68,21 +89,21 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
             })
             .collect();
 
-        let duration_vec_var: Vec<Var> = (0..num_tasks)
+        let duration_vec_var: Vec<Var> = (0..self.num_tasks)
             .map(|_| add_intvar!(model, bounds: 0..).unwrap())
             .collect();
 
-        let start_vec_var: Vec<Var> = (0..num_tasks)
+        let start_vec_var: Vec<Var> = (0..self.num_tasks)
             .map(|_| add_intvar!(model, bounds: 0..).unwrap())
             .collect();
 
-        let finish_vec_var: Vec<Var> = (0..num_tasks)
+        let finish_vec_var: Vec<Var> = (0..self.num_tasks)
             .map(|_| add_intvar!(model, bounds: 0..).unwrap())
             .collect();
 
         let max_finish_var: Var = add_intvar!(model, bounds: 0..).unwrap();
 
-        for i in 0..num_tasks {
+        for i in 0..self.num_tasks {
             model
                 .add_constr(
                     &format!("c{:?}", i),
@@ -91,7 +112,7 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
                 .unwrap();
         }
 
-        for i in 0..num_tasks {
+        for i in 0..self.num_tasks {
             model
                 .add_constr(
                     &format!("d{:?}", i),
@@ -100,7 +121,7 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
                 .unwrap();
         }
 
-        for i in 0..num_tasks {
+        for i in 0..self.num_tasks {
             model
                 .add_constr(
                     &format!("e{:?}", i),
@@ -114,20 +135,20 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
                 .unwrap();
         }
 
-        for i in 0..num_tasks {
+        for i in 0..self.num_tasks {
             model
                 .add_constr(
                     &format!("f{:?}", i),
                     c!(duration_vec_var[i]
                         == cores_mat_var[i]
                             .iter()
-                            .zip(cost_map[i].iter())
+                            .zip(self.cost_map[i].iter())
                             .fold(Expr::default(), |acc, (&core, &time)| { acc + core * time })),
                 )
                 .unwrap();
         }
 
-        for i in 0..num_tasks {
+        for i in 0..self.num_tasks {
             model
                 .add_constr(
                     &format!("g{:?}", i),
@@ -136,8 +157,8 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
                 .unwrap();
         }
 
-        for i1 in 0..num_tasks {
-            for i2 in 0..num_tasks {
+        for i1 in 0..self.num_tasks {
+            for i2 in 0..self.num_tasks {
                 if i1 != i2 {
                     for j in 0..self.num_threads {
                         let z1: Var = add_binvar!(model).unwrap();
@@ -170,7 +191,7 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
                             )
                             .unwrap();
                     }
-                    if flow_map[i1][i2] == true {
+                    if self.flow_map[i1][i2] == true {
                         model
                             .add_constr(
                                 &format!("l{:?}{:?}", i1, i2),
@@ -243,42 +264,17 @@ impl<C: ArkConfig, CM: CostModel<C>> GurobiScheduler<C, CM> {
     }
 }
 
-impl<C: ArkConfig, CM: CostModel<C>> Scheduler<C> for GurobiScheduler<C, CM> {
-    type CM = CM;
-    fn schedule(&self, dag: UDag<C>, cost_model: Self::CM) -> TDag<C> {
-        // Create cost map from the DAG
-        let mut cost_map: Vec<Vec<f64>> = vec![vec![0.0; self.num_threads]; dag.node_count()];
-        for i in dag.node_indices() {
-            for j in 0..self.num_threads {
-                cost_map[i.index()][j] =
-                    match &dag.0[i] {
-                        Node::Inp(_, _) => 0.0,
-                        Node::Op(op, _)
-                        | Node::Transcr(op, _) => cost_model.cost(&op, j + 1).0,
-                    }
-            }
-        }
-        println!("Cost map extracted from the dag: {:?}", cost_map);
-
-        // Create flow map from the DAG
-        let mut flow_map: Vec<Vec<bool>> = vec![vec![false; dag.node_count()]; dag.node_count()];
-        for i in dag.node_indices() {
-            for j in dag.node_indices() {
-                if algo::has_path_connecting(&dag.0, i, j, None) && i != j
-                {
-                    flow_map[i.index()][j.index()] = true;
-                }
-            }
-        }
-        println!("Flow map extracted from the dag: {:?}", flow_map);
+impl Scheduler for GurobiScheduler {
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C> {
+        let num_threads = self.num_threads;
 
         // Call Gurobi and solve the ILP problem
-        let lp_solution = self.solve_for_exec_time(dag.node_count(), cost_map, flow_map);
+        let lp_solution = self.optimize_runtime();
 
         // Extract the task thread map from the LP solution
         let mut output = vec![Vec::new(); dag.node_count()];
         for i in 0..dag.node_count() {
-            for j in 0..self.num_threads {
+            for j in 0..num_threads {
                 if lp_solution.maping[i][j] {
                     output[i].push(j);
                 }
@@ -305,19 +301,26 @@ fn gurobi_e2e() {
        (r * a) . (r * a)
       }"#;
 
-    let solver = GurobiScheduler::new(4);
 
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
+    // AsymptoticCost is a cost model for zippel operations
     let cost_model = AsymptoticCost::new();
+
+    // Create a new Gurobi ILP solver
+    let solver = GurobiScheduler::new(4, &g, &cost_model);
+
+    // Show the costs of the operations in the DAG
     g.map_annotations(|op, _|
         (1..5).map(|i| (i, cost_model.cost(op, i))).collect::<Ctx<_, _>>()
     ).write_pdf("ilp_test").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
-    let tg = solver.schedule(g, cost_model);
+    // Run the gurobi solver
+    let tg = solver.schedule(g);
+
     tg.write_pdf("scheduler_test").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });

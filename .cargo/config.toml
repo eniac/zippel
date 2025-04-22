@@ -1,0 +1,4 @@
+[env]
+SYMBOLICA_HIDE_BANNER = "1"
+GUROBI_LIBNAME = "gurobi120"
+

@@ -22,4 +22,3 @@ grb = { version = "3.0.1", features = ["gurobi12"], default-features = false }
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
 serial_test = "3.2.0"
-

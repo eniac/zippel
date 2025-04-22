@@ -26,7 +26,6 @@ impl fmt::Display for ThreadAlloc {
 }
 
 /// This trait implements a scheduling algorithm for the DAG.
-pub trait Scheduler<C: ArkConfig> {
-    type CM: CostModel<C>;
-    fn schedule(&self, dag: UDag<C>, cm: Self::CM) -> TDag<C>;
+pub trait Scheduler {
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C>;
 }
