@@ -1,5 +1,5 @@
 pub mod trans_clos;
 pub mod principal;
-pub mod groebner;
+pub mod zk;
 
 pub use trans_clos::TransClos;
