@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![feature(trait_alias)]
 mod node;
 mod dep;
 mod op;

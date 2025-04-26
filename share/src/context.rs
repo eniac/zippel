@@ -109,6 +109,11 @@ impl<K, V> Ctx<K, V> {
     pub fn first(&self) -> Option<(&K, &V)> {
         self.0.iter().next()
     }
+
+    pub fn pop_first(&mut self) -> Option<(K, V)> where K: Ord + Clone, V: Clone {
+        self.0.pop_first()
+    }
+
     pub fn any<FF>(&self, f: FF) -> bool where FF: Fn(&K, &V) -> bool {
         self.find(f).is_some()
     }

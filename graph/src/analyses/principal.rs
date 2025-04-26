@@ -12,7 +12,7 @@ use backend::ArkConfig;
 use std::fmt;
 
 /// Assign a principal to graph nodes
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Hash)]
 pub enum Principal {
     Verifier,
     Prover,
