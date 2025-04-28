@@ -110,6 +110,10 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().next()
     }
 
+    pub fn last(&self) -> Option<(&K, &V)> {
+        self.0.iter().next_back()
+    }
+
     pub fn pop_first(&mut self) -> Option<(K, V)> where K: Ord + Clone, V: Clone {
         self.0.pop_first()
     }

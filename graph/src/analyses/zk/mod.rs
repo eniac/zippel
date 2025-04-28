@@ -2,27 +2,20 @@ pub mod groebner;
 
 use groebner::{Monomial, VecField, SparsePolynomial};
 
-use crate::{GOp, Op, Ref, Node, Dag, UDag, Dep};
-use petgraph::{
-    graph::{EdgeReference, NodeIndex},
-    visit::EdgeRef,
-    Graph,
-    Direction,
-};
-use lang::{id::{Fresh, Vid}, typ::Range};
-use lang::ast::{BinOp, CArg};
-use lang::typ::CRange;
+use crate::{GOp, Op, Ref};
+use petgraph::graph::NodeIndex;
+use lang::{id::Vid, typ::Range};
+use lang::ast::BinOp;
+use lang::typ::{Qualifier, CRange};
 use crate::analyses::principal::Principal;
 use crate::analyses::TransClos;
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig, ArkScalarOps};
-use std::hash::{DefaultHasher, Hash};
 use std::fmt;
 use itertools::Itertools;
 use std::cmp::Ordering;
-use std::ops::{Mul, Div, MulAssign, Neg};
-use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{Field, One, Zero, BigInteger, PrimeField};
+use std::ops::{Mul, Neg, Div, MulAssign};
+use ark_ff::{Field, One, Zero};
 
 /// A variable in the Groebner basis
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -34,9 +27,16 @@ pub struct PRef {
 }
 
 impl PRef {
-    pub fn new(reference: Ref, typ: ATyp, principal: Principal) -> Self {
-        PRef { reference, range: Range::new(0, typ.size()), typ, principal }
+    pub fn new(reference: &Ref, typ: &ATyp, principal: Principal) -> Self {
+        PRef { reference: reference.clone(), range: Range::new(0, typ.size()), typ: typ.clone(), principal }
     }
+    pub fn node(node: NodeIndex, typ: ATyp, principal: Principal) -> Self {
+        PRef { reference: Ref::Node(node), range: Range::new(0, typ.size()), typ, principal }
+    }
+    pub fn var(v: Vid, typ: ATyp, principal: Principal) -> Self {
+        PRef { reference: Ref::Var(v, NodeIndex::new(0)), range: Range::new(0, typ.size()), typ, principal }
+    }
+
     pub fn is_prover(&self) -> bool {
         self.principal == Principal::Prover
     }
@@ -98,7 +98,9 @@ impl fmt::Display for LexDegTerm {
         } else {
             let mut terms: Vec<String> = Vec::new();
             for (var, power) in self.vars.iter() {
-                if *power > 0 {
+                if *power == 1 {
+                    terms.push(format!("{}", var));
+                } else if *power > 0 {
                     terms.push(format!("{}^{}", var, power));
                 }
             }
@@ -254,33 +256,97 @@ impl Ord for LexDegTerm {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GroebnerSolution<C: ArkConfig> {
+    private: Set<Ref>,
+    terms: Vec<(VecField<C::F>, Vec<(GOp<C>, usize)>)>
+}
+impl<C: ArkConfig> GroebnerSolution<C> {
+    pub fn from_sparse<A>(poly: SparsePolynomial<C::F, PRef, LexDegTerm>, tc: &TransClos<C, A>, npterms: &Ctx<NodeIndex, GOp<C>>) -> Self {
+        let mut terms = Vec::new();
+        for (mono, coeff) in poly.terms.into_iter() {
+            let m: Vec<(GOp<C>, usize)> = mono.vars.into_iter()
+                .map(|(v, p)|
+                    match v.reference {
+                        Ref::Var(_, _) => (Op::Ref(v.reference.clone(), v.typ.clone()), p),
+                        Ref::Node(n) =>
+                            (tc.inline(&Op::underscore(n, v.typ), &npterms.keys()), p),
+                    }).collect();
+            terms.push((coeff, m));
+        }
+        GroebnerSolution { terms, private: tc.private() }
+    }
+}
+
+impl<C: ArkConfig> fmt::Display for GroebnerSolution<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn write_term<C: ArkConfig>(terms: &Vec<(GOp<C>, usize)>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for (op, p) in terms.iter() {
+                if *p == 1 {
+                    write!(f, "{}", op)?;
+                } else {
+                    write!(f, "{}^{}", op, p)?;
+                }
+            }
+            Ok(())
+        }
+        if self.terms.is_empty() {
+            write!(f, "[]")
+        } else {
+            write!(f, "[ ")?;
+            write_term(&self.terms[0].1, f)?;
+            for (coeff, term) in self.terms.iter() {
+                if coeff.is_one() {
+                    write!(f, " + ")?;
+                    write_term(term, f)?;
+                } else if coeff.is_zero() {
+                    continue
+                } else if coeff.clone().neg().is_one() {
+                    write!(f, " - ")?;
+                    write_term(term, f)?;
+                } else {
+                    write!(f, " + {}*", coeff)?;
+                    write_term(term, f)?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 /// This is used to construct a Groebner basis from the ideals corresponding to
 /// each one of groups G1, G2, GT and the scalar ring F.
 /// Construct a Groebner basis from a graph, by first taking the transitive
 /// closure of the graph, building a set of equations of polynomials. Non-polynomial
 /// terms are replaced with variables in [npterms].
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct GroebnerBasis<C: ArkConfig> {
+#[derive(Clone)]
+pub struct GroebnerBasis<C: ArkConfig, A> {
     equ: Vec<SparsePolynomial<C::F, PRef, LexDegTerm>>,
     vars: Set<PRef>,
-    npterms: Ctx<usize, GOp<C>>,
+    npterms: Ctx<NodeIndex, GOp<C>>,
+    tc: TransClos<C, A>
 }
 
-impl<C: ArkConfig> GroebnerBasis<C> {
-    pub fn new<A: Clone>(tc: TransClos<C, A>) -> Self {
+impl<C: ArkConfig, A> GroebnerBasis<C, A> {
+    pub fn new(tc: TransClos<C, A>) -> Self where A: Clone {
         let mut s = GroebnerBasis {
             equ: Vec::new(),
-            vars: tc.public.into_iter()
-                .map(|(n, t)| PRef::new(n, t, Principal::Verifier))
-                .chain(tc.private.into_iter()
-                    .map(|(n, t)| PRef::new(n, t, Principal::Prover)))
+            vars: tc.types.iter()
+                .map(|(n, t)|
+                    match tc.visibility.get(n) {
+                        Some(Qualifier::Public) => PRef::new(n, t, Principal::Verifier),
+                        Some(Qualifier::Private) => PRef::new(n, t, Principal::Prover),
+                        None => PRef::new(n, t, Principal::Any),
+                    })
                 .collect(),
             npterms: Ctx::new(),
+            tc
         };
 
-        for (i, op) in tc.clos.into_iter() {
-            s.from_op(i, op)
+        for (i, op) in s.tc.clone().clos.into_iter() {
+            s.from_op(i, op);
         }
+
         s
     }
 
@@ -304,36 +370,35 @@ impl<C: ArkConfig> GroebnerBasis<C> {
         self.vars.iter().filter(|v| v.is_verifier()).cloned().collect()
     }
 
-    pub fn compute(&mut self) {
+    /// Compute Groebner basis using Buchberger algorithm, the LexDeg variant
+    /// for elimination order.
+    pub fn run(&mut self) -> Vec<GroebnerSolution<C>> {
         self.equ = groebner::buchberger(self.equ.clone());
         // Remove dangling variables
         self.vars.retain(|v| self.equ.iter().any(|p| p.contains(v)));
+
+        // Create a set of polynomials that leak information
+        self.get_leaks()
     }
 
-    pub fn get_leaks(&self) -> Vec<SparsePolynomial<C::F, PRef, LexDegTerm>> {
+
+    pub fn get_leaks(&self) -> Vec<GroebnerSolution<C>> {
         // Create a set of polynomials that leak information
-        self.equ.iter().filter(|p| {
+        let poly_leaks : Vec<SparsePolynomial<C::F, PRef, LexDegTerm>> =
+            self.equ.iter().filter(|p| {
                 let vars = p.vars();
                 // Contains both secret and public variables, and at least one secret!
                 vars.iter().all(|v| v.is_prover() || v.is_verifier())
                 && vars.iter().any(|v| v.is_prover())
-        }).cloned().collect()
-    }
+            }).cloned().collect();
 
-    pub fn print_leaks(&self) {
-        // Create a set of polynomials that leak information
-        let leaks = self.get_leaks();
-
-        let msg =
-            if leaks.is_empty() {
-                format!(" No leaks found in Groebner basis ")
-            } else {
-                format!(" Found leaks in the Groebner basis: \n{}", leaks.into_iter().map(|v| format!("{}", v)).join("\n"))
-            };
-        println!("================================================");
-        println!(" {} ", msg);
-        println!("================================================");
-        println!("{}", self);
+        // Translate from polynomials to Groebner solutions
+        // using the transitive closure operations
+        // Need to get :     terms: Vec<(C::F, Vec<(GOp<C>, usize)>)>
+        poly_leaks.into_iter()
+            .map(|p|
+                GroebnerSolution::from_sparse(p, &self.tc, &self.npterms))
+            .collect()
     }
 
     /// This function converts an operation to a vector of sparse polynomial expressions
@@ -385,7 +450,7 @@ impl<C: ArkConfig> GroebnerBasis<C> {
     }
 
     fn from_op(&mut self, i: NodeIndex, op: GOp<C>) {
-        let pf = self.find_ref(&Ref::Node(i)).unwrap();
+        let pf = self.find_ref(&i.into()).unwrap_or_else(|| PRef::node(i, op.typ(), Principal::Any));
         match op {
             // Polynomial operations
             Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
@@ -442,7 +507,7 @@ impl<C: ArkConfig> GroebnerBasis<C> {
             Op::Ref(_, _) => {},
             op => {
                 // Create a new variable for an NP term
-                self.npterms.insert(&i.index(), &op);
+                self.npterms.insert(&i, &op);
             }
         }
     }
@@ -455,7 +520,9 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        if self.range.len() == 1 {
+        if self.range.len() == 1 && self.range.start == 0 {
+            allocator.text(format!("{}", self.reference))
+        } else if self.range.len() == 1 {
             allocator.text(format!("{}[{}]", self.reference, self.range.start))
         } else {
             allocator.text(format!("{}[{}]", self.reference, self.range))
@@ -467,7 +534,7 @@ where
     }
 }
 
-impl<'a, C, D, A> Pretty<'a, D, A> for GroebnerBasis<C>
+impl<'a, C, D, A, X> Pretty<'a, D, A> for GroebnerBasis<C, X>
 where
     C: ArkConfig,
     D: DocAllocator<'a, A>,
@@ -476,28 +543,39 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
-            allocator.text("#### Equations:"),
+            allocator.text("####### Equations: ########"),
             allocator.hardline(),
             allocator.intersperse(
-                self.equ.into_iter().map(|p| p.pretty(allocator)),
+                self.equ.into_iter().map(|p| p.pretty(allocator).indent(8)),
                 allocator.hardline(),
             ),
             allocator.hardline(),
-            allocator.text("#### Non-polynomial terms:"),
+            allocator.hardline(),
+            allocator.text("#######  Non-polynomial terms: #######"),
             allocator.hardline(),
             allocator.intersperse(
                 self.npterms.into_iter().map(|(i, op)|
-                    allocator.text(format!("{}: ", i))
-                        .append(op.pretty(allocator))),
+                    allocator.text(format!("{}: ", i.index()))
+                        .append(op.pretty(allocator)).indent(8)),
                 allocator.hardline(),
             ),
             allocator.hardline(),
-            allocator.text("#### Variables:"),
+            allocator.hardline(),
+            allocator.text("#######  Variables: #######"),
             allocator.hardline(),
             allocator.intersperse(
-                self.vars.into_iter().map(|v| v.pretty(allocator)),
+                self.vars.into_iter().map(|v| {
+                    let typ = v.typ.clone();
+                    let prin = v.principal.clone();
+                    allocator.concat([
+                        v.pretty(allocator),
+                        allocator.text(format!(": {} ", prin)),
+                        typ.pretty(allocator),
+                    ]).indent(8)
+                }),
                 allocator.hardline(),
             ),
+            allocator.hardline(),
         ])
     }
 
@@ -506,9 +584,9 @@ where
     }
 }
 
-impl<C: ArkConfig> fmt::Display for GroebnerBasis<C> {
+impl<C: ArkConfig, A: Clone> fmt::Display for GroebnerBasis<C, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <GroebnerBasis<C> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <GroebnerBasis<C, A> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -516,6 +594,7 @@ impl<C: ArkConfig> fmt::Display for GroebnerBasis<C> {
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use backend::ArkBls12_381;
+#[cfg(test)] use crate::UDag;
 #[test]
 fn groebner_foo() {
 
@@ -538,16 +617,21 @@ fn groebner_foo() {
     // Compute transitive closure
     let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", tc);
-
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBasis::new(tc);
 
     // Compute the Groebner basis
-    groebner.compute();
+    let leaks = groebner.run();
 
-    // Compute the Groebner basis and print leaks
-    groebner.print_leaks();
+    println!("{}", groebner);
+    if leaks.is_empty() {
+        println!("No leaks found");
+    } else {
+        println!("Leaks found:\n");
+        for leak in leaks.iter() {
+            println!("\t{}", leak);
+        }
+    }
 }
 
 #[test]
@@ -571,16 +655,19 @@ fn groebner_bar() {
     // Compute transitive closure
     let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", tc);
-
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBasis::new(tc);
-
     // Compute the Groebner basis
-    groebner.compute();
+    let leaks = groebner.run();
 
-    // Compute the Groebner basis and print leaks
-    groebner.print_leaks();
+    if leaks.is_empty() {
+        println!("No leaks found");
+    } else {
+        println!("Leaks found:\n");
+        for leak in leaks.iter() {
+            println!("\t{}", leak);
+        }
+    }
 }
 
 #[test]
@@ -604,16 +691,22 @@ fn groebner_baz() {
     // Compute transitive closure
     let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", tc);
+    println!("{}", tc);
 
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBasis::new(tc);
 
     // Compute the Groebner basis
-    groebner.compute();
+    let leaks = groebner.run();
 
-    // Compute the Groebner basis and print leaks
-    groebner.print_leaks();
+    if leaks.is_empty() {
+        println!("No leaks found");
+    } else {
+        println!("Leaks found:\n");
+        for leak in leaks.iter() {
+            println!("\t{}", leak);
+        }
+    }
 }
 
 /// This example is somewhat contrived. Here is how we leak s = s'.
@@ -623,7 +716,7 @@ fn groebner_baz() {
 /// 4. g*(a - b) = g *(s - s') = 0 from [2]
 /// 5. s = s' if g != 0.
 #[test]
-fn zk_ex3() {
+fn groebner_ex3() {
     let ex = r#"
         proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F) where s == s {
             let r = random<F>;
@@ -640,10 +733,19 @@ fn zk_ex3() {
     // Compute transitive closure
     let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", tc);
-    for (_, op) in tc.clos.iter() {
-        assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
-        assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
+    println!("{}", tc);
+    // Create an object computing the Groebner basis
+    let mut groebner = GroebnerBasis::new(tc);
+
+    // Compute the Groebner basis
+    let leaks = groebner.run();
+
+    if leaks.is_empty() {
+        println!("No leaks found");
+    } else {
+        println!("Leaks found:\n");
+        for leak in leaks.iter() {
+            println!("\t{}", leak);
+        }
     }
-    println!("Public nodes: {}", tc.public);
 }

@@ -2,7 +2,7 @@ use ark_ff::Field;
 use crate::principal::Principal;
 use crate::Ref;
 use core::cmp::Ordering;
-use core::ops::{Add, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
+use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use ark_ff::{One, Zero};
 use std::collections::VecDeque;
@@ -61,10 +61,10 @@ impl<F: Field> From<F> for VecField<F> {
 
 impl<F: Field> fmt::Display for VecField<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_zero() {
-            write!(f, "0[{}]", self.0.len())
-        } else if self.0.len() == 1 {
+        if self.0.len() == 1 {
             write!(f, "{}", self.0[0])
+        } else if self.is_zero() {
+            write!(f, "0")
         } else {
             write!(f, "[{}", self.0[0])?;
             for coeff in self.0.iter().skip(1) {
@@ -135,6 +135,18 @@ impl<F: Field> Sub for VecField<F> {
     fn sub(self, other: Self) -> Self {
         let mut result = self.clone();
         result -= other;
+        result
+    }
+}
+
+impl<F: Field> Neg for VecField<F> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        let mut result = self.clone();
+        for coeff in result.0.iter_mut() {
+            *coeff = -(*coeff);
+        }
         result
     }
 }
@@ -285,7 +297,13 @@ impl<F: Field, V: Var, T: Monomial<V>> fmt::Display for SparsePolynomial<F, V, T
         } else {
             let mut terms: Vec<String> = Vec::new();
             for (term, coeff) in self.terms.iter() {
-                if !coeff.is_zero() {
+                if coeff.is_one() {
+                    terms.push(format!("{}", term));
+                } else if coeff.is_zero() {
+                    continue
+                } else if coeff.clone().neg().is_one() {
+                    terms.push(format!("-{}", term));
+                } else  {
                     let term_str = format!("{}*{}", coeff, term);
                     terms.push(term_str);
                 }

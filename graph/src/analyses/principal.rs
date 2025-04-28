@@ -18,3 +18,13 @@ pub enum Principal {
     Prover,
     Any
 }
+
+impl fmt::Display for Principal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Principal::Verifier => write!(f, "Verifier"),
+            Principal::Prover => write!(f, "Prover"),
+            Principal::Any => write!(f, "Any"),
+        }
+    }
+}
