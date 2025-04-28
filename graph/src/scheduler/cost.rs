@@ -36,7 +36,7 @@ impl From<f64> for Cost {
 }
 
 /// Implement this trait to give costs to operations in the DAG.
-pub trait CostModel<C: ArkConfig> {
-    fn cost(&self, op: &Op<C>, nthreads: usize) -> Cost;
+pub trait CostModel<C: ArkConfig, R> {
+    fn cost(&self, op: &Op<C, R>, nthreads: usize) -> Cost;
 }
 

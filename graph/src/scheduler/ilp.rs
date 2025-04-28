@@ -6,7 +6,7 @@ use grb::{add_binvar, add_intvar, attr, c, Expr, Model, Status, Var, INFINITY};
 use petgraph::algo;
 use petgraph::graph::NodeIndex;
 
-use crate::{Dag, UDag, Node};
+use crate::{Dag, UDag, Ref, Node};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};
 
 #[derive(Debug)]
@@ -28,7 +28,7 @@ pub struct GurobiScheduler {
 }
 
 impl GurobiScheduler {
-    pub fn new<C: ArkConfig, CM: CostModel<C>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM) -> Self {
+    pub fn new<C: ArkConfig, CM: CostModel<C, Ref>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM) -> Self {
         // Create cost map from the DAG
         let mut cost_map: Vec<Vec<f64>> = vec![vec![0.0; num_threads]; dag.node_count()];
         for i in dag.node_indices() {
@@ -37,7 +37,7 @@ impl GurobiScheduler {
                     match &dag.0[i] {
                         Node::Inp(_, _) => 0.0,
                         Node::Op(op, _)
-                        | Node::Transcr(op, _) => cost_model.cost(&op, j + 1).0.round(), // Round to the nearest integer
+                        | Node::Transcr(op, _) => cost_model.cost(op, j + 1).0.round(), // Round to the nearest integer
                     }
             }
         }
@@ -57,7 +57,7 @@ impl GurobiScheduler {
         GurobiScheduler { num_threads, num_tasks: dag.node_count(), cost_map, flow_map }
     }
 
-    pub fn default<C: ArkConfig, CM: CostModel<C>>(dag: &UDag<C>, cost_model: &CM) -> Self {
+    pub fn default<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM) -> Self {
         let num_threads: usize = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);

@@ -49,6 +49,11 @@ pub trait ArkScalarOps<F: PrimeField> {
         F::one()
     }
 
+    #[inline]
+    fn from_usize(i: usize) -> F {
+        F::from(i as u64)
+    }
+
     /// Scalar addition, saves result in f2
     #[inline]
     fn add(f1: &F, f2: &mut F) {

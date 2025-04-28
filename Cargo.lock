@@ -1142,6 +1142,7 @@ dependencies = [
  "backend",
  "good_lp",
  "grb",
+ "itertools 0.14.0",
  "lang",
  "log",
  "num-bigint",

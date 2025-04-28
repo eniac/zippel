@@ -58,9 +58,6 @@ pub enum TypeError {
     #[error("RangeError: Not a valid range expression:\n{0}, {1} |- {2}\n\n{3}")]
     Range(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Range<usize>, RangeError),
 
-    #[error("ConcatenateError: Expects two vectors with the same element types:\n {0}, {1} |- {2} ++ {3}")]
-    Concat(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CTyp, CTyp),
-
     #[error("InterpolateError: Expects a field vector:\n{0}, {1} |- interpolate ( {2}: {3})")]
     Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
@@ -137,9 +134,6 @@ impl<'a> TypeError {
     }
     pub fn range(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, r: &Range<usize>, e: RangeError) -> Self {
         TypeError::Range(kctx.clone(), vctx.clone(), r.clone(), e)
-    }
-    pub fn concat(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CTyp, b: &CTyp) -> Self {
-        TypeError::Concat(kctx.clone(), vctx.clone(), a.clone(), b.clone())
     }
     pub fn interp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
@@ -324,53 +318,9 @@ impl Typeable for CExp {
                 let tb = b.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
 
-                match (ta, tb) {
-                    (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
-                        // Type [a] and [b] should be the same ([t])
-                        let t = CTyp::lub_equ(&a, &b, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-
-                        // Add the sizes of the vectors
-                        Ok(CTyp::vec(&t, x + y))
-                    },
-                    (CTyp::Uni(a, n), CTyp::Uni(b, m)) => {
-                        // Type [a] and [b] should be the same ([t])
-                        let t = Tid::lub_equ(&a, &b, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        // Add the sizes of the vectors
-                        Ok(CTyp::Uni(t, n + m))
-                    },
-                    (CTyp::Uni(a, n), CTyp::Vec(box b, m))
-                    | (CTyp::Vec(box b, m), CTyp::Uni(a, n)) => {
-                        // Type [a] and [b] should be the same ([t])
-                        CTyp::lub_equ(&CTyp::base(&a), &b, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        // Add elements to the polynomial
-                        Ok(CTyp::uni(&a, n + m))
-                    },
-                    (CTyp::Vec(box a, n), b)
-                    | (b, CTyp::Vec(box a, n)) => {
-                        // Type [a] and [b] should be the same ([t])
-                        let t = CTyp::lub_equ(&a, &b, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        // Add an element to the vector
-                        Ok(CTyp::vec(&t, n + 1))
-                    },
-                    (CTyp::Mle(t1, n), CTyp::Mle(t2, m)) => {
-                        // Type [t1] and [t2] should be the same ([t])
-                        let t = Tid::lub_equ(&t1, &t2, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        // Add the sizes of the MLEs and pad to the next power of two
-                        let (l, r) = log2((1 << n) + (1 << m));
-                        if r == 1 {
-                            Ok(CTyp::mle(&t, l))
-                        } else {
-                            Ok(CTyp::mle(&t, l + 1))
-                        }
-                    },
-                    (ta, tb) => Err(TypeError::concat(kctx, vctx, &ta, &tb))
-                }
-            }
+                CTyp::lub_concat(&ta, &tb, kctx)
+                        .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+            },
 
             CExp::Bin(BinOp::Equ, a, b) => {
                 let ta = a.infer(kctx, fctx, vctx)
@@ -441,7 +391,7 @@ impl Typeable for CExp {
             // Random oracle challenge
             CExp::Challenge(t) | CExp::Random(t) => {
                 // What kind of [t]?
-                let k = kctx.get(&t).ok_or(
+                kctx.get(&t).ok_or(
                     TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&t)))?;
 
                 Ok(CTyp::base(t))

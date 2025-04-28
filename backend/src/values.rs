@@ -1,6 +1,6 @@
 use ark_ec::pairing::PairingOutput;
 use ark_ff::Field;
-use lang::typ::Range;
+use lang::typ::CRange;
 use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
@@ -17,10 +17,11 @@ pub enum Value<C: ArkConfig> {
     Bool(bool),
     VecBool(Vec<bool>),
     /// Scalars
-    Index(u64),
+    Index(usize),
     Scalar(C::F),
-    VecIndex(Vec<u64>),
+    VecIndex(Vec<usize>),
     VecScalar(Vec<C::F>),
+    Range(CRange),
     /// Groups
     G1(C::G1),
     G2(C::G2),
@@ -47,12 +48,12 @@ impl<C: ArkConfig> Value<C> {
             Value::Index(a) =>
                 match &other {
                     Value::Index(_) => *other.into_index_mut() += *a,
-                    Value::Scalar(_) => C::FOps::add(&(*a).into(), other.into_scalar_mut()),
+                    Value::Scalar(_) => C::FOps::add(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::Scalar(a) =>
                 match &other {
-                    Value::Index(b) => C::FOps::add(a, &mut (*b).into()),
+                    Value::Index(b) => C::FOps::add(a, &mut C::FOps::from_usize(*b)),
                     Value::Scalar(_) => C::FOps::add(a, other.into_scalar_mut()),
                     _ => panic!("Expected scalar, found {}", other)
                 },
@@ -70,19 +71,32 @@ impl<C: ArkConfig> Value<C> {
             // The same but for vectors (scalars)
             Value::VecIndex(vs) =>
                 match &other {
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_index_mut().par_iter_mut())
                         .for_each(|(a, b)| *b += *a),
                     Value::VecScalar(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::add(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::FOps::add(&C::FOps::from_usize(*a), b)),
+                    _ => panic!("Expected vec index, found {}", other)
+                },
+            Value::Range(r) =>
+                match &other {
+                    Value::Range(_) => *other.into_range_mut() += *r,
+                    Value::VecIndex(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_index_mut().iter_mut())
+                        .for_each(|(a, b)| *b += a),
+                    Value::VecScalar(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)| C::FOps::add(&C::FOps::from_usize(a), b)),
                     _ => panic!("Expected vec index, found {}", other)
                 },
             Value::VecScalar(vs) =>
                 match &other {
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::add(a, b)),
@@ -127,12 +141,12 @@ impl<C: ArkConfig> Value<C> {
             Value::Index(a) =>
                 match &other {
                     Value::Index(b) => *other.into_index_mut() = *a - *b,
-                    Value::Scalar(_) => C::FOps::sub(&(*a).into(), other.into_scalar_mut()),
+                    Value::Scalar(_) => C::FOps::sub(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                     _ => panic!("Expected scalar, found {}", other)
                 },
             Value::Scalar(a) =>
                 match &other {
-                    Value::Index(b) => C::FOps::sub(a, &mut (*b).into()),
+                    Value::Index(b) => C::FOps::sub(a, &mut C::FOps::from_usize(*b)),
                     Value::Scalar(_) => C::FOps::sub(a, other.into_scalar_mut()),
                     _ => panic!("Expected scalar, found {}", other)
                 },
@@ -150,19 +164,32 @@ impl<C: ArkConfig> Value<C> {
             // The same but for vectors (scalars)
             Value::VecIndex(vs) =>
                 match &other {
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_index_mut() .par_iter_mut())
                         .for_each(|(a, b)| *b = *a - *b),
                     Value::VecScalar(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::sub(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::FOps::sub(&C::FOps::from_usize(*a), b)),
+                    _ => panic!("Expected vec index, found {}", other)
+                },
+            Value::Range(r) =>
+                match &other {
+                    Value::Range(_) => *other.into_range_mut() -= *r,
+                    Value::VecIndex(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_index_mut().iter_mut())
+                        .for_each(|(a, b)| *b -= a),
+                    Value::VecScalar(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)| C::FOps::sub(&C::FOps::from_usize(a), b)),
                     _ => panic!("Expected vec index, found {}", other)
                 },
             Value::VecScalar(vs) =>
                 match &other {
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         vs.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::sub(a, b)),
@@ -210,36 +237,36 @@ impl<C: ArkConfig> Value<C> {
                     // Index * Index = Index
                     Value::Index(_) => *other.into_index_mut() *= *a,
                     // Index * whatever, cast index to scalar
-                    Value::Scalar(_) => C::FOps::mul(&(*a).into(), other.into_scalar_mut()),
+                    Value::Scalar(_) => C::FOps::mul(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                     // Index * groups
                     Value::G1(_) | Value::G1Affine(_) => {
                         let group = other.into_g1_mut();
-                        C::G1Ops::mul(&(*a).into(), group);
+                        C::G1Ops::mul(&C::FOps::from_usize(*a), group);
                     },
                     Value::G2(_) | Value::G2Affine(_) => {
                         let group = other.into_g2_mut();
-                        C::G2Ops::mul(&(*a).into(), group);
+                        C::G2Ops::mul(&C::FOps::from_usize(*a), group);
                     },
                     Value::GT(_) => {
                         let group = other.into_gt_mut();
-                        C::POps::mul(&(*a).into(), group);
+                        C::POps::mul(&C::FOps::from_usize(*a), group);
                     },
                     // Index * Vectors
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         other.into_vec_index_mut().par_iter_mut()
                         .for_each(|b| *b *= *a),
                     Value::VecScalar(_) =>
                         other.into_vec_scalar_mut().par_iter_mut()
-                        .for_each(|b| C::FOps::mul(&(*a).into(), b)),
+                        .for_each(|b| C::FOps::mul(&C::FOps::from_usize(*a), b)),
                     Value::VecG1(_) | Value::VecG1Affine(_) =>
                         other.into_vec_g1_mut().par_iter_mut()
-                        .for_each(|b| C::G1Ops::mul(&(*a).into(), b)),
+                        .for_each(|b| C::G1Ops::mul(&C::FOps::from_usize(*a), b)),
                     Value::VecG2(_) | Value::VecG2Affine(_) =>
                         other.into_vec_g2_mut().par_iter_mut()
-                        .for_each(|b| C::G2Ops::mul(&(*a).into(), b)),
+                        .for_each(|b| C::G2Ops::mul(&C::FOps::from_usize(*a), b)),
                     Value::VecGT(_) =>
                         other.into_vec_gt_mut().par_iter_mut()
-                        .for_each(|b| C::POps::mul(&(*a).into(), b)),
+                        .for_each(|b| C::POps::mul(&C::FOps::from_usize(*a), b)),
                     Value::Vec(_) =>
                         other.into_vec_mut().par_iter_mut()
                         .for_each(|b| self.value_mul(b)),
@@ -248,7 +275,7 @@ impl<C: ArkConfig> Value<C> {
                 match &other {
                     Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
                     // Scalar * index, cast index to Scalar
-                    Value::Index(b) => C::FOps::mul(a, &mut (*b).into()),
+                    Value::Index(b) => C::FOps::mul(a, &mut C::FOps::from_usize(*b)),
                     // Scalar * Scalar = Scalar
                     Value::Scalar(_) => C::FOps::mul(a, other.into_scalar_mut()),
                     // Index * groups
@@ -265,7 +292,7 @@ impl<C: ArkConfig> Value<C> {
                         C::POps::mul(a, group);
                     },
                     // Scalar * Vector
-                    Value::VecIndex(_) | Value::VecScalar(_) =>
+                    Value::VecIndex(_) | Value::VecScalar(_) | Value::Range(_) =>
                         other.into_vec_scalar_mut().par_iter_mut()
                         .for_each(|b| C::FOps::mul(a, b)),
                     Value::VecG1(_) | Value::VecG1Affine(_) =>
@@ -342,7 +369,7 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::GT(group.remove(0));
                     },
                     // GT * Vec<Index>
-                    Value::VecIndex(_) | Value::VecScalar(_) => {
+                     Value::VecIndex(_) | Value::VecScalar(_) => {
                         let vr = other.into_vec_scalar_mut();
                         *other = Value::VecGT(C::POps::vec_mul(a, vr))
                     },
@@ -351,6 +378,67 @@ impl<C: ArkConfig> Value<C> {
                         other.into_vec_mut().par_iter_mut()
                         .for_each(|b| self.value_mul(b)),
                     _ => panic!("Expected scalar, found {}", other)
+                },
+            Value::Range(r) =>
+                match &other {
+                    Value::Bool(_) | Value::VecBool(_) => panic!("Cannot multiply bools {} * {}", self, other),
+                    Value::Range(_) => *other.into_range_mut() *= *r,
+                    // Range * Index
+                    Value::Index(i) =>
+                        *other = Value::VecIndex(r.into_iter().map(|a| a * *i).collect()),
+                    // Vec<Index> * Scalar
+                    Value::Scalar(_) => {
+                        *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(r.len()).collect::<Vec<_>>());
+                        r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::FOps::mul(&C::FOps::from_usize(a), b))
+                    },
+                    // Vec<index> * Group1
+                    Value::G1(_) | Value::G1Affine(_) =>
+                        *other = Value::VecG1Affine(C::G1Ops::vec_mul(&*other.into_g1_mut(),
+                                &r.into_iter().map(C::FOps::from_usize).collect::<Vec<_>>())),
+                    // Vec<index> * G2
+                    Value::G2(_) | Value::G2Affine(_) =>
+                        *other = Value::VecG2Affine(C::G2Ops::vec_mul(&*other.into_g2_mut(),
+                                &r.into_iter().map(C::FOps::from_usize).collect::<Vec<_>>())),
+                    // Vec<index> * GT
+                    Value::GT(g) =>
+                        *other = Value::VecGT(C::POps::vec_mul(g, &r.into_iter().map(C::FOps::from_usize).collect::<Vec<_>>())),
+                    // Vec<Index> * Vec<Index> = Vec<Index>
+                    Value::VecIndex(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_index_mut().iter_mut())
+                        .for_each(|(a, b)| *b *= a),
+                    // Vec<Index> * Vec<Scalar> = Vec<Scalar>
+                    Value::VecScalar(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::FOps::mul(&C::FOps::from_usize(a), b)),
+                    // Vec<Index> * Vec<Group1> = Vec<Group1>
+                    Value::VecG1(_) | Value::VecG1Affine(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_g1_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::G1Ops::mul(&C::FOps::from_usize(a), b)),
+                    // Vec<Index> * Vec<G2> = Vec<G2>
+                    Value::VecG2(_) | Value::VecG2Affine(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_g2_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::G2Ops::mul(&C::FOps::from_usize(a), b)),
+                    // Vec<Index> * Vec<GT> = Vec<GT>
+                    Value::VecGT(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_gt_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::POps::mul(&C::FOps::from_usize(a), b)),
+                    // Vec<Index> * Vec<T>
+                    Value::Vec(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_mut().iter_mut())
+                        .for_each(|(a, b)| Value::Index(a).value_mul(b)),
                 },
             Value::VecIndex(v) =>
                 match &other {
@@ -363,21 +451,22 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::mul(&(*a).into(), b))
+                        .for_each(|(a, b)| C::FOps::mul(&C::FOps::from_usize(*a), b))
                     },
                     // Vec<index> * Group1
                     Value::G1(_) | Value::G1Affine(_) =>
                         *other = Value::VecG1Affine(C::G1Ops::vec_mul(&*other.into_g1_mut(),
-                                &v.par_iter().map(|a| (*a).into()).collect::<Vec<_>>())),
+                                &v.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>())),
                     // Vec<index> * G2
                     Value::G2(_) | Value::G2Affine(_) =>
                         *other = Value::VecG2Affine(C::G2Ops::vec_mul(&*other.into_g2_mut(),
-                                &v.par_iter().map(|a| (*a).into()).collect::<Vec<_>>())),
+                                &v.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>())),
                     // Vec<index> * GT
                     Value::GT(g) =>
-                        *other = Value::VecGT(C::POps::vec_mul(g, &v.par_iter().map(|a| (*a).into()).collect::<Vec<_>>())),
+                        *other = Value::VecGT(C::POps::vec_mul(g, &v.par_iter()
+                                .map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>())),
                     // Vec<Index> * Vec<Index> = Vec<Index>
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         v.par_iter()
                         .zip(other.into_vec_index_mut().par_iter_mut())
                         .for_each(|(a, b)| *b *= *a),
@@ -385,22 +474,23 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecScalar(_) =>
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::mul(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::FOps::mul(&C::FOps::from_usize(*a), b)),
                     // Vec<Index> * Vec<Group1> = Vec<Group1>
                     Value::VecG1(_) | Value::VecG1Affine(_) =>
                         v.par_iter()
                         .zip(other.into_vec_g1_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::G1Ops::mul(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::G1Ops::mul(&C::FOps::from_usize(*a), b)),
                     // Vec<Index> * Vec<G2> = Vec<G2>
                     Value::VecG2(_) | Value::VecG2Affine(_) =>
                         v.par_iter()
                         .zip(other.into_vec_g2_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::G2Ops::mul(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::G2Ops::mul(&C::FOps::from_usize(*a), b)),
                     // Vec<Index> * Vec<GT> = Vec<GT>
                     Value::VecGT(_) =>
                         v.par_iter()
                         .zip(other.into_vec_gt_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::POps::mul(&(*a).into(), b)),
+                        .for_each(|(a, b)|
+                            C::POps::mul(&C::FOps::from_usize(*a), b)),
                     // Vec<Index> * Vec<T>
                     Value::Vec(_) =>
                         v.par_iter()
@@ -414,7 +504,7 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::mul(&(*a).into(), b))
+                        .for_each(|(a, b)| *b *= a)
                     },
                     // Vec<Scalar> * Group1
                     Value::G1(g) =>
@@ -426,7 +516,7 @@ impl<C: ArkConfig> Value<C> {
                     Value::GT(g) =>
                         *other = Value::VecGT(C::POps::vec_mul(g, v)),
                     // Vec<Scalar> * Vec<Scalar> = Vec<Scalar>
-                    Value::VecIndex(_) =>
+                    Value::VecIndex(_) | Value::Range(_) =>
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b)),
@@ -477,7 +567,7 @@ impl<C: ArkConfig> Value<C> {
                             }).collect());
                     },
                     // Vec<Group1> * Vec<Index>
-                    Value::VecIndex(_) | Value::VecScalar(_) => {
+                    Value::VecIndex(_) | Value::VecScalar(_) | Value::Range(_) => {
                         // TODO: There has to be a better way to do this...
                         let vl = &*other.into_vec_scalar_mut();
                         let mut vr = v.clone();
@@ -515,7 +605,7 @@ impl<C: ArkConfig> Value<C> {
                             }).collect());
                     },
                     // Vec<G2> * Vec<Index>
-                    Value::VecIndex(_) | Value::VecScalar(_) => {
+                    Value::VecIndex(_) | Value::VecScalar(_) | Value::Range(_) => {
                         // TODO: There has to be a better way to do this...
                         let vl = &*other.into_vec_scalar_mut();
                         let mut vr = v.clone();
@@ -582,14 +672,14 @@ impl<C: ArkConfig> Value<C> {
                     // Index / Index = Index
                     Value::Index(_) => *other.into_index_mut() /= *a,
                     // Index / whatever, cast index to scalar
-                    Value::Scalar(_) => C::FOps::div(&(*a).into(), other.into_scalar_mut()),
+                    Value::Scalar(_) => C::FOps::div(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                     // Index / Vectors
                     Value::VecIndex(_) =>
                         other.into_vec_index_mut().par_iter_mut()
                         .for_each(|b| *b /= *a),
                     Value::VecScalar(_) =>
                         other.into_vec_scalar_mut().par_iter_mut()
-                        .for_each(|b| C::FOps::div(&(*a).into(), b)),
+                        .for_each(|b| C::FOps::div(&C::FOps::from_usize(*a), b)),
                     Value::Vec(_) =>
                         other.into_vec_mut().par_iter_mut()
                         .for_each(|b| self.value_div(b)),
@@ -598,7 +688,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Scalar(a) =>
                 match &other {
                     // Scalar / index, cast index to Scalar
-                    Value::Index(b) => C::FOps::div(a, &mut (*b).into()),
+                    Value::Index(b) => C::FOps::div(a, &mut C::FOps::from_usize(*b)),
                     // Scalar / Scalar = Scalar
                     Value::Scalar(_) => C::FOps::div(a, other.into_scalar_mut()),
                     // Scalar / Vector
@@ -691,7 +781,7 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(v.len()).collect::<Vec<_>>());
                          v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::div(&(*a).into(), b));
+                        .for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b));
                     },
                     // Vec<Index> / Vec<Index> = Vec<Index>
                     Value::VecIndex(_) =>
@@ -702,12 +792,45 @@ impl<C: ArkConfig> Value<C> {
                     Value::VecScalar(_) =>
                         v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
-                        .for_each(|(a, b)| C::FOps::div(&(*a).into(), b)),
+                        .for_each(|(a, b)| C::FOps::div(&C::FOps::from_usize(*a), b)),
                     // Vec<Index> * Vec<T>
                     Value::Vec(_) =>
                         v.par_iter()
                         .zip(other.into_vec_mut().par_iter_mut())
                         .for_each(|(a, b)| Value::Index(*a).value_div(b)),
+
+                    _ => panic!("Expected vec index, found {}", other)
+                },
+            Value::Range(r) =>
+                match &other {
+                    // Vec<Index> / Index
+                    Value::Index(i) =>
+                        *other = Value::VecIndex(r.into_iter().map(|a| a / *i).collect()),
+                    Value::Range(_) => *other.into_range_mut() /= *r,
+                    // Vec<Index> / Scalar
+                    Value::Scalar(_) => {
+                        *other = Value::VecScalar(std::iter::repeat(other.into_scalar()).take(r.len()).collect::<Vec<_>>());
+                         r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::FOps::div(&C::FOps::from_usize(a), b));
+                    },
+                    // Vec<Index> / Vec<Index> = Vec<Index>
+                    Value::VecIndex(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_index_mut().iter_mut())
+                        .for_each(|(a, b)| *b /= a),
+                    // Vec<Index> * Vec<Scalar> = Vec<Scalar>
+                    Value::VecScalar(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_scalar_mut().iter_mut())
+                        .for_each(|(a, b)|
+                            C::FOps::div(&C::FOps::from_usize(a), b)),
+                    // Vec<Index> * Vec<T>
+                    Value::Vec(_) =>
+                        r.into_iter()
+                        .zip(other.into_vec_mut().iter_mut())
+                        .for_each(|(a, b)| Value::Index(a).value_div(b)),
 
                     _ => panic!("Expected vec index, found {}", other)
                 },
@@ -848,6 +971,10 @@ impl<C: ArkConfig> Value<C> {
         match (self, &other) {
             (Value::Index(a), Value::Index(b)) =>
                 *other.into_index_mut() = *a % *b,
+            (Value::Range(a), Value::Index(x)) =>
+                *other = Value::VecIndex(a.into_iter().map(|a| a % *x).collect()),
+            (Value::Range(a), Value::Range(b)) =>
+                *other.into_range_mut() = *a % *b,
             (Value::Index(i), Value::VecIndex(_)) => {
                 other.into_vec_index_mut()
                     .par_iter_mut().for_each(|v| *v %= *i);
@@ -870,7 +997,7 @@ impl<C: ArkConfig> Value<C> {
     /// Value exponentiation, saves result in other
     pub fn value_pow(&self, other: &mut Self) {
         #[inline]
-        fn pow64(a: u64, i: u64) -> u64 {
+        fn pow64(a: usize, i: usize) -> usize {
             let mut i = i;
             let mut exp = a;
             while i % 2 == 0 {
@@ -890,7 +1017,7 @@ impl<C: ArkConfig> Value<C> {
             // Scalar ^ Index
             (Value::Scalar(a), Value::Index(i)) => {
                 let mut a = a.clone();
-                C::FOps::pow(&mut a, *i);
+                C::FOps::pow(&mut a, *i as u64);
                 *other = Value::Scalar(a);
             },
             // Vec<Index> ^ Index
@@ -902,7 +1029,7 @@ impl<C: ArkConfig> Value<C> {
             // Vec<Scalar> ^ Index
             (Value::VecScalar(vs), Value::Index(i)) => {
                 let mut vs = vs.clone();
-                vs.par_iter_mut().for_each(|v| C::FOps::pow(v, *i));
+                vs.par_iter_mut().for_each(|v| C::FOps::pow(v, *i as u64));
                 *other = Value::VecScalar(vs);
             },
             // Vec<Index> ^ Vec<Index> = Vec<Index>
@@ -931,17 +1058,17 @@ impl<C: ArkConfig> Value<C> {
         match (&self, &other) {
             (Value::VecIndex(a), Value::VecG1Affine(b))
             | (Value::VecG1Affine(b), Value::VecIndex(a)) => {
-                let vf: Vec<C::F> = a.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vf: Vec<C::F> = a.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>();
                 *other = Value::G1(C::G1Ops::vec_dot(b, &vf));
             },
             (Value::VecIndex(a), Value::VecG2Affine(b))
             | (Value::VecG2Affine(b), Value::VecIndex(a)) => {
-                let vf: Vec<C::F> = a.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vf: Vec<C::F> = a.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>();
                 *other = Value::G2(C::G2Ops::vec_dot(b, &vf));
             },
             (Value::VecIndex(a), Value::VecGT(b))
             | (Value::VecGT(b), Value::VecIndex(a)) => {
-                let vf: Vec<C::F> = a.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vf: Vec<C::F> = a.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>();
                 *other = Value::GT(C::POps::vec_dot(b, &vf));
             },
             (Value::VecScalar(a), Value::VecG1Affine(b))
@@ -979,7 +1106,7 @@ impl<C: ArkConfig> Value<C> {
                     .map(|(a, b)| *a * *b)
                     .sum()),
             (Value::VecIndex(v), _) => {
-                let vl = v.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vl = v.par_iter().map(|a| C::FOps::from_usize(*a)).collect::<Vec<_>>();
                 Self::value_dot(&Value::VecScalar(vl), other);
             },
             (Value::VecScalar(v), _) => {
@@ -1048,7 +1175,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     #[inline]
-    pub fn value_not(&self) -> Self {
+    pub fn not(&self) -> Self {
         match self {
             Value::Bool(a) => Value::Bool(!*a),
             Value::VecBool(a) => Value::VecBool(a.iter().map(|a| !*a).collect()),
@@ -1058,22 +1185,22 @@ impl<C: ArkConfig> Value<C> {
 
     /// Value equality
     #[inline]
-    pub fn value_equ(a: &Self, other: &Self) -> bool {
+    pub fn equ(a: &Self, other: &Self) -> bool {
         match (a, other) {
             (Value::Bool(a), Value::Bool(b)) => *a == *b,
             (Value::VecBool(a), Value::VecBool(b)) => a == b,
             (Value::Index(a), Value::Index(b)) => *a == *b,
             (Value::Scalar(a), Value::Scalar(b)) => a == b,
-            (Value::Scalar(a), Value::Index(b)) => *a == (*b).into(),
-            (Value::Index(a), Value::Scalar(b)) => <u64 as Into<C::F>>::into(*a) == *b,
+            (Value::Scalar(a), Value::Index(b)) => *a == C::FOps::from_usize(*b),
+            (Value::Index(a), Value::Scalar(b)) => C::FOps::from_usize(*a) == *b,
             (Value::VecIndex(a), Value::VecIndex(b)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| *a == *b),
             (Value::VecScalar(a), Value::VecScalar(b)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| *a == *b),
             (Value::VecIndex(a), Value::VecScalar(b)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| <u64 as Into<C::F>>::into(*a) == *b),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| C::FOps::from_usize(*a) == *b),
             (Value::VecScalar(a), Value::VecIndex(b)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| <u64 as Into<C::F>>::into(*b) == *a),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| C::FOps::from_usize(*b) == *a),
             (Value::G1(a), Value::G1(b)) => a == b,
             (Value::G2(a), Value::G2(b)) => a == b,
             (Value::GT(a), Value::GT(b)) => a == b,
@@ -1094,34 +1221,38 @@ impl<C: ArkConfig> Value<C> {
             | (Value::VecG2Affine(b), Value::VecG2(a)) =>
                 a.par_iter().zip(b.par_iter()).all(|(a, b)| &a.into_affine() == b),
             (Value::Vec(a), Value::Vec(b)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, b)),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, b)),
             (Value::Vec(a), Value::VecScalar(b))
             | (Value::VecScalar(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::Scalar(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::Scalar(*b))),
             (Value::Vec(a), Value::VecIndex(b))
             | (Value::VecIndex(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::Index(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::Index(*b))),
             (Value::Vec(a), Value::VecG1(b))
             | (Value::VecG1(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G1(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::G1(*b))),
             (Value::Vec(a), Value::VecG2(b))
             | (Value::VecG2(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G2(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::G2(*b))),
             (Value::Vec(a), Value::VecGT(b))
             | (Value::VecGT(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::GT(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::GT(*b))),
             (Value::Vec(a), Value::VecG1Affine(b))
             | (Value::VecG1Affine(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G1Affine(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::G1Affine(*b))),
             (Value::Vec(a), Value::VecG2Affine(b))
             | (Value::VecG2Affine(b), Value::Vec(a)) =>
-                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::value_equ(a, &Value::G2Affine(*b))),
+                a.par_iter().zip(b.par_iter()).all(|(a, b)| Value::equ(a, &Value::G2Affine(*b))),
             (a, b) => panic!("Cannot compare {} == {}", a, b)
         }
     }
 
+    pub fn value_equ(&self, other: &Self) -> Self {
+        Value::Bool(Value::equ(self, other))
+    }
+
     /// TODO: How do I sample the hasher state?
-    pub fn value_challenge<H: Hasher>(typ: &ATyp, h: &mut H) -> Self {
+    pub fn challenge<H: Hasher>(typ: &ATyp, h: &mut H) -> Self {
         // TODO: Use spongefish to hash and generate challenges
         unimplemented!();
     }
@@ -1129,39 +1260,47 @@ impl<C: ArkConfig> Value<C> {
     pub fn ram(self, r: Self) -> Self {
         match (self, r) {
             (Value::VecIndex(a), Value::VecIndex(b)) =>
-                Value::VecIndex(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecIndex(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::Range(a), Value::Range(b)) =>
+                Value::Range(a.compose(&b)),
+            (Value::Range(a), Value::Index(b)) =>
+                Value::Index(a.compose_index(b)),
+            (Value::Range(a), Value::VecIndex(b)) =>
+                Value::VecIndex(b.par_iter().map(|i| a.compose_index(*i)).collect()),
+            (Value::VecIndex(a), Value::Range(b)) =>
+                Value::VecIndex(b.into_iter().map(|i| a[i]).collect()),
             (Value::VecIndex(a), Value::Index(b)) =>
-                Value::Index(a[b as usize].clone()),
+                Value::Index(a[b].clone()),
             (Value::VecScalar(a), Value::VecIndex(b)) =>
-                Value::VecScalar(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecScalar(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecScalar(a), Value::Index(b)) =>
-                Value::Scalar(a[b as usize].clone()),
+                Value::Scalar(a[b].clone()),
             (Value::VecG1(a), Value::VecIndex(b)) =>
-                Value::VecG1(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecG1(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecG1(a), Value::Index(b)) =>
-                Value::G1(a[b as usize].clone()),
+                Value::G1(a[b].clone()),
             (Value::VecG2(a), Value::VecIndex(b)) =>
-                Value::VecG2(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecG2(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecG2(a), Value::Index(b)) =>
-                Value::G2(a[b as usize].clone()),
+                Value::G2(a[b].clone()),
             (Value::VecGT(a), Value::VecIndex(b)) =>
-                Value::VecGT(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecGT(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecGT(a), Value::Index(b)) =>
-                Value::GT(a[b as usize].clone()),
+                Value::GT(a[b].clone()),
             (Value::VecG1Affine(a), Value::VecIndex(b)) =>
-                Value::VecG1Affine(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecG1Affine(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecG1Affine(a), Value::Index(b)) =>
-                Value::G1Affine(a[b as usize].clone()),
+                Value::G1Affine(a[b].clone()),
             (Value::VecG2Affine(a), Value::VecIndex(b)) =>
-                Value::VecG2Affine(b.par_iter().map(|i| a[*i as usize]).collect()),
+                Value::VecG2Affine(b.par_iter().map(|i| a[*i]).collect()),
             (Value::VecG2Affine(a), Value::Index(b)) =>
-                Value::G2Affine(a[b as usize].clone()),
+                Value::G2Affine(a[b].clone()),
             (Value::Vec(a), Value::VecIndex(b)) =>
-                Value::Vec(b.par_iter().map(|i| a[*i as usize].clone()).collect()),
+                Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect()),
             (Value::Vec(a), Value::Index(b)) =>
-                a[b as usize].clone(),
+                a[b].clone(),
             (Value::Vec(a), Value::Vec(b)) =>
-                Value::Vec(b.par_iter().map(|i| a[i.into_index() as usize].clone()).collect()),
+                Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect()),
             (a, b) => panic!("Cannot do {}[{}]", a, b)
 
         }
@@ -1204,11 +1343,76 @@ impl<C: ArkConfig> Value<C> {
                 a.append(r.into_vec_bool_mut());
                 *r = Value::VecBool(a);
             },
-            Value::VecIndex(a) => {
-                let mut a = a.clone();
-                a.append(r.into_vec_index_mut());
-                *r = Value::VecIndex(a);
-            },
+            Value::Range(a) =>
+                match &r {
+                    Value::Range(b) =>
+                        if let Some(x) = a.concat(b) {
+                            *r = Value::Range(x);
+                        } else {
+                            let mut v = Vec::with_capacity(a.len() + b.len());
+                            a.into_iter().for_each(|a| v.push(a));
+                            b.into_iter().for_each(|b| v.push(b));
+                            *r = Value::VecIndex(v);
+                        },
+                    Value::VecIndex(vs) => {
+                        let mut v = Vec::with_capacity(a.len() + vs.len());
+                        a.into_iter().for_each(|a| v.push(a));
+                        vs.iter().for_each(|b| v.push(*b));
+                        *r = Value::VecIndex(v);
+                    },
+                    Value::Index(b) if &a.end == b =>
+                        *r = Value::Range(CRange { start: a.start, step: a.step, end: a.end + 1 }),
+                    Value::Index(b) =>
+                        *r = Value::VecIndex(a.into_iter().chain(std::iter::once(*b)).collect()),
+                    Value::Vec(v) => {
+                        let mut x = Vec::with_capacity(a.len() + v.len());
+                        a.into_iter().for_each(|a| x.push(Value::Index(a)));
+                        x.extend(v.clone());
+                        *r = Value::Vec(x)
+                    },
+                    Value::Scalar(b) =>
+                        *r = Value::VecScalar(a.into_iter().map(C::FOps::from_usize).chain(std::iter::once(*b)).collect()),
+                    Value::VecScalar(b) => {
+                        let mut x = Vec::with_capacity(a.len() + b.len());
+                        a.into_iter().for_each(|a| x.push(C::FOps::from_usize(a)));
+                        x.extend(b);
+                        *r = Value::VecScalar(x)
+                    },
+                    _ => panic!("Expected range, found {}", r)
+                },
+            Value::VecIndex(a) =>
+                match &r {
+                    Value::Range(b) => {
+                            let mut v = Vec::with_capacity(a.len() + b.len());
+                            a.into_iter().for_each(|a| v.push(*a));
+                            b.into_iter().for_each(|b| v.push(b));
+                            *r = Value::VecIndex(v);
+                    },
+                    Value::VecIndex(vs) => {
+                        let mut v = Vec::with_capacity(a.len() + vs.len());
+                        a.iter().for_each(|a| v.push(*a));
+                        vs.iter().for_each(|b| v.push(*b));
+                        *r = Value::VecIndex(v);
+                    },
+                    Value::Index(b) =>
+                        *r = Value::VecIndex(a.iter().map(|a| *a).chain(std::iter::once(*b)).collect()),
+                    Value::Vec(v) => {
+                        let mut x = Vec::with_capacity(a.len() + v.len());
+                        a.iter().for_each(|a| x.push(Value::Index(*a)));
+                        x.extend(v.clone());
+                        *r = Value::Vec(x)
+                    },
+                    Value::Scalar(b) =>
+                        *r = Value::VecScalar(a.iter().map(|a| C::FOps::from_usize(*a))
+                            .chain(std::iter::once(*b)).collect()),
+                    Value::VecScalar(b) => {
+                        let mut x = Vec::with_capacity(a.len() + b.len());
+                        a.iter().for_each(|a| x.push(C::FOps::from_usize(*a)));
+                        x.extend(b);
+                        *r = Value::VecScalar(x)
+                    },
+                    _ => panic!("Expected vec index, found {}", r)
+                },
             Value::Scalar(a) => {
                 let mut a = vec![*a];
                 a.append(r.into_vec_scalar_mut());
@@ -1309,18 +1513,18 @@ impl<C: ArkConfig> Value<C> {
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
             ATyp::Bool => Value::Bool(rng.next_u32() % 2 == 0),
-            ATyp::Fin(r) => Value::Index(r.random(rng) as u64),
+            ATyp::Fin(r) => Value::Index(r.random(rng) as usize),
             ATyp::Scalar => Value::Scalar(C::FOps::rand(rng)),
             ATyp::G1 => Value::G1(C::G1Ops::rand(rng)),
             ATyp::G2 => Value::G2(C::G2Ops::rand(rng)),
             ATyp::G1Affine => Value::G1Affine(C::G1Ops::rand(rng).into_affine()),
             ATyp::G2Affine => Value::G2Affine(C::G2Ops::rand(rng).into_affine()),
             ATyp::GT => Value::GT(C::POps::rand(rng)),
-            ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as u64).collect()),
-            ATyp::Vec(box ATyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n as usize)),
-            ATyp::Vec(box ATyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n as usize)),
+            ATyp::Vec(box ATyp::Fin(r), n) => Value::VecIndex((0..*n).map(|_| r.random(rng) as usize).collect()),
+            ATyp::Vec(box ATyp::Scalar, n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::G1, n) => Value::VecG1(C::G1Ops::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::G2, n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
+            ATyp::Vec(box ATyp::GT, n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box ATyp::G1Affine, n) =>
                 Value::VecG1Affine(C::G1Ops::vec_rand(rng, *n).into_iter().map(|a| a.into()).collect()),
             ATyp::Vec(box ATyp::G2Affine, n) =>
@@ -1333,13 +1537,14 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Bool(_) => ATyp::Bool,
             Value::VecBool(v) => ATyp::Vec(Box::new(ATyp::Bool), v.len()),
-            Value::Index(n) => ATyp::Fin(Range::singleton(*n as usize)),
+            Value::Index(n) => ATyp::Fin(CRange::singleton(*n)),
             Value::Scalar(_) => ATyp::Scalar,
             Value::G1(_) => ATyp::G1,
             Value::G2(_) => ATyp::G2,
             Value::G1Affine(_) => ATyp::G1,
             Value::G2Affine(_) => ATyp::G2,
             Value::GT(_) => ATyp::GT,
+            Value::Range(r) => ATyp::Vec(Box::new(ATyp::Fin(r.clone())), r.len()),
             Value::VecScalar(v) => ATyp::vec(&ATyp::Scalar, v.len()),
             Value::VecG1(v) => ATyp::vec(&ATyp::G1, v.len()),
             Value::VecG2(v) => ATyp::vec(&ATyp::G2, v.len()),
@@ -1347,9 +1552,9 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2Affine(v) => ATyp::vec(&ATyp::G2Affine, v.len()),
             Value::VecGT(v) => ATyp::vec(&ATyp::GT, v.len()),
             Value::VecIndex(v) => {
-                let min = *v.iter().min().unwrap() as usize;
-                let max = *v.iter().max().unwrap() as usize;
-                ATyp::Vec(Box::new(ATyp::Fin(Range::new(min, max))), v.len())
+                let min = *v.iter().min().unwrap();
+                let max = *v.iter().max().unwrap();
+                ATyp::Vec(Box::new(ATyp::Fin(CRange::new(min, max + 1))), v.len())
             },
             Value::Vec(v) => {
                     let typ = v[0].typ();
@@ -1367,7 +1572,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn into_scalar(&self) -> C::F {
         match self {
             Value::Scalar(f) => *f,
-            Value::Index(i) => (*i).into(),
+            Value::Index(i) => C::FOps::from_usize(*i),
             _ => panic!("Expected scalar, found {}", self),
         }
     }
@@ -1375,7 +1580,7 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Scalar(f) => f,
             Value::Index(i) => {
-                *self = Value::Scalar((*i).into());
+                *self = Value::Scalar(C::FOps::from_usize(*i));
                 self.into_scalar_mut()
             },
             _ => panic!("Expected mut scalar, found {}", self),
@@ -1432,7 +1637,7 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::VecScalar(v) => v,
             Value::VecIndex(v) => {
-                *self = Value::VecScalar(v.par_iter().map(|i| (*i).into()).collect());
+                *self = Value::VecScalar(v.par_iter().map(|i| C::FOps::from_usize(*i)).collect());
                 self.into_vec_scalar_mut()
             },
             Value::Vec(v) => {
@@ -1531,25 +1736,31 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut vec bool, found {}", self),
         }
     }
-    pub fn into_vec_index_mut(&mut self) -> &mut Vec<u64> {
+    pub fn into_range_mut(&mut self) -> &mut CRange {
+        match self {
+            Value::Range(r) => r,
+            _ => panic!("Expected mut range, found {}", self),
+        }
+    }
+    pub fn into_vec_index_mut(&mut self) -> &mut Vec<usize> {
         match self {
             Value::VecIndex(v) => v,
             _ => panic!("Expected mut vec index, found {}", self),
         }
     }
-    pub fn into_vec_index(&self) -> &Vec<u64> {
+    pub fn into_vec_index(&self) -> &Vec<usize> {
         match self {
             Value::VecIndex(v) => v,
             _ => panic!("Expected vec index, found {}", self),
         }
     }
-    pub fn into_index(&self) -> u64 {
+    pub fn into_index(&self) -> usize {
         match self {
             Value::Index(i) => *i,
             _ => panic!("Expected index, found {}", self),
         }
     }
-    pub fn into_index_mut(&mut self) -> &mut u64 {
+    pub fn into_index_mut(&mut self) -> &mut usize {
         match self {
             Value::Index(i) => i,
             _ => panic!("Expected mut index, found {}", self),
@@ -1575,6 +1786,7 @@ impl<C: ArkConfig> Value<C> {
         match self {
             Value::Scalar(a) => a.is_zero(),
             Value::Index(a) => *a == 0,
+            Value::Range(r) => r.is_zero(),
             Value::Bool(a) => !*a,
             Value::G1(a) => a.is_zero(),
             Value::G2(a) => a.is_zero(),
@@ -1776,6 +1988,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             },
+            Value::Range(r) => write!(f, "{}", r),
             Value::Index(i) => write!(f, "{}", i),
             Value::Scalar(a) => C::FOps::write(a, f),
             Value::G1(a) => C::G1Ops::write(a, f),
@@ -1854,7 +2067,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
 
 // Commutativity of addition
 #[test]
-fn test_value_add_comm() {
+fn test_add_comm() {
     // Scalar + Scalar
     let mut rng = test_rng();
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
@@ -1882,13 +2095,13 @@ fn test_value_add_comm() {
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Index> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // Vec<Scalar> + Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
     assert_deq!(&a + &b, &b + &a);
 
     // G1 + G1Affine
@@ -1899,7 +2112,7 @@ fn test_value_add_comm() {
 
 // Commutativity of multiplication
 #[test]
-fn test_value_mul_comm() {
+fn test_mul_comm() {
     // Scalar * Scalar
     let mut rng = test_rng();
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Scalar);
@@ -1912,13 +2125,13 @@ fn test_value_mul_comm() {
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Index> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // Vec<Scalar> * Vec<Index>
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Scalar), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(Range::singleton(10))), 10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::Fin(CRange::singleton(10))), 10));
     assert_deq!(&a * &b, &b * &a);
 
     // G1 * G2

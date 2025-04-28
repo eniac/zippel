@@ -2,7 +2,7 @@ use crate::ast::BinOp;
 use crate::typ::{Kind, Nothing, CTyp, TypeVar};
 use crate::typ::range::{Range, RangeError};
 use crate::id::Tid;
-use share::Ctx;
+use share::{Ctx, log2};
 
 use std::fmt;
 use thiserror::Error;
@@ -57,6 +57,9 @@ impl LubError {
     pub fn dot<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Dot, a.to_string(), b.to_string())
     }
+    pub fn concat<K: fmt::Display>(a: &K, b: &K) -> Self {
+        LubError::Bin(BinOp::Concat, a.to_string(), b.to_string())
+    }
 }
 
 /// Instances of this trait can be added, muliplied, divided, exp'd and dot product'd together, generating constraints and type errors
@@ -70,6 +73,7 @@ pub trait Lub where Self: Sized {
     fn lub_pow(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
 }
 
 /// Least-upper bounds for [Range] overapproximate sets of integers
@@ -195,6 +199,24 @@ impl Lub for Range<usize> {
     fn lub_dot(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         Self::lub_mul(a, b, &Nothing)
             .map_err(|e| LubError::next(LubError::dot(&a, &b), e))
+    }
+
+    fn lub_concat(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
+        // Validate ranges
+        a.check().map_err(|e|
+                LubError::next(
+                    LubError::concat(&a, &b),
+                    LubError::bad_range(&a, e)))?;
+        b.check().map_err(|e|
+                LubError::next(
+                    LubError::concat(&a, &b),
+                    LubError::bad_range(&b, e)))?;
+
+        if let Some(c) = a.concat(b) {
+            return Ok(c);
+        } else {
+            return Err(LubError::concat(&a, &b));
+        }
     }
 }
 
@@ -331,6 +353,19 @@ impl Lub for Tid {
         Self::lub_mul(a, b, ctx)
             .map_err(|e|
                 LubError::next(LubError::dot(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)), e))
+    }
+
+    /// Least-upper-bound for Concatenation is always an error
+    fn lub_concat(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(a)
+            .ok_or(LubError::kind_not_found(&a))?;
+
+        let kb = ctx.get(b)
+            .ok_or(LubError::kind_not_found(&b))?;
+
+        match (ka, kb) {
+            (_, _) => Err(LubError::sub(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        }
     }
 }
 
@@ -641,6 +676,50 @@ impl Lub for CTyp {
                 },
             (a, b) => CTyp::lub_mul(a, b, ctx)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
+        }
+    }
+
+    fn lub_concat(ta: &Self, tb: &Self, kctx: &Self::Context) -> Result<Self, LubError> {
+        match (ta, tb) {
+            // Vec<A> ++ Vec<B> = Vec<C> if A = B = C
+            (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
+                // Type [a] and [b] should be the same ([t])
+                let t = CTyp::lub_equ(&a, &b, kctx)
+                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
+
+                // Add the sizes of the vectors
+                Ok(CTyp::vec(&t, x + y))
+            },
+            // Uni<A, n> ++ Vec<B, m> = Uni<C, n + m> if A = B = C
+            (CTyp::Uni(a, n), CTyp::Vec(box b, m))
+            | (CTyp::Vec(box b, m), CTyp::Uni(a, n)) => {
+                // Type [a] and [b] should be the same ([t])
+                CTyp::lub_equ(&CTyp::base(&a), &b, kctx)
+                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
+                // Add elements to the polynomial
+                Ok(CTyp::uni(&a, n + m))
+            },
+            (CTyp::Vec(box a, n), b)
+            | (b, CTyp::Vec(box a, n)) => {
+                // Type [a] and [b] should be the same ([t])
+                let t = CTyp::lub_equ(&a, &b, kctx)
+                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
+                // Add an element to the vector
+                Ok(CTyp::vec(&t, n + 1))
+            },
+            (CTyp::Mle(t1, n), CTyp::Mle(t2, m)) => {
+                // Type [t1] and [t2] should be the same ([t])
+                let t = Tid::lub_equ(&t1, &t2, kctx)
+                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
+                // Add the sizes of the MLEs and pad to the next power of two
+                let (l, r) = log2((1 << n) + (1 << m));
+                if r == 1 {
+                    Ok(CTyp::mle(&t, l))
+                } else {
+                    Ok(CTyp::mle(&t, l + 1))
+                }
+            },
+            (ta, tb) => Err(LubError::concat(&ta, &tb))
         }
     }
 }

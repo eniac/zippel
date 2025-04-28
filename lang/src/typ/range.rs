@@ -2,10 +2,11 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
+use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign};
 use rand::Rng;
 use thiserror::Error;
 
-use share::{Pretty, Traversal, DocAllocator, DocBuilder, BoxAllocator, Ctx};
+use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
 use crate::typ::Size;
 use crate::parser::*;
@@ -38,6 +39,18 @@ impl<N> ToTraversal1<N> for Range<N> {
             step: f(self.step)?,
             end: f(self.end)?
         })
+    }
+}
+
+impl Default for Range<Size> {
+    fn default() -> Self {
+        Range { start: Size::zero(), step: Size::one(), end: Size::one() }
+    }
+}
+
+impl Default for CRange {
+    fn default() -> Self {
+        Range { start: 0, step: 1, end: 1 }
     }
 }
 
@@ -82,6 +95,22 @@ impl CRange {
 
         // Check if the value aligns with the step
         (value - self.start) % self.step == 0
+    }
+
+    pub fn concat(&self, other: &CRange) -> Option<CRange> {
+        if self.step == other.step && self.end == other.start + 1 {
+            return Some(Range {
+                start: self.start,
+                step: self.step,
+                end: other.end
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.start == 0 && self.end <= self.step
     }
 
     pub fn len(&self) -> usize {
@@ -161,22 +190,6 @@ impl CRange {
         }
     }
 
-}
-
-pub struct RangeTraversal1<N>(std::marker::PhantomData<N>);
-impl<A, B> Traversal<A, B> for RangeTraversal1<A> {
-    type Domain = Range<A>;
-    type Codomain = Range<B>;
-    fn traverse<E>(
-        on: Self::Domain,
-        f: &mut dyn FnMut(A) -> Result<B, E>,
-    ) -> Result<Self::Codomain, E> {
-        Ok(Range {
-            start: f(on.start)?,
-            step: f(on.step)?,
-            end: f(on.end)?,
-        })
-    }
 }
 
 impl Iterator for CRange {
@@ -342,6 +355,43 @@ impl BitXor for CRange {
     }
 }
 
+impl AddAssign for CRange {
+    fn add_assign(&mut self, b: CRange) {
+        *self = *self + b;
+    }
+}
+
+impl SubAssign for CRange {
+    fn sub_assign(&mut self, b: CRange) {
+        *self = *self - b;
+    }
+}
+
+impl MulAssign for CRange {
+    fn mul_assign(&mut self, b: CRange) {
+        *self = *self * b;
+    }
+}
+
+impl DivAssign for CRange {
+    fn div_assign(&mut self, b: CRange) {
+        *self = *self / b;
+    }
+}
+
+impl RemAssign for CRange {
+    fn rem_assign(&mut self, b: CRange) {
+        *self = *self % b;
+    }
+}
+
+impl BitXorAssign for CRange {
+    fn bitxor_assign(&mut self, b: CRange) {
+        *self = *self ^ b;
+    }
+}
+
+
 /// Display instance calls the pretty printer
 impl<'a, N> fmt::Display for Range<N> where N: Pretty<'a, BoxAllocator, ()> + Clone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -391,6 +441,11 @@ impl<'pest> FromPest<'pest> for Range<Size> {
                 let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(Range { start, step: Size::one(), end })
+            },
+            Rule::size_ty => {
+                let mut inner = pair.into_inner();
+                let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                Ok(Range { start: Size::zero(), step: Size::one(), end })
             },
             _ => unreachable!()
         }

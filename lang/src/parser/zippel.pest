@@ -46,7 +46,7 @@ typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
     base_ty = { id }                                     // Base type variable
     uni_ty = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Univariate polynomial
     mle_ty = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Multilinear expression
-    fin_ty = { "Fin" ~ "<" ~ range ~ ">"  }              // Index type
+    fin_ty = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }  // Index type
     vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }         // Vector type
     bool_ty = { "Bool" }                                 // Boolean type
 

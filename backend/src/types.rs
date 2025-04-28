@@ -58,6 +58,20 @@ impl ATyp {
         matches!(self, ATyp::G1 | ATyp::G2 | ATyp::G1Affine | ATyp::G2Affine | ATyp::GT)
     }
 
+    pub fn into_inner(&self) -> ATyp {
+        match self {
+            ATyp::Vec(box t, _) => t.into_inner(),
+            ATyp::Fin(r) => ATyp::Fin(r.clone()),
+            ATyp::Bool => ATyp::Bool,
+            ATyp::Scalar => ATyp::Scalar,
+            ATyp::G1Affine => ATyp::G1Affine,
+            ATyp::G2Affine => ATyp::G2Affine,
+            ATyp::G1 => ATyp::G1,
+            ATyp::G2 => ATyp::G2,
+            ATyp::GT => ATyp::GT
+        }
+    }
+
     pub fn size(&self) -> usize {
         match self {
             ATyp::Bool => 1,
@@ -272,6 +286,22 @@ impl Lub for ATyp {
             },
             (a, b) => ATyp::lub_mul(a, b, ctx)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
+        }
+    }
+
+    fn lub_concat(x: &Self, y: &Self, _: &Self::Context) -> Result<Self, LubError> {
+        match (x, y) {
+            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) => {
+                let t = ATyp::lub_equ(t1, t2, &Nothing)
+                    .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1 + *n2))
+            },
+            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_equ(t1, b, &Nothing)
+                    .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1 + 1))
+            },
+            (a, b) => Err(LubError::concat(&a, &b))
         }
     }
 }

@@ -1,10 +1,10 @@
-use lang::ast::{BinOp, CSig};
+use lang::ast::BinOp;
 use lang::id::{Fid, Vid};
 use lang::typ::{Qualifier, Nothing};
 use share::Ctx;
 use share::traversal::ToTraversal2;
 
-use crate::Op;
+use crate::{Ref, GOp};
 use backend::{ATyp, ArkConfig};
 use std::fmt;
 
@@ -14,9 +14,9 @@ pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
     Inp(Fid, Ctx<Vid, (Qualifier, ATyp)>),
     /// A transcript transaction
-    Transcr(Op<C>, A),
+    Transcr(GOp<C>, A),
     /// Operation node
-    Op(Op<C>, A),
+    Op(GOp<C>, A),
 }
 
 /// A node in the DAG with no annotations
@@ -43,40 +43,55 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    pub fn into_op(self) -> GOp<C> {
+        match self {
+            Node::Op(op, _) => op,
+            Node::Transcr(op, _) => op,
+            _ => panic!("Cannot convert input to operation"),
+        }
+    }
+
+    pub fn into_ann(self) -> N {
+        match self {
+            Node::Op(_, ann) => ann,
+            Node::Transcr(_, ann) => ann,
+            _ => panic!("Cannot convert input to annotation"),
+        }
+    }
 }
 
 impl<C: ArkConfig> Node<C, Nothing> {
     pub fn inp(f: Fid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
         Node::Inp(f, sig)
     }
-    pub fn coef(op: &Op<C>) -> Self {
-        Node::Op(Op::coef(op.clone()), Nothing)
+    pub fn coef(op: &GOp<C>) -> Self {
+        Node::Op(GOp::coef(op.clone()), Nothing)
     }
-    pub fn eval(op: &Op<C>) -> Self {
-        Node::Op(Op::eval(op.clone()), Nothing)
+    pub fn eval(op: &GOp<C>) -> Self {
+        Node::Op(GOp::eval(op.clone()), Nothing)
     }
-    pub fn bin(op: BinOp, a: &Op<C>, b: &Op<C>, typ: &ATyp) -> Self {
-        Node::Op(Op::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
+    pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
+        Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
     }
     pub fn challenge(typ: &ATyp) -> Self {
-        Node::Transcr(Op::challenge(typ.clone()), Nothing)
+        Node::Transcr(GOp::challenge(typ.clone()), Nothing)
     }
     pub fn random(typ: &ATyp) -> Self {
-        Node::Op(Op::random(typ.clone()), Nothing)
+        Node::Op(GOp::random(typ.clone()), Nothing)
     }
     pub fn generator(typ: &ATyp) -> Self {
-        Node::Op(Op::generator(typ.clone()), Nothing)
+        Node::Op(GOp::generator(typ.clone()), Nothing)
     }
-    pub fn transcr(op: &Op<C>) -> Self {
+    pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(op.clone(), Nothing)
     }
-    pub fn assert(op: &Op<C>) -> Self {
-        Node::Op(Op::check(op.clone()), Nothing)
+    pub fn assert(op: &GOp<C>) -> Self {
+        Node::Op(GOp::check(op.clone()), Nothing)
     }
-    pub fn verify(op: &Op<C>) -> Self {
-        Node::Transcr(Op::check(op.clone()), Nothing)
+    pub fn verify(op: &GOp<C>) -> Self {
+        Node::Transcr(GOp::check(op.clone()), Nothing)
     }
-    pub fn ret(op: &Op<C>) -> Self {
+    pub fn ret(op: &GOp<C>) -> Self {
         Node::Op(op.clone(), Nothing)
     }
 
@@ -86,6 +101,14 @@ impl<C: ArkConfig> Node<C, Nothing> {
             Node::Transcr(op, _) => Node::Transcr(op.clone(), ann),
             Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone())
         }
+    }
+
+    pub fn is_underscore(&self) -> bool {
+        matches!(self, Node::Op(GOp::Ref(Ref::Node(_), _), _))
+    }
+
+    pub fn is_var(&self) -> bool {
+        matches!(self, Node::Op(GOp::Ref(Ref::Var(_, _), _), _))
     }
 }
 

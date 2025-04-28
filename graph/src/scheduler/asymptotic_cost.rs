@@ -100,8 +100,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     }
 }
 
-impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
-    fn cost(&self, op: &Op<C>, nthreads: usize) -> Cost {
+impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
+    fn cost(&self, op: &Op<C, R>, nthreads: usize) -> Cost {
         let mut cost = 0.0;
         match op {
             Op::Bin(op, box l, box r, _) => {
@@ -115,15 +115,12 @@ impl<C: ArkConfig> CostModel<C> for AsymptoticCost<C> {
                     (BinOp::And | BinOp::Or, lt, rt) => cost += Self::cost_bool(&lt, &rt, nthreads),
                     (BinOp::Pow, lt, rt) => cost += Self::cost_pow(&lt, &rt, nthreads),
                     (BinOp::Concat, _, _) => {},
-                    (_, _, _) => unreachable!(),
                 }
             },
             Op::Value(_)
             | Op::Gen(_)
-            | Op::Underscore(_, _)
-            | Op::Var(_, _, _)
+            | Op::Ref(_, _)
             | Op::Random(_) => cost += 1.0,
-            Op::Range(r) => cost += r.len() as f64 * Self::INT_ADD,
             Op::Ram(box l, box r) =>
                 cost += self.cost(l, nthreads).0 + self.cost(r, nthreads).0,
             Op::Vec(vs) =>

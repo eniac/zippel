@@ -21,6 +21,7 @@ symbolica = "0.16.0"
 log = "0.4.27"
 good_lp = { version = "1.13.0", features = ["lp-solvers", ], default-features = false}
 grb = { version = "3.0.1", features = ["gurobi12"], default-features = false }
+itertools = "0.14.0"
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }

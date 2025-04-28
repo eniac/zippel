@@ -374,6 +374,9 @@ fn typ_parser() {
     pairs = ZippelParser::parse(Rule::typ, "Fin<0..N>").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from("N") }));
 
+    pairs = ZippelParser::parse(Rule::typ, "Fin<10>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::fin(Range { start: Size::zero(), step: Size::one(), end: Size::from(10) }));
+
     pairs = ZippelParser::parse(Rule::typ, "Bool").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Bool);
 }

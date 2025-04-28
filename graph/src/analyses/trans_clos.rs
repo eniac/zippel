@@ -1,20 +1,20 @@
-use crate::{Op, Node, Dag};
+use crate::{GOp, Op, Ref, Node, Dag};
 use lang::typ::Qualifier;
 use petgraph::{
     graph::NodeIndex,
     visit::EdgeRef,
-    Graph,
     Direction,
 };
-use share::{Set, Ctx};
-use backend::ArkConfig;
+use std::fmt;
+use share::Ctx;
+use backend::{ArkConfig, ATyp};
 
 /// Transitive closure on a DAG
 pub struct TransClos<C: ArkConfig, A> {
     dag: Dag<C, A>,
-    pub clos: Ctx<usize, Op<C>>,
-    pub public: Set<String>,
-    pub private: Set<String>,
+    pub clos: Ctx<NodeIndex, GOp<C>>,
+    pub public: Ctx<Ref, ATyp>,
+    pub private: Ctx<Ref, ATyp>,
 }
 
 impl<C: ArkConfig, A> TransClos<C, A> {
@@ -30,43 +30,35 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         let mut s = Self {
             dag,
             clos: Ctx::new(),
-            public: Set::new(),
-            private: Set::new(),
+            public: Ctx::new(),
+            private: Ctx::new(),
         };
         // Compute transitive closure
         for node in node_indices {
             let op = s.trans_clos_node(node);
-            if !op.is_underscore() {
-                s.clos.insert(&last.index(), &op);
+            if matches!(op, Op::Ref(Ref::Node(_), _)) {
+                s.clos.insert(&last, &op);
             }
         }
         s
     }
 
-    pub fn closure(&self) -> &Ctx<usize, Op<C>> {
-        &self.clos
-    }
-
-    pub fn public(&self) -> &Set<String> {
+    pub fn public(&self) -> &Ctx<Ref, ATyp> {
         &self.public
     }
 
-    pub fn max_node(&self) -> usize {
-        self.dag.max_node().index().max(*self.clos.keys().iter().max().unwrap_or(&0))
-    }
-
-    fn trans_clos_op(&mut self, op: Op<C>) -> Op<C> {
+    fn trans_clos_op(&mut self, op: GOp<C>) -> GOp<C> {
         match op {
-            Op::Underscore(n, _) => self.trans_clos_node(n),
-            Op::Var(v, n, typ) =>
+            Op::Ref(Ref::Node(n), _) => self.trans_clos_node(n),
+            Op::Ref(Ref::Var(v, n), typ) =>
                 match self.dag.0[n] {
                     Node::Inp(_, ref args) => {
                         match args.get(&v) {
-                            Some((Qualifier::Public, _)) => self.public.insert(v.0.clone()),
-                            Some((Qualifier::Private, _)) => self.private.insert(v.0.clone()),
-                            _ => false
+                            Some((Qualifier::Public, typ)) => self.public.insert(&(&v).into(), typ),
+                            Some((Qualifier::Private, typ)) => self.private.insert(&(&v).into(), typ),
+                            _ => None
                         };
-                        Op::Var(v, n, typ)
+                        Op::var(&v, n, typ)
                     },
                     _ => self.trans_clos_node(n),
                 },
@@ -81,7 +73,6 @@ impl<C: ArkConfig, A> TransClos<C, A> {
                 Op::Ram(Box::new(oa), Box::new(ob))
             },
             Op::Value(v) => Op::Value(v),
-            Op::Range(r) => Op::Range(r),
             Op::Vec(vs) =>
                 Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
                     .collect::<Vec<_>>()),
@@ -92,38 +83,47 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         }
     }
 
-    fn find_or_insert(&mut self, n: NodeIndex, op: Op<C>) -> Op<C> {
+    fn find_or_insert_public(&mut self, n: NodeIndex, op: GOp<C>) -> GOp<C> {
         // Check if the node is already in the context
-        if let Some(op) = self.clos.get(&n.index()) {
-            return Op::underscore(&n, op.typ());
+        if let Some(op) = self.clos.get(&n) {
+            return Op::underscore(n, op.typ());
         }
         // Otherwise add it
-        self.clos.insert(&n.index(), &op);
-        Op::underscore(&n, op.typ())
+        self.clos.insert(&n, &op);
+        self.public.insert(&Ref::Node(n), &op.typ());
+        Op::underscore(n, op.typ())
     }
 
-    fn trans_clos_node(&mut self, node: NodeIndex) -> Op<C> {
+    fn find_or_insert_private(&mut self, n: NodeIndex, op: GOp<C>) -> GOp<C> {
         // Check if the node is already in the context
-        if let Some(op) = self.clos.get(&node.index()) {
-            return Op::underscore(&node, op.typ());
+        if let Some(op) = self.clos.get(&n) {
+            return Op::underscore(n, op.typ());
+        }
+        // Otherwise add it
+        self.clos.insert(&n, &op);
+        self.private.insert(&Ref::Node(n), &op.typ());
+        Op::underscore(n, op.typ())
+    }
+    fn trans_clos_node(&mut self, node: NodeIndex) -> GOp<C> {
+        // Check if the node is already in the context
+        if let Some(op) = self.clos.get(&node) {
+            return Op::underscore(node, op.typ());
         }
         // Otherwise add it
         match &self.dag.0[node] {
             Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), _) => {
-                self.clos.insert(&node.index(), &op.clone());
-                Op::underscore(&node, op.typ())
+                self.clos.insert(&node, &op);
+                self.private.insert(&Ref::Node(node), &op.typ());
+                Op::underscore(node, op.typ())
             },
             Node::Op(op, _) => {
                 let obin = self.trans_clos_op(op.clone());
-                self.find_or_insert(node, obin.clone())
+                self.find_or_insert_private(node, obin.clone())
             },
             Node::Transcr(op, _) => {
                 // Add the node to the context
                 let op = self.trans_clos_op(op.clone());
-                let op = self.find_or_insert(node, op.clone());
-
-                // Add it to public nodes
-                self.public.insert(format!("#{}", node.index()));
+                let op = self.find_or_insert_public(node, op.clone());
 
                 // Add the transcript parent to the context if it does not exist
                 let tr_edge =
@@ -140,6 +140,15 @@ impl<C: ArkConfig, A> TransClos<C, A> {
     }
 }
 
+impl<C: ArkConfig, A: fmt::Display> fmt::Display for TransClos<C, A> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "\n")?;
+        self.clos.iter().map(|(n, op)|
+            write!(f, "\t{}: {}\n", n.index(), op))
+            .collect::<fmt::Result>()
+    }
+}
+
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use crate::UDag;
 #[cfg(test)] use share::unwrap;
@@ -147,9 +156,9 @@ impl<C: ArkConfig, A> TransClos<C, A> {
 #[test]
 fn trans_clos_foo() {
     let ex = r#"
-        proto foo<F: Field>(private s: F, private s': F) where s == s' {
+        proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
             let r = random<F>;
-            a <- r * s;
+            a <- r * s[i + 2];
             b <- r * s';
             verify(a == b);
         }"#;
@@ -159,7 +168,7 @@ fn trans_clos_foo() {
     // Compute transitive closure
     let tc = TransClos::new(g);
 
-    println!("Transitive closure: {}", tc.clos);
+    println!("Transitive closure: {}", tc);
     for (_, op) in tc.clos.iter() {
         assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
         assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
