@@ -249,7 +249,7 @@ fn trans_clos_foo() {
 
     // Check that inlining works
     assert_deq!(
-        tc.inline(tc.clos.last().unwrap().1, &|n, _| n != NodeIndex::new(1)),
+        tc.inline(tc.clos.last().unwrap().1, &|n, _| n == NodeIndex::new(1)),
         Op::equ(
             Op::mul(
                 Op::underscore(NodeIndex::new(1), ATyp::Scalar),
