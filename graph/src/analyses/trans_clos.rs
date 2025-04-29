@@ -38,10 +38,12 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         s
     }
 
+    /// Iterate over the transitive closure
     pub fn iter(&self) -> impl Iterator<Item = (&NodeIndex, &GOp<C>)> {
         self.clos.iter()
     }
 
+    /// Get the public references
     pub fn public(&self) -> Set<Ref> {
         self.visibility.iter()
             .filter(|(_, q)| **q == Qualifier::Public)
@@ -49,6 +51,7 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             .collect()
     }
 
+    /// Get the private references
     pub fn private(&self) -> Set<Ref> {
         self.visibility.iter()
             .filter(|(_, q)| **q == Qualifier::Private)
@@ -56,11 +59,36 @@ impl<C: ArkConfig, A> TransClos<C, A> {
             .collect()
     }
 
-    pub fn inline(&self, op: &GOp<C>, except: &Set<NodeIndex>) -> GOp<C> {
+    /// Get the input variables
+    pub fn vars(&self) -> Set<Ref> {
+        self.visibility.iter()
+            .filter(|(r, _)| matches!(r, Ref::Var(_, _)))
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+
+    /// Rebuild the transcript operations (public nodes)
+    pub fn transcript(&self) -> Vec<(Ref, GOp<C>)> {
+        self.clos.iter()
+            .filter_map(|(node, op)| {
+                let rf = Ref::Node(*node);
+                if self.visibility.get(&rf) == Some(&Qualifier::Public) {
+                    Some((rf, op.clone()))
+                } else {
+                    None
+                }
+            }).collect()
+    }
+
+    /// Inline an operation using the transitive closure, except for the nodes specified
+    /// which remain as node identifiers.
+    pub fn inline<F: Fn(NodeIndex, &GOp<C>)->bool> (&self, op: &GOp<C>, except: &F) -> GOp<C> {
         match op {
-            Op::Ref(Ref::Node(n), _) if except.contains(n) => op.clone(),
             Op::Ref(Ref::Node(n), _) =>
                 if let Some(next) = self.clos.get(&n) {
+                    if except(*n, next) {
+                        return op.clone();
+                    }
                     self.inline(next, except)
                 } else {
                     op.clone()
@@ -221,7 +249,7 @@ fn trans_clos_foo() {
 
     // Check that inlining works
     assert_deq!(
-        tc.inline(tc.clos.last().unwrap().1, &Set::from(vec![NodeIndex::new(1)])),
+        tc.inline(tc.clos.last().unwrap().1, &|n, _| n != NodeIndex::new(1)),
         Op::equ(
             Op::mul(
                 Op::underscore(NodeIndex::new(1), ATyp::Scalar),

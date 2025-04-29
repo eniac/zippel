@@ -6,6 +6,7 @@ use petgraph::{
     Direction,
 };
 use lang::id::Vid;
+use lang::typ::Qualifier;
 use lang::ast::{BinOp, CArg};
 use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::ArkConfig;
@@ -26,5 +27,30 @@ impl fmt::Display for Principal {
             Principal::Prover => write!(f, "Prover"),
             Principal::Any => write!(f, "Any"),
         }
+    }
+}
+
+impl From<Qualifier> for Principal {
+    fn from(q: Qualifier) -> Self {
+        match q {
+            Qualifier::Public => Principal::Verifier,
+            Qualifier::Private => Principal::Prover,
+        }
+    }
+}
+
+/// Pretty-printer for Principals
+impl<'a, D, A> Pretty<'a, D, A> for Principal
+where
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
     }
 }

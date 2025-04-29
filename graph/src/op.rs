@@ -58,6 +58,22 @@ pub enum Op<C: ArkConfig, R> {
 /// Graph operation
 pub type GOp<C> = Op<C, Ref>;
 
+impl Ref {
+    pub fn node(&self) -> Option<NodeIndex> {
+        match self {
+            Ref::Node(n) => Some(*n),
+            Ref::Var(_, _) => None,
+        }
+    }
+
+    pub fn var(&self) -> Option<Vid> {
+        match self {
+            Ref::Node(_) => None,
+            Ref::Var(v, _) => Some(v.clone()),
+        }
+    }
+}
+
 impl<C: ArkConfig, R> Op<C, R> {
     pub fn typ(&self) -> ATyp {
         match &self {
@@ -540,7 +556,7 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Ref::Node(n) => allocator.text(format!("#{}", n.index())),
+            Ref::Node(n) => allocator.text(format!("n{}", n.index())),
             Ref::Var(v, _) => allocator.text(format!("{}", v)),
         }
     }

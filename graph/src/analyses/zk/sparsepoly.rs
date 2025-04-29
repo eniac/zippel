@@ -1,0 +1,701 @@
+use ark_ff::Field;
+use crate::Ref;
+use core::cmp::Ordering;
+use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
+use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use ark_ff::{One, Zero};
+use std::fmt::Debug;
+use std::fmt;
+
+/// For elimination order we need a classification of variables into
+/// two classes. The ones which map to [true] are eliminated before
+/// those which map to [false].
+pub trait Var: Clone + PartialEq + Eq + PartialOrd + Ord + fmt::Display {
+    fn eliminate(&self) -> bool;
+}
+
+/// A monomial trait that represents a term in a polynomial.
+pub trait Monomial<V: Var>:
+    Clone
+    + PartialEq
+    + Eq
+    + fmt::Display
+    + MulAssign
+    + Mul<Output = Self>
+    + Div<Output = Option<Self>>
+    + From<Vec<(V, usize)>>
+    + Ord {
+
+    fn vars(&self) -> Vec<V>;
+    fn powers(&self) -> Vec<usize>;
+    fn degree(&self) -> usize {
+        self.powers().iter().sum()
+    }
+    fn is_constant(&self) -> bool {
+        self.vars().is_empty()
+    }
+    fn evaluate<F: Field>(&self, p: &Ctx<V, F>) -> F;
+
+    fn is_divided(&self, other: &Self) -> bool;
+
+    fn lcm(&self, other: &Self) -> Self;
+    fn grevlex(&self, other: &Self) -> Ordering;
+}
+
+/// A sparse polynomial is a polynomial represented as a map from terms to their coefficients.
+/// The terms are stored in a sorted order, and the coefficients are stored in a field.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SparsePolynomial<F: Field, V: Var, T: Monomial<V>> {
+    pub num_vars: usize,
+    pub terms: Ctx<T, VecField<F>>, // Coefficient and Term pairs
+    _marker: std::marker::PhantomData<V>,
+}
+
+/// Coefficients are vectors of scalars
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct VecField<F: Field>(Vec<F>);
+
+impl<F: Field> From<F> for VecField<F> {
+    fn from(value: F) -> Self {
+        VecField(vec![value])
+    }
+}
+
+impl<F: Field> fmt::Display for VecField<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.len() == 1 {
+            write!(f, "{}", self.0[0])
+        } else if self.is_zero() {
+            write!(f, "0")
+        } else {
+            write!(f, "[{}", self.0[0])?;
+            for coeff in self.0.iter().skip(1) {
+                write!(f, ", {}", coeff)?;
+            }
+            write!(f, "]")
+        }
+    }
+}
+
+/// Algebraic operations on VecField
+impl<F: Field> Zero for VecField<F> {
+    fn zero() -> Self {
+        VecField(vec![F::zero()])
+    }
+    fn is_zero(&self) -> bool {
+        self.0.iter().all(|c| c.is_zero())
+    }
+}
+
+impl<F: Field> One for VecField<F> {
+    fn one() -> Self {
+        VecField(vec![F::one()])
+    }
+}
+
+impl<F: Field> AddAssign for VecField<F> {
+    fn add_assign(&mut self, other: Self) {
+        let mut other = other;
+        if self.0.len() < other.0.len() {
+            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
+        } else if other.0.len() < self.0.len() {
+            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
+        }
+        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
+            *a += *b;
+        }
+    }
+}
+
+impl<F: Field> Add for VecField<F> {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result += other;
+        result
+    }
+}
+
+impl<F: Field> SubAssign for VecField<F> {
+    fn sub_assign(&mut self, other: Self) {
+        let mut other = other;
+        if self.0.len() < other.0.len() {
+            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
+        } else if other.0.len() < self.0.len() {
+            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
+        }
+        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
+            *a -= *b;
+        }
+    }
+}
+
+impl<F: Field> Sub for VecField<F> {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result -= other;
+        result
+    }
+}
+
+impl<F: Field> Neg for VecField<F> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        let mut result = self.clone();
+        for coeff in result.0.iter_mut() {
+            *coeff = -(*coeff);
+        }
+        result
+    }
+}
+
+impl<F: Field> MulAssign for VecField<F> {
+    fn mul_assign(&mut self, other: Self) {
+        let mut other = other;
+        if self.0.len() < other.0.len() {
+            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
+        } else if other.0.len() < self.0.len() {
+            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
+        }
+        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
+            *a *= *b;
+        }
+    }
+}
+
+impl<F: Field> Mul for VecField<F> {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result *= other;
+        result
+    }
+}
+
+impl<'a, F: Field> Mul for &'a VecField<F> {
+    type Output = VecField<F>;
+
+    fn mul(self, other: Self) -> Self::Output {
+        let mut result = self.clone();
+        result *= other.clone();
+        result
+    }
+}
+
+impl<F: Field> DivAssign for VecField<F> {
+    fn div_assign(&mut self, other: Self) {
+        let mut other = other;
+        if self.0.len() < other.0.len() {
+            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
+        } else if other.0.len() < self.0.len() {
+            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
+        }
+        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
+            *a /= *b;
+        }
+    }
+}
+
+impl<F: Field> Div for VecField<F> {
+    type Output = Self;
+
+    fn div(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result /= other;
+        result
+    }
+}
+
+impl<F: Field> VecField<F> {
+    pub fn inverse(&self) -> Option<Self> {
+        self.0.iter().map(|c| c.inverse()).collect::<Option<Vec<_>>>().map(|v| VecField(v))
+    }
+}
+
+impl<F: Field> From<Vec<F>> for VecField<F> {
+    fn from(value: Vec<F>) -> Self {
+        VecField(value)
+    }
+}
+
+/// Algebraic operations on SparsePolynomial
+impl<F: Field, V: Var, T: Monomial<V>> AddAssign for SparsePolynomial<F, V, T> {
+    fn add_assign(&mut self, other: Self) {
+        for (term, coef) in other.terms {
+            *self.terms.entry(term).or_insert(VecField::zero()) += coef;
+        }
+        self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> SubAssign for SparsePolynomial<F, V, T> {
+    fn sub_assign(&mut self, other: Self) {
+        for (term, coef) in other.terms {
+            *self.terms.entry(term).or_insert(VecField::zero()) -= coef;
+        }
+        self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> MulAssign for SparsePolynomial<F, V, T> {
+    fn mul_assign(&mut self, other: Self) {
+        let mut new_terms = Ctx::new();
+        for (term1, coeff1) in self.terms.iter() {
+            for (term2, coeff2) in other.terms.iter() {
+                let new_term = term1.clone() * term2.clone();
+                let new_coeff = coeff1.clone() * coeff2.clone();
+                *new_terms.entry(new_term).or_insert(VecField::zero()) += new_coeff;
+            }
+        }
+        self.terms = new_terms;
+        self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> Add for SparsePolynomial<F, V, T> {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result += other;
+        result
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> Sub for SparsePolynomial<F, V, T> {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result -= other;
+        result
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> Mul for SparsePolynomial<F, V, T> {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result *= other;
+        result
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> From<Vec<(&T, F)>> for SparsePolynomial<F, V, T> {
+    fn from(terms: Vec<(&T, F)>) -> Self {
+        let mut poly = SparsePolynomial::zero();
+        for (term, coeff) in terms {
+            *poly.terms.entry(term.clone()).or_insert(VecField::zero()) += coeff.into();
+        }
+        poly.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+
+        let keys = poly.terms.keys().iter().flat_map(|t| t.vars()).collect::<Set<_>>();
+        // Set num_vars based on the terms
+        poly.num_vars = keys.len();
+        poly
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> From<Vec<(F, Vec<(&V, usize)>)>> for SparsePolynomial<F, V, T> {
+    fn from(terms: Vec<(F, Vec<(&V, usize)>)>) -> Self {
+        let mut vars = Set::new();
+
+        let processed_terms =
+            terms.into_iter()
+            .map(|(coeff, term_vec)|
+                (T::from(term_vec.into_iter().map(|(k, v)| {
+                    let var = k.clone();
+                    vars.insert(var.clone());
+                    (var, v)
+                }).collect()), coeff.into()))
+            .collect();
+
+        SparsePolynomial {
+            num_vars: vars.len(),
+            terms: processed_terms,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F: Field, V: Var, T: Monomial<V>> fmt::Display for SparsePolynomial<F, V, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            write!(f, "0")
+        } else {
+            let mut terms: Vec<String> = Vec::new();
+            let mut first = true;
+            for (term, coeff) in self.terms.iter() {
+                if coeff.is_one() && first {
+                    terms.push(format!("{}", term));
+                    first = false;
+                } else if coeff.is_one() {
+                    terms.push(format!("+ {}", term));
+                } else if coeff.is_zero() {
+                    continue
+                } else if coeff.clone().neg().is_one() {
+                    terms.push(format!("- {}", term));
+                    first = false;
+                } else if first {
+                    let term_str = format!("{}*{}", coeff, term);
+                    terms.push(term_str);
+                    first = false;
+                } else {
+                    let term_str = format!("+ {}*{}", coeff, term);
+                    terms.push(term_str);
+                }
+            }
+            write!(f, "{}", terms.join(" "))
+        }
+    }
+}
+
+/// Ad-hoc interface to SparsePolynomial with vector field coefficients
+impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
+
+    pub fn zero() -> Self {
+        SparsePolynomial {
+            num_vars: 0,
+            terms: Ctx::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.terms.is_empty()
+    }
+
+    pub fn lit(f: &VecField<F>) -> SparsePolynomial<F, V, T> {
+        let mut terms = Ctx::new();
+        terms.insert(&T::from(vec![]), f);
+        SparsePolynomial {
+            num_vars: 0,
+            terms,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn var(v: &V) -> SparsePolynomial<F, V, T> {
+        let mut terms = Ctx::new();
+        terms.insert(&T::from(vec![(v.clone(), 1)]), &VecField::one());
+        SparsePolynomial {
+            num_vars: 1,
+            terms,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn degree(&self) -> usize {
+        self.terms.iter().map(|(t, _)| t.degree()).max().unwrap_or(0)
+    }
+
+    pub fn leading_term(&self) -> Option<(VecField<F>, T)> {
+        self.terms.first().map(|(t, c)| (c.clone(), t.clone()))
+    }
+
+    pub fn contains(&self, v: &V) -> bool {
+        self.vars().contains(v)
+    }
+
+    pub fn vars(&self) -> Set<V> {
+        self.terms.keys().iter().flat_map(|t| t.vars()).collect()
+    }
+
+    pub fn mul_by_term_and_scalar(
+        &self,
+        scalar: VecField<F>,
+        term: &T,
+    ) -> SparsePolynomial<F, V, T> {
+        if scalar.is_zero() {
+            return SparsePolynomial::zero();
+        }
+        let new_terms: Vec<(T, VecField<F>)> = self
+            .terms
+            .iter()
+            .map(|(t, coeff)| (term.clone() * t.clone(), coeff.clone() * scalar.clone()))
+            .collect();
+
+        // Need to handle combining like terms and sorting.
+        let mut combined_terms: Ctx<T, VecField<F>> = Ctx::new(); // BTreeMap keeps terms sorted
+        for (t, coeff) in new_terms {
+            *combined_terms.entry(t).or_insert(VecField::zero()) += coeff;
+        }
+        combined_terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+
+        SparsePolynomial {
+            num_vars: self.num_vars,
+            terms: combined_terms,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    pub fn s_poly(
+        &self,
+        other: &SparsePolynomial<F, V, T>,
+    ) -> SparsePolynomial<F, V, T> {
+        if self.is_zero() || other.is_zero() {
+            return SparsePolynomial::zero();
+        }
+
+        let lt_self = self.leading_term().unwrap();
+        let lt_other = other.leading_term().unwrap();
+
+        let term_self = &lt_self.1;
+        let coeff_self = lt_self.0;
+
+        let term_other = &lt_other.1;
+        let coeff_other = lt_other.0;
+
+        let lcm_t = term_self.lcm(term_other);
+
+        // Multiplier for self: (lcm_t / term_self) * (1 / coeff_self)
+        let multiplier_term_self = (lcm_t.clone() / term_self.clone()).expect("Term division failed for LCM/LT");
+        let multiplier_scalar_self = coeff_self.inverse().expect("Leading coefficient must be non-zero");
+
+        // Multiplier for other: (lcm_t / term_other) * (1 / coeff_other)
+        let multiplier_term_other = (lcm_t.clone() / term_other.clone()).expect("Term division failed for LCM/LT");
+        let multiplier_scalar_other = coeff_other.inverse().expect("Leading coefficient must be non-zero");
+
+        let mut poly_self_scaled = self.mul_by_term_and_scalar(multiplier_scalar_self, &multiplier_term_self);
+        let poly_other_scaled = other.mul_by_term_and_scalar(multiplier_scalar_other, &multiplier_term_other);
+
+        // S = poly_self_scaled - poly_other_scaled
+        poly_self_scaled -= poly_other_scaled;
+        poly_self_scaled
+    }
+}
+
+impl<'a, D, A, F, V, T> Pretty<'a, D, A> for SparsePolynomial<F, V, T>
+where
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    F: Field,
+    V: Var,
+    T: Monomial<V>,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
+pub struct LexDegTerm<V: Var> {
+    pub vars: Ctx<V, usize>, // (var index, power)
+}
+
+impl<V: Var> LexDegTerm<V> {
+    pub fn new(vars: Ctx<V, usize>) -> Self {
+        LexDegTerm { vars }
+    }
+
+}
+
+/// Multiplies two terms. (var, power) pairs are combined by adding powers
+/// for common variables.
+impl<V: Var> MulAssign for LexDegTerm<V> {
+    fn mul_assign(&mut self, other: Self) {
+        for (var, power) in other.vars.iter() {
+            *self.vars.entry(var.clone()).or_insert(0) += power;
+        }
+    }
+}
+
+impl<V: Var> Mul for LexDegTerm<V> {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result *= other;
+        result
+    }
+}
+
+impl<'a, V: Var> Mul for &'a LexDegTerm<V> {
+    type Output = LexDegTerm<V>;
+
+    fn mul(self, other: &'a LexDegTerm<V>) -> LexDegTerm<V> {
+        self.clone() * other.clone()
+    }
+}
+
+impl<V: Var> fmt::Display for LexDegTerm<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_constant() {
+            write!(f, "1")
+        } else {
+            let mut terms: Vec<String> = Vec::new();
+            for (var, power) in self.vars.iter() {
+                if *power > 0 {
+                    terms.push(format!("{}^{}", var, power));
+                }
+            }
+            write!(f, "{}", terms.join("*"))
+        }
+    }
+}
+
+impl<V: Var> Div for LexDegTerm<V> {
+    type Output = Option<Self>;
+
+    fn div(self, other: Self) -> Option<Self> {
+        if !self.is_divided(&other) {
+            return None;
+        }
+
+        let mut powers1 = self.vars.iter().map(|(v, p)| (v.clone(), *p)).collect::<Vec<_>>();
+        for (var, power2) in other.vars.iter() {
+            // We know var is in powers1 with sufficient power because term_is_divided was true
+            if let Some(power1) = powers1.iter_mut().find(|(v, _)| v == var) {
+                power1.1 -= power2;
+            }
+        }
+
+        Some(Self::new(powers1.into_iter().filter(|(_, p)| *p > 0).collect()))
+    }
+}
+
+impl<'a, V: Var> Div for &'a LexDegTerm<V> {
+    type Output = Option<LexDegTerm<V>>;
+
+    fn div(self, other: &'a LexDegTerm<V>) -> Option<LexDegTerm<V>> {
+        self.clone() / other.clone()
+    }
+}
+
+impl<V: Var> From<Vec<(V, usize)>> for LexDegTerm<V> {
+    fn from(vars: Vec<(V, usize)>) -> Self {
+        LexDegTerm::new(vars.into_iter().collect())
+    }
+}
+
+impl<'a, V: Var> From<Vec<(&'a V, usize)>> for LexDegTerm<V> {
+    fn from(vars: Vec<(&'a V, usize)>) -> Self {
+        LexDegTerm::new(vars.into_iter().map(|(v, p)| (v.clone(), p)).collect())
+    }
+}
+
+impl<V: Var> Monomial<V> for LexDegTerm<V> {
+    fn vars(&self) -> Vec<V> {
+        self.vars.iter().map(|(v, _)| v.clone()).collect()
+    }
+    fn powers(&self) -> Vec<usize> {
+        self.vars.iter().map(|(_, p)| *p).collect()
+    }
+    fn is_constant(&self) -> bool {
+        self.vars.iter().next().is_none() // Empty vec means the term is 1 (constant)
+    }
+
+    fn evaluate<F: Field>(&self, p: &Ctx<V, F>) -> F {
+        let mut result = F::one();
+        for (var, power) in self.vars.iter() {
+            if let Some(value) = p.get(&var) {
+                for _ in 0..*power {
+                    result *= value;
+                }
+            } else {
+                // Variable not found in context, assume it evaluates to 1
+            }
+        }
+        result
+    }
+    fn is_divided(&self, other: &Self) -> bool {
+        for (var, power2) in other.vars.iter() {
+            match self.vars.get(var) {
+                Some(power1) => {
+                    if power1 < power2 {
+                        return false;
+                    }
+                }
+                None => return false, // other has a variable self doesn't have
+            }
+        }
+        true // All variables in other are in self with sufficient power
+    }
+
+    fn lcm(&self, other: &Self) -> Self {
+        let mut lcm_powers: Vec<(V, usize)> = self.vars.iter().map(|(v, p)| (v.clone(), *p)).collect();
+        for (var, power2) in other.vars.iter() {
+            match lcm_powers.iter_mut().find(|(v, _)| v == var) {
+                Some((_, power1)) => *power1 = (*power1).max(*power2),
+                None => lcm_powers.push((var.clone(), *power2)),
+            }
+        }
+        Self::new(lcm_powers.into_iter().collect())
+    }
+    // Graded reverse lexicographic order (grevlex, or degrevlex for degree reverse lexicographic order)
+    // compares the total degree first, then uses a lexicographic order as tie-breaker, but it reverses
+    // the outcome of the lexicographic comparison so that lexicographically larger monomials of the same
+    // degree are considered to be degrevlex smaller.
+    fn grevlex(&self, other: &Self) -> Ordering {
+        // Compare total degrees of the monomials
+        match self.degree().cmp(&other.degree()) {
+            Ordering::Equal => {},
+            order => return order.reverse(),
+        };
+
+        // Compare powers in reverse lexicographic order
+        for ((v1, p1), (v2, p2)) in self.vars.iter().zip(other.vars.iter()) {
+            match (v1.cmp(v2), p1.cmp(p2)) {
+                (Ordering::Equal, Ordering::Equal) => continue,
+                (Ordering::Equal, order) => return order.reverse(),
+                (order, _) => return order
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+/// Define elimination order comparison. First, we compare principals such that if any variable has
+/// Principal::Any > Principal::Verifier and Principal::Any > Principal::Prover, then the same is true for LexDegTerm.
+/// If the principals are equal, then perform a grevlex comparison on the powers of the variables (graded, reverse lexicographic order).
+impl<V: Var> Ord for LexDegTerm<V> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let elim_self = LexDegTerm {
+            vars: self.vars.iter()
+                .filter(|(var, _)| var.eliminate())
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<V, usize>>()
+        };
+
+        let elim_other = LexDegTerm {
+            vars: other.vars.iter()
+                .filter(|(var, _)| var.eliminate())
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<V, usize>>()
+        };
+
+        // Compare the variables we prefer to eliminate first, using the grevlex monomial order
+        match elim_self.grevlex(&elim_other) {
+            Ordering::Equal => {},
+            order => return order
+        };
+
+        // If they are equal, compare the remaining variables
+        let other_self = LexDegTerm {
+            vars: self.vars.iter()
+                .filter(|(var, _)| !var.eliminate())
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<V, usize>>()
+        };
+        let other_other = LexDegTerm {
+            vars: other.vars.iter()
+                .filter(|(var, _)| !var.eliminate())
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<V, usize>>()
+        };
+
+        // If they are equal, compare the remaining variables
+        other_self.grevlex(&other_other)
+    }
+}
