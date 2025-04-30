@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use std::ops::Index;
 use std::fmt;
 
-use crate::zk::sparsepoly::{Var, Monomial, LexDegTerm, SparsePolynomial};
+use crate::sparsepoly::{Var, Monomial, LexDegTerm, SparsePolynomial};
 use log::debug;
 
 /// A struct representing a Gröbner basis.

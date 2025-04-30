@@ -1,5 +1,6 @@
 use ark_ff::Field;
-use crate::Ref;
+use backend::ArkConfig;
+use crate::{GOp, Op, Ref};
 use core::cmp::Ordering;
 use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
@@ -19,6 +20,7 @@ pub trait Monomial<V: Var>:
     Clone
     + PartialEq
     + Eq
+    + Default
     + fmt::Display
     + MulAssign
     + Mul<Output = Self>
@@ -39,6 +41,8 @@ pub trait Monomial<V: Var>:
     fn is_divided(&self, other: &Self) -> bool;
 
     fn lcm(&self, other: &Self) -> Self;
+    fn gcd(&self, other: &Self) -> Self;
+
     fn grevlex(&self, other: &Self) -> Ordering;
 }
 
@@ -242,6 +246,17 @@ impl<F: Field, V: Var, T: Monomial<V>> SubAssign for SparsePolynomial<F, V, T> {
     }
 }
 
+impl<F: Field, V: Var, T: Monomial<V>> Neg for SparsePolynomial<F, V, T> {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        let mut result = self.clone();
+        for (_, coeff) in result.terms.iter_mut() {
+            *coeff = coeff.clone().neg();
+        }
+        result
+    }
+}
 impl<F: Field, V: Var, T: Monomial<V>> MulAssign for SparsePolynomial<F, V, T> {
     fn mul_assign(&mut self, other: Self) {
         let mut new_terms = Ctx::new();
@@ -395,6 +410,10 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         self.terms.iter().map(|(t, _)| t.degree()).max().unwrap_or(0)
     }
 
+    pub fn is_constant(&self) -> bool {
+        self.degree() == 0
+    }
+
     pub fn leading_term(&self) -> Option<(VecField<F>, T)> {
         self.terms.first().map(|(t, c)| (c.clone(), t.clone()))
     }
@@ -407,6 +426,18 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         self.terms.keys().iter().flat_map(|t| t.vars()).collect()
     }
 
+    pub fn map_vars<VV: Var, TT: Monomial<VV>, FF: Fn(V) -> VV>(self, f: &FF) -> SparsePolynomial<F, VV, TT> {
+        let mut new_terms = Ctx::new();
+        for (term, coeff) in self.terms.into_iter() {
+            let new_term: Vec<(VV, usize)> = term.vars().into_iter().map(|v | f(v)).zip(term.powers().into_iter()).collect();
+            new_terms.insert(&TT::from(new_term), &coeff);
+        }
+        SparsePolynomial {
+            num_vars: self.num_vars,
+            terms: new_terms,
+            _marker: std::marker::PhantomData,
+        }
+    }
     pub fn mul_by_term_and_scalar(
         &self,
         scalar: VecField<F>,
@@ -435,6 +466,8 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         }
     }
 
+    /// Compute the "syzygy" polynomial of two sparse polynomials
+    /// for Buchberger's algorithm.
     pub fn s_poly(
         &self,
         other: &SparsePolynomial<F, V, T>,
@@ -469,6 +502,94 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         poly_self_scaled -= poly_other_scaled;
         poly_self_scaled
     }
+
+    /// Splits the polynomial `P` (implicitly `P=0`) into `lhs` and `rhs` such that
+    /// `M_gcd * lhs = -rhs`, where `lhs` contains terms derived from the original
+    /// terms having only `factor(v) = true` variables, factored by the monomial GCD (`M_gcd`).
+    /// `rhs` contains the negation of the terms having at least one `eliminate=false` variable.
+    ///
+    /// Assumes the `Monomial` trait provides a `gcd` method.
+    ///
+    /// # Returns
+    ///
+    /// A tuple `(lhs, rhs, divided_vars)` where:
+    /// - `lhs`: The factored polynomial part with `eliminate=true` variables.
+    /// - `rhs`: The negated polynomial part with `eliminate=false` variables.
+    /// - `divided_vars`: A `HashSet` of variables present in the `M_gcd` that was factored out.
+    pub fn isolate_elimination_vars<FF: Fn(&V)->bool>(&self, factor: &FF) -> (Self, Self, Set<V>) {
+        let mut tmp_lhs_terms: Ctx<T, VecField<F>> = Ctx::new();
+        let mut tmp_rhs_terms: Ctx<T, VecField<F>> = Ctx::new();
+
+        // 1. Initial Split
+        for (monomial, coefficient) in self.terms.iter() {
+            let vars = monomial.vars();
+            // Constants assigned to LHS, check if this is desired.
+            let is_lhs_term = vars.is_empty() || vars.iter().any(|v| factor(v));
+
+            if is_lhs_term {
+                tmp_lhs_terms.insert(monomial, coefficient);
+            } else {
+                tmp_rhs_terms.insert(monomial, coefficient);
+            }
+        }
+
+        // 2. Find LHS Monomial GCD using Monomial::gcd
+        let mut m_gcd = tmp_lhs_terms
+            .keys()
+            .iter()
+            .cloned()
+            .reduce(|acc, item| acc.gcd(&item)) // Use the gcd method
+            .unwrap_or_default(); // Default to constant if tmp_lhs_terms is empty
+
+
+        // 2.5: Remove factored variables from gcd by dividing
+        for pv in tmp_lhs_terms.keys().iter().flat_map(|pv| pv.vars()) {
+            let m_pv = T::from(vec![(pv.clone(), 1)]);
+            if let Some(new_gcd) = m_gcd.clone() / m_pv {
+                m_gcd = new_gcd;
+            }
+        }
+
+        let mut final_lhs_terms: Ctx<T, VecField<F>>;
+        let divided_vars: Set<V>;
+
+        // 3. Factor LHS & Track Variables (if GCD is not constant)
+        if !m_gcd.is_constant() {
+            final_lhs_terms = Ctx::new();
+            for (monomial, coefficient) in tmp_lhs_terms.into_iter() {
+                // Perform division: monomial / m_gcd
+                match monomial.div(m_gcd.clone()) {
+                    Some(factored_monomial) =>
+                        final_lhs_terms.insert(&factored_monomial, &coefficient),
+                    None => panic!("Failed to divide monomial by GCD"),
+                };
+            }
+            divided_vars = m_gcd.vars().into_iter().collect();
+        } else {
+            // No factoring needed if GCD is constant
+            final_lhs_terms = tmp_lhs_terms;
+            divided_vars = Set::new();
+        }
+
+        // 4. Construct final polynomials
+        let final_lhs = SparsePolynomial {
+            num_vars: self.num_vars,
+            terms: final_lhs_terms,
+            _marker: std::marker::PhantomData,
+        };
+
+        let initial_rhs = SparsePolynomial {
+            num_vars: self.num_vars,
+            terms: tmp_rhs_terms,
+            _marker: std::marker::PhantomData,
+        };
+
+        // 5. Negate RHS
+        let final_rhs = -initial_rhs;
+
+        // 6. Return
+        (final_lhs, final_rhs, divided_vars)
+    }
 }
 
 impl<'a, D, A, F, V, T> Pretty<'a, D, A> for SparsePolynomial<F, V, T>
@@ -478,6 +599,22 @@ where
     F: Field,
     V: Var,
     T: Monomial<V>,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        allocator.text(format!("{}", self))
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+impl<'a, D, A, F> Pretty<'a, D, A> for VecField<F>
+where
+    D: DocAllocator<'a, A>,
+    D::Doc: Clone,
+    F: Field,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
@@ -499,6 +636,13 @@ impl<V: Var> LexDegTerm<V> {
         LexDegTerm { vars }
     }
 
+
+}
+
+impl<V: Var> Default for LexDegTerm<V> {
+    fn default() -> Self {
+        LexDegTerm::new(Ctx::new())
+    }
 }
 
 /// Multiplies two terms. (var, power) pairs are combined by adding powers
@@ -536,7 +680,9 @@ impl<V: Var> fmt::Display for LexDegTerm<V> {
         } else {
             let mut terms: Vec<String> = Vec::new();
             for (var, power) in self.vars.iter() {
-                if *power > 0 {
+                if *power == 1 {
+                    terms.push(format!("{}", var));
+                } else if *power > 0 {
                     terms.push(format!("{}^{}", var, power));
                 }
             }
@@ -633,6 +779,21 @@ impl<V: Var> Monomial<V> for LexDegTerm<V> {
         }
         Self::new(lcm_powers.into_iter().collect())
     }
+
+    fn gcd(&self, other: &Self) -> Self {
+        let mut gcd_powers: Vec<(V, usize)> = Vec::new();
+        for (var1, power1) in self.vars.iter() {
+            if let Some((_, power2)) = other.vars.iter().find(|(v, _p)| v == &var1) {
+                let min_power = (*power1).min(*power2);
+                if min_power > 0 {
+                    gcd_powers.push((var1.clone(), min_power));
+                }
+            }
+        }
+        Self::new(gcd_powers.into_iter().collect())
+    }
+
+
     // Graded reverse lexicographic order (grevlex, or degrevlex for degree reverse lexicographic order)
     // compares the total degree first, then uses a lexicographic order as tie-breaker, but it reverses
     // the outcome of the lexicographic comparison so that lexicographically larger monomials of the same
@@ -699,3 +860,15 @@ impl<V: Var> Ord for LexDegTerm<V> {
         other_self.grevlex(&other_other)
     }
 }
+
+/// To report back results to the user, we need to substitute GOp<C> in the
+/// place of variables. Instantiate Var with GOp<C>
+impl<C: ArkConfig> Var for GOp<C> {
+    fn eliminate(&self) -> bool {
+        match self {
+            GOp::Random(_) => true,
+            _ => false
+        }
+    }
+}
+

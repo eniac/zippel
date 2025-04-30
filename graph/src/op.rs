@@ -19,7 +19,7 @@ pub enum Ref {
 
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Ord, PartialOrd)]
 pub enum Op<C: ArkConfig, R> {
     /// Value
     Value(Value<C>),

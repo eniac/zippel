@@ -4,8 +4,9 @@ use lang::typ::CRange;
 use rayon::prelude::*;
 use rand::Rng;
 use std::fmt;
+use std::cmp::Ordering;
 use core::hash::{Hash, Hasher};
-use ark_ff::Zero;
+use ark_ff::{PrimeField, Zero};
 use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr, AddAssign, MulAssign};
 use ark_ec::{AffineRepr, CurveGroup};
 
@@ -39,6 +40,30 @@ pub enum Value<C: ArkConfig> {
 }
 
 impl<C: ArkConfig> Value<C> {
+    /// Returns an integer representing the constructor order.
+    /// Higher values correspond to constructors defined earlier.
+    pub fn discriminant_order(&self) -> u8 {
+        match self {
+            Value::Bool(_) => 17,
+            Value::VecBool(_) => 16,
+            Value::Index(_) => 15,
+            Value::Scalar(_) => 14,
+            Value::VecIndex(_) => 13,
+            Value::VecScalar(_) => 12,
+            Value::Range(_) => 11,
+            Value::G1(_) => 10,
+            Value::G2(_) => 9,
+            Value::GT(_) => 8,
+            Value::VecG1(_) => 7,
+            Value::VecG2(_) => 6,
+            Value::VecGT(_) => 5,
+            Value::G1Affine(_) => 4,
+            Value::G2Affine(_) => 3,
+            Value::VecG1Affine(_) => 2,
+            Value::VecG2Affine(_) => 1,
+            Value::Vec(_) => 0,
+        }
+    }
     /// Value addition, saves result in other
     #[inline]
     pub fn value_add(&self, other: &mut Self) {
@@ -2057,6 +2082,130 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             },
+        }
+    }
+}
+
+/// Compare group elements by their x and y coordinates
+/// in affine form. Warning: Expensive!
+/// Should only be used at compile time.
+fn affine_group_cmp<G: CurveGroup>(a: &G::Affine, b: &G::Affine) -> Ordering {
+    match (a.xy(), b.xy()) {
+        (Some((x1, y1)), Some((x2, y2))) => x1.cmp(&x2).then(y1.cmp(&y2)),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// Hacky: PartialOrd of the things that can be ordered
+impl<C: ArkConfig> PartialOrd for Value<C> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let order_self = self.discriminant_order();
+        let order_other = other.discriminant_order();
+
+        // 1. Compare based on the variant kind (discriminant order)
+        match order_self.cmp(&order_other) {
+            Ordering::Less => Some(Ordering::Less),
+            Ordering::Greater => Some(Ordering::Greater),
+            Ordering::Equal => {
+                // 2. Variants are the same, compare inner values *if possible*
+                match (self, other) {
+                    // Variants with comparable inner types
+                    (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b), // bool is Ord
+                    (Value::VecBool(a), Value::VecBool(b)) => a.partial_cmp(b), // Vec<bool> is Ord
+                    (Value::Index(a), Value::Index(b)) => a.partial_cmp(b), // usize is Ord
+                    (Value::VecIndex(a), Value::VecIndex(b)) => a.partial_cmp(b), // Vec<usize> is Ord
+                    (Value::Range(a), Value::Range(b)) => a.partial_cmp(b), // Assumes CRange implements PartialOrd
+                    (Value::Vec(a), Value::Vec(b)) => a.partial_cmp(b), // Vec<Value<C>> uses this impl recursively
+
+                    // Variants with non-comparable inner types (return None)
+                    (Value::Scalar(a), Value::Scalar(b)) => a.into_bigint().partial_cmp(&b.into_bigint()),
+                    (Value::VecScalar(a), Value::VecScalar(b)) => a.partial_cmp(b), // Vec<Scalar> is Ord
+                    (Value::G1(a), Value::G1(b)) =>
+                        Some(affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine())),
+                    (Value::G2(a), Value::G2(b)) =>
+                        Some(affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine())),
+                    (Value::GT(a), Value::GT(b)) => a.partial_cmp(b), // PairingOutput is Ord
+                    (Value::VecG1(a), Value::VecG1(b)) =>
+                        a.iter().zip(b.iter())
+                        .map(|(a, b)| affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine())).find(|o| o != &Ordering::Equal),
+                    (Value::VecG2(a), Value::VecG2(b)) =>
+                        a.iter().zip(b.iter())
+                        .map(|(a, b)| affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine())).find(|o| o != &Ordering::Equal),
+                    (Value::VecGT(a), Value::VecGT(b)) => a.partial_cmp(b), // Vec<PairingOutput> is Ord
+                    (Value::G1Affine(a), Value::G1Affine(b)) =>
+                        Some(affine_group_cmp::<C::G1>(a, b)),
+                    (Value::G2Affine(a), Value::G2Affine(b)) =>
+                        Some(affine_group_cmp::<C::G2>(a, b)),
+                    (Value::VecG1Affine(a), Value::VecG1Affine(b)) =>
+                        a.iter().zip(b.iter()).map(|(a, b)| affine_group_cmp::<C::G1>(a, b)).find(|o| o != &Ordering::Equal),
+                    (Value::VecG2Affine(a), Value::VecG2Affine(b)) =>
+                        a.iter().zip(b.iter()).map(|(a, b)| affine_group_cmp::<C::G2>(a, b)).find(|o| o != &Ordering::Equal),
+
+                     // This case should be unreachable because we've covered all variants
+                     // and already established that the discriminants are equal.
+                    (_, _) => unreachable!("Variants matched discriminant order but not specific arms"),
+                }
+            }
+        }
+    }
+}
+
+impl<C: ArkConfig> Ord for Value<C> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let order_self = self.discriminant_order();
+        let order_other = other.discriminant_order();
+
+        // 1. Compare based on the variant kind (discriminant order)
+        match order_self.cmp(&order_other) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+            Ordering::Equal => {
+                // 2. Variants are the same, compare inner values *if possible*
+                match (self, other) {
+                    // Variants with comparable inner types
+                    (Value::Bool(a), Value::Bool(b)) => a.cmp(b), // bool is Ord
+                    (Value::VecBool(a), Value::VecBool(b)) => a.cmp(b), // Vec<bool> is Ord
+                    (Value::Index(a), Value::Index(b)) => a.cmp(b), // usize is Ord
+                    (Value::VecIndex(a), Value::VecIndex(b)) => a.cmp(b), // Vec<usize> is Ord
+                    (Value::Range(a), Value::Range(b)) => a.cmp(b), // Assumes CRange implements PartialOrd
+                    (Value::Vec(a), Value::Vec(b)) => a.cmp(b), // Vec<Value<C>> uses this impl recursively
+
+                    // Variants with non-comparable inner types (return None)
+                    (Value::Scalar(a), Value::Scalar(b)) => a.into_bigint().cmp(&b.into_bigint()),
+                    (Value::VecScalar(a), Value::VecScalar(b)) => a.cmp(b), // Vec<Scalar> is Ord
+                    (Value::G1(a), Value::G1(b)) =>
+                        affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine()),
+                    (Value::G2(a), Value::G2(b)) =>
+                        affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine()),
+                    (Value::GT(a), Value::GT(b)) => a.cmp(b), // PairingOutput is Ord
+                    (Value::VecG1(a), Value::VecG1(b)) =>
+                        a.iter().zip(b.iter())
+                        .map(|(a, b)| affine_group_cmp::<C::G1>(&a.into_affine(), &b.into_affine())).find(|o| o != &Ordering::Equal)
+                        .unwrap_or(Ordering::Equal),
+                    (Value::VecG2(a), Value::VecG2(b)) =>
+                        a.iter().zip(b.iter())
+                        .map(|(a, b)| affine_group_cmp::<C::G2>(&a.into_affine(), &b.into_affine())).find(|o| o != &Ordering::Equal)
+                        .unwrap_or(Ordering::Equal),
+                    (Value::VecGT(a), Value::VecGT(b)) => a.cmp(b), // Vec<PairingOutput> is Ord
+                    (Value::G1Affine(a), Value::G1Affine(b)) =>
+                        affine_group_cmp::<C::G1>(a, b),
+                    (Value::G2Affine(a), Value::G2Affine(b)) =>
+                        affine_group_cmp::<C::G2>(a, b),
+                    (Value::VecG1Affine(a), Value::VecG1Affine(b)) =>
+                        a.iter().zip(b.iter())
+                        .map(|(a, b)| affine_group_cmp::<C::G1>(a, b)).find(|o| o != &Ordering::Equal)
+                        .unwrap_or(Ordering::Equal),
+                    (Value::VecG2Affine(a), Value::VecG2Affine(b)) =>
+                        a.iter().zip(b.iter()).map(|(a, b)| affine_group_cmp::<C::G2>(a, b)).find(|o| o != &Ordering::Equal)
+                        .unwrap_or(Ordering::Equal),
+
+                     // This case should be unreachable because we've covered all variants
+                     // and already established that the discriminants are equal.
+                    (_, _) => unreachable!("Variants matched discriminant order but not specific arms"),
+                }
+            }
         }
     }
 }
