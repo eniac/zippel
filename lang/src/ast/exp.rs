@@ -11,7 +11,7 @@ use share::traversal::ToTraversal1;
 use share::{Set, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::Size;
 use crate::typ::range::{Range, RangeTraversal};
-use crate::id::{Tid, TidSubst, Fid, Vid};
+use crate::id::{Tid, TidSubst, Vid};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -127,7 +127,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let result1 = f(x + 2, x)
     ///     ```
-    App(Fid, Exps<N>),
+    App(Vid, Exps<N>),
 
     ///     Coefficients of a univariate vector
     ///     **Zippel Code:**
@@ -539,7 +539,7 @@ impl<N> Exp<N> {
     pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
         Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
-    pub fn app(id: Fid, args: Exps<N>) -> Self {
+    pub fn app(id: Vid, args: Exps<N>) -> Self {
         Exp::App(id, args)
     }
     pub fn is_pure(&self) -> bool {
@@ -911,7 +911,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::app_exp => {
                     let mut inner = pair.into_inner();
                     // Call a function
-                    let func = Fid::from_pest(&mut inner)?;
+                    let func = Vid::from_pest(&mut inner)?;
                     // Arguments
                     let params = Exps::from_pest(&mut inner)?;
                     Ok(Exp::app(func, params))
@@ -1096,7 +1096,7 @@ fn parser_call_two() {
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::app(
-            Fid::from("f"),
+            Vid::from("f"),
             Exps(vec![Exp::varstr("x") + Exp::from(2), Exp::varstr("x")])
         ))
     );

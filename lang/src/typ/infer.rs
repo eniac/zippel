@@ -1,7 +1,7 @@
 #![allow(refining_impl_trait)]
 use share::{Ctx, Set, log2};
-use crate::id::{Fid, Tid, Vid};
-use crate::ast::{BinOp, CExp, CBody};
+use crate::id::{Tid, Vid};
+use crate::ast::{BinOp, CExp, CExps, CBody};
 use crate::typ::unify::UnifyError;
 use crate::typ::lub::{Lub, LubError};
 use crate::ast::sig::CSig;
@@ -17,12 +17,12 @@ pub trait Typeable {
 #[derive(Error, PartialEq, Debug)]
 pub enum TypeError {
     #[error("TypeError: In declaration {0}:\n\n{1}")]
-    Decl(Fid, Box<TypeError>),
+    Decl(Vid, Box<TypeError>),
 
     #[error("{0}\n\n{1}")]
     Next(Box<TypeError>, Box<TypeError>),
 
-    #[error("TypeError: Specification relation must be pure (no transcript and randomness):\n{0}")]
+    #[error("TypeError: Specification relation must be pure (no transcript and randomness):\n\t{0}")]
     NotPureRel(CExp),
 
     #[error("TypeError: Cannot find an Arkworks type for {0}, {1} |- {2} : {3}")]
@@ -34,50 +34,53 @@ pub enum TypeError {
     #[error("VecEmptyError: Cannot infer the type of the empty vector {0}, {1} |- []")]
     VecEmpty(Ctx<Tid, Kind>, Ctx<Vid, CTyp>),
 
-    #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- {2} != {3} \n\n{4}")]
+    #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- {2} != {3} \n\n\t{4}")]
     Vec(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
 
-    #[error("CoefficientError: Argument to [coef] must be a vector of fields:\n{0}, {1} |- coef {2}")]
+    #[error("CoefficientError: Argument to [coef] must be a vector of fields:\n\t{0}, {1} |- coef {2}")]
     Coef(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n{0}, {1} |- mle {2}")]
+    #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n\t{0}, {1} |- mle {2}")]
     Mle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("MapError: Arguments to [for] must be a vector type:\n{0}, {1} |- [{2} for {3} in {4}]")]
+    #[error("MapError: Arguments to [for] must be a vector type:\n\t{0}, {1} |- [{2} for {3} in {4}]")]
     Map(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CExp),
 
-    #[error("GenError: Only group generators are allowed:\n{0}, {1} |- gen< {2} : {3} >")]
+    #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
+    Uni(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+
+    #[error("GenError: Only group generators are allowed:\n\t{0}, {1} |- gen< {2} : {3} >")]
     Gen(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Kind),
 
-    #[error("ChallengeError: Only challenges returning field elements are allowed:\n {0}, {1} |- challenge< {2} : {3} >")]
+    #[error("ChallengeError: Only challenges returning field elements are allowed:\n\t {0}, {1} |- challenge< {2} : {3} >")]
     Challenge(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Kind),
 
     #[error("VarError: Variable {0} not found in context {1}")]
     VarNotFound(Vid, Ctx<Vid, CTyp>),
 
-    #[error("RangeError: Not a valid range expression:\n{0}, {1} |- {2}\n\n{3}")]
+    #[error("RangeError: Not a valid range expression:\n\t{0}, {1} |- {2}\n\n{3}")]
     Range(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Range<usize>, RangeError),
 
-    #[error("InterpolateError: Expects a field vector:\n{0}, {1} |- interpolate ( {2}: {3})")]
+    #[error("InterpolateError: Expects a field vector:\n\t{0}, {1} |- interpolate ( {2}: {3})")]
     Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error("EvaluateError: Expects a polynomial (univariate or MLE):\n{0}, {1} |- evaluate ( {2}: {3})")]
+    #[error("EvaluateError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- evaluate ( {2}: {3})")]
     Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
+    #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
-    #[error("AppMultipleError: Function has multiple matching definitions in context\n{0} |- {1} ( {2} )")]
-    AppMultiple(Set<CSig>, Fid, CTyps),
+    #[error("AppMultipleError: Function has multiple matching definitions in context\n\t{0} |- {1} ( {2} )")]
+    AppMultiple(Set<CSig>, Vid, CTyps),
 
-    #[error("FuncNotFound: No matching definition found for function:\n{0} |- {1} ( {2} )")]
-    FuncNotFound(Set<CSig>, Fid, CTyps),
+    #[error("FuncNotFound: No matching definition found for function:\n\t{0} |- {1} ( {2} )")]
+    FuncNotFound(Set<CSig>, Vid, CTyps),
 
-    #[error("BoolError: Expected boolean expression:\n{0}, {1} |- {2}")]
+    #[error("BoolError: Expected boolean expression:\n\t{0}, {1} |- {2}")]
     Bool(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("FuncRetError: The return type of function {3} must be {4} but is found {0}, {1} |- {2} : {5}")]
-    FuncRet(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Fid, CTyp, CTyp),
+    #[error("FuncRetError: The return type of function {3} must be {4} but is found:\n\t{0}, {1} |- {2} : {5}")]
+    FuncRet(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
 
     #[error(transparent)]
     Unify(#[from] UnifyError),
@@ -87,7 +90,7 @@ pub enum TypeError {
 }
 
 impl<'a> TypeError {
-    pub fn decl(id: &Fid, e: TypeError) -> Self {
+    pub fn decl(id: &Vid, e: TypeError) -> Self {
         TypeError::Decl(id.clone(), Box::new(e))
     }
     pub fn next(a: Self, b: Self) -> Self {
@@ -126,6 +129,9 @@ impl<'a> TypeError {
     pub fn gen(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, k: &Kind) -> Self {
         TypeError::Gen(kctx.clone(), vctx.clone(), t.clone(), k.clone())
     }
+    pub fn uni(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, ts: &CTyps) -> Self {
+        TypeError::Uni(kctx.clone(), vctx.clone(), id.clone(), e.clone(), ts.clone())
+    }
     pub fn challenge(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, k: &Kind) -> Self {
         TypeError::Challenge(kctx.clone(), vctx.clone(), t.clone(), k.clone())
     }
@@ -147,13 +153,13 @@ impl<'a> TypeError {
     pub fn bool(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Bool(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn app_multiple(fctx: &Set<CSig>, id: &Fid, params: CTyps) -> Self {
+    pub fn app_multiple(fctx: &Set<CSig>, id: &Vid, params: CTyps) -> Self {
         TypeError::AppMultiple(fctx.clone(), id.clone(), params)
     }
-    pub fn func_not_found(fctx: &Set<CSig>, id: &Fid, params: CTyps) -> Self {
+    pub fn func_not_found(fctx: &Set<CSig>, id: &Vid, params: CTyps) -> Self {
         TypeError::FuncNotFound(fctx.clone(), id.clone(), params)
     }
-    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Fid, t: &CTyp, r: &CTyp) -> Self {
+    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Vid, t: &CTyp, r: &CTyp) -> Self {
         TypeError::FuncRet(kctx.clone(), vctx.clone(), e.clone(), id.clone(), t.clone(), r.clone())
     }
 }
@@ -467,36 +473,77 @@ impl Typeable for CExp {
                 }
             }
 
-            // Function application
+            // Function or polynomial application
             CExp::App(id, params) => {
                 // type inference for each parameter
                 let param_types: CTyps = params.iter()
                         .map(|p| p.infer(kctx, fctx, vctx)).collect::<Result<_, _>>()
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Find all matching functions in function context [fctx]
-                let matching_sigs = fctx.iter().filter_map(|sig| {
-                    // If the function name matches
-                    if &sig.name == id {
-                        // The argument types must match the parameter types
-                        let (vs, _) = sig.clone()
-                            .unify(&param_types, &kctx)
-                            .ok()?;
-                        // Return new signature
-                        Some(vs)
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<_>>();
+                // Is it a polynomial or a function?
+                if let Some(CTyp::Uni(tbase, _)) = vctx.get(&id) {
+                    // It is a polynomial
+                    let k = kctx.get(&tbase).ok_or(
+                        TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tbase)))?;
 
-                // Only one function shoud match
-                if matching_sigs.len() > 1 {
-                    Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::app_multiple(fctx, id, param_types)))
-                } else if matching_sigs.len() == 0 {
-                    Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::func_not_found(fctx, id, param_types)))
+                    // Only field elements can be evaluated and only 1 argument can be given
+                    if !k.is_scalar()|| param_types.len() != 1 {
+                        return Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                    }
+
+                    // If the polynomial is a vector, it must be a vector of fields
+                    match param_types.0[0].clone() {
+                        CTyp::Vec(box inner, n) =>
+                            if let Some(tb) = inner.to_scalar(kctx) {
+                                if &tb == tbase {
+                                    // The polynomial is a vector of fields
+                                    Ok(CTyp::vec(&CTyp::base(tbase), n))
+                                } else {
+                                    Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                                }
+                            } else {
+                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                            },
+                        other =>
+                            if let Some(tb) = other.to_scalar(kctx) {
+                                if &tb == tbase {
+                                    // The polynomial is a field
+                                    Ok(CTyp::base(tbase))
+                                } else {
+                                    Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                                }
+                            } else {
+                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                            }
+                    }
                 } else {
-                    let sig = &matching_sigs[0];
-                    Ok(sig.ret.clone())
+                    // It is a function
+                    // Find all matching functions in function context [fctx]
+                    let matching_sigs = fctx.iter().filter_map(|sig| {
+                        // If the function name matches
+                        if &sig.name == id {
+                            // The argument types must match the parameter types
+                            let (vs, _) = sig.clone()
+                                .unify(&param_types, &kctx)
+                                .ok()?;
+                            // Return new signature
+                            Some(vs)
+                        } else {
+                            None
+                        }
+                    }).collect::<Vec<_>>();
+
+                    // Only one function shoud match
+                    if matching_sigs.len() > 1 {
+                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::app_multiple(fctx, id, param_types)))
+                    } else if matching_sigs.len() == 0 {
+                        // otherwise it could be a polynomial
+
+                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::func_not_found(fctx, id, param_types)))
+                    } else {
+                        let sig = &matching_sigs[0];
+                        Ok(sig.ret.clone())
+                    }
                 }
             }
 
@@ -1071,6 +1118,18 @@ mod tests {
             CExp::lit(2)
         ]));
         assert!(app2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // A polynomial application to scalar
+        let uni_app = CExp::app("p".into(), Exps::from([
+            CExp::lit(1),
+        ]));
+        assert_eq!(uni_app.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Base(Tid::from("F"))));
+
+        // A polynomial application to vector of scalars
+        let uni_app_vec = CExp::app("p".into(), Exps::from([CExp::varstr("v1")]));
+        assert_eq!(uni_app_vec.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 5)));
     }
 
     // Test for random access

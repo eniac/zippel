@@ -7,7 +7,7 @@ use bumpalo::Bump;
 use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
-use crate::id::{Tid, TidSubst, Fid, Vid};
+use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal};
 use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
@@ -75,13 +75,13 @@ impl FreeVars for CBody {
 
 /// Useful constructors
 impl<N> Decl<N> {
-    pub fn proto(name: Fid, typevars: TypeVars, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
+    pub fn proto(name: Vid, typevars: TypeVars, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret: GTyp::bool() };
         let body = Body::Proto { relation, body };
         Decl { sig, body }
     }
 
-    pub fn func(name: Fid, typevars: TypeVars, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
+    pub fn func(name: Vid, typevars: TypeVars, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
@@ -350,7 +350,7 @@ impl<'pest> FromPest<'pest> for UDecl {
             Rule::proto_decl => {
                 let mut inner = pair.into_inner();
                 // Protocol's name
-                let name = Fid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                let name = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Type variables
                 let typevars = TypeVars::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Arguments
@@ -384,7 +384,7 @@ impl<'pest> FromPest<'pest> for UDecl {
             Rule::func_decl => {
                 let mut inner = pair.into_inner();
                 // Function's name
-                let name = Fid::from_pest(&mut inner)?;
+                let name = Vid::from_pest(&mut inner)?;
                 // Type variables
                 let typevars = TypeVars::from_pest(&mut inner)?;
                 // Function's arguments
@@ -472,7 +472,7 @@ fn proto_parser() {
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::proto(
-        Fid::from("test"),
+        Vid::from("test"),
         TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
         GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
         UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
@@ -491,7 +491,7 @@ fn fn_parser1() {
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
-        Fid::from("test"),
+        Vid::from("test"),
         TypeVars(vec![
             TypeVar::new_str("F", Kind::Field),
             TypeVar::new_str("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
@@ -515,7 +515,7 @@ fn fn_parser2() {
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
-        Fid::from("test"),
+        Vid::from("test"),
         TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
         GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
         GTyp::varstr("F"),
@@ -523,7 +523,7 @@ fn fn_parser2() {
             UExp::logx(Vid::from("p"),
                 UExp::coef(UExp::mul(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]))),
                 UExp::logx(Vid::from("x"), UExp::challenge(Tid::from("F")),
-                    UExp::app(Fid::from("p"), Exps::from([UExp::varstr("x")])))))
+                    UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])))))
     ));
 }
 
@@ -542,7 +542,7 @@ fn decls_parser() {
     let mut pairs = ZippelParser::parse(Rule::decls, ex).unwrap();
     assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), Decls(vec![
         UDecl::proto(
-            Fid::from("test"),
+            Vid::from("test"),
             TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
             GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
             UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
@@ -550,7 +550,7 @@ fn decls_parser() {
                 UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
         ),
         UDecl::func(
-            Fid::from("test"),
+            Vid::from("test"),
             TypeVars(vec![
                 TypeVar::new_str("F", Kind::Field),
                 TypeVar::new_str("N", Kind::Range(Range { start:0, step:1, end: 10 })),

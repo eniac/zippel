@@ -4,7 +4,7 @@ use crate::typ::unify::{Unify, UnifyError};
 use crate::ast::{GArg, GArgs};
 use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::{ToTraversal1, ToTraversal2};
-use crate::id::{Fresh, Fid, Tid, TidSubst};
+use crate::id::{Fresh, Vid, Tid, TidSubst};
 use std::fmt;
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub enum SigError {
 /// Function and protocol argument signatures
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Sig<N> {
-    pub name: Fid,
+    pub name: Vid,
     pub typevars: TypeVars,
     pub args: GArgs<N>,
     pub ret: GTyp<N>

@@ -2,7 +2,7 @@ use from_pest::ConversionError;
 use thiserror::Error;
 use pest::iterators::Pair;
 
-use crate::id::{Fid, Tid};
+use crate::id::{Vid, Tid};
 use crate::ast::sig::USig;
 use crate::ast::arg::UArgs;
 use crate::parser::Rule;
@@ -23,8 +23,6 @@ pub enum InputError<'pest> {
     MalformedRange(RangeError),
     #[error("Type variables should start with a capital letter and contain alphanumerics or '_', '-', '\'' {0}")]
     TidCapitalize(Pair<'pest, Rule>),
-    #[error("Functions should start with a lowercase letter and contain alphanumerics or '_', '-', '\'' {0}")]
-    FidCapitalize(Pair<'pest, Rule>),
     #[error("Variables should start with a lowercase letter and contain alphanumerics or '_', '-', '\'' {0}")]
     VidCapitalize(Pair<'pest, Rule>),
     #[error("Error statically evaluating range expression {0}")]
@@ -40,7 +38,7 @@ pub enum InputError<'pest> {
     #[error("ReservedType: Bool is a reserved type")]
     ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
-    EmptyDecl(Fid, TypeVars, UArgs)
+    EmptyDecl(Vid, TypeVars, UArgs)
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {

@@ -160,64 +160,6 @@ impl Vid {
     }
 }
 
-/// Function/protocol identifier
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
-pub struct Fid(pub String);
-
-impl<'a, D, A> Pretty<'a, D, A> for Fid
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self.0))
-    }
-
-    fn is_nil(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl fmt::Display for Fid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<&str> for Fid {
-    fn from(s: &str) -> Self {
-        Fid(s.to_string())
-    }
-}
-
-impl From<String> for Fid {
-    fn from(s: String) -> Self {
-        Fid(s)
-    }
-}
-
-impl Default for Fid {
-    fn default() -> Self {
-        Fid("".to_string())
-    }
-}
-
-impl Fid {
-    pub fn new<'a>(s: &'a str) -> Self {
-        Fid(s.to_string())
-    }
-}
-
-/// Arbitrary instance for Fid
-#[cfg(test)]
-impl<'a> Arbitrary<'a> for Fid {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let c = u.int_in_range(0..=25)?;
-        Ok(Fid(format!("f{}", (b'a' + c) as char)))
-    }
-}
-
 impl<'pest> FromPest<'pest> for Vid {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -233,28 +175,6 @@ impl<'pest> FromPest<'pest> for Vid {
                     Ok(Vid::from(s))
                 } else {
                     Err(ConversionError::Malformed(InputError::VidCapitalize(pair)))
-                }
-            },
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl<'pest> FromPest<'pest> for Fid {
-    type Rule = Rule;
-    type FatalError = InputError<'pest>;
-
-    fn from_pest(
-        pest: &mut Pairs<'pest, Self::Rule>,
-    ) -> Result<Self, ConversionError<Self::FatalError>> {
-        let pair = pest.next().ok_or(ConversionError::NoMatch)?;
-        match pair.as_rule() {
-            Rule::id => {
-                let s = pair.as_str();
-                if s.chars().next().unwrap().is_lowercase() {
-                    Ok(Fid::from(s))
-                } else {
-                    Err(ConversionError::Malformed(InputError::FidCapitalize(pair)))
                 }
             },
             _ => unreachable!(),
@@ -377,7 +297,6 @@ fn id_parser() {
     assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("N"));
 
     pairs = ZippelParser::parse(Rule::id, "foo").unwrap();
-    assert_eq!(Fid::from_pest(&mut pairs).unwrap(), Fid::new("foo"));
     assert!(Tid::from_pest(&mut pairs).is_err());
 
     pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
@@ -385,6 +304,5 @@ fn id_parser() {
 
     pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
     // assert there was an error
-    assert!(Fid::from_pest(&mut pairs).is_err());
     assert!(Vid::from_pest(&mut pairs).is_err());
 }

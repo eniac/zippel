@@ -13,6 +13,7 @@ pub mod subst;
 use crate::id::{Tid, TidSubst};
 
 pub use kind::Kind;
+use num::One;
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use typevar::{TypeVar, TypeVars};

@@ -1,5 +1,5 @@
 use lang::ast::BinOp;
-use lang::id::{Fid, Vid};
+use lang::id::Vid;
 use lang::typ::{Qualifier, Nothing};
 use share::Ctx;
 use share::traversal::ToTraversal2;
@@ -12,7 +12,7 @@ use std::fmt;
 #[derive(PartialEq, Eq, Clone)]
 pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
-    Inp(Fid, Ctx<Vid, (Qualifier, ATyp)>),
+    Inp(Vid, Ctx<Vid, (Qualifier, ATyp)>),
     /// A transcript transaction
     Transcr(GOp<C>, A),
     /// Operation node
@@ -61,7 +61,7 @@ impl<C: ArkConfig, N> Node<C, N> {
 }
 
 impl<C: ArkConfig> Node<C, Nothing> {
-    pub fn inp(f: Fid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
+    pub fn inp(f: Vid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
         Node::Inp(f, sig)
     }
     pub fn coef(op: &GOp<C>) -> Self {
