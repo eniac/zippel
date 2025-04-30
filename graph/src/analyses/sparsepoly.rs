@@ -2,7 +2,7 @@ use ark_ff::Field;
 use backend::ArkConfig;
 use crate::{GOp, Op, Ref};
 use core::cmp::Ordering;
-use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
+use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, BitXor, MulAssign, DivAssign, SubAssign};
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use ark_ff::{One, Zero};
 use std::fmt::Debug;
@@ -50,7 +50,6 @@ pub trait Monomial<V: Var>:
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SparsePolynomial<F: Field, V: Var, T: Monomial<V>> {
-    pub num_vars: usize,
     pub terms: Ctx<T, VecField<F>>, // Coefficient and Term pairs
     _marker: std::marker::PhantomData<V>,
 }
@@ -219,6 +218,16 @@ impl<F: Field> VecField<F> {
     pub fn inverse(&self) -> Option<Self> {
         self.0.iter().map(|c| c.inverse()).collect::<Option<Vec<_>>>().map(|v| VecField(v))
     }
+    pub fn pow(&mut self, exp: usize) {
+        for coeff in self.0.iter_mut() {
+            let mut i = exp.clone();
+            while (i % 2) == 0 {
+                coeff.square_in_place();
+                i /= 2;
+            }
+            *coeff= coeff.pow(&[i as u64])
+        }
+    }
 }
 
 impl<F: Field> From<Vec<F>> for VecField<F> {
@@ -310,9 +319,6 @@ impl<F: Field, V: Var, T: Monomial<V>> From<Vec<(&T, F)>> for SparsePolynomial<F
         }
         poly.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
 
-        let keys = poly.terms.keys().iter().flat_map(|t| t.vars()).collect::<Set<_>>();
-        // Set num_vars based on the terms
-        poly.num_vars = keys.len();
         poly
     }
 }
@@ -332,7 +338,6 @@ impl<F: Field, V: Var, T: Monomial<V>> From<Vec<(F, Vec<(&V, usize)>)>> for Spar
             .collect();
 
         SparsePolynomial {
-            num_vars: vars.len(),
             terms: processed_terms,
             _marker: std::marker::PhantomData,
         }
@@ -373,10 +378,8 @@ impl<F: Field, V: Var, T: Monomial<V>> fmt::Display for SparsePolynomial<F, V, T
 
 /// Ad-hoc interface to SparsePolynomial with vector field coefficients
 impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
-
     pub fn zero() -> Self {
         SparsePolynomial {
-            num_vars: 0,
             terms: Ctx::new(),
             _marker: std::marker::PhantomData,
         }
@@ -390,7 +393,6 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![]), f);
         SparsePolynomial {
-            num_vars: 0,
             terms,
             _marker: std::marker::PhantomData,
         }
@@ -400,7 +402,6 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![(v.clone(), 1)]), &VecField::one());
         SparsePolynomial {
-            num_vars: 1,
             terms,
             _marker: std::marker::PhantomData,
         }
@@ -422,6 +423,23 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         self.vars().contains(v)
     }
 
+    pub fn square(&mut self) {
+        *self *= self.clone();
+    }
+
+    pub fn pow(&mut self, exp: usize) {
+        let mut i = exp;
+        while (i % 2) == 0 {
+            self.square();
+            i /= 2;
+        }
+        let mul = self.clone();
+        while i > 0 {
+            *self *= mul.clone();
+            i -= 1;
+        }
+    }
+
     pub fn vars(&self) -> Set<V> {
         self.terms.keys().iter().flat_map(|t| t.vars()).collect()
     }
@@ -433,11 +451,27 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
             new_terms.insert(&TT::from(new_term), &coeff);
         }
         SparsePolynomial {
-            num_vars: self.num_vars,
             terms: new_terms,
             _marker: std::marker::PhantomData,
         }
     }
+
+    pub fn flat_map_vars<FF: Fn(V) -> Self>(self, f: &FF) -> SparsePolynomial<F, V, T> {
+        let mut new_poly = SparsePolynomial::zero();
+        for (term, coeff) in self.terms.into_iter() {
+            // Start with the coefficient
+            let mut new_mono = SparsePolynomial::lit(&coeff);
+            // Apply the mapping function to each variable in the term
+            for (var, power) in term.vars().into_iter().zip(term.powers().into_iter()) {
+                let mut p = f(var);
+                p.pow(power);
+                new_mono *= p;
+            }
+            new_poly += new_mono;
+        }
+        new_poly
+    }
+
     pub fn mul_by_term_and_scalar(
         &self,
         scalar: VecField<F>,
@@ -460,7 +494,6 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         combined_terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
 
         SparsePolynomial {
-            num_vars: self.num_vars,
             terms: combined_terms,
             _marker: std::marker::PhantomData,
         }
@@ -573,13 +606,11 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
 
         // 4. Construct final polynomials
         let final_lhs = SparsePolynomial {
-            num_vars: self.num_vars,
             terms: final_lhs_terms,
             _marker: std::marker::PhantomData,
         };
 
         let initial_rhs = SparsePolynomial {
-            num_vars: self.num_vars,
             terms: tmp_rhs_terms,
             _marker: std::marker::PhantomData,
         };

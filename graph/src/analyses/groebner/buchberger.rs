@@ -38,19 +38,9 @@ impl<F: Field, V: Var, T: Monomial<V>> IntoIterator for GroebnerBasis<F, V, T> {
     }
 }
 
-impl<F: Field, V: Var, T: Monomial<V>> From<Vec<SparsePolynomial<F, V, T>>> for GroebnerBasis<F, V, T> {
-    fn from(basis: Vec<SparsePolynomial<F, V, T>>) -> Self {
-        let num_vars = basis.iter().map(|p| p.num_vars).max().unwrap_or(0);
-        let mut basis = basis;
-        basis.iter_mut().for_each(|p| p.num_vars = num_vars);
-        Self { basis, num_vars }
-    }
-}
-
 impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
     pub fn new(num_vars: usize, basis: Vec<SparsePolynomial<F, V, T>>) -> Self {
         let mut basis = basis;
-        basis.iter_mut().for_each(|p| p.num_vars = num_vars);
         Self { basis, num_vars }
     }
 
@@ -82,7 +72,6 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
     /// Assumes `G` does not contain the zero polynomial.
     pub fn reduce(&self, mut p: SparsePolynomial<F, V, T>) -> SparsePolynomial<F, V, T> {
         let mut remainder = SparsePolynomial::zero();
-        remainder.num_vars = self.num_vars;
 
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
@@ -213,7 +202,6 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
 
                 // Multiply the entire polynomial by lc_inv
                 let mut monic_p = SparsePolynomial::zero(); // Start fresh
-                monic_p.num_vars = num_vars;
                 for (term, coeff) in p.terms.iter() {
                     monic_p.terms.insert(term, &(coeff * &lc_inv.clone()));
                 }
