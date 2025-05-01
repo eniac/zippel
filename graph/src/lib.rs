@@ -20,9 +20,10 @@ use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
-use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices}, Direction, Graph};
+use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbors}, Direction, Graph};
 use std::process::Command;
 use std::fmt;
+use std::ops::Index;
 use std::path::PathBuf;
 
 /// Represents graphs in the Zippel language
@@ -82,7 +83,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 Ref::Node(n) =>  // Add edge from [n] to [sink]
                     self.add_edge(n, sink, Dep::new(edge_type, None)),
                 Ref::Var(v, i) => // Add edge from [i] to [sink]
-                    self.add_edge(sink, i, Dep::new(edge_type, Some(v))),
+                    self.add_edge(i, sink, Dep::new(edge_type, Some(v))),
             }
         });
     }
@@ -119,6 +120,14 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
+    }
+
+    pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
+        self.0.neighbors_directed(n, Direction::Outgoing)
+    }
+
+    pub fn nodes_to(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
+        self.0.neighbors_directed(n, Direction::Incoming)
     }
 
     pub fn erase_ann(self) -> UDag<C> {
@@ -543,6 +552,13 @@ impl<C: ArkConfig> UDag<C> {
     }
 }
 
+impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
+    type Output = Node<C, A>;
+    fn index(&self, index: NodeIndex) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
@@ -587,7 +603,7 @@ fn graph_foo() {
     });
 
     // Test transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 0);
     println!("{}", tc);
 }
 

@@ -12,28 +12,50 @@ use backend::{ATyp, ArkConfig};
 /// Transitive closure on a DAG
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig, A> {
-    dag: Dag<C, A>,
     pub clos: Ctx<NodeIndex, GOp<C>>,
     pub visibility: Ctx<Ref, Qualifier>,
     pub types: Ctx<Ref, ATyp>,
+    pub annotations: Ctx<Ref, A>,
 }
 
-impl<C: ArkConfig, A> TransClos<C, A> {
-    pub fn new(dag: Dag<C, A>) -> Self where A: Clone {
-        let node_indices = dag.0.node_indices()
-            .filter(|n| dag.0[*n].is_op())
-            .collect::<Vec<_>>();
+impl<C: ArkConfig, A: Clone> TransClos<C, A> {
+    pub fn new(dag: Dag<C, A>, subgraph: usize) -> Self {
 
         // Empty transitive closure
         let mut s = Self {
-            dag,
             clos: Ctx::new(),
             visibility: Ctx::new(),
             types: Ctx::new(),
+            annotations: Ctx::new(),
         };
-        // Compute transitive closure
-        for node in node_indices {
-            s.trans_clos_node(node);
+
+        // Find all input nodes to the graph, that is the number
+        // of subgraphs.
+        let input_nodes = dag.0.node_indices()
+            .filter(|n| dag[*n].is_input())
+            .collect::<Vec<_>>();
+
+        if subgraph >= input_nodes.len() {
+            panic!("Subgraph index out of bounds {} >= {}", subgraph, input_nodes.len());
+        }
+
+        // Add the input node to the transitive closure
+        let mut worklist = vec![input_nodes[subgraph]];
+        s.trans_clos_inp(&dag, input_nodes[subgraph]);
+
+        println!("AFTER ADDING INPUT NODE: {}", input_nodes[subgraph].index());
+        println!("{:?}", s.visibility);
+        // Add all nodes reachable from the input node
+        // (should be a DAG but adding this just in case to avoid spinning on bugs)
+        let mut done = vec![];
+        while let Some(node) = worklist.pop() {
+            if !done.contains(&node) {
+                worklist.extend(dag.nodes_from(node));
+                done.push(node);
+                if dag[node].is_op() {
+                    s.trans_clos_node(&dag, node);
+                }
+            }
         }
         s
     }
@@ -42,7 +64,6 @@ impl<C: ArkConfig, A> TransClos<C, A> {
     pub fn iter(&self) -> impl Iterator<Item = (&NodeIndex, &GOp<C>)> {
         self.clos.iter()
     }
-
     /// Get the public references
     pub fn public(&self) -> Set<Ref> {
         self.visibility.iter()
@@ -113,91 +134,82 @@ impl<C: ArkConfig, A> TransClos<C, A> {
         }
     }
 
-    fn trans_clos_op(&mut self, op: GOp<C>) -> GOp<C> {
+    fn trans_clos_inp(&mut self, dag: &Dag<C, A>, node: NodeIndex) {
+        // Add variables to the context
+        if let Node::Inp(_, ref args) = dag[node] {
+            for (v, (q, typ)) in args.iter() {
+                // Add the variable to the context
+                self.visibility.insert(&Ref::Var(v.clone(), node), q);
+                self.types.insert(&Ref::Var(v.clone(), node), typ);
+            }
+        }
+    }
+
+    fn trans_clos_op(&mut self, dag: &Dag<C, A>, op: GOp<C>) -> GOp<C> {
         match op {
-            Op::Ref(Ref::Node(n), _) => self.trans_clos_node(n),
-            Op::Ref(Ref::Var(v, n), typ) =>
-                match self.dag.0[n] {
-                    Node::Inp(_, ref args) => {
-                        // Add input variable's visibility
-                        if let Some((q, typ)) = args.get(&v) {
-                            self.visibility.insert(&(&v).into(), q);
-                            self.types.insert(&(&v).into(), typ);
-                        }
-                        Op::var(&v, n, typ)
-                    },
-                    _ => self.trans_clos_node(n),
-                },
+            Op::Ref(Ref::Node(n), _) => self.trans_clos_node(dag, n),
+            Op::Ref(Ref::Var(v, n), typ) => Op::var(&v, n, typ),
             Op::Bin(op, box a, box b, typ) => {
-                let oa = self.trans_clos_op(a);
-                let ob = self.trans_clos_op(b);
+                let oa = self.trans_clos_op(dag, a);
+                let ob = self.trans_clos_op(dag, b);
                 Op::bin(op, oa, ob, typ.clone())
             },
             Op::Ram(box a, box b) => {
-                let oa = self.trans_clos_op(a);
-                let ob = self.trans_clos_op(b);
+                let oa = self.trans_clos_op(dag, a);
+                let ob = self.trans_clos_op(dag, b);
                 Op::Ram(Box::new(oa), Box::new(ob))
             },
             Op::Value(v) => Op::Value(v),
             Op::Vec(vs) =>
-                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(v))
+                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(dag, v))
                     .collect::<Vec<_>>()),
-            Op::Check(box op) => self.trans_clos_op(op),
-            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(v))),
-            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(v))),
+            Op::Check(box op) => self.trans_clos_op(dag, op),
+            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(dag, v))),
+            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(dag, v))),
             op => op
         }
     }
 
-    fn find_or_insert(&mut self, n: NodeIndex, op: GOp<C>, q: Option<Qualifier>) -> GOp<C> {
+    fn find_or_insert(&mut self, n: NodeIndex, op: GOp<C>) -> GOp<C> {
         // Check if the node is already in the context
         if let Some(op) = self.clos.get(&n) {
             return Op::underscore(n, op.typ());
         }
         // Otherwise add it
         self.clos.insert(&n, &op);
-        let refer = Ref::Node(n);
 
-        // Record its type
-        self.types.insert(&refer, &op.typ());
-        // Record its visibility if given
-        if let Some(q) = q {
-            self.visibility.insert(&refer, &q);
-        }
         // Return it
-        Op::Ref(refer, op.typ())
+        Op::Ref(Ref::Node(n), op.typ())
     }
 
-    fn trans_clos_node(&mut self, node: NodeIndex) -> GOp<C> {
+    fn trans_clos_node(&mut self, dag: &Dag<C, A>, node: NodeIndex) -> GOp<C> {
         // Check if the node is already in the context
         if let Some(op) = self.clos.get(&node) {
             return Op::underscore(node, op.typ());
         }
         // Otherwise add it
-        match &self.dag.0[node] {
-            Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), _) => {
+        match &dag[node] {
+            Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), ann) => {
                 self.clos.insert(&node, &op);
                 self.types.insert(&Ref::Node(node), &op.typ());
+                self.annotations.insert(&Ref::Node(node), ann);
                 Op::underscore(node, op.typ())
             },
-            Node::Op(op, _) => {
-                let obin = self.trans_clos_op(op.clone());
-                self.find_or_insert(node, obin.clone(), None)
+            Node::Op(op, ann) => {
+                let obin = self.trans_clos_op(dag, op.clone());
+                let refer = Ref::Node(node);
+                self.types.insert(&refer, &op.typ());
+                self.annotations.insert(&refer, ann);
+                self.find_or_insert(node, obin.clone())
             },
-            Node::Transcr(op, _) => {
+            Node::Transcr(op, ann) => {
                 // Add the node to the context
-                let op = self.trans_clos_op(op.clone());
-                let op = self.find_or_insert(node, op.clone(), Some(Qualifier::Public));
-
-                // Add the transcript parent to the context if it does not exist
-                let tr_edge =
-                    self.dag.transcript_edge(node, Direction::Incoming).unwrap();
-
-                // Input nodes are already in the transitive closure
-                if !self.dag.0[tr_edge.source()].is_input() {
-                    self.trans_clos_node(tr_edge.source());
-                }
-                op
+                let op = self.trans_clos_op(dag, op.clone());
+                let refer = Ref::Node(node);
+                self.types.insert(&refer, &op.typ());
+                self.annotations.insert(&refer, ann);
+                self.visibility.insert(&refer, &Qualifier::Public);
+                self.find_or_insert(node, op.clone())
             },
             Node::Inp(_, _) => unreachable!()
         }
@@ -227,7 +239,7 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for TransClos<C, A> {
 #[cfg(test)] use share::{assert_deq, unwrap};
 #[cfg(test)] use backend::{Value, ArkBls12_381};
 #[test]
-fn trans_clos_foo() {
+fn trans_clos_simple() {
     let ex = r#"
         proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
             let r = random<F>;
@@ -239,7 +251,7 @@ fn trans_clos_foo() {
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 0);
 
     println!("{}", tc);
     for (_, op) in tc.clos.iter() {
@@ -271,4 +283,26 @@ fn trans_clos_foo() {
         )
     )
 
+}
+
+#[test]
+fn trans_clos_many() {
+    let ex = r#"
+        proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {
+            let r = random<F>;
+            a <- r * s[i];
+            b <- r * s';
+            verify(a == b);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+
+    // Compute transitive closure
+    let tc = TransClos::new(g, 1);
+
+    println!("{}", tc);
+    for (_, op) in tc.clos.iter() {
+        assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
+        assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
+    }
 }

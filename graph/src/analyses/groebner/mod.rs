@@ -95,8 +95,8 @@ pub struct GroebnerBuilder<C: ArkConfig, A> {
     tc: TransClos<C, A>
 }
 
-impl<C: ArkConfig, A> GroebnerBuilder<C, A> {
-    pub fn new(tc: TransClos<C, A>) -> Self where A: Clone {
+impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
+    pub fn new(tc: TransClos<C, A>) -> Self {
         let mut s = GroebnerBuilder {
             equ: GroebnerBasis::empty(tc.types.len()),
             vars: tc.types.iter()
@@ -379,7 +379,7 @@ fn groebner_foo() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 0);
 
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::new(tc);
@@ -417,7 +417,7 @@ fn groebner_bar() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 0);
 
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::new(tc);
@@ -439,7 +439,7 @@ fn groebner_bar() {
 fn groebner_baz() {
 
     let ex = r#"
-        proto foo<F: Field>(private s: [F; 5], private s': F) where s[3] == s' {
+        proto baz<F: Field, N: 4..8>(private s: [F; N], private s': F) where s[3] == s' {
             let r = random<F>;
             a <- r * s[3];
             b <- r * s';
@@ -454,7 +454,7 @@ fn groebner_baz() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 3);
 
     println!("{}", tc);
 
@@ -465,6 +465,49 @@ fn groebner_baz() {
     groebner.run();
     let leaks = groebner.get_leaks();
 
+    println!("{}", groebner);
+    if leaks.is_empty() {
+        println!("No leaks found");
+    } else {
+        println!("Leaks found:\n");
+        for leak in leaks.iter() {
+            println!("{}", leak);
+        }
+    }
+}
+
+#[test]
+fn groebner_schnorr() {
+
+    let ex = r#"
+        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F>;
+            z <- r + x*c;
+            verify(g*z == u + h*c);
+        }"#;
+
+    println!("Parsing Schnorr example: {}", ex);
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+
+    g.write_pdf("groebner_schnorr").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+    // Compute transitive closure
+    let tc = TransClos::new(g, 0);
+
+    println!("{}", tc);
+
+    // Create an object computing the Groebner basis
+    let mut groebner = GroebnerBuilder::new(tc);
+
+    // Compute the Groebner basis
+    groebner.run();
+    let leaks = groebner.get_leaks();
+
+    println!("{}", groebner);
     if leaks.is_empty() {
         println!("No leaks found");
     } else {
@@ -497,7 +540,7 @@ fn groebner_ex3() {
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let tc = TransClos::new(g);
+    let tc = TransClos::new(g, 0);
 
     println!("{}", tc);
     // Create an object computing the Groebner basis
