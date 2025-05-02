@@ -261,10 +261,13 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(GOp::Value(Value::Bool(b))),
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) => vars.get(&id)
-                .map(|v| v.clone())
-                .ok_or_else(|| GraphError::var_not_found(&id)),
-
+            CExp::Var(id) => {
+                let nop = vars.get(&id).ok_or_else(|| GraphError::var_not_found(&id))?;
+                match nop {
+                    GOp::Ref(Ref::Node(n), typ) => Ok(GOp::Ref(Ref::Var(id, *n), typ.clone())),
+                    op => Ok(op.clone())
+                }
+            },
             // Create a new [coef], [eval] or [mle] node
             CExp::Coef(box v) => {
                 // Add child first
@@ -523,6 +526,14 @@ impl<C: ArkConfig> UDag<C> {
                 vars.insert(&id, &ol);
                 // Add right-hand side as Node
                 self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
+                // Names?
+                //oe.references().into_iter().for_each(|refer| {
+                //    match refer {                .ok_or_else(|| GraphError::var_not_found(&id)),
+                //        Ref::Node(n) if n == transcr =>  // Add edge from [n] to [sink]
+                //            self.add_edge(n, n, Dep::new(edge_type, Some(id))),
+                //        _ => {}
+                //    }
+                // });
             },
             CExp::Assert(box a) => {
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;

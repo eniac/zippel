@@ -91,15 +91,15 @@ impl<'a, C: ArkConfig> fmt::Display for GroebnerLeak<C>{
 pub struct GroebnerBuilder<C: ArkConfig, A> {
     equ: GroebnerBasis<C::F, PRef, LexTerm>,
     vars: Set<PRef>,
-    npterms: Ctx<NodeIndex, GOp<C>>,
+    npterms: Ctx<Ref, GOp<C>>,
     tc: TransClos<C, A>
 }
 
 impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
     pub fn new(tc: TransClos<C, A>) -> Self {
         let mut s = GroebnerBuilder {
-            equ: GroebnerBasis::empty(tc.types.len()),
-            vars: tc.types.iter()
+            equ: GroebnerBasis::empty(tc.clos.len()),
+            vars: tc.types().iter()
                 .map(|(n, t)|
                     match tc.visibility.get(n) {
                         Some(Qualifier::Public) => PRef::new(n, t, Principal::Verifier),
@@ -146,8 +146,8 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
     pub fn get_leaks(&self) -> Vec<GroebnerLeak<C>> {
 
         // Node references to not inline, first non-polynomial terms, then Principal::Any terms
-        let except = |n: NodeIndex, op: &GOp<C>| {
-            self.npterms.contains(&n) || op.references().iter().filter_map(|r| self.find_ref(r)).any(|pf| pf.is_any())
+        let except = |r: &Ref, op: &GOp<C>| {
+            self.npterms.contains(r) || op.references().iter().filter_map(|r| self.find_ref(r)).any(|pf| pf.is_any())
         };
         // 1. Create a set of polynomials that leak information
         self.equ.iter()
@@ -189,8 +189,10 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
     /// as the constant polynomials with degree 0.
     fn to_poly(&mut self, op: GOp<C>) -> Vec<SparsePolynomial<C::F, PRef, LexTerm>> {
         match op {
-            Op::Ref(v, _) =>
-                vec![SparsePolynomial::var(&self.find_ref(&v).unwrap())],
+            Op::Ref(v, _) => {
+                println!("\nREF: {:?}, VARS: {:?}", v, self.vars);
+                vec![SparsePolynomial::var(&self.find_ref(&v).unwrap())]
+            },
             Op::Value(v) =>
                 match v {
                     Value::Scalar(s) => vec![SparsePolynomial::lit(&s.into())],
@@ -232,8 +234,8 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
         }
     }
 
-    fn from_op(&mut self, i: NodeIndex, op: GOp<C>) {
-        let pf = self.find_ref(&i.into()).unwrap_or_else(|| PRef::node(i, op.typ(), Principal::Any));
+    fn from_op(&mut self, r: Ref, op: GOp<C>) {
+        let pf = self.find_ref(&r).unwrap_or_else(|| PRef::new(&r, &op.typ(), Principal::Any));
         match op {
             // Polynomial operations
             Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
@@ -286,11 +288,11 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
                     }),
             // Unsure what to do with these, I think from the view of information
             // theory those are identities?
-            Op::Coef(box a) | Op::Eval(box a) | Op::Check(box a) => self.from_op(i, a),
+            Op::Coef(box a) | Op::Eval(box a) | Op::Check(box a) => self.from_op(r, a),
             Op::Ref(_, _) => {},
             op => {
                 // Create a new variable for an NP term
-                self.npterms.insert(&i, &op);
+                self.npterms.insert(&r, &op);
             }
         }
     }
@@ -318,8 +320,9 @@ where
             allocator.text("#######  Non-polynomial terms: #######"),
             allocator.hardline(),
             allocator.intersperse(
-                self.npterms.into_iter().map(|(i, op)|
-                    allocator.text(format!("{}: ", i.index()))
+                self.npterms.into_iter().map(|(r, op)|
+                    r.pretty(allocator)
+                        .append(allocator.text(": "))
                         .append(op.pretty(allocator)).indent(8)),
                 allocator.hardline(),
             ),

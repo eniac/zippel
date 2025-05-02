@@ -59,10 +59,10 @@ pub enum Op<C: ArkConfig, R> {
 pub type GOp<C> = Op<C, Ref>;
 
 impl Ref {
-    pub fn node(&self) -> Option<NodeIndex> {
+    pub fn node(&self) -> NodeIndex {
         match self {
-            Ref::Node(n) => Some(*n),
-            Ref::Var(_, _) => None,
+            Ref::Node(n) => *n,
+            Ref::Var(_, n) => *n,
         }
     }
 
