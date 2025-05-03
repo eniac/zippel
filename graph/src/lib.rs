@@ -3,14 +3,14 @@
 mod node;
 mod dep;
 mod op;
-mod analyses;
+pub mod analyses;
 pub mod scheduler;
-
-pub use analyses::*;
+pub mod principal;
 
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
+pub use principal::{Principal, PRef, LexTerm};
 
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
@@ -193,7 +193,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
 /// Constructors for graphs
 impl<C: ArkConfig> UDag<C> {
-    fn from_module(m: CModule) -> Result<Self, GraphError> {
+    pub fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut g = Dag(Graph::new());
         // Build [fctx] from module
         let fctx =
@@ -331,7 +331,7 @@ impl<C: ArkConfig> UDag<C> {
                                 transcr, edge_type, kctx, fctx, vctx, vars);
                         },
                     // Polynomial remainder
-                    (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r), BinOp::Rem) =>
+                    (CTyp::Uni(_, n), CTyp::Uni(_, _l), CTyp::Uni(_, _r), BinOp::Rem) =>
                         unimplemented!("Polynomial remainder"),
                     // Polynomial exponentiation
                     (CTyp::Uni(_, n), CTyp::Uni(_, l), _, BinOp::Pow) => {

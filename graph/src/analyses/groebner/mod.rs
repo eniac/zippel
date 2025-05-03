@@ -6,7 +6,8 @@ use crate::{GOp, Op, Ref};
 use petgraph::graph::NodeIndex;
 use lang::typ::{Qualifier, Range};
 use lang::ast::BinOp;
-use crate::analyses::{Principal, PRef, LexTerm, TransClos, LexDegTerm, VecField, Var, SparsePolynomial};
+use crate::analyses::{TransClos, LexDegTerm, Var, SparsePolynomial};
+use crate::principal::{Principal, PRef, LexTerm};
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ArkConfig, ArkScalarOps};
@@ -195,21 +196,25 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
             },
             Op::Value(v) =>
                 match v {
-                    Value::Scalar(s) => vec![SparsePolynomial::lit(&s.into())],
-                    Value::Bool(b) => vec![SparsePolynomial::lit(&if b { VecField::one() } else { VecField::zero() })],
-                    Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(i).into())],
+                    Value::Scalar(s) => vec![SparsePolynomial::lit(&s)],
+                    Value::Bool(b) => vec![SparsePolynomial::lit(&if b { C::F::one() } else { C::F::zero() })],
+                    Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(i))],
                     Value::VecBool(v) =>
-                        vec![SparsePolynomial::lit(
-                            &v.into_iter()
-                            .map(|b| if b { C::F::one() } else { C::F::zero() })
-                            .collect::<Vec<_>>()
-                            .into())],
+                            v.into_iter()
+                            .map(|b| SparsePolynomial::lit(&if b { C::F::one() } else { C::F::zero() }))
+                            .collect::<Vec<_>>(),
                     Value::VecScalar(v) =>
-                        vec![SparsePolynomial::lit(&v.into())],
+                        v.into_iter()
+                            .map(|s| SparsePolynomial::lit(&s))
+                            .collect::<Vec<_>>(),
                     Value::VecIndex(v) =>
-                        vec![SparsePolynomial::lit(&v.into_iter().map(|i| C::FOps::from_usize(i)).collect::<Vec<_>>().into())],
+                        v.into_iter()
+                            .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
+                            .collect::<Vec<_>>(),
                     Value::Range(r) =>
-                        vec![SparsePolynomial::lit(&r.into_iter().map(|i| C::FOps::from_usize(i)).collect::<Vec<_>>().into())],
+                        r.into_iter()
+                            .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
+                            .collect::<Vec<_>>(),
                     Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(Op::Value(v))).collect(),
                     _ => unreachable!("Unsupported value: {}", v),
                 },
@@ -226,7 +231,7 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
                         pf.range = Range::singleton(i);
                         vec![SparsePolynomial::var(&pf)]
                     },
-                    _ => vec![SparsePolynomial::var(&self.find_ref(&n).unwrap())],
+                    _ => vec![SparsePolynomial::var(&pf)],
                 }
             },
             Op::Ram(box a, _) => self.to_poly(a),

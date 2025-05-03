@@ -50,197 +50,15 @@ pub trait Monomial<V: Var>:
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SparsePolynomial<F: Field, V: Var, T: Monomial<V>> {
-    pub terms: Ctx<T, VecField<F>>, // Coefficient and Term pairs
+    pub terms: Ctx<T, F>, // Coefficient and Term pairs
     _marker: std::marker::PhantomData<V>,
-}
-
-/// Coefficients are vectors of scalars
-#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
-pub struct VecField<F: Field>(Vec<F>);
-
-impl<F: Field> From<F> for VecField<F> {
-    fn from(value: F) -> Self {
-        VecField(vec![value])
-    }
-}
-
-impl<F: Field> fmt::Display for VecField<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.len() == 1 {
-            write!(f, "{}", self.0[0])
-        } else if self.is_zero() {
-            write!(f, "0")
-        } else {
-            write!(f, "[{}", self.0[0])?;
-            for coeff in self.0.iter().skip(1) {
-                write!(f, ", {}", coeff)?;
-            }
-            write!(f, "]")
-        }
-    }
-}
-
-/// Algebraic operations on VecField
-impl<F: Field> Zero for VecField<F> {
-    fn zero() -> Self {
-        VecField(vec![F::zero()])
-    }
-    fn is_zero(&self) -> bool {
-        self.0.iter().all(|c| c.is_zero())
-    }
-}
-
-impl<F: Field> One for VecField<F> {
-    fn one() -> Self {
-        VecField(vec![F::one()])
-    }
-}
-
-impl<F: Field> AddAssign for VecField<F> {
-    fn add_assign(&mut self, other: Self) {
-        let mut other = other;
-        if self.0.len() < other.0.len() {
-            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
-        } else if other.0.len() < self.0.len() {
-            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
-        }
-        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
-            *a += *b;
-        }
-    }
-}
-
-impl<F: Field> Add for VecField<F> {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result += other;
-        result
-    }
-}
-
-impl<F: Field> SubAssign for VecField<F> {
-    fn sub_assign(&mut self, other: Self) {
-        let mut other = other;
-        if self.0.len() < other.0.len() {
-            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
-        } else if other.0.len() < self.0.len() {
-            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
-        }
-        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
-            *a -= *b;
-        }
-    }
-}
-
-impl<F: Field> Sub for VecField<F> {
-    type Output = Self;
-
-    fn sub(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result -= other;
-        result
-    }
-}
-
-impl<F: Field> Neg for VecField<F> {
-    type Output = Self;
-
-    fn neg(self) -> Self {
-        let mut result = self.clone();
-        for coeff in result.0.iter_mut() {
-            *coeff = -(*coeff);
-        }
-        result
-    }
-}
-
-impl<F: Field> MulAssign for VecField<F> {
-    fn mul_assign(&mut self, other: Self) {
-        let mut other = other;
-        if self.0.len() < other.0.len() {
-            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
-        } else if other.0.len() < self.0.len() {
-            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
-        }
-        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
-            *a *= *b;
-        }
-    }
-}
-
-impl<F: Field> Mul for VecField<F> {
-    type Output = Self;
-
-    fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
-    }
-}
-
-impl<'a, F: Field> Mul for &'a VecField<F> {
-    type Output = VecField<F>;
-
-    fn mul(self, other: Self) -> Self::Output {
-        let mut result = self.clone();
-        result *= other.clone();
-        result
-    }
-}
-
-impl<F: Field> DivAssign for VecField<F> {
-    fn div_assign(&mut self, other: Self) {
-        let mut other = other;
-        if self.0.len() < other.0.len() {
-            self.0.extend(vec![self.0[0]; other.0.len()-self.0.len()]);
-        } else if other.0.len() < self.0.len() {
-            other.0.extend(vec![other.0[0]; self.0.len()-other.0.len()]);
-        }
-        for (a, b) in self.0.iter_mut().zip(other.0.iter_mut()) {
-            *a /= *b;
-        }
-    }
-}
-
-impl<F: Field> Div for VecField<F> {
-    type Output = Self;
-
-    fn div(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result /= other;
-        result
-    }
-}
-
-impl<F: Field> VecField<F> {
-    pub fn inverse(&self) -> Option<Self> {
-        self.0.iter().map(|c| c.inverse()).collect::<Option<Vec<_>>>().map(|v| VecField(v))
-    }
-    pub fn pow(&mut self, exp: usize) {
-        for coeff in self.0.iter_mut() {
-            let mut i = exp.clone();
-            while (i % 2) == 0 {
-                coeff.square_in_place();
-                i /= 2;
-            }
-            *coeff= coeff.pow(&[i as u64])
-        }
-    }
-}
-
-impl<F: Field> From<Vec<F>> for VecField<F> {
-    fn from(value: Vec<F>) -> Self {
-        VecField(value)
-    }
 }
 
 /// Algebraic operations on SparsePolynomial
 impl<F: Field, V: Var, T: Monomial<V>> AddAssign for SparsePolynomial<F, V, T> {
     fn add_assign(&mut self, other: Self) {
         for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(VecField::zero()) += coef;
+            *self.terms.entry(term).or_insert(F::zero()) += coef;
         }
         self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
     }
@@ -249,7 +67,7 @@ impl<F: Field, V: Var, T: Monomial<V>> AddAssign for SparsePolynomial<F, V, T> {
 impl<F: Field, V: Var, T: Monomial<V>> SubAssign for SparsePolynomial<F, V, T> {
     fn sub_assign(&mut self, other: Self) {
         for (term, coef) in other.terms {
-            *self.terms.entry(term).or_insert(VecField::zero()) -= coef;
+            *self.terms.entry(term).or_insert(F::zero()) -= coef;
         }
         self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
     }
@@ -261,7 +79,7 @@ impl<F: Field, V: Var, T: Monomial<V>> Neg for SparsePolynomial<F, V, T> {
     fn neg(self) -> Self {
         let mut result = self.clone();
         for (_, coeff) in result.terms.iter_mut() {
-            *coeff = coeff.clone().neg();
+            *coeff = (*coeff).neg();
         }
         result
     }
@@ -273,7 +91,7 @@ impl<F: Field, V: Var, T: Monomial<V>> MulAssign for SparsePolynomial<F, V, T> {
             for (term2, coeff2) in other.terms.iter() {
                 let new_term = term1.clone() * term2.clone();
                 let new_coeff = coeff1.clone() * coeff2.clone();
-                *new_terms.entry(new_term).or_insert(VecField::zero()) += new_coeff;
+                *new_terms.entry(new_term).or_insert(F::zero()) += new_coeff;
             }
         }
         self.terms = new_terms;
@@ -315,7 +133,7 @@ impl<F: Field, V: Var, T: Monomial<V>> From<Vec<(&T, F)>> for SparsePolynomial<F
     fn from(terms: Vec<(&T, F)>) -> Self {
         let mut poly = SparsePolynomial::zero();
         for (term, coeff) in terms {
-            *poly.terms.entry(term.clone()).or_insert(VecField::zero()) += coeff.into();
+            *poly.terms.entry(term.clone()).or_insert(F::zero()) += coeff;
         }
         poly.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
 
@@ -389,7 +207,7 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         self.terms.is_empty()
     }
 
-    pub fn lit(f: &VecField<F>) -> SparsePolynomial<F, V, T> {
+    pub fn lit(f: &F) -> SparsePolynomial<F, V, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![]), f);
         SparsePolynomial {
@@ -400,7 +218,7 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
 
     pub fn var(v: &V) -> SparsePolynomial<F, V, T> {
         let mut terms = Ctx::new();
-        terms.insert(&T::from(vec![(v.clone(), 1)]), &VecField::one());
+        terms.insert(&T::from(vec![(v.clone(), 1)]), &F::one());
         SparsePolynomial {
             terms,
             _marker: std::marker::PhantomData,
@@ -415,7 +233,7 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
         self.degree() == 0
     }
 
-    pub fn leading_term(&self) -> Option<(VecField<F>, T)> {
+    pub fn leading_term(&self) -> Option<(F, T)> {
         self.terms.first().map(|(t, c)| (c.clone(), t.clone()))
     }
 
@@ -474,22 +292,22 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
 
     pub fn mul_by_term_and_scalar(
         &self,
-        scalar: VecField<F>,
+        scalar: F,
         term: &T,
     ) -> SparsePolynomial<F, V, T> {
         if scalar.is_zero() {
             return SparsePolynomial::zero();
         }
-        let new_terms: Vec<(T, VecField<F>)> = self
+        let new_terms: Vec<(T, F)> = self
             .terms
             .iter()
             .map(|(t, coeff)| (term.clone() * t.clone(), coeff.clone() * scalar.clone()))
             .collect();
 
         // Need to handle combining like terms and sorting.
-        let mut combined_terms: Ctx<T, VecField<F>> = Ctx::new(); // BTreeMap keeps terms sorted
+        let mut combined_terms: Ctx<T, F> = Ctx::new(); // BTreeMap keeps terms sorted
         for (t, coeff) in new_terms {
-            *combined_terms.entry(t).or_insert(VecField::zero()) += coeff;
+            *combined_terms.entry(t).or_insert(F::zero()) += coeff;
         }
         combined_terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
 
@@ -550,8 +368,8 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
     /// - `rhs`: The negated polynomial part with `eliminate=false` variables.
     /// - `divided_vars`: A `HashSet` of variables present in the `M_gcd` that was factored out.
     pub fn isolate_elimination_vars<FF: Fn(&V)->bool>(&self, factor: &FF) -> (Self, Self, Set<V>) {
-        let mut tmp_lhs_terms: Ctx<T, VecField<F>> = Ctx::new();
-        let mut tmp_rhs_terms: Ctx<T, VecField<F>> = Ctx::new();
+        let mut tmp_lhs_terms: Ctx<T, F> = Ctx::new();
+        let mut tmp_rhs_terms: Ctx<T, F> = Ctx::new();
 
         // 1. Initial Split
         for (monomial, coefficient) in self.terms.iter() {
@@ -583,7 +401,7 @@ impl<F: Field, V: Var, T: Monomial<V>> SparsePolynomial<F, V, T> {
             }
         }
 
-        let mut final_lhs_terms: Ctx<T, VecField<F>>;
+        let mut final_lhs_terms: Ctx<T, F>;
         let divided_vars: Set<V>;
 
         // 3. Factor LHS & Track Variables (if GCD is not constant)
@@ -630,22 +448,6 @@ where
     F: Field,
     V: Var,
     T: Monomial<V>,
-    A: 'a + Clone,
-{
-    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self))
-    }
-
-    fn is_nil(&self) -> bool {
-        false
-    }
-}
-
-impl<'a, D, A, F> Pretty<'a, D, A> for VecField<F>
-where
-    D: DocAllocator<'a, A>,
-    D::Doc: Clone,
-    F: Field,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {

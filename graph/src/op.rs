@@ -1,12 +1,10 @@
 use lang::typ::range::CRange;
-use lang::typ::{CTyp, TypeError, Nothing, Typeable, Kind};
-use lang::ast::{CExp, BinOp, CSig, CBody};
-use lang::id::{Tid, Vid};
+use lang::ast::BinOp;
+use lang::id::Vid;
 use backend::{Value, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
 
 use petgraph::graph::NodeIndex;
-use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use std::ops::{Add, Sub, Mul, Div, Rem, BitXor, BitAnd, BitOr};
+use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use std::fmt;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
@@ -442,7 +440,7 @@ impl<C: ArkConfig, R> Op<C, R> {
         }
     }
 
-    fn pad_zeroes(v: Op<C, R>, n: usize) -> Op<C, R> where R: Clone {
+    pub fn pad_zeroes(v: Op<C, R>, n: usize) -> Op<C, R> where R: Clone {
         let typ = v.typ();
         let (t, m) = typ.into_vec();
         if m < n {

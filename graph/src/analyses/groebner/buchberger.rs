@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use std::ops::Index;
 use std::fmt;
 
-use crate::sparsepoly::{Var, Monomial, LexDegTerm, SparsePolynomial};
+use crate::analyses::sparsepoly::{Var, Monomial, LexDegTerm, SparsePolynomial};
 use log::debug;
 
 /// A struct representing a Gröbner basis.
@@ -40,7 +40,6 @@ impl<F: Field, V: Var, T: Monomial<V>> IntoIterator for GroebnerBasis<F, V, T> {
 
 impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
     pub fn new(num_vars: usize, basis: Vec<SparsePolynomial<F, V, T>>) -> Self {
-        let mut basis = basis;
         Self { basis, num_vars }
     }
 
@@ -203,7 +202,7 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
                 // Multiply the entire polynomial by lc_inv
                 let mut monic_p = SparsePolynomial::zero(); // Start fresh
                 for (term, coeff) in p.terms.iter() {
-                    monic_p.terms.insert(term, &(coeff * &lc_inv.clone()));
+                    monic_p.terms.insert(term, &(*coeff * lc_inv));
                 }
 
                 // Ensure it's still not zero after making monic (unlikely but possible with weird fields)

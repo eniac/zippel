@@ -19,9 +19,6 @@ pub enum Node<C: ArkConfig, A> {
     Op(GOp<C>, A),
 }
 
-/// A node in the DAG with no annotations
-pub type UNode<C> = Node<C, Nothing>;
-
 impl<C: ArkConfig, N> Node<C, N> {
     pub fn is_op(&self) -> bool {
         match self {
