@@ -190,10 +190,7 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
     /// as the constant polynomials with degree 0.
     fn to_poly(&mut self, op: GOp<C>) -> Vec<SparsePolynomial<C::F, PRef, LexTerm>> {
         match op {
-            Op::Ref(v, _) => {
-                println!("\nREF: {:?}, VARS: {:?}", v, self.vars);
-                vec![SparsePolynomial::var(&self.find_ref(&v).unwrap())]
-            },
+            Op::Ref(v, _) => vec![SparsePolynomial::var(&self.find_ref(&v).unwrap())],
             Op::Value(v) =>
                 match v {
                     Value::Scalar(s) => vec![SparsePolynomial::lit(&s)],

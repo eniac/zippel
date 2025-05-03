@@ -1,4 +1,9 @@
 WHITESPACE = _{ " " | "\n" | "\t" }
+line_comment = { "//" ~ (!NEWLINE ~ ANY)* }
+block_comment = { "/*" ~ ( !"*/" ~ ANY )* ~ "*/" }
+COMMENT = _{ line_comment | block_comment }
+
+/// Terminals
 positive = @{ ASCII_DIGIT+ }
 one = @{ "1" }
 two = @{ "2" }

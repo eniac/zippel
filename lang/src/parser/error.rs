@@ -21,10 +21,6 @@ pub enum InputError<'pest> {
     ExpectedConstSize(Size),
     #[error(transparent)]
     MalformedRange(RangeError),
-    #[error("Type variables should start with a capital letter and contain alphanumerics or '_', '-', '\'' {0}")]
-    TidCapitalize(Pair<'pest, Rule>),
-    #[error("Variables should start with a lowercase letter and contain alphanumerics or '_', '-', '\'' {0}")]
-    VidCapitalize(Pair<'pest, Rule>),
     #[error("Error statically evaluating range expression {0}")]
     RangeError(#[from] EvalError),
     #[error("KindError: Duplicate type variable {0}")]

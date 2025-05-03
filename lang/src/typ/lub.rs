@@ -373,6 +373,7 @@ impl Lub for CTyp {
     type Context = Ctx<Tid, Kind>;
     fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
         match (x, y) {
+            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_equ(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?)),

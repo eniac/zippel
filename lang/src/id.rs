@@ -171,11 +171,7 @@ impl<'pest> FromPest<'pest> for Vid {
         match pair.as_rule() {
             Rule::id => {
                 let s = pair.as_str();
-                if s.chars().next().unwrap().is_lowercase() {
-                    Ok(Vid::from(s))
-                } else {
-                    Err(ConversionError::Malformed(InputError::VidCapitalize(pair)))
-                }
+                Ok(Vid::from(s))
             },
             _ => unreachable!(),
         }
@@ -193,11 +189,7 @@ impl<'pest> FromPest<'pest> for Tid {
         match pair.as_rule() {
             Rule::id => {
                 let s = pair.as_str();
-                if s.chars().next().unwrap().is_uppercase() {
-                    Ok(Tid::from(s))
-                } else {
-                    Err(ConversionError::Malformed(InputError::TidCapitalize(pair)))
-                }
+                Ok(Tid::from(s))
             },
             _ => unreachable!()
         }
