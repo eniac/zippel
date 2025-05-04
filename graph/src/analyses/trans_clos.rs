@@ -1,13 +1,10 @@
 use crate::{GOp, Op, Ref, Node, Dag};
 use petgraph::{
     graph::NodeIndex,
-    visit::EdgeRef,
-    Direction,
 };
 use std::fmt;
 use share::{Set, Ctx};
 use lang::typ::Qualifier;
-use lang::id::Vid;
 use backend::{ATyp, ArkConfig};
 
 /// Transitive closure on a DAG
@@ -212,7 +209,7 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
         }
         // Otherwise add it
         match &dag[r.node()] {
-            Node::Op(op @ (Op::Challenge(_) | Op::Gen(_) | Op::Random(_)), ann) => {
+            Node::Op(op @ (Op::Challenge(_) | Op::Random(_)), ann) => {
                 self.insert(&r, &op);
                 self.annotations.insert(&r, ann);
                 self.types.insert(&r, &op.typ());

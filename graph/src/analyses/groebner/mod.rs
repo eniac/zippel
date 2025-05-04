@@ -3,10 +3,9 @@ pub mod buchberger;
 use buchberger::GroebnerBasis;
 
 use crate::{GOp, Op, Ref};
-use petgraph::graph::NodeIndex;
 use lang::typ::{Qualifier, Range};
 use lang::ast::BinOp;
-use crate::analyses::{TransClos, LexDegTerm, Var, SparsePolynomial};
+use crate::analyses::{TransClos, LexDegTerm, SparsePolynomial};
 use crate::principal::{Principal, PRef, LexTerm};
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
@@ -532,11 +531,10 @@ fn groebner_schnorr() {
 #[test]
 fn groebner_ex3() {
     let ex = r#"
-        proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F) where s == s {
+        proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F, public g: G) where s == s {
             let r = random<F>;
             let a = r + s;
             let b = r + s';
-            g <- gen<G>;
             c <- g * a;
             d <- g * b;
             verify(c == d);

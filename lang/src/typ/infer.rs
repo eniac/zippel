@@ -49,9 +49,6 @@ pub enum TypeError {
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
     Uni(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
-    #[error("GenError: Only group generators are allowed:\n\t{0}, {1} |- gen< {2} : {3} >")]
-    Gen(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Kind),
-
     #[error("ChallengeError: Only challenges returning field elements are allowed:\n\t {0}, {1} |- challenge< {2} : {3} >")]
     Challenge(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Kind),
 
@@ -125,9 +122,6 @@ impl<'a> TypeError {
     }
     pub fn map(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: Vid, r: CExp) -> Self {
         TypeError::Map(kctx.clone(), vctx.clone(), e, id, r)
-    }
-    pub fn gen(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, k: &Kind) -> Self {
-        TypeError::Gen(kctx.clone(), vctx.clone(), t.clone(), k.clone())
     }
     pub fn uni(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, ts: &CTyps) -> Self {
         TypeError::Uni(kctx.clone(), vctx.clone(), id.clone(), e.clone(), ts.clone())
@@ -403,20 +397,6 @@ impl Typeable for CExp {
                 Ok(CTyp::base(t))
             }
 
-            // Group generator
-            CExp::Gen(t) => {
-                // What kind of [t]?
-                let k = kctx.get(&t).ok_or(
-                    TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&t)))?;
-
-                // Only generate elements of groups
-                if k.is_group() {
-                    Ok(CTyp::base(t))
-                } else {
-                    Err(TypeError::gen(kctx, vctx, t, k))
-                }
-            }
-
             // Convert a polynomial to its evaluation form
             CExp::Eval(box a) => {
                 let t = a.infer(kctx, fctx, vctx)
@@ -491,30 +471,16 @@ impl Typeable for CExp {
                         return Err(TypeError::uni(kctx, vctx, id, params, &param_types))
                     }
 
-                    // If the polynomial is a vector, it must be a vector of fields
-                    match param_types.0[0].clone() {
-                        CTyp::Vec(box inner, n) =>
-                            if let Some(tb) = inner.to_scalar(kctx) {
-                                if &tb == tbase {
-                                    // The polynomial is a vector of fields
-                                    Ok(CTyp::vec(&CTyp::base(tbase), n))
-                                } else {
-                                    Err(TypeError::uni(kctx, vctx, id, params, &param_types))
-                                }
-                            } else {
-                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
-                            },
-                        other =>
-                            if let Some(tb) = other.to_scalar(kctx) {
-                                if &tb == tbase {
-                                    // The polynomial is a field
-                                    Ok(CTyp::base(tbase))
-                                } else {
-                                    Err(TypeError::uni(kctx, vctx, id, params, &param_types))
-                                }
-                            } else {
-                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
-                            }
+                    // The argument must be a field and the same as the polynomial
+                    if let Some(tb) = param_types.0[0].clone().to_scalar(kctx) {
+                        if &tb == tbase {
+                            // The polynomial is a field
+                            Ok(CTyp::base(tbase))
+                        } else {
+                            Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                        }
+                    } else {
+                        Err(TypeError::uni(kctx, vctx, id, params, &param_types))
                     }
                 } else {
                     // It is a function
@@ -534,12 +500,8 @@ impl Typeable for CExp {
                     }).collect::<Vec<_>>();
 
                     // Only one function shoud match
-                    if matching_sigs.len() > 1 {
+                    if matching_sigs.len() != 1 {
                         Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::app_multiple(fctx, id, param_types)))
-                    } else if matching_sigs.len() == 0 {
-                        // otherwise it could be a polynomial
-
-                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::func_not_found(fctx, id, param_types)))
                     } else {
                         let sig = &matching_sigs[0];
                         Ok(sig.ret.clone())

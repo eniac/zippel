@@ -118,7 +118,6 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
                 }
             },
             Op::Value(_)
-            | Op::Gen(_)
             | Op::Ref(_, _)
             | Op::Random(_) => cost += 1.0,
             Op::Ram(box l, box r) =>

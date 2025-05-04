@@ -242,6 +242,15 @@ impl<C: ArkConfig> UDag<C> {
         Ok(g)
     }
 
+    /// Variables to operations by lookup in [vars]
+    fn op_from_var(id: &Vid, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
+        let nop = vars.get(&id).ok_or_else(|| GraphError::var_not_found(&id))?;
+        match nop {
+            GOp::Ref(Ref::Node(n), typ) => Ok(GOp::Ref(Ref::Var(id.clone(), *n), typ.clone())),
+            op => Ok(op.clone())
+        }
+    }
+
     /// Add an expression [exp] to the graph
     pub fn add_exp(&mut self,
         exp: CExp,
@@ -261,13 +270,8 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(GOp::Value(Value::Bool(b))),
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) => {
-                let nop = vars.get(&id).ok_or_else(|| GraphError::var_not_found(&id))?;
-                match nop {
-                    GOp::Ref(Ref::Node(n), typ) => Ok(GOp::Ref(Ref::Var(id, *n), typ.clone())),
-                    op => Ok(op.clone())
-                }
-            },
+            CExp::Var(id) => Self::op_from_var(&id, vars),
+
             // Create a new [coef], [eval] or [mle] node
             CExp::Coef(box v) => {
                 // Add child first
@@ -421,15 +425,6 @@ impl<C: ArkConfig> UDag<C> {
                 *transcr = nchallenge;
                 Ok(GOp::underscore(nchallenge, at))
             },
-            CExp::Gen(_) => {
-                let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                    TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
-                })?;
-                let ngen = self.add_node(Node::generator(&at));
-                Ok(GOp::underscore(ngen, at))
-            },
             CExp::Random(_) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
@@ -444,44 +439,64 @@ impl<C: ArkConfig> UDag<C> {
                 let param_types: CTyps = params.iter()
                         .map(|p| p.infer(kctx, &fctx.keys(), vctx)).collect::<Result<_, _>>()?;
 
-                // Find all matching functions in function context [fctx]
-                let matching_sigs =
-                    fctx.iter().filter_map(|(sig, body)| {
+                // Is it a polynomial or a function?
+                if let Some(CTyp::Uni(tbase, n)) = vctx.get(&fid) {
+                    // It is a polynomial
+                    let k = kctx.get(&tbase).unwrap();
+
+                    // Only field elements can be evaluated and only 1 argument can be given
+                    assert!(k.is_scalar());
+                    assert_eq!(param_types.len(), 1);
+
+                    let x = params[0].clone();
+                    // Add the argument to the graph x_pow = [x^0, ..., x^n]
+                    let x_pow = CExp::vec((0..*n).map(|i| CExp::ram(x.clone(), CExp::lit(i))).collect());
+                    let xop = self.add_exp(x_pow.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
+                    // Add the dot-product to the graph
+                    let pop = Self::op_from_var(&fid, vars)?;
+                    let nbin = self.add_node(Node::bin(BinOp::Dot, &pop, &xop, &ATyp::Scalar));
+                    // Add edges from [nbin] to [vl] and [vr]
+                    self.add_edges(edge_type, nbin, pop);
+                    self.add_edges(edge_type, nbin, xop);
+                    Ok(GOp::underscore(nbin, ATyp::Scalar))
+                } else {
+                    // It is a function. Find all matching functions in function context [fctx]
+                    let matching_sigs = fctx.iter().filter_map(|(sig, body)| {
                         // If the function name matches
                         if sig.name == fid {
                             // The argument types must match the parameter types
                             let (sig, subs) = sig.clone()
                                 .unify(&param_types, &kctx)
                                 .ok()?;
+                            // Return new signature
                             Some((sig, body, subs))
                         } else {
                             None
                         }
                     }).collect::<Vec<_>>();
 
-                // Only one function shoud match (enforced by the type system)
-                assert_eq!(matching_sigs.len(), 1);
-                let triple = matching_sigs[0].clone();
-                let sig = triple.0;
-                let mut body = triple.1.clone();
-                let subs = triple.2;
+                    // Only one function shoud match (enforced by the type system)
+                    assert_eq!(matching_sigs.len(), 1);
+                    let triple = matching_sigs[0].clone();
+                    let sig = triple.0;
+                    let mut body = triple.1.clone();
+                    let subs = triple.2;
+                    subs.tid_subst(&mut body);
 
-                // Substitute type variables in the body
-                subs.tid_subst(&mut body);
-
-                // First add the arguments to the graph
-                let oparams: Vec<GOp<C>> = params.into_iter()
+                    // First add the arguments to the graph
+                    let oparams: Vec<GOp<C>> = params.into_iter()
                     .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
                     .collect::<Result<_, _>>()?;
 
-                // Create a new context
-                let vctx = sig.args.to_ctx();
-                let vars =
-                    sig.args.iter().zip(oparams.iter())
-                    .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
+                    // Create a new context
+                    let vctx = sig.args.to_ctx();
+                    let vars =
+                        sig.args.iter().zip(oparams.iter())
+                        .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
 
-                // Add the body to the graph
-                self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
+                    // Add the body to the graph
+                    self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
+                }
             },
             CExp::Let(Some(id), box l, box r) => {
                 // Infer the type of [l]
@@ -526,14 +541,6 @@ impl<C: ArkConfig> UDag<C> {
                 vars.insert(&id, &ol);
                 // Add right-hand side as Node
                 self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
-                // Names?
-                //oe.references().into_iter().for_each(|refer| {
-                //    match refer {                .ok_or_else(|| GraphError::var_not_found(&id)),
-                //        Ref::Node(n) if n == transcr =>  // Add edge from [n] to [sink]
-                //            self.add_edge(n, n, Dep::new(edge_type, Some(id))),
-                //        _ => {}
-                //    }
-                // });
             },
             CExp::Assert(box a) => {
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;

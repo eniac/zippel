@@ -1,10 +1,9 @@
 use ark_ff::Field;
 use backend::ArkConfig;
-use crate::{GOp, Op, Ref};
+use crate::GOp;
 use core::cmp::Ordering;
-use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, BitXor, MulAssign, DivAssign, SubAssign};
-use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use ark_ff::{One, Zero};
+use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, SubAssign};
+use share::{Ctx, Set, Pretty, DocAllocator, DocBuilder};
 use std::fmt::Debug;
 use std::fmt;
 

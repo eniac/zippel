@@ -28,9 +28,6 @@ pub enum Op<C: ArkConfig, R> {
     /// Binary operations
     Bin(BinOp, Box<Op<C, R>>, Box<Op<C, R>>, ATyp),
 
-    /// Generator for a group
-    Gen(ATyp),
-
     /// Random access into a value
     Ram(Box<Op<C, R>>, Box<Op<C, R>>),
 
@@ -77,7 +74,6 @@ impl<C: ArkConfig, R> Op<C, R> {
         match &self {
             Op::Value(v) => v.typ(),
             Op::Bin(_, _, _, typ) => typ.clone(),
-            Op::Gen(t) => t.clone(),
             Op::Ref(_, t) => t.clone(),
             Op::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
@@ -496,9 +492,6 @@ impl<C: ArkConfig, R> Op<C, R> {
     pub fn random(typ: ATyp) -> Op<C, R> {
         Op::Random(typ)
     }
-    pub fn generator(typ: ATyp) -> Op<C, R> {
-        Op::Gen(typ)
-    }
 
     pub fn check(op: Op<C, R>) -> Op<C, R> {
         Op::Check(Box::new(op))
@@ -520,7 +513,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             | Op::Check(box v)
             | Op::Eval(box v) => v.references(),
             Op::Value(_)
-            | Op::Gen(_)
             | Op::Random(_)
             | Op::Challenge(_) => vec![],
         }
@@ -640,7 +632,6 @@ where
                 vs.into_iter().map(|v| v.pretty(allocator)), ", "),
                 allocator.text("]"),
             ]),
-            Op::Gen(t) => allocator.text(format!("gen<{}>", t)),
             Op::Ref(n, _) => n.pretty(allocator),
         }
     }

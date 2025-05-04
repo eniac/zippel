@@ -1,17 +1,11 @@
 use ark_ff::Field;
-use crate::principal::Principal;
-use crate::Ref;
-use core::cmp::Ordering;
-use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, DivAssign, SubAssign};
-use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use ark_ff::{One, Zero};
-use ark_ec::AdditiveGroup;
 use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::ops::Index;
 use std::fmt;
+use std::ops::Index;
 
-use crate::analyses::sparsepoly::{Var, Monomial, LexDegTerm, SparsePolynomial};
+use crate::analyses::sparsepoly::{Var, Monomial, SparsePolynomial};
+use share::Ctx;
+use ark_ff::AdditiveGroup;
 use log::debug;
 
 /// A struct representing a Gröbner basis.
@@ -305,6 +299,8 @@ mod groebner_test {
         use super::*;
         use ark_ff::One;
         use share::assert_deq;
+    use crate::analyses::LexDegTerm;
+
     // For testing we have concrete variables and monomial terms
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
     pub struct PVar {

@@ -1,10 +1,8 @@
 use backend::ArkConfig;
-use grb::{attribute::VarDoubleAttr::X, prelude::*};
 use grb::expr::GurobiSum;
 use grb::ModelSense::Minimize;
-use grb::{add_binvar, add_intvar, attr, c, Expr, Model, Status, Var, INFINITY};
+use grb::{add_binvar, add_intvar, attr, c, Expr, Model, Status, Var};
 use petgraph::algo;
-use petgraph::graph::NodeIndex;
 
 use crate::{Dag, UDag, Ref, Node};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};

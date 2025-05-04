@@ -108,13 +108,6 @@ pub enum Exp<N> {
     ///     ```
     Bool(bool),
 
-    ///     Generator of a group [Tid]
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let g = gen<G>;
-    ///     ```
-    Gen(Tid),
-
     ///     Variable reference
     ///     **Zippel Code:**
     ///     ```zippel
@@ -272,7 +265,6 @@ impl<N> ToTraversal1<N> for Exp<N> {
                 Ok(Exp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?))),
             Exp::Challenge(t) => Ok(Exp::Challenge(t)),
             Exp::Random(t) => Ok(Exp::Random(t)),
-            Exp::Gen(t) => Ok(Exp::Gen(t)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
             Exp::Eval(box x) =>
                 Ok(Exp::Eval(Box::new(x.traverse1(f)?))),
@@ -307,7 +299,6 @@ impl TidSubst for CExp {
         match self {
             Exp::Challenge(t) if t == from => *t = to.clone(),
             Exp::Random(t) if t == from => *t = to.clone(),
-            Exp::Gen(t) if t == from => *t = to.clone(),
             Exp::Coef(box p)
             | Exp::Mle(box p)
             | Exp::Assert(box p)
@@ -324,7 +315,7 @@ impl TidSubst for CExp {
                 b.tid_subst(from, to);
             },
             Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
-            | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_) => {}
+            | Exp::Challenge(_) | Exp::Random(_) => {}
         }
     }
 }
@@ -339,7 +330,7 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_) | Exp::Gen(_)
+            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_)
             | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Coef(box p)
             | Exp::Mle(box p)
@@ -455,9 +446,6 @@ impl<N> Exp<N> {
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
         Exp::Bin(op, Box::new(l), Box::new(r))
     }
-    pub fn gen(t: Tid) -> Self {
-        Exp::Gen(t)
-    }
     pub fn coef(a: Self) -> Self {
         Exp::Coef(Box::new(a))
     }
@@ -544,7 +532,7 @@ impl<N> Exp<N> {
     }
     pub fn is_pure(&self) -> bool {
         match self {
-            Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Gen(_) | Exp::Range(_) => true,
+            Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
             Exp::Coef(box p) => p.is_pure(),
             Exp::Mle(box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
@@ -646,11 +634,6 @@ where
             ]),
             Exp::Random(t) => allocator.concat([
                 allocator.text("random<"),
-                t.pretty(allocator),
-                allocator.text(">"),
-            ]),
-            Exp::Gen(t) => allocator.concat([
-                allocator.text("gen<"),
                 t.pretty(allocator),
                 allocator.text(">"),
             ]),
@@ -876,7 +859,6 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::lit_bexp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
-                Rule::gen_exp => Ok(Exp::gen(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::eval_exp => Ok(Exp::eval(Exp::from_pest(&mut pair.into_inner())?)),

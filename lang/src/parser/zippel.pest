@@ -58,7 +58,6 @@ typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
 /// Arithmetic expression language of Zippel
 aexp       = { aexp_term ~ (bin_op ~ aexp_term)* }
 aexp_term  = _{ "(" ~ aexp ~ ")"
-         | gen_exp
          | coef_exp
          | mle_exp
          | eval_exp
@@ -76,7 +75,6 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | positive
          | id
     }
-    gen_exp       = { "gen" ~ "<" ~ id ~ ">" }                         // Group generator
     coef_exp      = { "coef" ~ "(" ~ aexp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
     eval_exp      = { "eval" ~ "(" ~ aexp ~ ")" }                      // Evaluation form (FFT) univariate polynomial or MLE
     mle_exp       = { "mle" ~ "(" ~ aexp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
