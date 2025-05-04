@@ -95,7 +95,7 @@ stmts   = { aexp ~ (";" ~ aexp)* ~ ";"? }
 
 /// Binary expressions
 bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
-bexp_term = _{ "(" ~ bexp ~ ")" | lit_bexp | app_bexp | eq_bexp }
+bexp_term = _{ "(" ~ bexp ~ ")" | lit_bexp | eq_bexp | app_bexp }
     app_bexp = { id ~ "(" ~ aexps ~ ")" }
     eq_bexp  = { aexp ~ "==" ~ aexp  }
     lit_bexp = { "true" | "false" }

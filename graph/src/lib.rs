@@ -448,17 +448,12 @@ impl<C: ArkConfig> UDag<C> {
                     assert!(k.is_scalar());
                     assert_eq!(param_types.len(), 1);
 
-                    let x = params[0].clone();
+                    // Add the argument to the graph
+                    let ox = self.add_exp(params[0].clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
+
                     // Add the argument to the graph x_pow = [x^0, ..., x^n]
-                    let x_pow = CExp::vec((0..*n).map(|i| CExp::ram(x.clone(), CExp::lit(i))).collect());
-                    let xop = self.add_exp(x_pow.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
-                    // Add the dot-product to the graph
-                    let pop = Self::op_from_var(&fid, vars)?;
-                    let nbin = self.add_node(Node::bin(BinOp::Dot, &pop, &xop, &ATyp::Scalar));
-                    // Add edges from [nbin] to [vl] and [vr]
-                    self.add_edges(edge_type, nbin, pop);
-                    self.add_edges(edge_type, nbin, xop);
-                    Ok(GOp::underscore(nbin, ATyp::Scalar))
+                    let x_pow = Op::vec((0..*n).map(|i| Op::pow(ox.clone(), i.into(), ox.typ())).collect());
+                    Ok(Op::dot(Self::op_from_var(&fid, vars)?, x_pow.clone(), ATyp::Scalar))
                 } else {
                     // It is a function. Find all matching functions in function context [fctx]
                     let matching_sigs = fctx.iter().filter_map(|(sig, body)| {
@@ -628,8 +623,10 @@ fn graph_foo() {
 #[test]
 fn graph_poly() {
     let ex = r#"
-        fn poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) -> Uni<F, 32> {
-            a * b
+        proto poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) where a == a {
+            let r = random<F>;
+            let p = a * b;
+            verify(p(r) == (a(r) * b(r)));
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);

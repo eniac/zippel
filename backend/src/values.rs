@@ -1057,11 +1057,6 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter_mut().for_each(|v| C::FOps::pow(v, *i as u64));
                 *other = Value::VecScalar(vs);
             },
-            // Vec<Index> ^ Vec<Index> = Vec<Index>
-            (Value::VecIndex(vs), _) =>
-                vs.par_iter()
-                .zip(other.into_vec_index_mut().par_iter_mut())
-                .for_each(|(a, b)| *b = pow64(*a, *b)),
 
             // Vec<T> ^ Index
             (Value::Vec(vs), Value::Index(_)) => {
@@ -1069,12 +1064,7 @@ impl<C: ArkConfig> Value<C> {
                 vs.par_iter_mut().for_each(|v| Value::value_pow(other, v));
                 *other = Value::Vec(vs);
             }
-            // Vec<T> ^ Vec
-            (Value::Vec(v), _) =>
-                v.par_iter()
-                .zip(other.into_vec_mut().par_iter_mut())
-                .for_each(|(a, b)| a.value_pow(b)),
-            (a, b) => panic!("Mismatched values {} ^ {}", a, b)
+                        (a, b) => panic!("Mismatched values {} ^ {}", a, b)
         }
     }
 
@@ -1205,6 +1195,20 @@ impl<C: ArkConfig> Value<C> {
             Value::Bool(a) => Value::Bool(!*a),
             Value::VecBool(a) => Value::VecBool(a.iter().map(|a| !*a).collect()),
             a => panic!("Cannot NOT {}", a)
+        }
+    }
+
+    #[inline]
+    pub fn is_one(&self) -> bool {
+        match self {
+            Value::Bool(a) => *a,
+            Value::VecBool(a) => a.iter().all(|a| *a),
+            Value::Index(a) => *a == 1,
+            Value::VecIndex(a) => a.iter().all(|a| *a == 1),
+            Value::Range(a) => a == &CRange::singleton(1),
+            Value::Scalar(a) => a == &C::FOps::one(),
+            Value::VecScalar(a) => a.iter().all(|a| a == &C::FOps::one()),
+            _ => false
         }
     }
 

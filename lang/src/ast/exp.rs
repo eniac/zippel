@@ -1207,3 +1207,16 @@ fn parser_seq() {
         ]))
     );
 }
+
+#[test]
+fn parser_app() {
+    let ex = "p(a) == q(a)";
+    let mut pairs = ZippelParser::parse(Rule::bexp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::equ(
+            Exp::app(Vid::from("p"), Exps(vec![Exp::varstr("a")])),
+            Exp::app(Vid::from("q"), Exps(vec![Exp::varstr("a")]))
+        ))
+    );
+}

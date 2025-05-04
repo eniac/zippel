@@ -192,6 +192,9 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn add(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v + 0 = 0 + v = v
+            (Op::Value(a), Op::Value(b)) if a.is_zero() => Op::Value(b),
+            (Op::Value(a), Op::Value(b)) if b.is_zero() => Op::Value(a),
             // v1 + v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
             // e + v = v + e
@@ -224,6 +227,8 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn sub(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // v - 0
+            (Op::Value(a), Op::Value(b)) if b.is_zero() => Op::Value(a),
             // v1 - v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
             // e - v = v - e
@@ -256,6 +261,10 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn mul(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            // 0 * v = v * 0 = 0
+            (Op::Value(a), _) | (_, Op::Value(a)) if a.is_zero() => Op::zero(&typ),
+            // 1 * v = v * 1 = v
+            (Op::Value(a), b) | (b, Op::Value(a)) if a.is_one() => b,
             // v1 * v2 = v1.mul(v2)
             (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
             // [e0, ..., en] * v = [e0 * v0, e1 * v1, ..., en * vn]
@@ -287,6 +296,9 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn div(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
+            (_, Op::Value(b)) if b.is_zero() => panic!("UncaughtError: Division by zero"),
+            (Op::Value(a), _) if a.is_zero() => Op::zero(&typ),
+            (a, Op::Value(b)) if b.is_one() => a,
             // v1 / v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
             // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
@@ -364,24 +376,8 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Self where R: Clone {
         match v2 {
-            Op::Value(Value::Index(i)) => {
-                let mut exp: u64 = i as u64;
-                let mut base = Op::one(&typ);
-                while exp > 0 {
-                    if exp % 2 == 1 {
-                        base = Op::mul(v1.clone(), base.clone(), typ.clone());
-                    }
-                    base = Op::mul(base.clone(), base.clone(), typ.clone());
-                    exp /= 2;
-                };
-                base
-            },
-            Op::Value(Value::Range(r)) => {
-                let (t, _) = typ.into_vec();
-                Op::Vec(r.into_iter()
-                    .map(|r| Op::pow(v1.clone(), r.into(), t.clone()))
-                    .collect())
-            },
+            Op::Value(Value::Index(i)) if i == 0 => Op::one(&typ),
+            Op::Value(Value::Index(i)) if i == 1 => v1,
             v2 => Op::Bin(BinOp::Pow, Box::new(v1), Box::new(v2), typ),
         }
     }
