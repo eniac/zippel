@@ -139,7 +139,7 @@ fn run(args: RunArgs) {
         process::exit(1);
     });
 
-    println!("Parsing Zippel program: {}", zfile);
+    println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
     println!("Number of nodes: {}", g.node_count());
