@@ -11,6 +11,7 @@ pub mod domain_seperator;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
+use petgraph::Directed;
 pub use pref::{PRef, LexTerm};
 pub use analyses::StaticAnalysis;
 
@@ -88,6 +89,7 @@ impl GraphError {
 }
 
 impl<C: ArkConfig, A> Dag<C, A> {
+    
     pub fn new() -> Self {
         Dag(Graph::new())
     }
