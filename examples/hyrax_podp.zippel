@@ -6,7 +6,8 @@
 // Assume N is defined, e.g., N = 32
 // Helper function for Pedersen vector commitment: h*r + reduce(+, g_vec * x_vec)
 fn Com_Vec<G: Group, F: Scalar<G>, N: 4>(public g_vec: [G; N], public h: G, public x_vec: [F; N], public r: F) -> G {
-  let term_sum = reduce(+, g_vec * x_vec); // Assumes element-wise G*F multiplication then reduce
+  let gx = g_vec * x_vec;
+  let term_sum = reduce(+, gx); // Assumes element-wise G*F multiplication then reduce
   h*r + term_sum
 }
 
