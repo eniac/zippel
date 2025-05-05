@@ -291,6 +291,7 @@ impl Scheduler for GurobiScheduler {
 #[cfg(test)] use share::{Ctx, unwrap};
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::scheduler::AsymptoticCost;
+#[ignore = "Gurobi license for CI bot does not work due to HostID"]
 #[test]
 fn gurobi_e2e() {
     let ex =
