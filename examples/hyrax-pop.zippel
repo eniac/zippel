@@ -1,0 +1,80 @@
+// Protocol implementing the non-interactive version of proof-of-product(X,Y,Z)
+// from the Hyrax paper appendix/description.
+// It proves that Z commits x*y, given X commits x and Y commits y,
+// using Pedersen-like commitments X = g*x + h*r_X, Y = g*y + h*r_Y, Z = g*(x*y) + h*r_Z.
+
+proto proof_of_product<G: Group, F: Scalar<G>>(
+    // Private witness known only to the prover:
+    private x: F,            // Value committed in X
+    private y: F,            // Value committed in Y
+    private r_X: F,          // Randomness for X
+    private r_Y: F,          // Randomness for Y
+    private r_Z: F,          // Randomness for Z (such that Z commits x*y)
+
+    // Public inputs known to prover and verifier:
+    public g: G,           // Base G1 for Pedersen commitments
+    public h: G,           // Base G2 for Pedersen commitments
+    public X: G,           // Commitment X = g*x + h*r_X
+    public Y: G,           // Commitment Y = g*y + h*r_Y
+    public Z: G            // Commitment Z = g*(x*y) + h*r_Z
+)
+// The 'where' clause defines the exact relations the prover must satisfy.
+where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
+
+      // --- Prover Phase ---
+
+      // 1. Pick randomness (b1..b5) and compute commitments (alpha, beta, delta).
+      //    Corresponds to Prover Step 1.
+      let b1 = random<F>;
+      let b2 = random<F>;
+      let b3 = random<F>;
+      let b4 = random<F>;
+      let b5 = random<F>;
+
+      // Compute commitments using additive notation
+      let commit_alpha = g*b1 + h*b2;
+      let commit_beta = g*b3 + h*b4;
+      // Note: X^b3 becomes X*b3 (scalar multiplication)
+      let commit_delta = X*b3 + h*b5;
+
+      // Add commitments to the transcript
+      alpha <- commit_alpha;
+      beta <- commit_beta;
+      delta <- commit_delta;
+
+      // 2. Derive the Fiat-Shamir challenge 'c'.
+      //    Corresponds to Verifier Step 2, made non-interactive.
+      c <- challenge<F>;
+
+      // 3. Compute the responses (z1..z5).
+      //    Corresponds to Prover Step 3.
+      let resp_z1 = b1 + c*x;
+      let resp_z2 = b2 + c*r_X;
+      let resp_z3 = b3 + c*y;
+      let resp_z4 = b4 + c*r_Y;
+      // Compute the more complex scalar part for z5 first
+      let z5_scalar_part = r_Z - r_X * y;
+      let resp_z5 = b5 + c * z5_scalar_part;
+
+      // Add responses to the transcript
+      z1 <- resp_z1;
+      z2 <- resp_z2;
+      z3 <- resp_z3;
+      z4 <- resp_z4;
+      z5 <- resp_z5;
+
+      // --- Verification Logic (encoded using 'verify') ---
+      // Combines the three checks from Verifier Step 4.
+
+      // Check 1: alpha + X*c == g*z1 + h*z2
+      let check1 = (alpha + X*c == g*z1 + h*z2);
+
+      // Check 2: beta + Y*c == g*z3 + h*z4
+      let check2 = (beta + Y*c == g*z3 + h*z4);
+
+      // Check 3: delta + Z*c == X*z3 + h*z5
+      let check3 = (delta + Z*c == X*z3 + h*z5);
+
+      // Verify that all checks pass
+      verify(check1 && check2 && check3);
+}
