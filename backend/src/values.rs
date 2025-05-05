@@ -64,6 +64,37 @@ impl<C: ArkConfig> Value<C> {
             Value::Vec(_) => 0,
         }
     }
+
+    pub fn zero(typ: &ATyp) -> Self {
+        match typ {
+            ATyp::Base(ABase::Bool) => Value::Bool(false),
+            ATyp::Base(ABase::Fin(r)) if r.contains(0) => Value::Index(0),
+            ATyp::Base(ABase::Scalar) => Value::Scalar(C::F::zero()),
+            ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
+            ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
+            ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
+            ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
+            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) =>
+                Value::VecIndex(vec![0; *n]),
+            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) =>
+                Value::VecScalar(vec![C::F::zero(); *n]),
+            ATyp::Vec(box ATyp::Base(ABase::G1), n) =>
+                Value::VecG1(vec![C::G1::zero(); *n]),
+            ATyp::Vec(box ATyp::Base(ABase::G2), n) =>
+                Value::VecG2(vec![C::G2::zero(); *n]),
+            ATyp::Vec(box ATyp::Base(ABase::GT), n) =>
+                Value::VecGT(vec![PairingOutput::<C::P>::zero(); *n]),
+            ATyp::Vec(box vt, n) => {
+                let mut v = Vec::<Value<C>>::with_capacity(*n);
+                for _ in 0..*n {
+                    v.push(Value::<C>::zero(&vt));
+                }
+                Value::Vec(v)
+            },
+            _ => panic!("Cannot create zero value for type {}", typ)
+        }
+    }
+
     /// Value addition, saves result in other
     #[inline]
     pub fn value_add(&self, other: &mut Self) {

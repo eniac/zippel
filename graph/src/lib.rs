@@ -406,6 +406,24 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(GOp::vec(res))
             },
 
+            CExp::Reduce(op, box v) => {
+                // Type of [v]
+                let tv = v.infer(kctx, &fctx.keys(), vctx)?;
+                let atv = ATyp::from_ctyp(&tv, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &tv))
+                })?;
+
+                // Get the size [n] from type [tv]
+                let (_, n) = atv.into_vec();
+
+                let mut redexp = CExp::ram(v.clone(), CExp::lit(0));
+                for i in 1..n {
+                    redexp = CExp::bin(op, redexp, CExp::ram(v.clone(), CExp::lit(i)));
+                }
+                self.add_exp(redexp, transcr, edge_type, kctx, fctx, vctx, vars)
+            },
             CExp::Ram(box a, box b) => {
                 // Add children
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
@@ -632,6 +650,20 @@ fn graph_poly() {
     println!("{}", m);
     let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
     g.write_pdf("graph_poly").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+}
+
+#[test]
+fn graph_reduce() {
+    let ex = r#"
+        fn reduce_foo<F: Field>(public a: [F; 10]) -> F {
+            reduce(+, a)
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    println!("{}", m);
+    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    g.write_pdf("graph_reduce").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }

@@ -421,33 +421,7 @@ impl<C: ArkConfig, R> Op<C, R> {
         Op::Value(Value::Range(r))
     }
     pub fn zero(typ: &ATyp) -> Op<C, R> {
-        match typ {
-            ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(0)),
-            ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::zero())),
-            ATyp::Base(ABase::G1) => Op::Value(Value::G1(C::G1Ops::zero())),
-            ATyp::Base(ABase::G2) => Op::Value(Value::G2(C::G2Ops::zero())),
-            ATyp::Base(ABase::GT) => Op::Value(Value::GT(C::POps::zero())),
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) =>
-                Op::Value(Value::VecScalar(vec![C::FOps::zero(); *n])),
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) =>
-                Op::Value(Value::VecIndex(vec![0; *n])),
-            ATyp::Vec(box ATyp::Base(ABase::G1), n) =>
-                Op::Value(Value::VecG1(vec![C::G1Ops::zero(); *n])),
-            ATyp::Vec(box ATyp::Base(ABase::G2), n) =>
-                Op::Value(Value::VecG2(vec![C::G2Ops::zero(); *n])),
-            ATyp::Vec(box ATyp::Base(ABase::GT), n) =>
-                Op::Value(Value::VecGT(vec![C::POps::zero(); *n])),
-            ATyp::Vec(box typ, n) => {
-                let mut vs = vec![];
-                for _ in 0..*n {
-                    vs.push(Op::zero(typ));
-                }
-                Op::Vec(vs)
-            },
-            ATyp::Uni(n) if *n > 0 =>
-                Op::Value(Value::VecIndex(vec![0; *n])),
-            _ => unreachable!("UncaughtError: Op::zero() not implemented for type {}", typ),
-        }
+        Op::Value(Value::zero(typ))
     }
 
     pub fn pad_zeroes(v: Op<C, R>, n: usize) -> Op<C, R> where R: Clone {

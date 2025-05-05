@@ -162,6 +162,13 @@ pub enum Exp<N> {
     ///     ```
     Map(Box<Exp<N>>, Vid, Box<Exp<N>>),
 
+    ///     Reduce a vector with a binary operation
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let sum = reduce(+, [1,2,3]);
+    ///     ```
+    Reduce(BinOp, Box<Exp<N>>),
+
     ///     Random access or slice a vector
     ///     **Zippel Code:**
     ///     ```zippel
@@ -255,6 +262,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
                 )),
             Exp::Map(box x, id, box r) =>
                 Ok(Exp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?))),
+            Exp::Reduce(op, box x) =>
+                Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
             Exp::Challenge(t) => Ok(Exp::Challenge(t)),
             Exp::Random(t) => Ok(Exp::Random(t)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
@@ -295,6 +304,7 @@ impl TidSubst for CExp {
             | Exp::Mle(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
+            | Exp::Reduce(_, box p)
             | Exp::Eval(box p) => p.tid_subst(from, to),
             Exp::Vec(v)
             | Exp::App(_, v) => v.tid_subst(from, to),
@@ -326,6 +336,7 @@ impl FreeVars for CExp {
             | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Coef(box p)
             | Exp::Mle(box p)
+            | Exp::Reduce(_, box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
             | Exp::Eval(box p) => p.freevars(),
@@ -459,6 +470,9 @@ impl<N> Exp<N> {
     pub fn map(l: Self, x: Vid, range: Self) -> Self {
         Exp::Map(Box::new(l), x, Box::new(range))
     }
+    pub fn reduce(op: BinOp, a: Self) -> Self {
+        Exp::Reduce(op, Box::new(a))
+    }
     pub fn ram(v: Self, i: Self) -> Self {
         Exp::Ram(Box::new(v), Box::new(i))
     }
@@ -524,6 +538,7 @@ impl<N> Exp<N> {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
             Exp::Coef(box p) => p.is_pure(),
             Exp::Mle(box p) => p.is_pure(),
+            Exp::Reduce(_, box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
@@ -611,6 +626,13 @@ where
                 allocator.text(format!(" for {} in ", id)),
                 range.pretty(allocator),
                 allocator.text("]"),
+            ]),
+            Exp::Reduce(op, a) => allocator.concat([
+                allocator.text("reduce("),
+                op.pretty(allocator),
+                allocator.text(", "),
+                (*a).pretty(allocator),
+                allocator.text(")"),
             ]),
             Exp::Var(x) => allocator.concat([
                 x.pretty(allocator),
@@ -834,6 +856,31 @@ lazy_static! {
     };
 }
 
+impl<'pest> FromPest<'pest> for BinOp {
+    type Rule = Rule;
+    type FatalError = InputError<'pest>;
+
+    fn from_pest(
+        expression: &mut Pairs<'pest, Self::Rule>,
+    ) -> Result<Self, ConversionError<Self::FatalError>> {
+        let pair = expression.next().ok_or(ConversionError::NoMatch)?;
+        match pair.as_rule() {
+                Rule::bin_op => BinOp::from_pest(&mut pair.into_inner()),
+                Rule::add_op => Ok(BinOp::Add),
+                Rule::sub_op => Ok(BinOp::Sub),
+                Rule::mul_op => Ok(BinOp::Mul),
+                Rule::div_op => Ok(BinOp::Div),
+                Rule::pow_op => Ok(BinOp::Pow),
+                Rule::dot_op => Ok(BinOp::Dot),
+                Rule::rem_op => Ok(BinOp::Rem),
+                Rule::concat_op => Ok(BinOp::Concat),
+                Rule::eq_op => Ok(BinOp::Equ),
+                Rule::and_op => Ok(BinOp::And),
+                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+        }
+    }
+}
+
 impl<'pest> FromPest<'pest> for UExp {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -867,6 +914,13 @@ impl<'pest> FromPest<'pest> for UExp {
                     Ok(Exp::map(
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                },
+                Rule::reduce_exp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::reduce(
+                        BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
@@ -1084,6 +1138,19 @@ fn parser_for() {
             Vid::from("i"),
             Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
         ));
+}
+
+#[test]
+fn parser_reduce() {
+    let ex = "reduce(+, [1,2,3])";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::reduce(
+            BinOp::Add,
+            Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])
+        ))
+    );
 }
 
 #[test]

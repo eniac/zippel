@@ -78,6 +78,21 @@ pub trait Lub where Self: Sized {
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+
+    fn lub_op(op: BinOp, a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match op {
+            BinOp::Equ => Self::lub_equ(a, b, ctx),
+            BinOp::Add => Self::lub_add(a, b, ctx),
+            BinOp::Sub => Self::lub_sub(a, b, ctx),
+            BinOp::Mul => Self::lub_mul(a, b, ctx),
+            BinOp::Div => Self::lub_div(a, b, ctx),
+            BinOp::Pow => Self::lub_pow(a, b, ctx),
+            BinOp::Rem => Self::lub_rem(a, b, ctx),
+            BinOp::Dot => Self::lub_dot(a, b, ctx),
+            BinOp::And => Self::lub_and(a, b, ctx),
+            BinOp::Concat => Self::lub_concat(a, b, ctx),
+        }
+    }
 }
 
 /// Least-upper bounds for [Range] overapproximate sets of integers
@@ -698,10 +713,9 @@ impl Lub for CTyp {
                         // Type [a] and [b] should be multiplied
                         Ok(CTyp::Base(Tid::lub_mul(&a, &b, ctx)
                             .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)),
-                    (p, q) => {
+                    (_, _) =>
                         CTyp::lub_mul(x, y, ctx)
-                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
-                    },
+                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e)),
                 },
             (a, b) => CTyp::lub_mul(a, b, ctx)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e))

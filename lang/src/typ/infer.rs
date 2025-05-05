@@ -46,6 +46,9 @@ pub enum TypeError {
     #[error("MapError: Arguments to [for] must be a vector type:\n\t{0}, {1} |- [{2} for {3} in {4}]")]
     Map(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CExp),
 
+    #[error("ReduceError: Arguments to [reduce] must be a vector type:\n\t{0}, {1} |- reduce ({2}, {3} : {4})")]
+    Reduce(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
+
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
     Uni(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
@@ -122,6 +125,9 @@ impl<'a> TypeError {
     }
     pub fn map(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: Vid, r: CExp) -> Self {
         TypeError::Map(kctx.clone(), vctx.clone(), e, id, r)
+    }
+    pub fn reduce(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, op: BinOp, e: &CExp, t: &CTyp) -> Self {
+        TypeError::Reduce(kctx.clone(), vctx.clone(), op, e.clone(), t.clone())
     }
     pub fn uni(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, ts: &CTyps) -> Self {
         TypeError::Uni(kctx.clone(), vctx.clone(), id.clone(), e.clone(), ts.clone())
@@ -366,7 +372,7 @@ impl Typeable for CExp {
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tr {
-                    CTyp::Vec(box inner, n) => {
+                    CTyp::Vec(box inner, n) if n > 0 => {
                         // Clone the context
                         let mut innerctx = vctx.clone();
 
@@ -383,6 +389,22 @@ impl Typeable for CExp {
                 }
             }
 
+            CExp::Reduce(op, box v) => {
+                // Type infer the vector expression
+                let tv = v.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match tv {
+                    CTyp::Vec(box tv, n) if n > 0 => {
+                        // Infer the return type
+                        CTyp::lub_op(*op, &tv, &tv, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                    },
+                    _ => Err(TypeError::next(
+                            TypeError::exp(kctx, vctx, self),
+                            TypeError::reduce(kctx, vctx, *op, v, &tv)))
+                }
+            },
             // Variable context lookup
             CExp::Var(id) =>
                 vctx.get(&id).map(|x| x.clone()).ok_or(TypeError::var_not_found(&id, vctx)),
