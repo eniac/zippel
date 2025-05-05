@@ -3,6 +3,7 @@ use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use std::fmt;
 
 use crate::typ::range::Range;
+use crate::typ::size::Size;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
@@ -113,6 +114,7 @@ impl<'pest> FromPest<'pest> for Kind {
                 Ok(Kind::Pairing(g1, g2))
             }
             Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
+            Rule::positive => Ok(Kind::Range(Range::singleton(pair.as_str().parse().unwrap()))),
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
