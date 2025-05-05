@@ -16,13 +16,7 @@ dot_op = @{ "." }
 rem_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
-le_op = @{ "<=" }
-lt_op = @{ "<" }
-ge_op = @{ ">=" }
-gt_op = @{ ">" }
 and_op = @{ "&&" }
-or_op  = @{ "||" }
-in_op  = @{ "in" }
 
 /// Identifiers for functions, variables, type variables
 keyword = {"let" | "fn" | "proto" }
@@ -56,8 +50,8 @@ typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
     bool_ty = { "Bool" }                                 // Boolean type
 
 /// Arithmetic expression language of Zippel
-aexp       = { aexp_term ~ (bin_op ~ aexp_term)* }
-aexp_term  = _{ "(" ~ aexp ~ ")"
+exp       = { exp_term ~ (bin_op ~ exp_term)* }
+exp_term  = _{ "(" ~ exp ~ ")"
          | coef_exp
          | mle_exp
          | eval_exp
@@ -72,34 +66,28 @@ aexp_term  = _{ "(" ~ aexp ~ ")"
          | let_exp
          | log_exp
          | app_exp
+         | bool_exp
          | positive
          | id
     }
-    coef_exp      = { "coef" ~ "(" ~ aexp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
-    eval_exp      = { "eval" ~ "(" ~ aexp ~ ")" }                      // Evaluation form (FFT) univariate polynomial or MLE
-    mle_exp       = { "mle" ~ "(" ~ aexp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
-    random_exp    = { "random" ~ "<" ~ id ~ ">" }                      // Uniform random sampling (Prover)
-    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                   // Random oracle challenge (Verifier)
-    map_exp       = { "[" ~ aexp ~ "for" ~ id ~ "in" ~ aexp ~ "]" }    // Map comprehension
-    vec_exp       = { "[" ~ aexp ~ ("," ~ aexp)* ~ "]" }               // vector of elements
-    ram_exp       = { id ~ "[" ~ aexp ~ "]" }                          // Randm access into a vector
-    range_exp     = { range }                                          // Range expression
-    assert_exp    = { "assert" ~ "(" ~ bexp ~ ")" }                    // Assertion (Prover) expression
-    verify_exp    = { "verify" ~ "(" ~ bexp ~ ")"  }                   // Assertion (Verifier) expression
-    app_exp       = { id ~ "(" ~ aexps ~ ")" }                         // Function application
-    let_exp       = { "let" ~ id ~ "=" ~ aexp ~ ";" ~ aexp }           // Let expression
-    log_exp       = { id ~ "<-" ~ aexp ~ ";" ~ aexp }                  // Transcript log expression
-    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op }
-aexps = { aexp ~ ("," ~ aexp)* }
-stmts   = { aexp ~ (";" ~ aexp)* ~ ";"? }
-
-/// Binary expressions
-bexp = { bexp_term ~ (bool_op ~ bexp_term)* }
-bexp_term = _{ "(" ~ bexp ~ ")" | lit_bexp | eq_bexp | app_bexp }
-    app_bexp = { id ~ "(" ~ aexps ~ ")" }
-    eq_bexp  = { aexp ~ "==" ~ aexp  }
-    lit_bexp = { "true" | "false" }
-    bool_op  = _{ and_op | or_op }
+    coef_exp      = { "coef" ~ "(" ~ exp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
+    eval_exp      = { "eval" ~ "(" ~ exp ~ ")" }                      // Evaluation form (FFT) univariate polynomial or MLE
+    mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
+    random_exp    = { "random" ~ "<" ~ id ~ ">" }                     // Uniform random sampling (Prover)
+    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                  // Random oracle challenge (Verifier)
+    map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension
+    vec_exp       = { "[" ~ exp ~ ("," ~ exp)* ~ "]" }                // vector of elements
+    ram_exp       = { id ~ "[" ~ exp ~ "]" }                          // Randm access into a vector
+    range_exp     = { range }                                         // Range expression
+    assert_exp    = { "assert" ~ "(" ~ exp ~ ")" }                    // Assertion (Prover) expression
+    verify_exp    = { "verify" ~ "(" ~ exp ~ ")"  }                   // Assertion (Verifier) expression
+    app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
+    let_exp       = { "let" ~ id ~ "=" ~ exp ~ ";" ~ exp }            // Let expression
+    log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
+    bool_exp      = { "true" | "false" }                              // True or false constants
+    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op | eq_op | and_op }
+exps = { exp ~ ("," ~ exp)* }
+stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 
 /// Type variable declarations
 tvar  = { id ~ ":" ~ kind_ty }
@@ -112,7 +100,7 @@ args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols] or [functions].
 decl = { proto_decl | func_decl }
-    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ bexp ~ "{" ~ stmts ~ "}" }
+    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ stmts ~ "}" }
     func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }
 
 /// Top-level module

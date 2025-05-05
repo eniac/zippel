@@ -362,16 +362,16 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let body =
                     match next.as_rule() {
                         Rule::stmts => {
-                            let mut aexps = Vec::new();
+                            let mut exps = Vec::new();
                             for p in next.into_inner() {
                                 match p.as_rule() {
-                                    Rule::aexp => {
-                                        aexps.push(Exp::from_pest(&mut Pairs::single(p))?);
+                                    Rule::exp => {
+                                        exps.push(Exp::from_pest(&mut Pairs::single(p))?);
                                     },
                                     _ => unreachable!(),
                                 }
                             }
-                            match aexps.as_slice() {
+                            match exps.as_slice() {
                                 [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
                                 [body] => Ok(body.clone()),
                                 [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))
@@ -396,16 +396,16 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let body =
                     match next.as_rule() {
                         Rule::stmts => {
-                            let mut aexps = Vec::new();
+                            let mut exps = Vec::new();
                             for p in next.into_inner() {
                                 match p.as_rule() {
-                                    Rule::aexp => {
-                                        aexps.push(Exp::from_pest(&mut Pairs::single(p))?);
+                                    Rule::exp => {
+                                        exps.push(Exp::from_pest(&mut Pairs::single(p))?);
                                     },
                                     _ => unreachable!(),
                                 }
                             }
-                            match aexps.as_slice() {
+                            match exps.as_slice() {
                                 [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
                                 [body] => Ok(body.clone()),
                                 [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))

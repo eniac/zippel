@@ -6,83 +6,114 @@ use share::{Ctx, Pretty, DocAllocator, DocBuilder};
 use std::fmt;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum ATyp {
-    Bool,
-    Fin(CRange),
-    Vec(Box<ATyp>, usize),
-    Scalar,
-    G1Affine,
-    G2Affine,
+pub enum ABase {
     G1,
     G2,
     GT,
+    Scalar,
+    Bool,
+    Fin(CRange),
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+pub enum ATyp {
+    /// Base type
+    Base(ABase),
+    /// Vector
+    Vec(Box<ATyp>, usize),
+    /// Univariate polynomial in coefficient form
+    Uni(usize),
 }
 
 impl ATyp {
-    pub fn vec_scalar(n: usize) -> Self {
-        ATyp::Vec(Box::new(ATyp::Scalar), n)
+    pub fn scalar() -> Self {
+        ATyp::Base(ABase::Scalar)
     }
-
+    pub fn g1() -> Self {
+        ATyp::Base(ABase::G1)
+    }
+    pub fn g2() -> Self {
+        ATyp::Base(ABase::G2)
+    }
+    pub fn gt() -> Self {
+        ATyp::Base(ABase::GT)
+    }
+    pub fn bool() -> Self {
+        ATyp::Base(ABase::Bool)
+    }
+    pub fn fin(r: CRange) -> Self {
+        ATyp::Base(ABase::Fin(r))
+    }
+    pub fn uni(n: usize) -> Self {
+        ATyp::Uni(n)
+    }
+    pub fn vec_scalar(n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::scalar()), n)
+    }
+    pub fn vec_bool(n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::bool()), n)
+    }
+    pub fn vec_g1(n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::g1()), n)
+    }
+    pub fn vec_g2(n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::g2()), n)
+    }
+    pub fn vec_gt(n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::gt()), n)
+    }
+    pub fn vec_fin(r: CRange, n: usize) -> Self {
+        ATyp::Vec(Box::new(ATyp::fin(r)), n)
+    }
     pub fn vec(t: &ATyp, n: usize) -> Self {
         ATyp::Vec(Box::new(t.clone()), n)
-    }
-
-    pub fn fin(r: &CRange) -> Self {
-        ATyp::Fin(r.clone())
     }
 
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
+            ATyp::Uni(n) => (ATyp::scalar(), n),
             _ => unreachable!()
         }
     }
 
     pub fn is_scalar(&self) -> bool {
-        matches!(self, ATyp::Scalar)
+        matches!(self, ATyp::Base(ABase::Scalar))
     }
 
     pub fn is_vec(&self) -> bool {
         matches!(self, ATyp::Vec(_, _))
     }
 
+    pub fn is_uni(&self) -> bool {
+        matches!(self, ATyp::Uni(_))
+    }
+
     pub fn is_fin(&self) -> bool {
-        matches!(self, ATyp::Fin(_))
+        matches!(self, ATyp::Base(ABase::Fin(_)))
     }
 
     pub fn is_bool(&self) -> bool {
-        matches!(self, ATyp::Bool)
+        matches!(self, ATyp::Base(ABase::Bool))
     }
 
     pub fn is_group(&self) -> bool {
-        matches!(self, ATyp::G1 | ATyp::G2 | ATyp::G1Affine | ATyp::G2Affine | ATyp::GT)
+        matches!(self, ATyp::Base(ABase::G1 | ABase::G2 | ABase::GT))
     }
 
     pub fn into_inner(&self) -> ATyp {
         match self {
             ATyp::Vec(box t, _) => t.into_inner(),
-            ATyp::Fin(r) => ATyp::Fin(r.clone()),
-            ATyp::Bool => ATyp::Bool,
-            ATyp::Scalar => ATyp::Scalar,
-            ATyp::G1Affine => ATyp::G1Affine,
-            ATyp::G2Affine => ATyp::G2Affine,
-            ATyp::G1 => ATyp::G1,
-            ATyp::G2 => ATyp::G2,
-            ATyp::GT => ATyp::GT
+            ATyp::Uni(_) => ATyp::scalar(),
+            base => base.clone(),
         }
     }
 
     pub fn size(&self) -> usize {
         match self {
-            ATyp::Bool => 1,
-            ATyp::Fin(_) => 1,
             ATyp::Vec(t, n) => t.size() * n,
-            ATyp::Scalar => 1,
-            ATyp::G1Affine => 1,
-            ATyp::G2Affine => 1,
-            ATyp::G1 => 1,
-            ATyp::G2 => 1,
-            ATyp::GT => 1
+            ATyp::Base(_) => 1,
+            ATyp::Uni(n) => *n,
         }
     }
 
@@ -92,34 +123,154 @@ impl ATyp {
             CTyp::Base(b) => {
                 let k = kctx.get(b)?;
                 match k {
-                    Kind::Field => Some(ATyp::Scalar),
+                    Kind::Field => Some(ATyp::scalar()),
                     Kind::Group => {
                         // If this is a pairing assign the right pairing types
                         for (og, _) in kctx.iter().filter(|(t, k)| k.is_group() && *t != b) {
                             if let Some((_, Kind::Pairing(x, y))) = kctx.find_one(|t, k| k.is_pairing(&og, t)) {
                                 if &x == b {
-                                    return Some(ATyp::G1);
+                                    return Some(ATyp::g1());
                                 } else if &y == b {
-                                    return Some(ATyp::G2);
+                                    return Some(ATyp::g2());
                                 }
                             }
                         }
                         // Otherwise, return the group type
-                        Some(ATyp::G1)
+                        Some(ATyp::g1())
                     },
-                    Kind::Pairing(_, _) => Some(ATyp::GT),
-                    Kind::Scalar(_) => Some(ATyp::Scalar),
-                    // ATyp have no Range kinds
+                    Kind::Pairing(_, _) => Some(ATyp::gt()),
+                    Kind::Scalar(_) => Some(ATyp::scalar()),
+                    // ATyp have no Range kinds, post [concretize]
                     Kind::Range(_) => unreachable!()
                 }
             },
             CTyp::Vec(box t, n) =>
                 Some(ATyp::Vec(Box::new(ATyp::from_ctyp(&t, kctx)?), *n)),
-            CTyp::Fin(r) => Some(ATyp::Fin(*r)),
-            CTyp::Bool => Some(ATyp::Bool),
-            CTyp::Uni(_, n) => Some(ATyp::vec_scalar(*n)),
-            CTyp::Mle(_, n) => Some(ATyp::vec_scalar(1 << n))
+            CTyp::Uni(_, n) => Some(ATyp::uni(*n)),
+            CTyp::Mle(_, n) => Some(ATyp::vec_scalar(1 << n)),
+            CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
+            CTyp::Bool => Some(ATyp::bool()),
         }
+    }
+}
+
+impl Lub for ABase {
+    type Context = Nothing;
+    fn lub_equ(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_equ(r1, r2, &Nothing)
+                    .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::G1) => Ok(ABase::G1),
+            (ABase::G2, ABase::G2) => Ok(ABase::G2),
+            (ABase::GT, ABase::GT) => Ok(ABase::GT),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (a, b) => Err(LubError::equ(&a, &b))
+        }
+    }
+
+    fn lub_add(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_add(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::G1) => Ok(ABase::G1),
+            (ABase::G2, ABase::G2) => Ok(ABase::G2),
+            (ABase::GT, ABase::GT) => Ok(ABase::GT),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (a, b) => Err(LubError::add(&a, &b))
+        }
+    }
+
+    fn lub_sub(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_sub(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::G1) => Ok(ABase::G1),
+            (ABase::G2, ABase::G2) => Ok(ABase::G2),
+            (ABase::GT, ABase::GT) => Ok(ABase::GT),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (a, b) => Err(LubError::sub(&a, &b))
+        }
+    }
+
+    fn lub_mul(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_mul(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::Scalar) | (ABase::Scalar, ABase::G1) => Ok(ABase::G1),
+            (ABase::G2, ABase::Scalar) | (ABase::Scalar, ABase::G2) => Ok(ABase::G2),
+            (ABase::GT, ABase::Scalar) | (ABase::Scalar, ABase::GT) => Ok(ABase::GT),
+            (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
+            (a, b) => Err(LubError::mul(&a, &b))
+        }
+    }
+
+    fn lub_div(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_div(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::div(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::Scalar) => Ok(ABase::G1),
+            (ABase::G2, ABase::Scalar) => Ok(ABase::G2),
+            (ABase::GT, ABase::Scalar) => Ok(ABase::GT),
+            (a, b) => Err(LubError::div(&a, &b))
+        }
+    }
+
+    fn lub_pow(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_pow(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::pow(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Fin(_)) => Ok(ABase::Scalar),
+            (a, b) => Err(LubError::pow(&a, &b))
+        }
+    }
+
+    fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_dot(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::dot(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::G1, ABase::Scalar) | (ABase::Scalar, ABase::G1) => Ok(ABase::G1),
+            (ABase::G2, ABase::Scalar) | (ABase::Scalar, ABase::G2) => Ok(ABase::G2),
+            (ABase::GT, ABase::Scalar) | (ABase::Scalar, ABase::GT) => Ok(ABase::GT),
+            (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
+            (a, b) => Err(LubError::dot(&a, &b))
+        }
+    }
+
+    fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Fin(r1), ABase::Fin(r2)) =>
+                Ok(ABase::Fin(CRange::lub_rem(r1, r2, ctx)
+                    .map_err(|e| LubError::next(LubError::rem(&a, &b), e))?)),
+            (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(r.clone())),
+            (a, b) => Err(LubError::rem(&a, &b))
+        }
+    }
+
+    fn lub_and(a: &Self, b: &Self, _: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::Bool, ABase::Bool) => Ok(ABase::Bool),
+            (a, b) => Err(LubError::and(&a, &b))
+        }
+    }
+
+    fn lub_concat(a: &Self, b: &Self, _: &Self::Context) -> Result<Self, LubError> {
+        Err(LubError::concat(&a, &b))
     }
 }
 
@@ -128,164 +279,159 @@ impl Lub for ATyp {
     type Context = Nothing;
     fn lub_equ(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         match (a, b) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_equ(r1, r2, &Nothing)
-                        .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_equ(a, b, &Nothing)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::equ(&a, &b), e)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_equ(t1, t2, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             },
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::G1Affine, ATyp::G1) | (ATyp::G1, ATyp::G1Affine) => Ok(ATyp::G1),
-            (ATyp::G2Affine, ATyp::G2) | (ATyp::G2, ATyp::G2Affine) => Ok(ATyp::G2),
-            (a, b) if a == b => Ok(a.clone()),
-            (a, b) => Err(LubError::equ(&a, &b))
+            (ATyp::Uni(n1), ATyp::Uni(n2)) if n1 == n2 => Ok(ATyp::uni(*n1)),
+                        (a, b) => Err(LubError::equ(&a, &b))
         }
     }
+
     fn lub_add(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_add(r1, r2, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&a, &b), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_add(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::add(&a, &b), e)),
+
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_add(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::add(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             },
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::G1Affine, ATyp::G1) | (ATyp::G1, ATyp::G1Affine) => Ok(ATyp::G1),
-            (ATyp::G2Affine, ATyp::G2) | (ATyp::G2, ATyp::G2Affine) => Ok(ATyp::G2),
-            (a, b) if a == b => Ok(a.clone()),
+
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
             (a, b) => Err(LubError::add(&a, &b))
         }
     }
 
     fn lub_sub(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_sub(r1, r2, ctx)
-                    .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_sub(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::sub(&a, &b), e)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_sub(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             },
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::G1Affine, ATyp::G1) | (ATyp::G1, ATyp::G1Affine) => Ok(ATyp::G1),
-            (ATyp::G2Affine, ATyp::G2) | (ATyp::G2, ATyp::G2Affine) => Ok(ATyp::G2),
-            (a, b) if a == b => Ok(a.clone()),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
             (a, b) => Err(LubError::sub(&a, &b))
         }
     }
     fn lub_mul(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_mul(r1, r2, ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&a, &a), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_mul(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::mul(&a, &b), e)),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1 + n2)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&a, &a), e))?;
                 Ok(ATyp::vec(&t, *n1))
             },
-            (ATyp::Scalar, ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            // Scalar mul
-            (ATyp::G1Affine, ATyp::Scalar)
-            | (ATyp::Scalar, ATyp::G1Affine) => Ok(ATyp::G1Affine),
-            (ATyp::G2Affine, ATyp::Scalar)
-            | (ATyp::Scalar, ATyp::G2Affine) => Ok(ATyp::G2Affine),
-            (ATyp::G1, ATyp::Scalar)
-            | (ATyp::Scalar, ATyp::G1) => Ok(ATyp::G1),
-            (ATyp::G2, ATyp::Scalar)
-            | (ATyp::Scalar, ATyp::G2) => Ok(ATyp::G2),
-            (ATyp::GT, ATyp::Scalar)
-            | (ATyp::Scalar, ATyp::GT) => Ok(ATyp::GT),
-            // GT billinear map
-            (ATyp::G1, ATyp::G2)
-            | (ATyp::G2, ATyp::G1)
-            | (ATyp::G1, ATyp::G2Affine)
-            | (ATyp::G1Affine, ATyp::G2)
-            | (ATyp::G1Affine, ATyp::G2Affine)
-            | (ATyp::G2Affine, ATyp::G1)
-            | (ATyp::G2, ATyp::G1Affine) => Ok(ATyp::GT),
-            (a, b) if a == b => Ok(a.clone()),
+            (ATyp::Vec(box t1, n1), b)
+            | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_mul(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
             (a, b) => Err(LubError::mul(&a, &b))
         }
     }
 
     fn lub_div(x: &Self, y: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_div(r1, r2, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_div(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(n1.saturating_sub(*n2))),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_div(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
             },
-            (ATyp::Scalar, ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::G1, ATyp::Scalar) => Ok(ATyp::G1),
-            (ATyp::G2, ATyp::Scalar) => Ok(ATyp::G2),
-            (ATyp::G1Affine, ATyp::Scalar) => Ok(ATyp::G1Affine),
-            (ATyp::G2Affine, ATyp::Scalar) => Ok(ATyp::G2Affine),
-            (ATyp::GT, ATyp::Scalar) => Ok(ATyp::GT),
+            (ATyp::Vec(box t1, n1), b)
+            | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_div(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
             (a, b) => Err(LubError::div(&a, &b))
         }
     }
 
     fn lub_rem(x: &Self, y: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            (ATyp::Scalar, ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::Scalar, ATyp::Fin(_)) | (ATyp::Fin(_), ATyp::Scalar) => Ok(ATyp::Scalar),
-            (ATyp::Fin(a), ATyp::Fin(b)) =>
-                Ok(ATyp::Fin(CRange::lub_rem(a, b, &Nothing)
-                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_rem(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e)),
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
             (ATyp::Vec(box a, n), ATyp::Vec(box b, m)) if n == m =>
                 Ok(ATyp::vec(&ATyp::lub_rem(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?, *n)),
-            // Vec<A> / c = Vec<A>
-            (ATyp::Vec(box b, n), a) =>
-                Ok(ATyp::vec(&ATyp::lub_rem(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?, *n)),
-
+            // Uni<A> % Uni<B> = Uni<B-1>
+            (ATyp::Uni(_), ATyp::Uni(n2)) =>
+                Ok(ATyp::uni(n2.saturating_sub(1))),
+            // Vec<A> % C = Vec<A>
+            (ATyp::Vec(box t1, n1), b)
+            | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_rem(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
             (_, _) => Err(LubError::rem(&x, &y))
         }
     }
 
     fn lub_pow(x: &Self, y: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            (ATyp::Fin(a), ATyp::Fin(b)) =>
-                Ok(ATyp::Fin(CRange::lub_pow(a, b, &Nothing)
-                    .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?)),
-            (ATyp::Scalar, ATyp::Fin(_)) => Ok(ATyp::Scalar),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_pow(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::pow(&x, &y), e)),
             // Vec<A> ^ Vec<B> = Vec<C>
             (ATyp::Vec(box a, n), ATyp::Vec(box b, m)) if n == m =>
                 Ok(ATyp::vec(&ATyp::lub_pow(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?, *n)),
-            // Vec<B> ^ A = Vec<A^B>
-            (ATyp::Vec(box a, n), b) =>
-                Ok(ATyp::vec(&ATyp::lub_pow(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?, *n)),
 
+            // Uni<A> ^ Fin<B> = Uni<A*B>
+            (ATyp::Uni(n1), ATyp::Base(ABase::Fin(r))) =>
+                Ok(ATyp::uni(n1 * r.len())),
+            // Vec<C> ^ C
+            (ATyp::Vec(box t1, n1), b)
+            | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_pow(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
             (_, _) => Err(LubError::pow(&x, &y))
         }
     }
 
     fn lub_dot(x: &Self, y: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            (ATyp::Fin(r1), ATyp::Fin(r2)) =>
-                Ok(ATyp::Fin(CRange::lub_dot(r1, r2, ctx)
-                    .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)),
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_dot(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::dot(&x, &y), e)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?;
                 Ok(t)
             },
-            (a, b) => ATyp::lub_mul(a, b, ctx)
-                .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
+            (ATyp::Uni(n1), ATyp::Uni(n2)) if n1 == n2 => Ok(ATyp::scalar()),
+            (_, _) => Err(LubError::dot(&x, &y)),
         }
     }
 
@@ -296,28 +442,55 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1 + *n2))
             },
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
-                let t = ATyp::lub_equ(t1, b, &Nothing)
+            (ATyp::Vec(box t, n), ATyp::Uni(n2))
+            | (ATyp::Uni(n2), ATyp::Vec(box t, n)) => {
+                ATyp::lub_equ(t, &ATyp::scalar(), &Nothing)
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
-                Ok(ATyp::vec(&t, *n1 + 1))
+                Ok(ATyp::uni(*n + *n2))
             },
             (a, b) => Err(LubError::concat(&a, &b))
         }
     }
+
+    fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_and(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::and(&a, &b), e)),
+            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+                let t = ATyp::lub_and(t1, t2, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
+            (ATyp::Vec(box t1, _), b)
+            | (b, ATyp::Vec(box t1, _)) => {
+                ATyp::lub_and(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))
+            },
+            (a, b) => Err(LubError::and(&a, &b))
+        }
+    }
 }
 
+impl fmt::Display for ABase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ABase::Bool => write!(f, "Bool"),
+            ABase::Fin(r) => write!(f, "Fin<{}>", r),
+            ABase::Scalar => write!(f, "Scalar"),
+            ABase::G1 => write!(f, "G1"),
+            ABase::G2 => write!(f, "G2"),
+            ABase::GT => write!(f, "GT")
+        }
+    }
+}
 impl fmt::Display for ATyp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ATyp::Bool => write!(f, "Bool"),
-            ATyp::Fin(r) => write!(f, "Fin({})", r),
+            ATyp::Base(b) => write!(f, "{}", b),
             ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
-            ATyp::Scalar => write!(f, "Scalar"),
-            ATyp::G1Affine => write!(f, "G1Affine"),
-            ATyp::G2Affine => write!(f, "G2Affine"),
-            ATyp::G1 => write!(f, "G1"),
-            ATyp::G2 => write!(f, "G2"),
-            ATyp::GT => write!(f, "GT")
+            ATyp::Uni(n) => write!(f, "Uni<{}>", n),
         }
     }
 }

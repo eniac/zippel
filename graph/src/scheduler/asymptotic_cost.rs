@@ -1,7 +1,8 @@
 use ark_ec::CurveGroup;
 use lang::ast::BinOp;
+use lang::typ::CRange;
 
-use backend::{ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig};
 use crate::Op;
 use crate::scheduler::{Cost, CostModel};
 use ark_ff::{Field, PrimeField};
@@ -19,31 +20,49 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
     const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
+
     pub fn new() -> Self {
         Self(PhantomData)
     }
 
+    fn base_add(lt: &ABase, rt: &ABase) -> f64 {
+        match (lt, rt) {
+            (ABase::Fin(_), ABase::Fin(_)) => Self::INT_ADD,
+            (ABase::Scalar, ABase::Scalar) => Self::SCALAR_ADD,
+            (ABase::G1, ABase::G1) => Self::G_ADD,
+            (ABase::G2, ABase::G2) => Self::G_ADD,
+            (ABase::GT, ABase::GT) => Self::G_ADD,
+            (_, _) => unreachable!(),
+        }
+    }
+
     pub fn cost_add(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
         match (lt, rt) {
-            (ATyp::Fin(_), ATyp::Fin(_)) => Self::INT_ADD,
-            (ATyp::Scalar, ATyp::Scalar) => Self::SCALAR_ADD,
-            (ATyp::G1, ATyp::G1) => Self::G_ADD,
-            (ATyp::G1Affine, ATyp::G1Affine) => Self::G_AFFINE_ADD,
-            (ATyp::G2, ATyp::G2) => Self::G_ADD,
-            (ATyp::G2Affine, ATyp::G2Affine) => Self::G_AFFINE_ADD,
-            (ATyp::G1, ATyp::G1Affine) | (ATyp::G1Affine, ATyp::G1) => Self::G_AFFINE_ADD,
-            (ATyp::G2, ATyp::G2Affine) | (ATyp::G2Affine, ATyp::G2) => Self::G_AFFINE_ADD,
+            (ATyp::Base(a), ATyp::Base(b)) => Self::base_add(a, b),
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64),
+            (ATyp::Uni(lt), ATyp::Uni(rt)) =>
+                (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64),
+            (_, _) => unreachable!(),
+        }
+    }
+
+    fn base_mul(lt: &ABase, rt: &ABase) -> f64 {
+        match (lt, rt) {
+            (ABase::Fin(_), ABase::Fin(_)) => Self::INT_MUL,
+            (ABase::Scalar, ABase::Scalar) => Self::SCALAR_MUL,
+            (ABase::Scalar, ABase::Fin(_))
+            | (ABase::Fin(_), ABase::Scalar) => Self::SCALAR_MUL,
+            (ABase::G1, _) | (_, ABase::G1) => Self::G_SCALAR_MUL,
+            (ABase::G2, _) | (_, ABase::G2) => Self::G_SCALAR_MUL,
+            (ABase::GT, _) | (_, ABase::GT) => Self::G_SCALAR_MUL,
             (_, _) => unreachable!(),
         }
     }
 
     pub fn cost_mul(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
         match (lt, rt) {
-            (ATyp::Fin(_), ATyp::Fin(_)) => Self::INT_MUL,
-            (ATyp::Scalar, ATyp::Scalar) => Self::SCALAR_MUL,
-            (ATyp::Scalar, g) | (g, ATyp::Scalar) if g.is_group() => Self::G_SCALAR_MUL,
+            (ATyp::Base(a), ATyp::Base(b)) => Self::base_mul(a, b),
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_mul(lt, rt, nthreads) / (nthreads as f64),
             (ATyp::Vec(box lt, n), rt)
@@ -55,9 +74,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
 
     pub fn cost_div(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
         match (lt, rt) {
-            (ATyp::Fin(_), ATyp::Fin(_)) => Self::INT_MUL,
-            (ATyp::Scalar, ATyp::Scalar) => Self::SCALAR_INV + Self::SCALAR_MUL,
-            (ATyp::Scalar, g) | (g, ATyp::Scalar) if g.is_group() => Self::G_SCALAR_MUL + Self::SCALAR_INV,
+            (ATyp::Base(a), ATyp::Base(b)) => Self::base_mul(a, b),
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_div(lt, rt, nthreads) / (nthreads as f64),
            (ATyp::Vec(box lt, n), rt)
@@ -79,20 +96,13 @@ impl<C: ArkConfig> AsymptoticCost<C> {
         }
     }
 
-    pub fn cost_pow(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
-        match (lt, rt) {
-            (ATyp::Fin(_), ATyp::Fin(r)) => Self::INT_MUL * r.len() as f64,
-            (ATyp::Scalar, ATyp::Fin(r)) => Self::SCALAR_MUL * r.len() as f64,
-            (ATyp::Vec(box lt, n), ATyp::Vec(box rt, _)) =>
-                Self::cost_pow(lt, rt, nthreads) * (*n as f64) / nthreads as f64,
-            (ATyp::Vec(box lt, n), rt) =>
-                Self::cost_pow(lt, rt, nthreads) * (*n as f64) / nthreads as f64,
-            (_, _) => unreachable!(),
-        }
+    pub fn cost_pow(lt: &ATyp, rt: &CRange, nthreads: usize) -> f64 {
+        Self::cost_mul(lt, lt, nthreads) * (rt.len() as f64) / nthreads as f64
     }
+
     pub fn cost_bool(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
         match (lt, rt) {
-            (ATyp::Bool, ATyp::Bool) => 1.0,
+            (ATyp::Base(ABase::Bool), ATyp::Base(ABase::Bool)) => 1.0,
             (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_bool(lt, rt, nthreads) / nthreads as f64,
             (_, _) => unreachable!(),
@@ -112,9 +122,10 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
                     (BinOp::Mul, lt, rt) => cost += Self::cost_mul(&lt, &rt, nthreads),
                     (BinOp::Div | BinOp::Rem, lt, rt) => cost += Self::cost_div(&lt, &rt, nthreads),
                     (BinOp::Dot, lt, rt) => cost += Self::cost_dot(&lt, &rt, nthreads),
-                    (BinOp::And | BinOp::Or, lt, rt) => cost += Self::cost_bool(&lt, &rt, nthreads),
-                    (BinOp::Pow, lt, rt) => cost += Self::cost_pow(&lt, &rt, nthreads),
+                    (BinOp::And, lt, rt) => cost += Self::cost_bool(&lt, &rt, nthreads),
+                    (BinOp::Pow, lt, ATyp::Base(ABase::Fin(r))) => cost += Self::cost_pow(&lt, &r, nthreads),
                     (BinOp::Concat, _, _) => {},
+                    _ => unreachable!(),
                 }
             },
             Op::Value(_)

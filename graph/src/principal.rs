@@ -3,7 +3,7 @@ use lang::id::Vid;
 use share::{Pretty, DocAllocator, BoxAllocator, DocBuilder};
 use backend::ArkConfig;
 use crate::{GOp, Op, Ref};
-use lang::typ::{Qualifier, Range, CRange};
+use lang::typ::Qualifier;
 use crate::analyses::{Var, LexDegTerm};
 
 use backend::{Value, ATyp};
@@ -56,20 +56,26 @@ where
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct PRef {
     pub reference: Ref,
-    pub range: CRange,
+    pub index: Option<usize>,
     pub typ: ATyp,
     pub principal: Principal,
 }
 
 impl PRef {
-    pub fn new(reference: &Ref, typ: &ATyp, principal: Principal) -> Self {
-        PRef { reference: reference.clone(), range: Range::new(0, typ.size()), typ: typ.clone(), principal }
+    pub fn new(reference: Ref, typ: ATyp, index: Option<usize>, principal: Principal) -> Self {
+        PRef { reference, index, typ, principal }
     }
     pub fn node(node: NodeIndex, typ: ATyp, principal: Principal) -> Self {
-        PRef { reference: Ref::Node(node), range: Range::new(0, typ.size()), typ, principal }
+        PRef { reference: Ref::Node(node), index: None, typ, principal }
     }
     pub fn var(v: Vid, typ: ATyp, principal: Principal) -> Self {
-        PRef { reference: Ref::Var(v, NodeIndex::new(0)), range: Range::new(0, typ.size()), typ, principal }
+        PRef { reference: Ref::Var(v, NodeIndex::new(0)), index: None, typ, principal }
+    }
+    pub fn var_index(v: Vid, index: usize, typ: ATyp, principal: Principal) -> Self {
+        PRef { reference: Ref::Var(v, NodeIndex::new(0)), index: Some(index), typ, principal }
+    }
+    pub fn node_index(node: NodeIndex, index: usize, typ: ATyp, principal: Principal) -> Self {
+        PRef { reference: Ref::Node(node), index: Some(index), typ, principal }
     }
 
     pub fn is_prover(&self) -> bool {
@@ -82,12 +88,14 @@ impl PRef {
         self.principal == Principal::Any
     }
     pub fn into_op<C: ArkConfig>(&self) -> GOp<C> {
-        // Convert the variable into an operation
-        if self.range == Range::default() {
-            GOp::Ref(self.reference.clone(), self.typ.clone())
-        } else {
-            GOp::Ram(Box::new(GOp::Ref(self.reference.clone(), self.typ.clone())), Box::new(Op::Value(Value::Range(self.range.clone()))))
+        match self.index {
+            Some(i) => GOp::Ram(Box::new(GOp::Ref(self.reference.clone(), self.typ.clone())), Box::new(Op::Value(Value::Index(i)))),
+            None => GOp::Ref(self.reference.clone(), self.typ.clone()),
         }
+    }
+
+    pub fn with_index(self, index: usize) -> Self {
+        PRef { reference: self.reference, index: Some(index), typ: self.typ, principal: self.principal }
     }
 }
 
@@ -106,12 +114,10 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        if self.range == Range::default() {
-            allocator.text(format!("{}", self.reference))
-        } else if self.range.len() == 1 {
-            allocator.text(format!("{}[{}]", self.reference, self.range.start))
-        } else {
-            allocator.text(format!("{}[{}]", self.reference, self.range))
+        match self.index {
+            Some(i) if self.typ.is_vec() => allocator.text(format!("{}[{}]", self.reference, i)),
+            Some(_) => allocator.text(format!("{}", self.reference)),
+            None => allocator.text(format!("{}", self.reference)),
         }
     }
 

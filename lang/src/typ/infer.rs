@@ -334,15 +334,14 @@ impl Typeable for CExp {
                 Ok(CTyp::bool())
             }
 
-            CExp::Bin(BinOp::And, box a, box b)
-            | CExp::Bin(BinOp::Or, box a, box b) => {
+            CExp::Bin(BinOp::And, box a, box b) => {
                 let ta = a.infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b.infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Types [ta] and [tb] must be equal and boolean
-                let t = CTyp::lub_equ(&ta, &tb, kctx)
+                let t = CTyp::lub_and(&ta, &tb, kctx)
                     .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
                 if t == CTyp::Bool {
                     Ok(CTyp::bool())
@@ -1088,10 +1087,8 @@ mod tests {
         assert_eq!(uni_app.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F"))));
 
-        // A polynomial application to vector of scalars
         let uni_app_vec = CExp::app("p".into(), Exps::from([CExp::varstr("v1")]));
-        assert_eq!(uni_app_vec.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 5)));
+        assert!(uni_app_vec.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
     // Test for random access

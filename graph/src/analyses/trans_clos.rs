@@ -284,21 +284,21 @@ fn trans_clos_simple() {
         tc.inline(&tc.last().unwrap().1, &|r, _| matches!(r, Ref::Var(v, _) if v == &"r".into())),
         Op::equ(
             Op::mul(
-                Op::var(&"r".into(), NodeIndex::new(1), ATyp::Scalar),
+                Op::var(&"r".into(), NodeIndex::new(1), ATyp::scalar()),
                 Op::ram(
-                    Op::var(&"s".into(), NodeIndex::new(0), ATyp::vec(&ATyp::Scalar, 10)),
+                    Op::var(&"s".into(), NodeIndex::new(0), ATyp::vec_scalar(10)),
                     Op::add(
-                        Op::var(&"i".into(), NodeIndex::new(0), ATyp::Fin(Range::new(0, 5))),
+                        Op::var(&"i".into(), NodeIndex::new(0), ATyp::fin(Range::new(0, 5))),
                         Op::Value(Value::Index(2)),
-                        ATyp::Fin(Range::new(2, 7))
+                        ATyp::fin(Range::new(2, 7))
                     )
                 ),
-                ATyp::Scalar
+                ATyp::scalar()
             ),
             Op::mul(
-                Op::var(&"r".into(), NodeIndex::new(1), ATyp::Scalar),
-                Op::var(&"s'".into(), NodeIndex::new(0), ATyp::Scalar),
-                ATyp::Scalar
+                Op::var(&"r".into(), NodeIndex::new(1), ATyp::scalar()),
+                Op::var(&"s'".into(), NodeIndex::new(0), ATyp::scalar()),
+                ATyp::scalar()
             )
         )
     )

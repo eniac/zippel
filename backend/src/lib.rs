@@ -6,7 +6,7 @@ pub mod nothing;
 
 pub use nothing::{NoField, NoCurve, NoPairing};
 pub use values::Value;
-pub use types::ATyp;
+pub use types::{ABase, ATyp};
 pub use config::{
     ArkScalarOps,
     ArkGroupOps,

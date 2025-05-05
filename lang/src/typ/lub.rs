@@ -57,6 +57,9 @@ impl LubError {
     pub fn dot<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Dot, a.to_string(), b.to_string())
     }
+    pub fn and<K: fmt::Display>(a: &K, b: &K) -> Self {
+        LubError::Bin(BinOp::And, a.to_string(), b.to_string())
+    }
     pub fn concat<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Concat, a.to_string(), b.to_string())
     }
@@ -73,6 +76,7 @@ pub trait Lub where Self: Sized {
     fn lub_pow(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
 }
 
@@ -217,6 +221,19 @@ impl Lub for Range<usize> {
         } else {
             return Err(LubError::concat(&a, &b));
         }
+    }
+    fn lub_and(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
+        // Validate ranges
+        a.check().map_err(|e|
+                LubError::next(
+                    LubError::add(&a, &b),
+                    LubError::bad_range(&a, e)))?;
+        b.check().map_err(|e|
+                LubError::next(
+                    LubError::add(&a, &b),
+                    LubError::bad_range(&b, e)))?;
+
+        Err(LubError::and(&a, &b))
     }
 }
 
@@ -363,9 +380,16 @@ impl Lub for Tid {
         let kb = ctx.get(b)
             .ok_or(LubError::kind_not_found(&b))?;
 
-        match (ka, kb) {
-            (_, _) => Err(LubError::sub(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
-        }
+        Err(LubError::sub(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+    }
+
+    fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(a)
+            .ok_or(LubError::kind_not_found(&a))?;
+        let kb = ctx.get(b)
+            .ok_or(LubError::kind_not_found(&b))?;
+
+        Err(LubError::and(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
     }
 }
 
@@ -669,11 +693,15 @@ impl Lub for CTyp {
         match (x, y) {
             // Vec<A> * Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
-                if n == m {
-                    CTyp::lub_mul(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
-                } else {
-                    Err(LubError::dot(&x, &y))
+                match (a.to_scalar(ctx), b.to_scalar(ctx)) {
+                    (Some(a), Some(b)) if n == m =>
+                        // Type [a] and [b] should be multiplied
+                        Ok(CTyp::Base(Tid::lub_mul(&a, &b, ctx)
+                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)),
+                    (p, q) => {
+                        CTyp::lub_mul(x, y, ctx)
+                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
+                    },
                 },
             (a, b) => CTyp::lub_mul(a, b, ctx)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
@@ -721,6 +749,22 @@ impl Lub for CTyp {
                 }
             },
             (ta, tb) => Err(LubError::concat(&ta, &tb))
+        }
+    }
+
+    fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+        match (x, y) {
+            // Bool && Bool = Bool
+            (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
+            // Vec<Bool> && Bool = Bool (forall)
+            (CTyp::Bool, CTyp::Vec(box a, _)) | (CTyp::Vec(box a, _), CTyp::Bool) =>
+                Ok(CTyp::lub_and(&a, &CTyp::bool(), ctx)
+                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?),
+            // Vec<Bool> && Vec<Bool> = Bool (forall)
+            (CTyp::Vec(box a, _), CTyp::Vec(box b, _)) =>
+                Ok(CTyp::lub_and(&a, &b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?),
+            (_, _) => Err(LubError::and(&x, &y))
         }
     }
 }
@@ -839,6 +883,11 @@ fn lub_typ() {
     assert_eq!(CTyp::lub_pow(&CTyp::vec(&tf, 10), &tr, &ctx), Ok(CTyp::vec(&tf, 10)));
     assert_eq!(CTyp::lub_pow(&CTyp::uni(&f, 10), &tr, &ctx), Ok(CTyp::uni(&f, 100)));
     assert!(CTyp::lub_pow(&CTyp::mle(&f, 10), &tr, &ctx).is_err());
+
+    assert_eq!(CTyp::lub_and(&CTyp::Bool, &CTyp::Bool, &ctx), Ok(CTyp::Bool));
+    assert_eq!(CTyp::lub_and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::vec(&CTyp::Bool, 10), &ctx), Ok(CTyp::Bool));
+    assert_eq!(CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx), Ok(CTyp::Bool));
+
 }
 
 

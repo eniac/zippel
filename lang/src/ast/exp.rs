@@ -1,4 +1,4 @@
-use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, BitOr, Index};
+use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, Index};
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
@@ -79,15 +79,7 @@ pub enum BinOp {
     ///     ```zippel
     ///     assert(true && false);
     ///     ```
-    And,
-
-    ///     Represents the logical OR of two boolean expressions.
-    ///
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     verify(true || false);
-    ///     ```
-    Or,
+    And
 }
 
 /// Represents arithmetic expressions in the Zippel language.
@@ -521,9 +513,6 @@ impl<N> Exp<N> {
     pub fn and(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::And, Box::new(l), Box::new(r))
     }
-    pub fn or(l: Self, r: Self) -> Self {
-        Exp::Bin(BinOp::Or, Box::new(l), Box::new(r))
-    }
     pub fn equ(l: Exp<N>, r: Exp<N>) -> Self {
         Exp::Bin(BinOp::Equ, Box::new(l), Box::new(r))
     }
@@ -578,7 +567,6 @@ where
             BinOp::Rem => allocator.text(" % "),
             BinOp::Equ => allocator.text(" == "),
             BinOp::And => allocator.text(" && "),
-            BinOp::Or => allocator.text(" || "),
         }
     }
 
@@ -770,17 +758,15 @@ impl<N> BitAnd for Exp<N> {
     }
 }
 
-impl<N> BitOr for Exp<N> {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self {
-        Exp::or(self, rhs)
-    }
-}
-
 impl From<u32> for UExp {
     fn from(x: u32) -> Self {
         UExp::lit(Size::from(x))
+    }
+}
+
+impl From<usize> for CExp {
+    fn from(x: usize) -> Self {
+        CExp::lit(x)
     }
 }
 
@@ -839,7 +825,8 @@ lazy_static! {
         use Rule::*;
 
         PrattParser::new()
-            .op(Op::infix(and_op, Left) | Op::infix(or_op, Left))
+            .op(Op::infix(and_op, Left))
+            .op(Op::infix(eq_op, Left))
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
             .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
             .op(Op::infix(concat_op, Left))
@@ -856,7 +843,7 @@ impl<'pest> FromPest<'pest> for UExp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
-                Rule::lit_bexp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
+                Rule::bool_exp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
@@ -898,13 +885,6 @@ impl<'pest> FromPest<'pest> for UExp {
                     let params = Exps::from_pest(&mut inner)?;
                     Ok(Exp::app(func, params))
                 },
-                Rule::eq_bexp => {
-                    let mut inner = pair.into_inner();
-                    Ok(Exp::equ(
-                           UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                           UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
-                    ))
-                },
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::assert(UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?))
@@ -931,14 +911,12 @@ impl<'pest> FromPest<'pest> for UExp {
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
-                Rule::aexp => Exp::from_pest(&mut pair.into_inner()),
-                Rule::bexp => Exp::from_pest(&mut pair.into_inner()),
+                Rule::exp => Exp::from_pest(&mut pair.into_inner()),
                 _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
             })
             .map_infix(|lhs, op, rhs|
                 match op.clone().as_rule() {
                     Rule::and_op => Ok(Exp::and(lhs?, rhs?)),
-                    Rule::or_op => Ok(Exp::or(lhs?, rhs?)),
                     Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
                     Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
                     Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
@@ -947,6 +925,7 @@ impl<'pest> FromPest<'pest> for UExp {
                     Rule::dot_op => Ok(Exp::dot(lhs?, rhs?)),
                     Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
                     Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
+                    Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
                     _ => unreachable!(),
                 })
             .parse(expression)
@@ -962,12 +941,12 @@ impl<'pest> FromPest<'pest> for UExps {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-            Rule::aexps => {
-                let mut aexps = Vec::new();
+            Rule::exps => {
+                let mut exps = Vec::new();
                 for pair in pair.into_inner() {
-                    aexps.push(UExp::from_pest(&mut Pairs::single(pair))?);
+                    exps.push(UExp::from_pest(&mut Pairs::single(pair))?);
                 }
-                Ok(Exps(aexps))
+                Ok(Exps(exps))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
@@ -981,14 +960,14 @@ impl<'pest> FromPest<'pest> for UExps {
 #[test]
 fn parser_lit() {
     let ex = "2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::from(2)));
 }
 
 #[test]
 fn parser_var() {
     let ex = "x";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::varstr("x")));
 }
 
@@ -996,7 +975,7 @@ fn parser_var() {
 fn parser_bin() {
     // Add
     let ex1 = "x + 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex1).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex1).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::varstr("x") + Exp::from(2))
@@ -1004,7 +983,7 @@ fn parser_bin() {
 
     // Sub
     let ex2 = "x - 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex2).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex2).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::varstr("x") - Exp::from(2))
@@ -1012,7 +991,7 @@ fn parser_bin() {
 
     // Mul
     let ex3 = "x * 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex3).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex3).unwrap();
     assert_eq!(
         Exp::from_pest(&mut pairs),
         Ok(Exp::varstr("x") * Exp::from(2))
@@ -1020,7 +999,7 @@ fn parser_bin() {
 
     // Div
     let ex4 = "x / 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex4).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex4).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::varstr("x") / Exp::from(2))
@@ -1028,7 +1007,7 @@ fn parser_bin() {
 
     // Pow
     let ex6 = "x ^ 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex6).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex6).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::pow(Exp::varstr("x"), Exp::from(2)))
@@ -1036,7 +1015,7 @@ fn parser_bin() {
 
     // Dot
     let ex7 = "x . 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex7).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex7).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::dot(Exp::varstr("x"), Exp::from(2)))
@@ -1044,7 +1023,7 @@ fn parser_bin() {
 
     // Rem
     let ex8 = "x % 2";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex8).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex8).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::rem(Exp::varstr("x"), Exp::from(2)))
@@ -1054,7 +1033,7 @@ fn parser_bin() {
 #[test]
 fn parser_coef() {
     let ex = "coef([1,2,3])";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::coef(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
@@ -1064,7 +1043,7 @@ fn parser_coef() {
 #[test]
 fn parser_eval() {
     let ex = "eval(x + 2)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::eval(Exp::varstr("x") + Exp::from(2)))
@@ -1074,7 +1053,7 @@ fn parser_eval() {
 #[test]
 fn parser_call_two() {
     let ex = "f(x + 2, x)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::app(
@@ -1087,7 +1066,7 @@ fn parser_call_two() {
 #[test]
 fn parser_range() {
     let ex = "0..N";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
@@ -1097,7 +1076,7 @@ fn parser_range() {
 #[test]
 fn parser_for() {
     let ex = "[ 3^i for i in 0..N ]";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::map(
@@ -1110,7 +1089,7 @@ fn parser_for() {
 #[test]
 fn parser_random() {
     let ex = "random<A>";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::random(Tid::from("A")))
@@ -1120,14 +1099,14 @@ fn parser_random() {
 #[test]
 fn parser_challenge() {
     let ex = "challenge<F>";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::challenge(Tid::from("F"))));
 }
 
 #[test]
 fn parser_concat() {
     let ex = "(x + 2) ++ x";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::concat(
@@ -1140,7 +1119,7 @@ fn parser_concat() {
 #[test]
 fn parser_let() {
     let ex = "let x = 2; 3";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::letx(
@@ -1154,7 +1133,7 @@ fn parser_let() {
 #[test]
 fn parser_log() {
     let ex = "x <- 2; 4";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::logx(
@@ -1167,12 +1146,12 @@ fn parser_log() {
 
 #[test]
 fn parser_assert() {
-    let ex = "assert(x == 2 || false)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let ex = "assert(x == 2 && false)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::assert(
-            Exp::or(
+            Exp::and(
                 Exp::equ(Exp::varstr("x"), Exp::from(2)),
                 Exp::bool(false))
         ))
@@ -1182,7 +1161,7 @@ fn parser_assert() {
 #[test]
 fn parser_verify() {
     let ex = "verify(x == 2 && 3 == 4)";
-    let mut pairs = ZippelParser::parse(Rule::aexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::verify(
@@ -1196,7 +1175,7 @@ fn parser_verify() {
 #[test]
 fn parser_seq() {
     let ex = "x <- 2; y <- 3; let x = 2 * 4; 2";
-    let mut pairs = ZippelParser::parse(Rule::aexps, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
     assert_eq!(
         UExps::from_pest(&mut pairs),
         Ok(Exps(vec![
@@ -1211,7 +1190,7 @@ fn parser_seq() {
 #[test]
 fn parser_app() {
     let ex = "p(a) == q(a)";
-    let mut pairs = ZippelParser::parse(Rule::bexp, ex).unwrap();
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::equ(

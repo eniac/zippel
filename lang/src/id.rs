@@ -289,12 +289,11 @@ fn id_parser() {
     assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("N"));
 
     pairs = ZippelParser::parse(Rule::id, "foo").unwrap();
-    assert!(Tid::from_pest(&mut pairs).is_err());
+    assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("foo"));
 
     pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
     assert_eq!(Tid::from_pest(&mut pairs).unwrap(), Tid::new("Foo"));
 
     pairs = ZippelParser::parse(Rule::id, "Foo").unwrap();
-    // assert there was an error
-    assert!(Vid::from_pest(&mut pairs).is_err());
+    assert_eq!(Vid::from_pest(&mut pairs).unwrap(), Vid::new("Foo"));
 }

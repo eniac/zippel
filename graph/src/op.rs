@@ -1,7 +1,7 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
 use lang::id::Vid;
-use backend::{Value, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
+use backend::{Value, ABase, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
 
 use petgraph::graph::NodeIndex;
 use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
@@ -77,8 +77,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ref(_, t) => t.clone(),
             Op::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
-                    (ATyp::Vec(box typ, _), ATyp::Fin(_)) => typ,
-                    (ATyp::Vec(box typ, _), ATyp::Vec(box ATyp::Fin(_), m)) =>
+                    (ATyp::Vec(box typ, _), ATyp::Base(_)) => typ,
+                    (ATyp::Vec(box typ, _), ATyp::Vec(_, m)) =>
                         ATyp::vec(&typ, m),
                     (a, b) =>
                         panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
@@ -112,7 +112,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             BinOp::Concat => Self::concat(a, b, typ),
             BinOp::Equ => Self::equ(a, b),
             BinOp::And => Self::and(a, b),
-            BinOp::Or => Self::or(a, b),
         }
     }
 
@@ -361,7 +360,12 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn one(typ: &ATyp) -> Op<C, R> {
         match typ {
-            ATyp::Fin(_) => Op::Value(Value::Index(1)),
+            ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
+            ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::one())),
+            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) =>
+                Op::Value(Value::VecScalar(vec![C::FOps::one(); *n])),
+            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) =>
+                Op::Value(Value::VecIndex(vec![1; *n])),
             ATyp::Vec(box typ, n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
@@ -369,7 +373,11 @@ impl<C: ArkConfig, R> Op<C, R> {
                 }
                 Op::Vec(vs)
             },
-            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::one())),
+            ATyp::Uni(n) if *n > 0 => {
+                let mut vs = vec![0; *n];
+                vs[0] = 1;
+                Op::Value(Value::VecIndex(vs))
+            },
             _ => unreachable!("UncaughtError: Op::one() not implemented for type {}", typ),
         }
     }
@@ -414,7 +422,21 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
     pub fn zero(typ: &ATyp) -> Op<C, R> {
         match typ {
-            ATyp::Fin(_) => Op::Value(Value::Index(0)),
+            ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(0)),
+            ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::zero())),
+            ATyp::Base(ABase::G1) => Op::Value(Value::G1(C::G1Ops::zero())),
+            ATyp::Base(ABase::G2) => Op::Value(Value::G2(C::G2Ops::zero())),
+            ATyp::Base(ABase::GT) => Op::Value(Value::GT(C::POps::zero())),
+            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) =>
+                Op::Value(Value::VecScalar(vec![C::FOps::zero(); *n])),
+            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) =>
+                Op::Value(Value::VecIndex(vec![0; *n])),
+            ATyp::Vec(box ATyp::Base(ABase::G1), n) =>
+                Op::Value(Value::VecG1(vec![C::G1Ops::zero(); *n])),
+            ATyp::Vec(box ATyp::Base(ABase::G2), n) =>
+                Op::Value(Value::VecG2(vec![C::G2Ops::zero(); *n])),
+            ATyp::Vec(box ATyp::Base(ABase::GT), n) =>
+                Op::Value(Value::VecGT(vec![C::POps::zero(); *n])),
             ATyp::Vec(box typ, n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
@@ -422,13 +444,9 @@ impl<C: ArkConfig, R> Op<C, R> {
                 }
                 Op::Vec(vs)
             },
-            ATyp::Bool => Op::Value(Value::Bool(false)),
-            ATyp::Scalar => Op::Value(Value::Scalar(C::FOps::zero())),
-            ATyp::G1 => Op::Value(Value::G1(C::G1Ops::zero())),
-            ATyp::G2 => Op::Value(Value::G2(C::G2Ops::zero())),
-            ATyp::GT => Op::Value(Value::GT(C::POps::zero())),
-            ATyp::G1Affine => Op::Value(Value::G1Affine(C::G1Ops::zero().into())),
-            ATyp::G2Affine => Op::Value(Value::G2Affine(C::G2Ops::zero().into())),
+            ATyp::Uni(n) if *n > 0 =>
+                Op::Value(Value::VecIndex(vec![0; *n])),
+            _ => unreachable!("UncaughtError: Op::zero() not implemented for type {}", typ),
         }
     }
 
@@ -445,7 +463,7 @@ impl<C: ArkConfig, R> Op<C, R> {
     pub fn equ(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
             (Op::Value(a), Op::Value(b)) => Op::Value(a.value_equ(&b)),
-            (v1, v2) => Op::Bin(BinOp::Equ, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (v1, v2) => Op::Bin(BinOp::Equ, Box::new(v1), Box::new(v2), ATyp::bool()),
         }
     }
 
@@ -454,7 +472,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             (Op::Value(Value::Bool(false)), _)
             | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
             (Op::Value(a), Op::Value(b)) => Op::Value(a & b),
-            (v1, v2) => Op::Bin(BinOp::And, Box::new(v1), Box::new(v2), ATyp::Bool),
+            (v1, v2) => Op::Bin(BinOp::And, Box::new(v1), Box::new(v2), ATyp::bool()),
         }
     }
 
@@ -463,15 +481,6 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
     pub fn bfalse() -> Self {
         Op::Value(Value::Bool(false))
-    }
-
-    pub fn or(v1: Self, v2: Self) -> Self {
-        match (v1, v2) {
-            (Op::Value(Value::Bool(true)), _)
-            | (_, Op::Value(Value::Bool(true))) => Op::btrue(),
-            (Op::Value(a), Op::Value(b)) => Op::Value(a | b),
-            (v1, v2) => Op::Bin(BinOp::Or, Box::new(v1), Box::new(v2), ATyp::Bool),
-        }
     }
 
     pub fn vec(vs: Vec<Op<C, R>>) -> Op<C, R> {

@@ -449,11 +449,11 @@ impl<C: ArkConfig> UDag<C> {
                     assert_eq!(param_types.len(), 1);
 
                     // Add the argument to the graph
-                    let ox = self.add_exp(params[0].clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
+                    let x_pow = CExp::vec(
+                        (0..*n).map(|i| CExp::pow(params[0].clone(), i.into())).collect());
 
-                    // Add the argument to the graph x_pow = [x^0, ..., x^n]
-                    let x_pow = Op::vec((0..*n).map(|i| Op::pow(ox.clone(), i.into(), ox.typ())).collect());
-                    Ok(Op::dot(Self::op_from_var(&fid, vars)?, x_pow.clone(), ATyp::Scalar))
+                    let dot_exp = CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
+                    self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
                 } else {
                     // It is a function. Find all matching functions in function context [fctx]
                     let matching_sigs = fctx.iter().filter_map(|(sig, body)| {

@@ -1,6 +1,6 @@
 use ark_ec::{AffineRepr, CurveConfig, CurveGroup, PrimeGroup, VariableBaseMSM};
 use ark_ec::scalar_mul::ScalarMul;
-use ark_ff::{SqrtPrecomputation, AdditiveGroup, CyclotomicMultSubgroup, Field, LegendreSymbol, PrimeField, UniformRand, Zero};
+use ark_ff::{AdditiveGroup, PrimeField, UniformRand, Zero};
 use ark_ff::biginteger::BigInt;
 use rand::Rng;
 use ark_serialize::{
@@ -9,11 +9,11 @@ use ark_serialize::{
 use num_bigint::BigUint;
 use zeroize::Zeroize;
 use std::fmt;
-use std::iter::{Product, Sum};
+use std::iter::Sum;
 use ark_std::io::{Read, Write};
 use std::ops::{
     Add, AddAssign, BitAnd, BitAndAssign,
-    BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign, Neg,
+    BitOr, BitOrAssign, BitXor, BitXorAssign, Mul, MulAssign, Neg,
     Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
 use std::str::FromStr;
 use std::marker::PhantomData;
