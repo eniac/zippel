@@ -1,0 +1,124 @@
+// Base case for dot product: vectors of size 1 (2^0)
+fn dot_product<F: Field>(v1: [F; 1], v2: [F; 1]) -> F {
+  // Simply multiply the single elements
+  v1[0] * v2[0]
+}
+
+// Recursive step for dot product: vectors of size 2^N, for N from 1 to 5.
+// This covers sizes 2, 4, 8, 16, and 32.
+fn dot_product<F: Field, N: 1..5>(v1: [F; 2^N], v2: [F; 2^N]) -> F {
+  
+  // Calculate the midpoint for slicing (size of each half is 2^(N-1))
+  let mid = 2^(N-1); 
+  // Calculate the end index (total size is 2^N)
+  let end = 2^N;
+  
+  // Slice the input vectors into left (L) and right (R) halves.
+  // Assuming slice notation v[start..end] extracts elements from index 'start'
+  // up to, but not including, index 'end'.
+  let v1_L = v1[0..mid];     // First half of v1
+  let v1_R = v1[mid..end];   // Second half of v1
+  let v2_L = v2[0..mid];     // First half of v2
+  let v2_R = v2[mid..end];   // Second half of v2
+
+  // Recursively call dot_product on the left halves and the right halves.
+  // The function called will implicitly correspond to N-1 due to the smaller vector size.
+  let dot_prod_left = dot_product(v1_L, v2_L);
+  let dot_prod_right = dot_product(v1_R, v2_R);
+
+  // Return the sum of the dot products of the halves.
+  dot_prod_left + dot_prod_right 
+}
+
+// Note: When you call dot_product with vectors of size 32 ([F; 32]), 
+// the second definition (N: 1..5) will be invoked with N=5. 
+// It will recursively call itself with N=4, N=3, N=2, N=1, 
+// eventually hitting the base case (N=0, size 1) defined in the first function.
+
+// Assume N is defined, e.g., N = 32
+// Helper function for Pedersen vector commitment: h*r + reduce(+, g_vec * x_vec)
+fn Com_Vec<G: Group, F: Scalar<G>, N: 32>(public g_vec: [G; N], public h: G, public x_vec: [F; N], public r: F) -> G {
+  let term_sum = reduce(+, g_vec * x_vec); // Assumes element-wise G*F multiplication then reduce
+  h*r + term_sum
+}
+
+// Helper function for Pedersen scalar commitment: g*y + h*r
+fn Com_Scal<G: Group, F: Scalar<G>>(public g: G, public h: G, public y: F, public r: F) -> G {
+  g*y + h*r
+}
+
+
+/ Protocol implementing the non-interactive version of proof-of-dot-prod(xi, tau, a_vec)
+// from Hyrax Figure 6.
+// Proves y = <x_vec, a_vec> where xi commits x_vec and tau commits y.
+
+proto proof_of_dot_product<G: Group, F: Scalar<G>, N: 32>(
+    // Private witness known only to the prover:
+    private x_vec: [F; N],    // Vector committed in xi
+    private r_xi: F,         // Randomness for xi commitment
+    private y: F,            // Scalar committed in tau (must equal <x_vec, a_vec>)
+    private r_tau: F,        // Randomness for tau commitment
+    
+    // Public inputs known to prover and verifier:
+    public g_vec: [G; N],    // Vector of bases for vector commitment
+    public a_vec: [F; N],    // Public vector for dot product
+    public g: G,             // Base for scalar value commitment (in tau)
+    public h: G,             // Base for randomness (in xi, tau, delta, beta)
+    public xi: G,            // Commitment xi = Com_Vec(g_vec, h, x_vec, r_xi)
+    public tau: G            // Commitment tau = Com_Scal(g, h, y, r_tau)
+) 
+// The 'where' clause defines the exact relations the prover must satisfy.
+// It uses the conceptual helper functions for clarity.
+where xi == Com_Vec(g_vec, h, x_vec, r_xi) 
+  && tau == Com_Scal(g, h, y, r_tau) 
+  && y == dot_product(x_vec, a_vec) {
+
+      // --- Prover Phase ---
+
+      // 1. Sample randomness (d_vec, r_delta, r_beta) 
+      //    and compute commitments (delta, beta).
+      let d_vec = [random<F> for i in 0..N]; // Generate random vector d_vec
+      let r_delta = random<F>;
+      let r_beta = random<F>;
+
+      // Compute delta = Com(d_vec; r_delta)
+      let delta_commit = Com_Vec(g_vec, h, d_vec, r_delta);
+
+      // Compute beta = Com(<a_vec, d_vec>; r_beta)
+      let dot_ad = dot_product(a_vec, d_vec);
+      let beta_commit = Com_Scal(g, h, dot_ad, r_beta);
+
+      // Add commitments to the transcript
+      delta <- delta_commit;
+      beta <- beta_commit;
+
+      // 2. Derive the Fiat-Shamir challenge 'c'.
+      c <- challenge<F>; 
+
+      // 3. Compute the responses (z_vec, z_delta, z_beta).
+      //    Requires element-wise vector operations.
+      let resp_z_vec = c * x_vec + d_vec; 
+      let resp_z_delta = c * r_xi + r_delta;
+      let resp_z_beta = c * r_tau + r_beta;
+
+      // Add responses to the transcript. 
+      // CRITICAL ASSUMPTION: Vector z_vec can be added/retrieved.
+      z_vec <- resp_z_vec;
+      z_delta <- resp_z_delta;
+      z_beta <- resp_z_beta;
+
+      // --- Verification Logic (encoded using 'verify') ---
+      // Implements the two checks from the paper.
+
+      // Check 1: xi*c + delta == Com(z_vec; z_delta)
+      let check1_rhs = Com_Vec(g_vec, h, z_vec, z_delta);
+      let check1 = (xi*c + delta == check1_rhs);
+
+      // Check 2: tau*c + beta == Com(<z_vec, a_vec>; z_beta)
+      let dot_za = dot_product(z_vec, a_vec); // Compute dot product <z_vec, a_vec>
+      let check2_rhs = Com_Scal(g, h, dot_za, z_beta);
+      let check2 = (tau*c + beta == check2_rhs);
+
+      // Verify that both checks pass
+      verify(check1 && check2); 
+}
