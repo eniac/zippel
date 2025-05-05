@@ -12,7 +12,8 @@ use log::debug;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
-pub use pref::PRef;
+use petgraph::Directed;
+pub use pref::{PRef, LexTerm};
 pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};
@@ -89,6 +90,7 @@ impl GraphError {
 }
 
 impl<C: ArkConfig, A> Dag<C, A> {
+    
     pub fn new() -> Self {
         Dag(Graph::new())
     }

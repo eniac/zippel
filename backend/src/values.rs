@@ -1,8 +1,8 @@
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
-use ark_ff::{PrimeField, Zero};
-use lang::typ::CRange;
+use lang::typ::{CRange, Nothing, lub::Lub};
+use rayon::prelude::*;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::GroupDomainSeparator;
@@ -1493,50 +1493,62 @@ impl<C: ArkConfig> Value<C> {
     }
     pub fn ram(self, r: Self) -> Self {
         match (self, r) {
-            (Value::VecIndex(a), Value::VecIndex(b)) => {
-                Value::VecIndex(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::Range(a), Value::Range(b)) => Value::Range(a.compose(&b)),
-            (Value::Range(a), Value::Index(b)) => Value::Index(a.compose_index(b)),
-            (Value::Range(a), Value::VecIndex(b)) => {
-                Value::VecIndex(b.par_iter().map(|i| a.compose_index(*i)).collect())
-            }
-            (Value::VecIndex(a), Value::Range(b)) => {
-                Value::VecIndex(b.into_iter().map(|i| a[i]).collect())
-            }
-            (Value::VecIndex(a), Value::Index(b)) => Value::Index(a[b].clone()),
-            (Value::VecScalar(a), Value::VecIndex(b)) => {
-                Value::VecScalar(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecScalar(a), Value::Index(b)) => Value::Scalar(a[b].clone()),
-            (Value::VecG1(a), Value::VecIndex(b)) => {
-                Value::VecG1(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecG1(a), Value::Index(b)) => Value::G1(a[b].clone()),
-            (Value::VecG2(a), Value::VecIndex(b)) => {
-                Value::VecG2(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecG2(a), Value::Index(b)) => Value::G2(a[b].clone()),
-            (Value::VecGT(a), Value::VecIndex(b)) => {
-                Value::VecGT(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecGT(a), Value::Index(b)) => Value::GT(a[b].clone()),
-            (Value::VecG1Affine(a), Value::VecIndex(b)) => {
-                Value::VecG1Affine(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecG1Affine(a), Value::Index(b)) => Value::G1Affine(a[b].clone()),
-            (Value::VecG2Affine(a), Value::VecIndex(b)) => {
-                Value::VecG2Affine(b.par_iter().map(|i| a[*i]).collect())
-            }
-            (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[b].clone()),
-            (Value::Vec(a), Value::VecIndex(b)) => {
-                Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect())
-            }
-            (Value::Vec(a), Value::Index(b)) => a[b].clone(),
-            (Value::Vec(a), Value::Vec(b)) => {
-                Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect())
-            }
-            (a, b) => panic!("Cannot do {}[{}]", a, b),
+            (Value::VecIndex(a), Value::VecIndex(b)) =>
+                Value::VecIndex(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::Range(a), Value::Range(b)) =>
+                Value::Range(a.compose(&b)),
+            (Value::Range(a), Value::Index(b)) =>
+                Value::Index(a.compose_index(b)),
+            (Value::Range(a), Value::VecIndex(b)) =>
+                Value::VecIndex(b.par_iter().map(|i| a.compose_index(*i)).collect()),
+            (Value::VecIndex(a), Value::Range(b)) =>
+                Value::VecIndex(b.into_iter().map(|i| a[i]).collect()),
+            (Value::VecIndex(a), Value::Index(b)) =>
+                Value::Index(a[b].clone()),
+            (Value::VecScalar(a), Value::Range(r)) =>
+                Value::VecScalar(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecG1(a), Value::Range(r)) =>
+                Value::VecG1(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecG2(a), Value::Range(r)) =>
+                Value::VecG2(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecG1Affine(a), Value::Range(r)) =>
+                Value::VecG1Affine(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecG2Affine(a), Value::Range(r)) =>
+                Value::VecG2Affine(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecGT(a), Value::Range(r)) =>
+                Value::VecGT(r.into_iter().map(|i| a[i]).collect()),
+            (Value::VecScalar(a), Value::VecIndex(b)) =>
+                Value::VecScalar(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecScalar(a), Value::Index(b)) =>
+                Value::Scalar(a[b].clone()),
+            (Value::VecG1(a), Value::VecIndex(b)) =>
+                Value::VecG1(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecG1(a), Value::Index(b)) =>
+                Value::G1(a[b].clone()),
+            (Value::VecG2(a), Value::VecIndex(b)) =>
+                Value::VecG2(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecG2(a), Value::Index(b)) =>
+                Value::G2(a[b].clone()),
+            (Value::VecGT(a), Value::VecIndex(b)) =>
+                Value::VecGT(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecGT(a), Value::Index(b)) =>
+                Value::GT(a[b].clone()),
+            (Value::VecG1Affine(a), Value::VecIndex(b)) =>
+                Value::VecG1Affine(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecG1Affine(a), Value::Index(b)) =>
+                Value::G1Affine(a[b].clone()),
+            (Value::VecG2Affine(a), Value::VecIndex(b)) =>
+                Value::VecG2Affine(b.par_iter().map(|i| a[*i]).collect()),
+            (Value::VecG2Affine(a), Value::Index(b)) =>
+                Value::G2Affine(a[b].clone()),
+            (Value::Vec(a), Value::VecIndex(b)) =>
+                Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect()),
+            (Value::Vec(a), Value::Index(b)) =>
+                a[b].clone(),
+            (Value::Vec(a), Value::Vec(b)) =>
+                Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect()),
+            (a, b) => panic!("Cannot do {}[{}]", a, b)
+
         }
     }
 
@@ -1761,6 +1773,20 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    #[inline]
+    pub fn value_concat(self, other: Self) -> Self {
+        let mut other = other;
+        self.concat(&mut other);
+        other
+    }
+
+    #[inline]
+    pub fn value_concat(self, other: Self) -> Self {
+        let mut other = other;
+        self.concat(&mut other);
+        other
+    }
+
     /// Generate a random value, given some parameters
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
@@ -1808,11 +1834,9 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(ATyp::fin(CRange::new(min, max + 1))), v.len())
             }
             Value::Vec(v) => {
-                let typ = v[0].typ();
+                let mut typ = v[0].typ();
                 for i in v.iter().skip(1) {
-                    if typ != i.typ() {
-                        panic!("Mismatched types in vector {} and {}", typ, i.typ());
-                    }
+                    typ = ATyp::lub_equ(&i.typ(), &typ, &Nothing).unwrap();
                 }
                 ATyp::Vec(Box::new(typ), v.len())
             }
@@ -2063,6 +2087,26 @@ impl<C: ArkConfig> Value<C> {
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
         }
+    }
+
+    pub fn value_vec(vec: Vec<Self>) -> Self {
+        let mut typ = vec[0].typ();
+        for i in vec.iter().skip(1) {
+            typ = ATyp::lub_equ(&i.typ(), &typ, &Nothing).unwrap();
+        }
+        let mut vec_value = Value::Vec(vec);
+        match typ {
+            ATyp::Base(ABase::Scalar) => vec_value.into_vec_scalar_mut(),
+            // ATyp::Base(ABase::Bool) => vec_value.into_vec_bool_mut(),
+            // ATyp::Base(ABase::Fin(r)) => vec_value.into_vec_index_mut(),
+            // ATyp::Base(ABase::G1) => vec_value.into_vec_g1_mut(), 
+            // ATyp::Base(ABase::G2) => vec_value.into_vec_g2_mut(),
+            // ATyp::Base(ABase::GT) => vec_value.into_vec_gt_mut(),
+            // ATyp::Base(ABase::G1Affine) => vec_value.into_vec_g1_affine_mut(),
+            // ATyp::Base(ABase::G2Affine) => vec_value.into_vec_g2_affine_mut(),
+            _ => panic!("Not yet implemented for vector")
+        };
+        return vec_value;
     }
 }
 
