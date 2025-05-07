@@ -598,7 +598,7 @@ impl Lub for CTyp {
                     Err(LubError::div(&x, &y))
                 },
             // Vec<A> / c = Vec<A>
-            (CTyp::Vec(box b, n), a) =>
+            (CTyp::Vec(box a, n), b) =>
                 Ok(CTyp::vec(&CTyp::lub_div(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, *n)),
 
@@ -623,17 +623,7 @@ impl Lub for CTyp {
                 }
             }
             // Indices can act like finite fields
-            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a)
-                    .ok_or(LubError::next(
-                            LubError::div(&x, &y),
-                            LubError::kind_not_found(&a)))?;
-                if ka == &Kind::Field {
-                    Ok(CTyp::base(a))
-                } else {
-                    Err(LubError::div(&x, &y))
-                }
-            },
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => Ok(CTyp::base(a)),
             (_, _) => Err(LubError::div(&x, &y))
         }
     }

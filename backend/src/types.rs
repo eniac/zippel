@@ -218,8 +218,9 @@ impl Lub for ABase {
             (ABase::Fin(r1), ABase::Fin(r2)) =>
                 Ok(ABase::Fin(CRange::lub_div(r1, r2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&a, &b), e))?)),
+            (a, ABase::Fin(_)) => Ok(a.clone()),
             (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
-            (ABase::Scalar, ABase::Fin(_)) | (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::Fin(_), ABase::Scalar) => Ok(ABase::Scalar),
             (ABase::G1, ABase::Scalar) => Ok(ABase::G1),
             (ABase::G2, ABase::Scalar) => Ok(ABase::G2),
             (ABase::GT, ABase::Scalar) => Ok(ABase::GT),

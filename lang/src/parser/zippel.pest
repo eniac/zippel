@@ -19,7 +19,7 @@ eq_op = @{ "==" }
 and_op = @{ "&&" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" }
+keyword = {"let" | "fn" | "proto" | "public" | "private" | "reduce" | "for" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 
 /// Ranges appear in types and expressions

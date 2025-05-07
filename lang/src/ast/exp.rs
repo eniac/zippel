@@ -1125,6 +1125,13 @@ fn parser_range() {
         UExp::from_pest(&mut pairs),
         Ok(Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
     );
+
+    let ex = "(N/2)..N";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::range(Range { start: Size::from("N").div(Size::from(2)), step: Size::from(1), end: Size::from("N") }))
+    );
 }
 
 #[test]
