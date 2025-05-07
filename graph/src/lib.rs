@@ -20,10 +20,11 @@ use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
-use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbors}, Direction, Graph};
+use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbors}, visit::EdgeRef, Direction, Graph};
 use std::process::Command;
 use std::fmt;
 use std::ops::Index;
+pub use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Represents graphs in the Zippel language
@@ -35,6 +36,12 @@ pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Dep>);
 
 /// Dag with no annotations
 pub type UDag<C> = Dag<C, Nothing>;
+
+/// A collection of dags
+#[derive(Clone)]
+pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
+
+pub type UDags<C> = Dags<C, Nothing>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -56,9 +63,25 @@ impl GraphError {
 }
 
 impl<C: ArkConfig, A> Dag<C, A> {
+    pub fn new() -> Self {
+        Dag(Graph::new())
+    }
+
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
         self.0.node_count()
+    }
+    /// Get the number of edges in the graph
+    pub fn edge_count(&self) -> usize {
+        self.0.edge_count()
+    }
+
+    pub fn input_node(&self) -> Option<NodeIndex> {
+        self.0.node_indices().find(|n| self.0[*n].is_input())
+    }
+
+    pub fn relation_node(&self) -> Option<NodeIndex> {
+        self.0.node_indices().find(|n| self.0[*n].is_relation())
     }
 
     /// Dep deduplication
@@ -111,7 +134,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 match node {
                     Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
                     Node::Transcr(op, ann) => Node::Transcr(op.clone(), f(op, ann)),
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone())
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
                 },
                 |_, e| e.clone()
         ))
@@ -135,10 +159,68 @@ impl<C: ArkConfig, A> Dag<C, A> {
             |_, node|
                 match node {
                     Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
                     Node::Op(op, _) => Node::Op(op.clone(), Nothing),
                     Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
                 },
             |_, e| e.clone()))
+    }
+
+    /// Join two DAGs into one
+    pub fn combine_dag(&self, other: &Self) -> Self where A: Clone {
+        let mut combined_graph = Graph::with_capacity(
+            self.node_count() + other.node_count(),
+            self.edge_count() + other.edge_count(),
+        );
+
+        // To map old NodeIndex values from self to new NodeIndex values in combined_graph
+        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
+        // To map old NodeIndex values from other to new NodeIndex values in combined_graph
+        let mut node_map_other = HashMap::<NodeIndex, NodeIndex>::new();
+
+        // Add nodes from self and populate node_map_self
+        for old_node_idx in self.node_indices() {
+            if let Some(weight) = self.0.node_weight(old_node_idx) {
+                let new_node_idx = combined_graph.add_node(weight.clone());
+                node_map_self.insert(old_node_idx, new_node_idx);
+            }
+        }
+
+        // Add nodes from other and populate node_map_other
+        for old_node_idx in other.node_indices() {
+            if let Some(weight) = other.0.node_weight(old_node_idx) {
+                let new_node_idx = combined_graph.add_node(weight.clone());
+                node_map_other.insert(old_node_idx, new_node_idx);
+            }
+        }
+
+        // Add edges from self using the mapped node indices
+        for edge_ref in self.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
+            {
+                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+
+        // Add edges from other using the mapped node indices
+        for edge_ref in other.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_other.get(&old_source_idx), node_map_other.get(&old_target_idx))
+            {
+                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+
+        Dag(combined_graph)
     }
 
     /// Write graph to PDF
@@ -163,6 +245,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 &|_, n|
                         match n.1 {
                             Node::Inp(_, _) => "shape = \"box\"".to_string(),
+                            Node::Rel(_, _) => "shape = \"note\"".to_string(),
                             Node::Transcr(_, _) => "color = \"red\"".to_string(),
                             _ => "shape = \"ellipse\"".to_string(),
                         }.to_string()
@@ -191,55 +274,112 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 }
 
-/// Constructors for graphs
-impl<C: ArkConfig> UDag<C> {
+impl<C: ArkConfig, A> Dags<C, A> {
+    pub fn new() -> Self {
+        Dags(Vec::new())
+    }
+
+    /// Write graph to PDF
+    pub fn write_pdf<'a>(&self, filename: &str) -> std::io::Result<()> where A: Clone + fmt::Display {
+        let mut joined_graph = Dag::new();
+        for g in self.0.iter() {
+            joined_graph = joined_graph.combine_dag(g);
+        }
+        joined_graph.write_pdf(filename)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<C: ArkConfig> UDags<C> {
+    /// Create a collection of Dags from a module
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
-        let mut g = Dag(Graph::new());
-        // Build [fctx] from module
+        let mut gs = UDags::new();
+
         let fctx =
             m.iter().map(|(sig, body)|
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
+
         for (sig, body) in m.into_iter() {
-            // Kind context
-            let kctx = sig.typevars.to_ctx();
-            // Add arguments to [vctx] and [vars]
-            let mut vars = Ctx::new();
-            let mut vctx = Ctx::new();
-
-            // Cast the signature to a arguments and insert to [start] node
-            let mut asig: Ctx<Vid, (Qualifier, ATyp)> = Ctx::new();
-            for arg in sig.args.iter() {
-                let atyp =
-                    ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(|| {
-                        TypeError::decl(&sig.name,
-                             TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ))
-                        })?;
-                // Add argument to [asig]
-                asig.insert(&arg.id, &(arg.qualifier.clone(), atyp));
-            }
-            // Start node
-            let mut start = g.add_node(Node::inp(sig.name.clone(), asig));
-
-            // Initial node is the function signature
-            for Arg { id, typ, .. } in sig.args.iter() {
-                let at = ATyp::from_ctyp(typ, &kctx).ok_or_else(|| {
-                    TypeError::decl(&sig.name,
-                        TypeError::ark(&kctx, &vctx, &CExp::var(id), typ))
-                })?;
-                vars.insert(id, &GOp::var(id, start, at));
-                vctx.insert(id, typ);
-            }
-            // Typecheck the body with the type signature
-            body.typecheck(sig, &fctx.keys())?;
-
-            // Add the body to the Graph
-            let op = g.add_exp(body.body(), &mut start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
-            if !matches!(op, GOp::Ref(Ref::Node(_), _)) {
-                let nr = g.add_node(Node::ret(&op));
-                g.add_edges(DepType::Data, nr, op);
-            };
+            let mut g = UDag::new();
+            g.add_decl(sig.clone(), body.clone(), &fctx)?;
+            gs.0.push(g);
         }
-        Ok(g)
+        Ok(gs)
+    }
+}
+
+/// Constructors for graphs
+impl<C: ArkConfig> UDag<C> {
+    /// Add a new top-level expression to the graph
+    pub fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
+        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<(), GraphError> {
+        let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
+        if !matches!(op, GOp::Ref(Ref::Node(_), _)) {
+            let nr = self.add_node(Node::ret(&op));
+            self.add_edges(DepType::Data, nr, op);
+        };
+        Ok(())
+    }
+
+    /// Add a new declaration to the graph
+    pub fn add_decl(&mut self, sig: CSig, body: CBody, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError> {
+        // Kind context
+        let kctx = sig.typevars.to_ctx();
+        // Add arguments to [vctx] and [vars]
+        let mut vctx = Ctx::new();
+
+        // Cast the signature to a arguments and insert to [start] node
+        let asig = sig.args
+            .iter()
+            .map(|arg| {
+                let atyp = ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(||
+                            TypeError::decl(&sig.name,
+                    TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ)))?;
+                Ok((arg.id.clone(), (arg.qualifier.clone(), atyp)))
+            })
+            .collect::<Result<Ctx<Vid, (Qualifier, ATyp)>,GraphError>>()?;
+
+        // Add arguments to type and evaluation contexts
+        let mut atyps = Ctx::new();
+        for Arg { id, typ, .. } in sig.args.iter() {
+            let at = ATyp::from_ctyp(typ, &kctx).ok_or_else(|| {
+                TypeError::decl(&sig.name,
+                    TypeError::ark(&kctx, &vctx, &CExp::var(id), typ))
+            })?;
+            atyps.insert(id, &at);
+            vctx.insert(id, typ);
+        }
+
+        // Typecheck the body with the type signature
+        body.typecheck(sig.clone(), &fctx.keys())?;
+
+        // Add the body to the Graph
+        match body {
+            CBody::Proto { body, relation } => {
+                // Start node
+                let mut start = self.add_node(Node::inp(sig.name.clone(), asig.clone()));
+                let vars =
+                    atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                // Relation start
+                start = self.add_node(Node::rel(sig.name.clone(), asig));
+                let vars =
+                    atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                self.add_top_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
+            },
+            CBody::Func { body } => {
+                let mut start = self.add_node(Node::inp(sig.name.clone(), asig));
+                let vars =
+                    atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Variables to operations by lookup in [vars]
@@ -335,7 +475,7 @@ impl<C: ArkConfig> UDag<C> {
                                 transcr, edge_type, kctx, fctx, vctx, vars);
                         },
                     // Polynomial remainder
-                    (CTyp::Uni(_, n), CTyp::Uni(_, _l), CTyp::Uni(_, _r), BinOp::Rem) =>
+                    (CTyp::Uni(_, _n), CTyp::Uni(_, _l), CTyp::Uni(_, _r), BinOp::Rem) =>
                         unimplemented!("Polynomial remainder"),
                     // Polynomial exponentiation
                     (CTyp::Uni(_, n), CTyp::Uni(_, l), _, BinOp::Pow) => {
@@ -590,6 +730,13 @@ impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
     }
 }
 
+impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
+    type Output = Dag<C, A>;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
@@ -606,8 +753,8 @@ fn graph_sum() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     assert_eq!(m.len(), 4);
     println!("{}", m);
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-    g.write_pdf("graph_sum").unwrap_or_else(|e| {
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    gs.write_pdf("graph_sum").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
@@ -626,15 +773,15 @@ fn graph_foo() {
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Output graph
-    g.write_pdf("graph_foo").unwrap_or_else(|e| {
+    gs.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
     // Test transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
     println!("{}", tc);
 }
 
@@ -648,8 +795,8 @@ fn graph_poly() {
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-    g.write_pdf("graph_poly").unwrap_or_else(|e| {
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    gs.write_pdf("graph_poly").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
@@ -657,13 +804,13 @@ fn graph_poly() {
 #[test]
 fn graph_reduce() {
     let ex = r#"
-        fn reduce_foo<F: Field>(public a: [F; 10]) -> F {
+        fn reduction_foo<F: Field>(public a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-    g.write_pdf("graph_reduce").unwrap_or_else(|e| {
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    gs.write_pdf("graph_reduce").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }

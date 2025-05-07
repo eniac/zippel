@@ -5,7 +5,7 @@ use std::fmt;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Tid, Vid, TidSubst};
-use crate::typ::{Size, Typ, Qualifier, Range, RangeTraversal};
+use crate::typ::{Size, Typ, Qualifier, Distribution, Range, RangeTraversal};
 use crate::parser::*;
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
@@ -20,6 +20,7 @@ use crate::parser::*;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Arg<T, N> {
     pub qualifier: Qualifier,
+    pub distribution: Distribution,
     pub id: Vid,
     pub typ: Typ<T, N>,
 }
@@ -40,14 +41,23 @@ pub type CArg = Arg<Tid, usize>;
 pub type CArgs = Args<Tid, usize>;
 
 impl<T, N> Arg<T, N> {
-    pub fn new<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<T, N>) -> Self {
-        Arg { qualifier, id: Vid::new(id), typ }
+    pub fn new<'a>(qualifier: Qualifier, distribution: Distribution, id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier, distribution, id: Vid::new(id), typ }
     }
-    pub fn public<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
-        Arg { qualifier: Qualifier::Public, id: Vid::new(id), typ }
+    pub fn public<'a>(id : &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier: Qualifier::Public, distribution: Distribution::Nonuniform, id: Vid::new(id), typ }
     }
     pub fn private<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
-        Arg { qualifier: Qualifier::Private, id: Vid::new(id), typ }
+        Arg { qualifier: Qualifier::Private, distribution: Distribution::Nonuniform, id : Vid::new(id), typ }
+    }
+    pub fn uniform<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier, distribution: Distribution::Uniform,  id : Vid::new(id), typ }
+    }
+    pub fn public_uniform<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier: Qualifier::Public, distribution: Distribution::Uniform, id : Vid::new(id), typ }
+    }
+    pub fn private_uniform<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier: Qualifier::Private, distribution: Distribution::Uniform, id : Vid::new(id), typ }
     }
     pub fn is_private(&self) -> bool {
         self.qualifier.is_private()
@@ -99,8 +109,8 @@ impl<N> TidSubst for GArgs<N> {
 impl<T, N> ToTraversal1<T> for Arg<T, N> {
     type Output<Z> = Arg<Z, N>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
-        let Arg { qualifier, id, typ } = self;
-        Ok(Arg { qualifier, id, typ: typ.traverse1(f)? })
+        let Arg { qualifier, distribution, id, typ } = self;
+        Ok(Arg { qualifier, distribution, id, typ: typ.traverse1(f)? })
     }
 }
 
@@ -108,8 +118,8 @@ impl<T, N> ToTraversal1<T> for Arg<T, N> {
 impl<T, N> ToTraversal2<N> for Arg<T, N> {
     type Output<Z> = Arg<T, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
-        let Arg { qualifier, id, typ } = self;
-        Ok(Arg { qualifier, id, typ: typ.traverse2(f)? })
+        let Arg { qualifier, distribution, id, typ } = self;
+        Ok(Arg { qualifier, distribution, id, typ: typ.traverse2(f)? })
     }
 }
 
@@ -131,7 +141,7 @@ impl<T, N> ToTraversal2<N> for Args<T, N> {
 
 impl<T, N> RangeTraversal<N> for Arg<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(Arg { qualifier: self.qualifier, id: self.id, typ: self.typ.range_traverse(f)? })
+        Ok(Arg { qualifier: self.qualifier, distribution: self.distribution, id: self.id, typ: self.typ.range_traverse(f)? })
     }
 }
 
@@ -157,10 +167,10 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        let Arg { qualifier, id, typ } = self;
+        let Arg { qualifier, distribution, id, typ } = self;
         allocator.concat([
             qualifier.pretty(allocator),
-            allocator.space(),
+            distribution.pretty(allocator),
             id.pretty(allocator),
             allocator.text(": "),
             typ.pretty(allocator),
@@ -229,11 +239,26 @@ impl<'pest> FromPest<'pest> for GArg<Size> {
         match pair.as_rule() {
             Rule::arg => {
                 let mut inner = pair.into_inner();
-                let qualifier = Qualifier::from_pest(&mut inner)?;
+                let mut qualifier = Qualifier::Public;
+                let mut distribution = Distribution::Nonuniform;
+
+                // Check for optional qualifier
+                if let Some(qualifier_pair) = inner.peek() {
+                    if qualifier_pair.as_rule() == Rule::qualifier {
+                        qualifier = Qualifier::from_pest(&mut inner)?;
+                    }
+                }
+                // Check for optional Distribution
+                if let Some(distr_pair) = inner.peek() {
+                    if distr_pair.as_rule() == Rule::distribution {
+                        distribution = Distribution::from_pest(&mut inner)?;
+                    }
+                }
+
                 let id = Vid::from_pest(&mut inner)?;
                 let typ = Typ::from_pest(&mut inner)?;
-                Ok(Arg { qualifier, id, typ })
-            }
+                Ok(Arg { qualifier, distribution, id, typ })
+            },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
@@ -264,24 +289,25 @@ impl<'pest> FromPest<'pest> for GArgs<Size> {
 #[cfg(test)] use pest::Parser;
 #[test]
 fn arg_parser() {
-    let ex = "public a: F, private foo: X";
+    let ex = "public a: F, private uniform foo: X";
     let mut pairs = ZippelParser::parse(Rule::args, ex).unwrap();
     assert_eq!(
         Args::from_pest(&mut pairs),
         Ok(Args(vec![
-            Arg::new(Qualifier::Public, "a", Typ::varstr("F")),
-            Arg::new(Qualifier::Private, "foo", Typ::varstr("X"))
+            Arg::new(Qualifier::Public, Distribution::Nonuniform, "a", Typ::varstr("F")),
+            Arg::new(Qualifier::Private, Distribution::Uniform, "foo", Typ::varstr("X"))
         ]))
     );
 
     let ex3 = "a: F";
-    assert!(ZippelParser::parse(Rule::arg, ex3).is_err());
+    let mut pairs = ZippelParser::parse(Rule::arg, ex3).unwrap();
+    assert_eq!(Arg::from_pest(&mut pairs), Ok(Arg::public("a", Typ::varstr("F"))));
 }
 
 #[test]
 fn arg_traversal() {
-    let arg = GArg::new(Qualifier::Public, "a",
+    let arg = GArg::new(Qualifier::Public, Distribution::Uniform, "a",
         Typ::fin(Range { start: Size::varstr("N") / 2, step: Size::one(), end: Size::varstr("N")*2 }));
     assert_eq!(arg.traverse2(&mut |x| x.eval(&Ctx::singleton("N".into(), 2))).unwrap(),
-       Arg::new(Qualifier::Public, "a", Typ::fin(Range { start: 1, step: 1, end: 4 })));
+       Arg::new(Qualifier::Public, Distribution::Uniform, "a", Typ::fin(Range { start: 1, step: 1, end: 4 })));
 }

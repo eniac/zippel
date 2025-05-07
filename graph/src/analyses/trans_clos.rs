@@ -17,8 +17,17 @@ pub struct TransClos<C: ArkConfig, A> {
 }
 
 impl<C: ArkConfig, A: Clone> TransClos<C, A> {
-    pub fn new(dag: Dag<C, A>, subgraph: usize) -> Self {
+    pub fn from_input(dag: &Dag<C, A>) -> Self {
+        let start = dag.input_node().unwrap();
+        Self::new(dag.clone(), start)
+    }
 
+    pub fn from_relation(dag: &Dag<C, A>) -> Self {
+        let start = dag.relation_node().unwrap();
+        Self::new(dag.clone(), start)
+    }
+
+    pub fn new(dag: Dag<C, A>, start: NodeIndex) -> Self {
         // Empty transitive closure
         let mut s = Self {
             clos: Vec::new(),
@@ -27,19 +36,9 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
             annotations: Ctx::new(),
         };
 
-        // Find all input nodes to the graph, that is the number
-        // of subgraphs.
-        let input_nodes = dag.node_indices()
-            .filter(|n| dag[*n].is_input())
-            .collect::<Vec<_>>();
-
-        if subgraph >= input_nodes.len() {
-            panic!("Subgraph index out of bounds {} >= {}", subgraph, input_nodes.len());
-        }
-
         // Add the input node to the transitive closure
-        let mut worklist = vec![input_nodes[subgraph]];
-        s.trans_clos_inp(&dag, input_nodes[subgraph]);
+        let mut worklist = vec![start];
+        s.trans_clos_inp(&dag, start);
 
         // Add all nodes reachable from the input node
         // (should be a DAG but adding this just in case to avoid spinning on bugs)
@@ -236,6 +235,13 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
                 } else {
                     unreachable!("Input node should only have variable dependencies")
                 },
+            Node::Rel(_, args) =>
+                if let Some(v) = r.var() {
+                    let typ = args.get(&v).unwrap().1.clone();
+                    Op::Ref(r, typ)
+                } else {
+                    unreachable!("Relation node should only have variable dependencies")
+                },
         }
     }
 }
@@ -255,7 +261,7 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for TransClos<C, A> {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use lang::typ::Range;
-#[cfg(test)] use crate::UDag;
+#[cfg(test)] use crate::UDags;
 #[cfg(test)] use share::{assert_deq, unwrap};
 #[cfg(test)] use backend::{Value, ArkBls12_381};
 #[test]
@@ -268,10 +274,10 @@ fn trans_clos_simple() {
             verify(a == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
 
     println!("{}", tc);
     for (_, op) in tc.clos.iter() {
@@ -315,10 +321,10 @@ fn trans_clos_many() {
             verify(a == b);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let tc = TransClos::new(g, 1);
+    let tc = TransClos::from_input(&gs[0]);
 
     println!("{}", tc);
     for (_, op) in tc.clos.iter() {

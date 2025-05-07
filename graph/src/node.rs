@@ -13,6 +13,8 @@ use std::fmt;
 pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
     Inp(Vid, Ctx<Vid, (Qualifier, ATyp)>),
+    /// Specification relation, annotated with a function or protocol signature
+    Rel(Vid, Ctx<Vid, (Qualifier, ATyp)>),
     /// A transcript transaction
     Transcr(GOp<C>, A),
     /// Operation node
@@ -30,6 +32,12 @@ impl<C: ArkConfig, N> Node<C, N> {
     pub fn is_input(&self) -> bool {
         match self {
             Node::Inp(_, _) => true,
+            _ => false,
+        }
+    }
+    pub fn is_relation(&self) -> bool {
+        match self {
+            Node::Rel(_, _) => true,
             _ => false,
         }
     }
@@ -60,6 +68,9 @@ impl<C: ArkConfig, N> Node<C, N> {
 impl<C: ArkConfig> Node<C, Nothing> {
     pub fn inp(f: Vid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
         Node::Inp(f, sig)
+    }
+    pub fn rel(f: Vid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
+        Node::Rel(f, sig)
     }
     pub fn coef(op: &GOp<C>) -> Self {
         Node::Op(GOp::coef(op.clone()), Nothing)
@@ -93,7 +104,8 @@ impl<C: ArkConfig> Node<C, Nothing> {
         match self {
             Node::Op(op, _) => Node::Op(op.clone(), ann),
             Node::Transcr(op, _) => Node::Transcr(op.clone(), ann),
-            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone())
+            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
+            Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
         }
     }
 
@@ -110,7 +122,16 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Node::Inp(fid, sig) => {
-                write!(f, "{} (", fid)?;
+                write!(f, "Impl {} (", fid)?;
+                let (v, (q, t)) = sig.first().unwrap();
+                write!(f, "{} {}: {}", q, v, t)?;
+                for (vid, (qual, typ)) in sig.iter().skip(1) {
+                    write!(f, ", {} {}: {}", qual, vid, typ)?;
+                }
+                write!(f, ")")
+            },
+            Node::Rel(fid, sig) => {
+                write!(f, "Spec {} (", fid)?;
                 let (v, (q, t)) = sig.first().unwrap();
                 write!(f, "{} {}: {}", q, v, t)?;
                 for (vid, (qual, typ)) in sig.iter().skip(1) {
@@ -136,6 +157,7 @@ impl<C: ArkConfig, N> ToTraversal2<N> for Node<C, N> {
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
             Node::Inp(fid, sig) => Ok(Node::Inp(fid, sig)),
+            Node::Rel(fid, sig) => Ok(Node::Rel(fid, sig)),
             Node::Transcr(op, ann) => Ok(Node::Transcr(op, f(ann)?)),
             Node::Op(op, ann) => Ok(Node::Op(op, f(ann)?)),
         }

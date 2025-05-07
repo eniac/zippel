@@ -390,7 +390,7 @@ impl<C: ArkConfig, A: Clone> fmt::Display for GroebnerBuilder<C, A> {
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::UDag;
+#[cfg(test)] use crate::UDags;
 #[test]
 fn groebner_foo() {
     let ex = r#"
@@ -404,13 +404,13 @@ fn groebner_foo() {
 
     println!("Parsing example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf("groebner_foo").unwrap_or_else(|e| {
+    gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
 
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::new(tc);
@@ -442,13 +442,13 @@ fn groebner_bar() {
 
     println!("Parsing example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf("groebner_bar").unwrap_or_else(|e| {
+    gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
 
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::new(tc);
@@ -479,13 +479,13 @@ fn groebner_baz() {
 
     println!("Parsing example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf("groebner_baz").unwrap_or_else(|e| {
+    gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g, 3);
+    let tc = TransClos::from_input(&gs[0]);
 
     println!("{}", tc);
 
@@ -521,13 +521,13 @@ fn groebner_schnorr() {
 
     println!("Parsing Schnorr example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf("groebner_schnorr").unwrap_or_else(|e| {
+    gs.write_pdf("groebner_schnorr").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // Compute transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
 
     println!("{}", tc);
 
@@ -567,10 +567,10 @@ fn groebner_ex3() {
             verify(c == d);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Compute transitive closure
-    let tc = TransClos::new(g, 0);
+    let tc = TransClos::from_input(&gs[0]);
 
     println!("{}", tc);
     // Create an object computing the Groebner basis
@@ -599,8 +599,8 @@ fn groebner_zerocheck() {
         }"#;
 
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-    let tc = TransClos::new(g, 0);
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let tc = TransClos::from_input(&gs[0]);
     println!("{}", tc);
     let mut groebner = GroebnerBuilder::new(tc);
     groebner.run();

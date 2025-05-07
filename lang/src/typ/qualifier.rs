@@ -50,8 +50,8 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Qualifier::Private => allocator.text("private"),
-            Qualifier::Public => allocator.text("public"),
+            Qualifier::Private => allocator.text("private "),
+            Qualifier::Public => allocator.text("public "),
         }
     }
     fn is_nil(&self) -> bool {
@@ -77,15 +77,9 @@ impl<'pest> FromPest<'pest> for Qualifier {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-            Rule::qualifier => {
-                if pair.as_str() == "private" {
-                    Ok(Qualifier::Private)
-                } else if pair.as_str() == "public" {
-                    Ok(Qualifier::Public)
-                } else {
-                    Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
-                }
-            },
+            Rule::qualifier => Qualifier::from_pest(&mut pair.into_inner()),
+            Rule::private => Ok(Qualifier::Private),
+            Rule::public => Ok(Qualifier::Public),
             _ => unreachable!()
         }
     }

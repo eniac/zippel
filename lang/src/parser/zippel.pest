@@ -19,7 +19,7 @@ eq_op = @{ "==" }
 and_op = @{ "&&" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" | "public" | "private" | "reduce" | "for" }
+keyword = {"let" | "fn" | "proto" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 
 /// Ranges appear in types and expressions
@@ -96,8 +96,11 @@ tvar  = { id ~ ":" ~ kind_ty }
 tvars = { tvar ~ ("," ~ tvar)* }
 
 /// Function and protocol arguments
-arg = { qualifier ~ id ~ ":" ~ typ }
-   qualifier = { "public" | "private" }
+arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }
+   qualifier = { public | private }
+   public = { "public" }
+   private = { "private" }
+   distribution = { "uniform" }
 args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols] or [functions].

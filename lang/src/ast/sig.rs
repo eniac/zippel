@@ -55,7 +55,7 @@ impl CSig {
         for (l, r) in shifted.args.iter().zip(typs.iter()) {
             let typ = CTyp::unify(&l.typ, &r, &kind_ctx, &mut subs)
                     .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
-            args.push(GArg { qualifier: l.qualifier.clone(), id: l.id.clone(), typ });
+            args.push(GArg { qualifier: l.qualifier, distribution: l.distribution, id: l.id.clone(), typ });
         }
 
         // Substitute alias in the return type and typevars

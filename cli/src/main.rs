@@ -9,7 +9,7 @@ use backend::ArkBls12_381;
 use costs::Benchmarker;
 use share::unwrap;
 use graph::{
-    UDag,
+    UDags,
     analyses::{TransClos, GroebnerBuilder}
 };
 
@@ -104,14 +104,16 @@ fn analyze(args: AnalyzeArgs) {
 
     println!("Parsing Zippel program: {}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
+    gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
+    assert!(args.subgraph < gs.len(), "Subgraph index out of bounds");
+
     // Compute transitive closure
-    let tc = TransClos::new(g, args.subgraph);
+    let tc = TransClos::from_input(&gs[args.subgraph]);
 
     println!("{}", tc);
 
@@ -141,8 +143,9 @@ fn run(args: RunArgs) {
 
     println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
-    println!("Number of nodes: {}", g.node_count());
+    let g = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    println!("Found {} subgraphs", g.len());
+    // TODO: Runtime
 }
 
 fn benchmark(args: BenchmarkArgs) {

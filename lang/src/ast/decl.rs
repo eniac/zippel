@@ -62,6 +62,12 @@ impl<N> Body<N> {
             Body::Func { body } => body,
         }
     }
+    pub fn relation(self) -> Option<Exp<N>> {
+        match self {
+            Body::Proto { relation, .. } => Some(relation),
+            Body::Func { .. } => None,
+        }
+    }
 }
 
 impl FreeVars for CBody {

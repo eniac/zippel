@@ -33,7 +33,7 @@ impl GurobiScheduler {
             for j in 0..num_threads {
                 cost_map[i.index()][j] =
                     match &dag.0[i] {
-                        Node::Inp(_, _) => 0.0,
+                        Node::Inp(_, _) | Node::Rel(_, _) => 0.0,
                         Node::Op(op, _)
                         | Node::Transcr(op, _) => cost_model.cost(op, j + 1).0.round(), // Round to the nearest integer
                     }
@@ -289,6 +289,7 @@ impl Scheduler for GurobiScheduler {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::{Ctx, unwrap};
+#[cfg(test)] use crate::UDags;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::scheduler::AsymptoticCost;
 #[ignore = "Gurobi license for CI bot does not work due to HostID"]
@@ -302,10 +303,13 @@ fn gurobi_e2e() {
 
 
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let g = unwrap!(UDag::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // AsymptoticCost is a cost model for zippel operations
     let cost_model = AsymptoticCost::new();
+
+    // Pick the first graph
+    let g = gs[0].clone();
 
     // Create a new Gurobi ILP solver
     let solver = GurobiScheduler::new(4, &g, &cost_model);
