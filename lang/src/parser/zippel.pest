@@ -52,8 +52,8 @@ typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
 /// Arithmetic expression language of Zippel
 exp       = { exp_term ~ (bin_op ~ exp_term)* }
 exp_term  = _{
+         "(" ~ exp ~ ")"
          | range_exp
-         | "(" ~ exp ~ ")"
          | coef_exp
          | mle_exp
          | eval_exp

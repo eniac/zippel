@@ -2,13 +2,13 @@
 // which corresponds to Protocol 1 in the Bulletproofs paper images).
 // N_current: Current dimension of vectors g, h, a, b.
 // u_base_for_ipa: The 'u' base to be used for L,R commitments and base case check in this IPA run.
-fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1>(
-    public g_vec_k: [G; N_current],          // Current g bases for this round
-    public h_vec_k: [G; N_current],          // Current h bases for this round
+fn ipa_recursive<G: Group, F: Scalar<G>>(
+    public g_vec_k: [G; 1],          // Current g bases for this round
+    public h_vec_k: [G; 1],          // Current h bases for this round
     public u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
     public P_commitment_k: G,                // Current P commitment for this round
-    private a_vec_k_private: [F; N_current],  // Prover's current 'a' vector (private)
-    private b_vec_k_private: [F; N_current]   // Prover's current 'b' vector (private)
+    private a_vec_k_private: [F; 1],  // Prover's current 'a' vector (private)
+    private b_vec_k_private: [F; 1]   // Prover's current 'b' vector (private)
 ) -> Bool {
         // BASE CASE (n=1)
         // Prover "sends" a and b scalars. In non-interactive, these are the final results
@@ -34,37 +34,37 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1>(
         P_commitment_k == expected_P_at_base
 }
 
-fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 2..8>(
-    public g_vec_k: [G; N_current],          // Current g bases for this round
-    public h_vec_k: [G; N_current],          // Current h bases for this round
-    public u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
-    public P_commitment_k: G,                // Current P commitment for this round
-    private a_vec_k_private: [F; N_current],  // Prover's current 'a' vector (private)
-    private b_vec_k_private: [F; N_current]   // Prover's current 'b' vector (private)
+fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
+    public g_vec_k: [G; 2^N_current],          // Current g bases for this round
+    public h_vec_k: [G; 2^N_current],          // Current h bases for this round
+    public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
+    public P_commitment_k: G,                   // Current P commitment for this round
+    private a_vec_k_private: [F; 2^N_current],  // Prover's current 'a' vector (private)
+    private b_vec_k_private: [F; 2^N_current]   // Prover's current 'b' vector (private)
 ) -> Bool {
         // RECURSIVE STEP (n > 1)
 
         // Prover computes c_L, c_R and then L, R.
         // Slice prover's private vectors a and b
-        let a_p_lo = a_vec_k_private[0..N_current / 2];
-        let a_p_hi = a_vec_k_private[N_current / 2..N_current];
-        let b_p_lo = b_vec_k_private[0..N_current / 2];
-        let b_p_hi = b_vec_k_private[N_current / 2..N_current];
+        let a_p_lo = a_vec_k_private[0..2^(N_current-1)];
+        let a_p_hi = a_vec_k_private[2^(N_current-1)..2^N_current];
+        let b_p_lo = b_vec_k_private[0..2^(N_current-1)];
+        let b_p_hi = b_vec_k_private[2^(N_current-1)..2^N_current];
 
         // Slice current g and h base vectors (these are public for this round)
-        let g_v_lo = g_vec_k[0..N_current / 2];
-        let g_v_hi = g_vec_k[N_current / 2..N_current];
-        let h_v_lo = h_vec_k[0..N_current / 2];
-        let h_v_hi = h_vec_k[N_current / 2..N_current];
+        let g_v_lo = g_vec_k[0..2^(N_current-1)];
+        let g_v_hi = g_vec_k[2^(N_current-1)..2^N_current];
+        let h_v_lo = h_vec_k[0..2^(N_current-1)];
+        let h_v_hi = h_vec_k[2^(N_current-1) .. 2^N_current];
 
         let cL_val = a_p_lo . b_p_hi; // Dot product <a_lo, b_hi>
         let cR_val = a_p_hi . b_p_lo; // Dot product <a_hi, b_lo>
 
         // Prover "sends" L and R by adding them to the transcript.
         // L = (g_hi^a_lo) * (h_lo^b_hi) * (u^c_L)  (multiplicative notation)
-        // L = reduce(+, g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
-        L_transcript <- reduce(+, g_v_hi * a_p_lo) + reduce(+, h_v_lo * b_p_hi) + u_base_for_ipa * cL_val;
-        R_transcript <- reduce(+, g_v_lo * a_p_hi) + reduce(+, h_v_hi * b_p_lo) + u_base_for_ipa * cR_val;
+        // L = g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
+        L_transcript <- g_v_hi . a_p_lo + h_v_lo . b_p_hi + u_base_for_ipa * cL_val;
+        R_transcript <- g_v_lo . a_p_hi + h_v_hi . b_p_lo + u_base_for_ipa * cR_val;
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
         x_challenge <- challenge<F>;
@@ -110,7 +110,10 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 8>(
     // --- Private Inputs ---
     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
-) where P_initial_commitment == g_vec . a_vec_witness + h_vec . b_vec_witness + u_aux_base * ip_val_claimed && ip_val_claimed == a_vec_witness . b_vec_witness {
+) where
+        (P_initial_commitment == ((g_vec . a_vec_witness)
+        + (h_vec . b_vec_witness)
+        + u_aux_base * ip_val_claimed)) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
     //    The challenge 'x_chal' is a scalar of type F.

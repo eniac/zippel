@@ -112,13 +112,9 @@ fn analyze(args: AnalyzeArgs) {
 
     assert!(args.subgraph < gs.len(), "Subgraph index out of bounds");
 
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[args.subgraph]);
-
-    println!("{}", tc);
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[args.subgraph]);
 
     // Compute the Groebner basis
     groebner.run();

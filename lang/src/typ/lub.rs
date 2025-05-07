@@ -698,14 +698,12 @@ impl Lub for CTyp {
         match (x, y) {
             // Vec<A> * Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
-                match (a.to_scalar(ctx), b.to_scalar(ctx)) {
-                    (Some(a), Some(b)) if n == m =>
-                        // Type [a] and [b] should be multiplied
-                        Ok(CTyp::Base(Tid::lub_mul(&a, &b, ctx)
-                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)),
-                    (_, _) =>
-                        CTyp::lub_mul(x, y, ctx)
-                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e)),
+                if n == m {
+                    // Type [a] and [b] should be multiplied
+                    Ok(CTyp::lub_dot(&a, &b, ctx)
+                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
+                } else {
+                    Err(LubError::dot(&x, &y))
                 },
             (a, b) => CTyp::lub_mul(a, b, ctx)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e))

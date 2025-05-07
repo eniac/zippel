@@ -5,6 +5,7 @@ use buchberger::GroebnerBasis;
 use crate::{GOp, Op, Ref};
 use lang::typ::{Qualifier, Range};
 use lang::ast::BinOp;
+use crate::Dag;
 use crate::analyses::{TransClos, LexDegTerm, SparsePolynomial};
 use crate::principal::{Principal, PRef, LexTerm};
 
@@ -96,7 +97,18 @@ pub struct GroebnerBuilder<C: ArkConfig, A> {
 }
 
 impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
-    pub fn new(tc: TransClos<C, A>) -> Self {
+    pub fn from_input(g: &Dag<C, A>) -> Self {
+        let tc = TransClos::from_input(g);
+        Self::from_tc(tc)
+    }
+
+    pub fn from_relation(g: &Dag<C, A>) -> Self where A: fmt::Display {
+        let tc = TransClos::from_relation(g);
+        println!("Transitive closure: \n\n{}", tc);
+        Self::from_tc(tc)
+    }
+
+    fn from_tc(tc: TransClos<C, A>) -> Self {
         let mut s = GroebnerBuilder {
             equ: GroebnerBasis::empty(tc.clos.len()),
             vars: tc.types().iter()
@@ -409,13 +421,13 @@ fn groebner_foo() {
     gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
+    // Compute Groebner basis for the implementation
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
 
-    // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
-    // Compute the Groebner basis
+
+    // Compute the Groebner bases
     groebner.run();
+
     let leaks = groebner.get_leaks();
 
     println!("{}", groebner);
@@ -426,6 +438,43 @@ fn groebner_foo() {
         for leak in leaks.iter() {
             println!("{}", leak);
         }
+    }
+}
+
+#[test]
+fn groebner_complete() {
+
+    let ex = r#"
+        proto ex_complete<F: Field>(private s: F, private s': F) where s == s' {
+            let r = random<F>;
+            a <- s * r;
+            b <- s' * r;
+            verify(a == b);
+        }"#;
+
+    println!("Parsing example: {}", ex);
+    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    gs.write_pdf("groebner_complete").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+
+    let mut groebner_inp = GroebnerBuilder::from_input(&gs[0]);
+    let mut groebner_rel = GroebnerBuilder::from_relation(&gs[0]);
+
+    // Compute the Groebner bases
+    groebner_inp.run();
+    groebner_rel.run();
+
+    // First, eliminate the intermediate varieties
+    groebner_inp.equ.eliminate();
+
+    // Check for inclusion rel <= inp
+
+    if groebner_inp.equ.contains(&groebner_rel.equ) {
+        println!("Complete: The relation is included in the implementation");
+    } else {
+        println!("Incomplete: The relation is not included in the implementation");
     }
 }
 
@@ -447,11 +496,10 @@ fn groebner_bar() {
     gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
+
     // Compute the Groebner basis
     groebner.run();
     let leaks = groebner.get_leaks();
@@ -484,13 +532,9 @@ fn groebner_baz() {
     gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
-
-    println!("{}", tc);
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
 
     // Compute the Groebner basis
     groebner.run();
@@ -526,13 +570,8 @@ fn groebner_schnorr() {
     gs.write_pdf("groebner_schnorr").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
-
-    println!("{}", tc);
-
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
 
     // Compute the Groebner basis
     groebner.run();
@@ -569,12 +608,8 @@ fn groebner_ex3() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
-
-    println!("{}", tc);
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
 
     // Compute the Groebner basis
     groebner.run();
@@ -600,9 +635,7 @@ fn groebner_zerocheck() {
 
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let tc = TransClos::from_input(&gs[0]);
-    println!("{}", tc);
-    let mut groebner = GroebnerBuilder::new(tc);
+    let mut groebner = GroebnerBuilder::from_input(&gs[0]);
     groebner.run();
 
     println!("Groebner basis:\n{}", groebner);

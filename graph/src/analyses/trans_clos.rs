@@ -141,6 +141,13 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
                 self.types.insert(&Ref::Var(v.clone(), node), typ);
             }
         }
+        if let Node::Rel(_, ref args) = dag[node] {
+            for (v, (q, typ)) in args.iter() {
+                // Add the variable to the context
+                self.visibility.insert(&Ref::Var(v.clone(), node), q);
+                self.types.insert(&Ref::Var(v.clone(), node), typ);
+            }
+        }
     }
 
     fn trans_clos_op(&mut self, dag: &Dag<C, A>, op: GOp<C>) -> GOp<C> {
