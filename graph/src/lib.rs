@@ -86,18 +86,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Dep deduplication
     fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
-        /*
-        if let Some(e) = self.0.find_edge(source, sink) {
-            // If the old edge exists, check its type
-            if self.0[e].edge_type() != edge.edge_type() {
-                // If the edges have different types, add new edge
-                self.0.add_edge(source, sink, edge);
-            }
-            return;
+        // If the edge is not a self-loop add it
+        if source != sink {
+            self.0.add_edge(source, sink, edge);
         }
-        // If the edge does not exist, add it
-        */
-        self.0.add_edge(source, sink, edge);
     }
 
     fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
