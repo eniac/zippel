@@ -139,8 +139,17 @@ fn run(args: RunArgs) {
 
     println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let g = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    println!("Found {} subgraphs", g.len());
+    let mut gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = gs.pop();
+
+    let verifier = g.get_verifier().unwrap();
+    let prover = g.get_prover();
+
+    let combined = verifier.combine_dag(&prover);
+
+    combined.write_pdf("prover_verifier.pdf").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
     // TODO: Runtime
 }
 

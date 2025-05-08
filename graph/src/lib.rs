@@ -76,8 +76,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.edge_count()
     }
 
-    pub fn input_node(&self) -> Option<NodeIndex> {
+    pub fn input_node(&self) -> NodeIndex {
         self.0.node_indices().find(|n| self.0[*n].is_input())
+            .expect("No input node found, DAG uninitialized")
     }
 
     pub fn relation_node(&self) -> Option<NodeIndex> {
@@ -112,6 +113,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
+    /// Slow, look around to find a var for a node
+    pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
+        self.0.edge_references()
+            .find_map(|edge|
+                if edge.source() == node {
+                    match edge.weight() {
+                        Dep(_, v) => v.clone(),
+                    }
+                } else {
+                    None
+                })
+    }
+
     pub fn node_indices(&self) -> NodeIndices {
         self.0.node_indices()
     }
@@ -136,6 +150,136 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
+    }
+
+    pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
+        self.0.node_indices()
+            .filter(|n| self[*n].is_transcript())
+            .collect()
+    }
+
+    pub fn get_prover(&self) -> Dag<C, A> where A: Clone {
+        let mut prover = Dag::new();
+        // Add all nodes to the prover graph
+        let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
+
+        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
+
+        while let Some(n) = worklist.pop() {
+            if node_map_self.contains_key(&n) {
+                continue;
+            } else if self[n].is_input() {
+                // Add to graph but do not continue the search
+                let new_node = prover.add_node(self.0[n].clone());
+                node_map_self.insert(n, new_node);
+                continue;
+            }
+            // Add node to prover graph
+            let new_node = prover.add_node(self.0[n].clone());
+            node_map_self.insert(n, new_node);
+
+            // Add previous neighbors to worklist
+            for e in self.0.edges_directed(n, Direction::Incoming) {
+                // Add neighbors to worklist
+                if !node_map_self.contains_key(&e.source()) {
+                    worklist.push(e.source());
+                }
+            }
+        }
+
+        // Add edges to prover graph using the mapped node indices
+        for edge_ref in self.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
+            {
+                prover.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+
+        prover
+    }
+
+    pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError> where A: Clone + fmt::Display {
+        let mut verifier = Dag::new();
+
+        // Rebuild the input node to take transcript arguments
+        let (name, mut args) =
+            match &self[self.input_node()] {
+                Node::Inp(name, args) =>
+                    (name.clone(), args.clone()),
+                _ => unreachable!("All Dags should have an input node")
+            };
+        // Remove all private arguments
+        args.retain(|_ , (q, _)| q.is_public());
+
+        // Add the transcript nodes (public) to the arguments
+        for node in self.transcript_nodes() {
+            if let Some(transcript_id) = self.find_var(node) {
+                let transcript_arg = (Qualifier::Public, self.0[node].clone().into_op().typ());
+                args.insert(&transcript_id, &transcript_arg);
+            }
+        }
+        // Associate old node indices with new node indices
+        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
+
+        // Make new input node
+        let n_input = verifier.add_node(Node::Inp(name, args));
+        node_map_self.insert(self.input_node(), n_input);
+        // Map all transcript arguments to to the new input node
+        for n_transcr in self.transcript_nodes().into_iter() {
+            node_map_self.insert(n_transcr, n_input);
+        }
+
+        // Add the verifier nodes, start with the verifier assertion
+        let n_check = self.find_check().expect("No verifier assertion found");
+        let mut worklist = vec![n_check];
+
+        while let Some(n) = worklist.pop() {
+            if node_map_self.contains_key(&n) {
+                continue;
+            } // else if self[n].is_private() { // Private nodes should not appear here!
+              //  return Err(GraphError::verifier_error(n, self[n].to_string()));
+              //}
+            // Add node to prover graph
+            let new_node = verifier.add_node(self.0[n].clone());
+            node_map_self.insert(n, new_node);
+
+            // Add parent neighbors to worklist
+            for e in self.0.edges_directed(n, Direction::Incoming) {
+                // Add neighbors to worklist
+                if !node_map_self.contains_key(&e.source()) {
+                    worklist.push(e.source());
+                }
+            }
+        }
+
+        // Add edges to prover graph using the mapped node indices
+        for edge_ref in self.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
+            {
+                verifier.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+        Ok(verifier)
+    }
+
+    /// Get the verifier assertion
+    pub fn find_check(&self) -> Option<NodeIndex> {
+        self.node_indices()
+            .find_map(|n| match self[n] {
+                Node::Op(Op::Check(_), _)
+                | Node::Transcr(Op::Check(_), _) => Some(n),
+                _ => None
+            })
     }
 
     pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
@@ -269,6 +413,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
 impl<C: ArkConfig, A> Dags<C, A> {
     pub fn new() -> Self {
         Dags(Vec::new())
+    }
+
+    pub fn pop(&mut self) -> Dag<C, A> {
+        self.0.pop().expect("No graph found")
     }
 
     /// Write graph to PDF
@@ -690,7 +838,7 @@ impl<C: ArkConfig> UDag<C> {
             CExp::Assert(box a) => {
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nassert = self.add_node(Node::assert(&oa));
+                let nassert = self.add_node(Node::check(&oa));
                 // Add edges
                 self.add_edges(edge_type, nassert, oa);
                 Ok(GOp::underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
@@ -702,9 +850,8 @@ impl<C: ArkConfig> UDag<C> {
             CExp::Verify(box a) => {
                 let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 // Add new node
-                let nverify = self.add_node(Node::verify(&oa));
+                let nverify = self.add_node(Node::check(&oa));
                 self.add_edges(edge_type, nverify, oa);
-                self.add_edge(*transcr, nverify, Dep::transcript());
                 Ok(GOp::underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),

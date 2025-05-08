@@ -41,6 +41,18 @@ impl<C: ArkConfig, N> Node<C, N> {
             _ => false,
         }
     }
+
+    pub fn is_verifier_check(&self) -> bool {
+        match self {
+            Node::Op(GOp::Check(_), _) => true,
+            Node::Transcr(GOp::Check(_), _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_transcript(&self) -> bool {
+        matches!(self, Node::Transcr(_, _))
+    }
     pub fn set_transcript(&mut self) where N: Clone {
         match &self {
             Node::Op(op, ann) => *self = Node::Transcr(op.clone(), ann.clone()),
@@ -61,6 +73,14 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Op(_, ann) => ann,
             Node::Transcr(_, ann) => ann,
             _ => panic!("Cannot convert input to annotation"),
+        }
+    }
+
+    pub fn args(&self) -> Option<Ctx<Vid, (Qualifier, ATyp)>> {
+        match self {
+            Node::Inp(_, sig) => Some(sig.clone()),
+            Node::Rel(_, sig) => Some(sig.clone()),
+            _ => None,
         }
     }
 }
@@ -90,11 +110,8 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(op.clone(), Nothing)
     }
-    pub fn assert(op: &GOp<C>) -> Self {
+    pub fn check(op: &GOp<C>) -> Self {
         Node::Op(GOp::check(op.clone()), Nothing)
-    }
-    pub fn verify(op: &GOp<C>) -> Self {
-        Node::Transcr(GOp::check(op.clone()), Nothing)
     }
     pub fn ret(op: &GOp<C>) -> Self {
         Node::Op(op.clone(), Nothing)
@@ -107,10 +124,6 @@ impl<C: ArkConfig> Node<C, Nothing> {
             Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
             Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
         }
-    }
-
-    pub fn is_underscore(&self) -> bool {
-        matches!(self, Node::Op(GOp::Ref(Ref::Node(_), _), _))
     }
 
     pub fn is_var(&self) -> bool {

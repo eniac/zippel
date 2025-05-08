@@ -18,7 +18,7 @@ pub struct TransClos<C: ArkConfig, A> {
 
 impl<C: ArkConfig, A: Clone> TransClos<C, A> {
     pub fn from_input(dag: &Dag<C, A>) -> Self {
-        let start = dag.input_node().unwrap();
+        let start = dag.input_node();
         Self::new(dag.clone(), start)
     }
 
