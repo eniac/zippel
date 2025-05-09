@@ -1,5 +1,7 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
+use lang::typ::lub::Lub;
+use lang::typ::Nothing;
 use lang::id::Vid;
 use backend::{Value, ABase, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
 
@@ -84,11 +86,10 @@ impl<C: ArkConfig, R> Op<C, R> {
                         panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
                 }
             Op::Vec(vs) => {
-                let typ = vs[0].typ();
+                let mut typ = vs[0].typ();
                 for v in vs.iter().skip(1) {
-                    if v.typ() != typ {
-                        panic!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ());
-                    }
+                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing)
+                        .expect(format!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ()).as_str());
                 }
                 ATyp::vec(&typ, vs.len())
             }

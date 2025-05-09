@@ -17,10 +17,12 @@ rem_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
 and_op = @{ "&&" }
+unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
 keyword = {"let" | "fn" | "proto" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
+ids = _{ id ~ ("," ~ id)* }
 
 /// Ranges appear in types and expressions
 range = { step_r | unit_r }
@@ -38,7 +40,7 @@ kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | positive }
     field_ty          = { "Field" }
     group_ty          = { "Group" }
     pairing_ty        = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
-    scalar_ty         = { "Scalar" ~ "<" ~ id ~ ">" }
+    scalar_ty         = { "Scalar" ~ "<" ~ ids ~ ">" }
     range_ty          = { range }
 
 typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
@@ -52,8 +54,8 @@ typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
 /// Arithmetic expression language of Zippel
 exp       = { exp_term ~ (bin_op ~ exp_term)* }
 exp_term  = _{
-         "(" ~ exp ~ ")"
-         | range_exp
+         range_exp
+         | "(" ~ exp ~ ")"
          | coef_exp
          | mle_exp
          | eval_exp
@@ -69,6 +71,7 @@ exp_term  = _{
          | log_exp
          | app_exp
          | bool_exp
+         | minus_exp
          | positive
          | id
     }
@@ -88,6 +91,7 @@ exp_term  = _{
     let_exp       = { "let" ~ id ~ "=" ~ exp ~ ";" ~ exp }            // Let expression
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
     bool_exp      = { "true" | "false" }                              // True or false constants
+    minus_exp     = _{ unary_minus ~ exp }                            // Negative expressions
     bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op | eq_op | and_op }
 exps = { exp ~ ("," ~ exp)* }
 stmts   = { exp ~ (";" ~ exp)* ~ ";"? }

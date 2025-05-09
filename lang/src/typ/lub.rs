@@ -13,7 +13,7 @@ pub enum LubError {
     Next(Box<LubError>, Box<LubError>),
     #[error("LubError: Cannot take equality of {0} == {1}")]
     Equ(String, String),
-    #[error("LubError: Cannot take the least-upper bounds of the arguments in {1} {0} {2}")]
+    #[error("LubError: Cannot take the least-upper bound: {1} {0} {2}")]
     Bin(BinOp, String, String),
     #[error("LubError: Cannot take dot-product of {0} . {1}")]
     Dot(String, String),
@@ -323,8 +323,8 @@ impl Lub for Tid {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
             // Scalar multiplication: Scalar * Group = Group * Scalar = Group
-            (Kind::Scalar(g), Kind::Group) if g == b => Ok(b.clone()),
-            (Kind::Group, Kind::Scalar(g)) if g == a => Ok(a.clone()),
+            (Kind::Scalar(g), Kind::Group) if g.contains(b) => Ok(b.clone()),
+            (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             // Group multiplication is only allowed for pairing friendly curves
@@ -350,7 +350,7 @@ impl Lub for Tid {
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
-            (Kind::Group, Kind::Scalar(g)) if g == a => Ok(a.clone()),
+            (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) => Err(LubError::div(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
@@ -477,6 +477,15 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 }
             },
+            // Finite fields can act like univariate polynomials
+            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+                let t = Tid::lub_add(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
+                Ok(CTyp::Uni(t, *n))
+            }
+            // Indices can act like univariate polynomials
+            (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
+                Ok(CTyp::uni(b, *n)),
             (_, _) => Err(LubError::add(&x, &y))
         }
     }
@@ -509,12 +518,21 @@ impl Lub for CTyp {
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a)
                     .ok_or(LubError::next(LubError::sub(&x, &y), LubError::kind_not_found(&a)))?;
-                if ka == &Kind::Field {
+                if ka.is_scalar() {
                     Ok(CTyp::base(a))
                 } else {
                     Err(LubError::sub(&x, &y))
                 }
             },
+            // Finite fields can act like univariate polynomials
+            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+                let t = Tid::lub_sub(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
+                Ok(CTyp::Uni(t, *n))
+            }
+            // Indices can act like univariate polynomials
+            (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
+                Ok(CTyp::uni(b, *n)),
             (_, _) => Err(LubError::sub(&x, &y))
         }
     }
@@ -530,7 +548,7 @@ impl Lub for CTyp {
             // Uni<A> * Uni<B> = Uni<A + B>
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
                 Ok(CTyp::Uni(Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, *n + *m)),
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, *n + *m - 1)),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -588,7 +606,7 @@ impl Lub for CTyp {
             // Uni<A> / Uni<B> = Uni<A - B> if A > B
             (CTyp::Uni(a, n), CTyp::Uni(b, m)) if n >= m =>
                 Ok(CTyp::Uni(Tid::lub_div(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, n - m)),
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, n - m + 1)),
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -696,17 +714,26 @@ impl Lub for CTyp {
 
     fn lub_dot(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
         match (x, y) {
-            // Vec<A> * Vec<B> = C
+            // Vec<A> . Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
                     // Type [a] and [b] should be multiplied
-                    Ok(CTyp::lub_dot(&a, &b, ctx)
+                    Ok(CTyp::lub_mul(&a, &b, ctx)
                             .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
                 } else {
                     Err(LubError::dot(&x, &y))
                 },
-            (a, b) => CTyp::lub_mul(a, b, ctx)
-                .map_err(|e| LubError::next(LubError::dot(&x, &y), e))
+            // Vec<A> . Uni<A> = A
+            (CTyp::Vec(box a, n), CTyp::Uni(b, m))
+            | (CTyp::Uni(b, m), CTyp::Vec(box a, n)) =>
+                if n == m {
+                    // Type [a] and [b] should be multiplied
+                    Ok(CTyp::lub_mul(&a, &CTyp::base(b), ctx)
+                            .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
+                } else {
+                    Err(LubError::dot(&x, &y))
+                },
+            (_, _) => Err(LubError::dot(&x, &y))
         }
     }
 
@@ -783,6 +810,7 @@ fn lub_range() {
     assert_eq!(Range::lub_div(&b, &Range { start: 1, step: 1, end: 15 }, &Nothing), Ok(Range { start: 0, step: 1, end: 15 }));
 }
 
+#[cfg(test)] use share::Set;
 #[test]
 fn lub_tid() {
     let f = Tid::from("F");
@@ -796,8 +824,8 @@ fn lub_tid() {
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
-        (s1.clone(), Kind::Scalar(g1.clone())),
-        (s2.clone(), Kind::Scalar(g2.clone())),
+        (s1.clone(), Kind::Scalar(Set::from([g1.clone()]))),
+        (s2.clone(), Kind::Scalar(Set::from([g2.clone()]))),
     ]);
 
     assert_eq!(Tid::lub_equ(&f, &f, &ctx), Ok(f.clone()));
@@ -847,8 +875,8 @@ fn lub_typ() {
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
-        (s1.clone(), Kind::Scalar(g1.clone())),
-        (s2.clone(), Kind::Scalar(g2.clone())),
+        (s1.clone(), Kind::Scalar(Set::from([g1.clone()]))),
+        (s2.clone(), Kind::Scalar(Set::from([g2.clone()]))),
     ]);
 
     let tf = CTyp::base(&f);

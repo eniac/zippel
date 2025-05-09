@@ -379,10 +379,13 @@ impl Typeable for CExp {
                         // Add variable [id] to the context with type [inner]
                         innerctx.insert(&id, &inner);
 
+                        println!("============= Type of {} : {}", id, inner);
+
                         // Type infer the expression [x] with the new context
                         let tx = x.infer(kctx, fctx, &mut innerctx)
                                 .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
+                        println!("============= Type of {} : {}", x, tx);
                         Ok(CTyp::vec(&tx, n))
                     },
                     _ => Err(TypeError::exp(kctx, vctx, self))
@@ -604,7 +607,7 @@ mod tests {
             // Add group type "G"
             kctx.insert(&Tid::from("G"), &Kind::Group);
             // Add scalar type "S"
-            kctx.insert(&Tid::from("S"), &Kind::Scalar("G".into()));
+            kctx.insert(&Tid::from("S"), &Kind::scalar1("G"));
             kctx
         };
 

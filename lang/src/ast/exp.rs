@@ -603,12 +603,14 @@ where
             Exp::Lit(p) => p.pretty(allocator),
             Exp::Bool(b) => allocator.text(b.to_string()),
             Exp::Coef(p) => allocator.concat([
-                allocator.text("coef "),
+                allocator.text("coef("),
                 p.pretty(allocator),
+                allocator.text(")"),
             ]),
             Exp::Mle(p) => allocator.concat([
-                allocator.text("mle "),
+                allocator.text("mle("),
                 p.pretty(allocator),
+                allocator.text(")"),
             ]),
             Exp::Vec(ts) => allocator.concat([
                 allocator.text("["),
@@ -853,6 +855,7 @@ lazy_static! {
             .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
             .op(Op::infix(concat_op, Left))
             .op(Op::infix(pow_op, Right))
+            .op(Op::prefix(unary_minus))
     };
 }
 
@@ -865,18 +868,18 @@ impl<'pest> FromPest<'pest> for BinOp {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = expression.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-                Rule::bin_op => BinOp::from_pest(&mut pair.into_inner()),
-                Rule::add_op => Ok(BinOp::Add),
-                Rule::sub_op => Ok(BinOp::Sub),
-                Rule::mul_op => Ok(BinOp::Mul),
-                Rule::div_op => Ok(BinOp::Div),
-                Rule::pow_op => Ok(BinOp::Pow),
-                Rule::dot_op => Ok(BinOp::Dot),
-                Rule::rem_op => Ok(BinOp::Rem),
-                Rule::concat_op => Ok(BinOp::Concat),
-                Rule::eq_op => Ok(BinOp::Equ),
-                Rule::and_op => Ok(BinOp::And),
-                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+            Rule::bin_op => BinOp::from_pest(&mut pair.into_inner()),
+            Rule::add_op => Ok(BinOp::Add),
+            Rule::sub_op => Ok(BinOp::Sub),
+            Rule::mul_op => Ok(BinOp::Mul),
+            Rule::div_op => Ok(BinOp::Div),
+            Rule::pow_op => Ok(BinOp::Pow),
+            Rule::dot_op => Ok(BinOp::Dot),
+            Rule::rem_op => Ok(BinOp::Rem),
+            Rule::concat_op => Ok(BinOp::Concat),
+            Rule::eq_op => Ok(BinOp::Equ),
+            Rule::and_op => Ok(BinOp::And),
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
         }
     }
 }
@@ -897,6 +900,12 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::eval_exp => Ok(Exp::eval(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
+                Rule::minus_exp => {
+                    let mut inner = pair.into_inner();
+                    let op = BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let exp = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
+                },
                 Rule::challenge_exp =>
                     Ok(Exp::challenge(Tid::from_pest(&mut pair.into_inner())?)),
                 Rule::random_exp =>
@@ -982,6 +991,10 @@ impl<'pest> FromPest<'pest> for UExp {
                     Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
                     _ => unreachable!(),
                 })
+            .map_prefix(|op, rhs| match op.as_rule() {
+                Rule::unary_minus => Ok(Exp::sub(Exp::lit(Size::zero()), rhs?)),
+                _ => unreachable!(),
+            })
             .parse(expression)
     }
 }
@@ -1247,6 +1260,23 @@ fn parser_verify() {
 }
 
 #[test]
+fn parser_map() {
+    let ex = "[ss[i] == s^i for i in 0..N]";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::map(
+            Exp::equ(
+                Exp::ram(Exp::varstr("ss"), Exp::varstr("i")),
+                Exp::pow(Exp::varstr("s"), Exp::varstr("i"))
+            ),
+            Vid::from("i"),
+            Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") })
+        ))
+    );
+}
+
+#[test]
 fn parser_seq() {
     let ex = "x <- 2; y <- 3; let x = 2 * 4; 2";
     let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
@@ -1257,6 +1287,19 @@ fn parser_seq() {
                 Exp::logx(Vid::from("y"), Exp::from(3),
                     Exp::letx(Vid::from("x"), Exp::from(2) * Exp::from(4),
                         Exp::from(2))))
+        ]))
+    );
+}
+
+#[test]
+fn parser_minus() {
+    let ex = "[-x, 3]";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::vec(vec![
+            Exp::bin(BinOp::Sub, Exp::lit(Size::zero()), Exp::varstr("x")),
+            Exp::from(3)
         ]))
     );
 }

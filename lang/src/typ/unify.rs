@@ -56,8 +56,10 @@ impl Unify for Tid {
             // Both kinds are defined
             (Kind::Field, Kind::Field) => Ok(subs.add_equ(&a, &b)),
             (Kind::Group, Kind::Group) => Ok(subs.add_equ(&a, &b)),
-            (Kind::Scalar(x), Kind::Scalar(y)) => {
-                subs.add_equ(x, y);
+            (Kind::Scalar(x), Kind::Scalar(y)) if x.len() == y.len() => {
+                x.iter().zip(y.iter()).for_each(|(x, y)| {
+                    subs.add_equ(x, y);
+                });
                 Ok(subs.add_equ(&a, &b))
             },
             (Kind::Pairing(k1, k2), Kind::Pairing(k3, k4)) => {
@@ -137,7 +139,7 @@ fn unify_typ() {
         (f2.clone(), Kind::Field),
         (g1.clone(), Kind::Group),
         (g2.clone(), Kind::Group),
-        (s1.clone(), Kind::Scalar(f1.clone())),
+        (s1.clone(), Kind::Scalar(Set::singleton(f1.clone()))),
         (p.clone(), Kind::Pairing(g1.clone(), g2.clone())),
         (pp.clone(), Kind::Pairing(g1.clone(), g1.clone())),
     ]);

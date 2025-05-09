@@ -1,5 +1,5 @@
 use crate::id::Tid;
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use share::{Pretty, DocAllocator, Set, DocBuilder, BoxAllocator};
 use std::fmt;
 
 use crate::typ::range::Range;
@@ -15,17 +15,21 @@ pub enum Kind {
     Field,
     /// Unconstrained group type variable
     Group,
-    /// Scalar of group
-    Scalar(Tid),
+    /// Scalar of groups
+    Scalar(Set<Tid>),
     /// Pairing-friendly groups
     Pairing(Tid, Tid),
     /// Range of numbers
-    Range(Range<usize>)
+    Range(Range<usize>),
+
 }
 
 impl Kind {
-    pub fn scalar<'a>(a: &'a str) -> Self {
-        Kind::Scalar(Tid::new(a))
+    pub fn scalar1<'a>(a: &'a str) -> Self {
+        Kind::Scalar(Set::singleton(Tid::new(a)))
+    }
+    pub fn scalar2<'a>(a: &'a str, b: &'a str) -> Self {
+        Kind::Scalar(Set::from([Tid::new(a), Tid::new(b)]))
     }
     pub fn pairing<'a>(a: &'a str, b: &'a str) -> Self {
         Kind::Pairing(Tid::new(a), Tid::new(b))
@@ -66,8 +70,13 @@ where
         match self {
             Kind::Field => allocator.text("Field"),
             Kind::Group => allocator.text(format!("Group")),
-            Kind::Scalar(f) => allocator.text(format!("Scalar({})", f)),
-            Kind::Pairing(g1, g2) => allocator.text(format!("Pairing({}, {})", g1, g2)),
+            Kind::Scalar(f) =>
+                allocator.concat([
+                    allocator.text("Scalar<"),
+                    allocator.intersperse(f.iter().map(|t| allocator.text(format!("{}", t))), ", "),
+                    allocator.text(">"),
+                ]),
+            Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1, g2)),
             Kind::Range(r) => allocator.concat([
                 r.start.pretty(allocator),
                 if r.step == 1 {
@@ -106,13 +115,32 @@ impl<'pest> FromPest<'pest> for Kind {
             Rule::kind_ty => Kind::from_pest(&mut pair.into_inner()),
             Rule::field_ty => Ok(Kind::Field),
             Rule::group_ty => Ok(Kind::Group),
-            Rule::scalar_ty => Ok(Kind::Scalar(Tid::from_pest(&mut pair.into_inner())?)),
+            Rule::scalar_ty => {
+                let inner = pair.into_inner();
+                let mut idents: Vec<Tid> = Vec::new();
+                for inner in inner {
+                    let t = Tid::from_pest(&mut Pairs::single(inner))?;
+                    idents.push(t);
+                }
+                let len = idents.len();
+                let set = Set::from(idents.clone());
+                if len != set.len() {
+                    return Err(ConversionError::Malformed(InputError::DuplicateIdents(
+                        idents
+                            .iter()
+                            .map(|t| t.to_string())
+                            .collect::<Vec<String>>()
+                            .join(", "),
+                    )));
+                }
+                Ok(Kind::Scalar(set))
+            },
             Rule::pairing_ty => {
                 let mut inner = pair.into_inner();
                 let g1 = Tid::from_pest(&mut inner)?;
                 let g2 = Tid::from_pest(&mut inner)?;
                 Ok(Kind::Pairing(g1, g2))
-            }
+            },
             Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
             Rule::positive => Ok(Kind::Range(Range::singleton(pair.as_str().parse().unwrap()))),
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),

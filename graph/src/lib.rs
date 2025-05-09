@@ -603,17 +603,19 @@ impl<C: ArkConfig> UDag<C> {
                 match (&typ, ta, tb, op) {
                     // Polynomial multiplication and division
                     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r),
-                        op @(BinOp::Mul | BinOp::Div)) =>
-                        if &l < n && &r < n {
-                            // Pad with zeroes
-                            let ex_a = CExp::eval(CExp::concat(a, CExp::zeroes(*n - l)));
-                            let ex_b = CExp::eval(CExp::concat(b, CExp::zeroes(*n - r)));
-                            return self.add_exp(CExp::coef(CExp::bin(op, ex_a, ex_b)),
+                        op @(BinOp::Mul | BinOp::Div)) => {
+                        let mut ex_a = a.clone();
+                        let mut ex_b = b.clone();
+                        // Pad with zeroes
+                        if &l < n {
+                            ex_a = CExp::concat(a, CExp::zeroes(*n - l + 1));
+                        }
+                        if &r < n {
+                            ex_b = CExp::concat(b, CExp::zeroes(*n - r + 1));
+                        }
+                        return self.add_exp(CExp::coef(CExp::bin(op, CExp::eval(ex_a), CExp::eval(ex_b))),
                                 transcr, edge_type, kctx, fctx, vctx, vars);
-                        } else {
-                            return self.add_exp(CExp::coef(CExp::bin(op, CExp::eval(a), CExp::eval(b))),
-                                transcr, edge_type, kctx, fctx, vctx, vars);
-                        },
+                    },
                     // Polynomial remainder
                     (CTyp::Uni(_, _n), CTyp::Uni(_, _l), CTyp::Uni(_, _r), BinOp::Rem) =>
                         unimplemented!("Polynomial remainder"),
@@ -660,16 +662,14 @@ impl<C: ArkConfig> UDag<C> {
             CExp::Map(box l, x, box e) => {
                 // Type of [e]
                 let te = e.infer(kctx, &fctx.keys(), vctx)?;
+
+                println!("Typechecked {} : {}", e, te);
                 // Op for [e]
                 let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let ate = ATyp::from_ctyp(&te, kctx).ok_or_else(|| {
-                    TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &te))
-                })?;
 
                 // Get the size [n] from type [te]
-                let (_, n) = ate.into_vec();
+                let (ie, n) = te.into_vec();
+
                 // Ops are saved here
                 let mut res = Vec::with_capacity(n);
                 // Create operations
@@ -678,7 +678,7 @@ impl<C: ArkConfig> UDag<C> {
                     let mut vars = vars.clone();
                     let mut vctx = vctx.clone();
                     vars.insert(&x, &GOp::ram(oe.clone(), GOp::index(i)));
-                    vctx.insert(&x, &te);
+                    vctx.insert(&x, &ie);
                     // Add subexpression
                     let ol = self.add_exp(l.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     res.push(ol);

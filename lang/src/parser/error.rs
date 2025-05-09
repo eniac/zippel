@@ -8,11 +8,14 @@ use crate::ast::arg::UArgs;
 use crate::parser::Rule;
 use crate::typ::{Size, Kind, EvalError, TypeVars};
 use crate::typ::range::RangeError;
+use share::Set;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {
     #[error("Duplicate declaration found: {0}")]
     DuplicateDecl(USig),
+    #[error("KindError: Duplicate identifiers {0}")]
+    DuplicateIdents(String),
     #[error("Unexpected expression {0}")]
     UnexpectedExp(Pair<'pest, Rule>),
     #[error("Unsupported operation {0}")]
@@ -30,7 +33,7 @@ pub enum InputError<'pest> {
     #[error("KindError: Pairing<{0},{1}> requires {2}: {3} to be a Group")]
     PairingGroup(Tid, Tid, Tid, Kind),
     #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
-    ScalarGroup(Tid, Kind),
+    ScalarGroup(Set<Tid>, Kind),
     #[error("ReservedType: Bool is a reserved type")]
     ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
