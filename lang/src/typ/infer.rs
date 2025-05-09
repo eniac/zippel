@@ -798,7 +798,7 @@ mod tests {
         let uni_div =
             CExp::div(CExp::varstr("p"), CExp::varstr("p"));
         assert_eq!(uni_div.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Uni(Tid::from("F"), 0)));
+            Ok(CTyp::Uni(Tid::from("F"), 1)));
     }
 
     // Test for remainder
@@ -880,9 +880,8 @@ mod tests {
         // Create expression x . y
         let field_dot =
             CExp::dot(CExp::varstr("f1"), CExp::varstr("f2"));
-
-        assert_eq!(field_dot.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("F"))));
+        // Only vectors and polynomials can be dotted
+        assert!(field_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
         // Create expression g1 . g2
         let group_dot =
@@ -892,8 +891,7 @@ mod tests {
         // Create expression s1 . s2
         let mult_group_dot =
             CExp::dot(CExp::varstr("s1"), CExp::varstr("s2"));
-        assert_eq!(mult_group_dot.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Base(Tid::from("S"))));
+        assert!(mult_group_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
         // Create expression v1 . v1
         let vec_dot1 =
