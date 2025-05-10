@@ -5,18 +5,18 @@ mod dep;
 mod op;
 pub mod analyses;
 pub mod scheduler;
-pub mod principal;
+pub mod pref;
 
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
-pub use principal::{Principal, PRef, LexTerm};
+pub use pref::{PRef, LexTerm};
 
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
-use lang::typ::{Qualifier, Nothing, CTyp, CTyps, Kind};
+use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
@@ -37,11 +37,14 @@ pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Dep>);
 /// Dag with no annotations
 pub type UDag<C> = Dag<C, Nothing>;
 
+/// Dag with qualifiers
+pub type QDag<C> = Dag<C, Qualifier>;
+
 /// A collection of dags
 #[derive(Clone)]
 pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
-
 pub type UDags<C> = Dags<C, Nothing>;
+pub type QDags<C> = Dags<C, Qualifier>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -83,6 +86,20 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn relation_node(&self) -> Option<NodeIndex> {
         self.0.node_indices().find(|n| self.0[*n].is_relation())
+    }
+
+    pub fn input_args(&self) -> Vec<PRef> {
+        match &self[self.input_node()] {
+            Node::Inp(_, args) => args.clone(),
+            _ => unreachable!("All Dags should have an input node")
+        }
+    }
+
+    pub fn rel_args(&self) -> Option<Vec<PRef>> {
+        match &self[self.relation_node()?] {
+            Node::Rel(_, args) => Some(args.clone()),
+            _ => None
+        }
     }
 
     /// Dep deduplication
@@ -214,13 +231,18 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 _ => unreachable!("All Dags should have an input node")
             };
         // Remove all private arguments
-        args.retain(|_ , (q, _)| q.is_public());
+        args.retain(|r| r.is_public());
 
         // Add the transcript nodes (public) to the arguments
         for node in self.transcript_nodes() {
             if let Some(transcript_id) = self.find_var(node) {
-                let transcript_arg = (Qualifier::Public, self.0[node].clone().into_op().typ());
-                args.insert(&transcript_id, &transcript_arg);
+                let transcript_pref =
+                    PRef::from_var(transcript_id, NodeIndex::new(0),
+                        self[node].clone().into_op().typ(),
+                        0,
+                        Qualifier::Public,
+                        Distribution::default());
+                args.push(transcript_pref);
             }
         }
         // Associate old node indices with new node indices
@@ -475,13 +497,12 @@ impl<C: ArkConfig> UDag<C> {
         // Cast the signature to a arguments and insert to [start] node
         let asig = sig.args
             .iter()
-            .map(|arg| {
-                let atyp = ATyp::from_ctyp(&arg.typ, &kctx).ok_or_else(||
-                            TypeError::decl(&sig.name,
-                    TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ)))?;
-                Ok((arg.id.clone(), (arg.qualifier.clone(), atyp)))
-            })
-            .collect::<Result<Ctx<Vid, (Qualifier, ATyp)>,GraphError>>()?;
+            .map(|arg|
+                PRef::from_arg(arg, NodeIndex::new(0), &kctx).ok_or_else(|| {
+                    TypeError::decl(&sig.name,
+                        TypeError::ark(&kctx, &vctx, &CExp::var(&arg.id), &arg.typ))
+                })
+            ).collect::<Result<Vec<PRef>, _>>()?;
 
         // Add arguments to type and evaluation contexts
         let mut atyps = Ctx::new();
@@ -879,6 +900,7 @@ impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
+#[cfg(test)] use crate::analyses::QualifierPropagation;
 #[test]
 fn graph_sum() {
     let ex = r#"
@@ -919,8 +941,12 @@ fn graph_foo() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
+    // Qualfier analysis
+    let mut q = QualifierPropagation::new();
+    let g = q.with_dag(&gs[0]);
+
     // Test transitive closure
-    let tc = TransClos::from_input(&gs[0]);
+    let tc = TransClos::from_input(&g);
     println!("{}", tc);
 }
 

@@ -1,39 +1,32 @@
-use crate::{GOp, Op, Ref, Node, Dag};
-use petgraph::{
-    graph::NodeIndex,
-};
+use crate::{Dag, GOp, Node, Op, PRef, QDag, Ref};
+use petgraph::graph::NodeIndex;
 use std::fmt;
-use share::{Set, Ctx};
-use lang::typ::Qualifier;
-use backend::{ATyp, ArkConfig};
+use lang::typ::{Distribution, Qualifier};
+use backend::ArkConfig;
 
 /// Transitive closure on a DAG
 #[derive(Clone)]
-pub struct TransClos<C: ArkConfig, A> {
-    pub clos: Vec<(Ref, GOp<C>)>,
-    pub visibility: Ctx<Ref, Qualifier>,
-    pub types: Ctx<Ref, ATyp>,
-    pub annotations: Ctx<Ref, A>,
+pub struct TransClos<C: ArkConfig> {
+    pub clos: Vec<(PRef, GOp<C>)>,
+    pub args: Vec<PRef>,
 }
 
-impl<C: ArkConfig, A: Clone> TransClos<C, A> {
-    pub fn from_input(dag: &Dag<C, A>) -> Self {
+impl<C: ArkConfig> TransClos<C> {
+    pub fn from_input(dag: &QDag<C>) -> Self {
         let start = dag.input_node();
-        Self::new(dag.clone(), start)
+        Self::new(&dag, start)
     }
 
-    pub fn from_relation(dag: &Dag<C, A>) -> Self {
+    pub fn from_relation(dag: &QDag<C>) -> Self {
         let start = dag.relation_node().unwrap();
-        Self::new(dag.clone(), start)
+        Self::new(&dag, start)
     }
 
-    pub fn new(dag: Dag<C, A>, start: NodeIndex) -> Self {
+    pub fn new(dag: &QDag<C>, start: NodeIndex) -> Self {
         // Empty transitive closure
         let mut s = Self {
             clos: Vec::new(),
-            visibility: Ctx::new(),
-            types: Ctx::new(),
-            annotations: Ctx::new(),
+            args: Vec::new(),
         };
 
         // Add the input node to the transitive closure
@@ -48,55 +41,28 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
                 worklist.extend(dag.nodes_from(node));
                 done.push(node);
                 if dag[node].is_op() {
-                    s.trans_clos_ref(&dag, Ref::Node(node));
+                    s.trans_clos_ref(dag, Ref::Node(node));
                 }
             }
         }
         s
     }
 
-    pub fn types(&self) -> Ctx<Ref, ATyp> {
-        self.types.clone()
-    }
-
     /// Iterate over the transitive closure
-    pub fn iter(&self) -> std::slice::Iter<(Ref, GOp<C>)> {
+    pub fn iter(&self) -> std::slice::Iter<(PRef, GOp<C>)> {
         self.clos.iter()
-    }
-    /// Get the public references
-    pub fn public(&self) -> Set<Ref> {
-        self.visibility.iter()
-            .filter(|(_, q)| **q == Qualifier::Public)
-            .map(|(n, _)| n.clone())
-            .collect()
-    }
-
-    /// Get the private references
-    pub fn private(&self) -> Set<Ref> {
-        self.visibility.iter()
-            .filter(|(_, q)| **q == Qualifier::Private)
-            .map(|(n, _)| n.clone())
-            .collect()
-    }
-
-    /// Get the input variables
-    pub fn vars(&self) -> Set<Ref> {
-        self.visibility.iter()
-            .filter(|(r, _)| matches!(r, Ref::Var(_, _)))
-            .map(|(n, _)| n.clone())
-            .collect()
     }
 
     /// Rebuild the transcript operations (public nodes)
-    pub fn transcript(&self) -> Vec<(Ref, GOp<C>)> {
+    pub fn transcript(&self) -> Vec<(PRef, GOp<C>)> {
         self.clos.iter()
-            .filter_map(|(rf, op)| {
-                if self.visibility.get(&rf) == Some(&Qualifier::Public) {
+            .filter_map(|(rf, op)|
+                if rf.is_public() {
                     Some((rf.clone(), op.clone()))
                 } else {
                     None
-                }
-            }).collect()
+                })
+            .collect()
     }
 
     /// Inline an operation using the transitive closure, except for the nodes specified
@@ -132,25 +98,17 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
         }
     }
 
-    fn trans_clos_inp(&mut self, dag: &Dag<C, A>, node: NodeIndex) {
+    fn trans_clos_inp<A>(&mut self, dag: &Dag<C, A>, node: NodeIndex) {
         // Add variables to the context
         if let Node::Inp(_, ref args) = dag[node] {
-            for (v, (q, typ)) in args.iter() {
-                // Add the variable to the context
-                self.visibility.insert(&Ref::Var(v.clone(), node), q);
-                self.types.insert(&Ref::Var(v.clone(), node), typ);
-            }
+            self.args = args.clone();
         }
         if let Node::Rel(_, ref args) = dag[node] {
-            for (v, (q, typ)) in args.iter() {
-                // Add the variable to the context
-                self.visibility.insert(&Ref::Var(v.clone(), node), q);
-                self.types.insert(&Ref::Var(v.clone(), node), typ);
-            }
+            self.args = args.clone();
         }
     }
 
-    fn trans_clos_op(&mut self, dag: &Dag<C, A>, op: GOp<C>) -> GOp<C> {
+    fn trans_clos_op(&mut self, dag: &QDag<C>, op: GOp<C>) -> GOp<C> {
         match op {
             Op::Ref(r, _) => self.trans_clos_ref(dag, r),
             Op::Bin(op, box a, box b, typ) => {
@@ -176,18 +134,19 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
 
     pub fn find(&self, r: &Ref) -> Option<&GOp<C>> {
         self.clos.iter()
-            .find(|(n, _)| n == r)
+            .find(|(n, _)| &n.reference == r)
             .map(|(_, op)| op)
     }
 
-    pub fn last(&self) -> Option<(Ref, GOp<C>)> {
+    pub fn last(&self) -> Option<(PRef, GOp<C>)> {
         self.clos.last()
             .map(|(n, op)| (n.clone(), op.clone()))
     }
-    fn find_or_insert(&mut self, r: Ref, op: GOp<C>) -> GOp<C> {
-        // Look for the node by node index
+
+    fn find_or_insert(&mut self, r: PRef, op: GOp<C>) -> GOp<C> {
+        // Look for the node, by node index
         if let Some(index) = self.clos.iter().position(|(r2, _)| r2.node() == r.node()) {
-            if r.var().is_some() {
+            if r.reference.var().is_some() {
                 // Check if the node is a variable, then remove the old node and substitute it
                 self.clos.swap_remove(index);
                 self.insert(&r, &op);
@@ -196,81 +155,64 @@ impl<C: ArkConfig, A: Clone> TransClos<C, A> {
             self.insert(&r, &op);
         }
         // Return it
-        Op::Ref(r, op.typ())
+        Op::Ref(r.reference, op.typ())
     }
 
-    fn insert(&mut self, r: &Ref, op: &GOp<C>) {
+    fn insert(&mut self, r: &PRef, op: &GOp<C>) {
         // Check if the node is already in the context
-        if let Some(_) = self.find(&r) {
+        if let Some(_) = self.find(&r.reference) {
             return;
         }
         // Otherwise add it
         self.clos.push((r.clone(), op.clone()));
     }
 
-    fn trans_clos_ref(&mut self, dag: &Dag<C, A>, r: Ref) -> GOp<C> {
+    fn trans_clos_ref(&mut self, dag: &QDag<C>, r: Ref) -> GOp<C> {
         // Check if the node is already in the context
         if let Some(op) = self.find(&r) {
             return Op::Ref(r, op.typ());
         }
         // Otherwise add it
         match &dag[r.node()] {
-            Node::Op(op @ (Op::Challenge(_) | Op::Random(_)), ann) => {
-                self.insert(&r, &op);
-                self.annotations.insert(&r, ann);
-                self.types.insert(&r, &op.typ());
+            Node::Op(op @ (Op::Challenge(_) | Op::Random(_)), qualifier) => {
+                let pref = PRef::new(r.clone(), op.typ(), 0, *qualifier, Distribution::Uniform);
+                self.insert(&pref, &op);
                 Op::Ref(r, op.typ())
             },
-            Node::Op(op, ann) => {
+            Node::Op(op, qualifier) => {
                 let obin = self.trans_clos_op(dag, op.clone());
-                self.annotations.insert(&r, ann);
-                self.types.insert(&r, &op.typ());
-                self.find_or_insert(r, obin.clone())
+                self.find_or_insert(PRef::from_ref(r, op.typ(), *qualifier), obin.clone())
             },
-            Node::Transcr(op, ann) => {
+            Node::Transcr(op, _) => {
                 // Add the node to the context
                 let op = self.trans_clos_op(dag, op.clone());
-                self.annotations.insert(&r, ann);
-                self.types.insert(&r, &op.typ());
-                self.visibility.insert(&r, &Qualifier::Public);
-                self.find_or_insert(r, op.clone())
+                self.find_or_insert(PRef::from_ref(r, op.typ(), Qualifier::Public), op.clone())
             },
-            Node::Inp(_, args) =>
-                if let Some(v) = r.var() {
-                    let typ = args.get(&v).unwrap().1.clone();
-                    Op::Ref(r, typ)
+            Node::Inp(_, args) | Node::Rel(_, args) =>
+                if let Some(ref v) = r.var() {
+                    let pref = args.iter().find(|pr| &pr.id().unwrap() == v).unwrap();
+                    Op::Ref(r, pref.typ.clone())
                 } else {
-                    unreachable!("Input node should only have variable dependencies")
-                },
-            Node::Rel(_, args) =>
-                if let Some(v) = r.var() {
-                    let typ = args.get(&v).unwrap().1.clone();
-                    Op::Ref(r, typ)
-                } else {
-                    unreachable!("Relation node should only have variable dependencies")
+                    unreachable!("Input and relation node should only have variable dependencies")
                 },
         }
     }
 }
 
-impl<C: ArkConfig, A: fmt::Display> fmt::Display for TransClos<C, A> {
+impl<C: ArkConfig> fmt::Display for TransClos<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "TC: \n")?;
         self.clos.iter().map(|(n, op)|
-            write!(f, "\t{}   |   {} : {}\n", n, op, op.typ()))
-            .collect::<fmt::Result>()?;
-        write!(f, "\nVisibility: \n")?;
-        self.visibility.iter().map(|(n, q)|
-            write!(f, "\t{}: {}\n", n, q))
+            write!(f, "\t{}   |   {} \n", n.verbose(), op))
             .collect::<fmt::Result>()
     }
 }
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use lang::typ::Range;
-#[cfg(test)] use crate::UDags;
+#[cfg(test)] use crate::{analyses::QualifierPropagation, UDags};
 #[cfg(test)] use share::{assert_deq, unwrap};
-#[cfg(test)] use backend::{Value, ArkBls12_381};
+#[cfg(test)] use backend::{Value, ATyp, ArkBls12_381};
 #[test]
 fn trans_clos_simple() {
     let ex = r#"
@@ -283,8 +225,12 @@ fn trans_clos_simple() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
+    // Propagate qualifiers
+    let mut qp = QualifierPropagation::new();
+    let g = qp.with_dag(&gs[0]);
+
     // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
+    let tc = TransClos::from_input(&g);
 
     println!("{}", tc);
     for (_, op) in tc.clos.iter() {
@@ -330,8 +276,12 @@ fn trans_clos_many() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
+    // Propagate qualifiers
+    let mut qp = QualifierPropagation::new();
+    let g = qp.with_dag(&gs[0]);
+
     // Compute transitive closure
-    let tc = TransClos::from_input(&gs[0]);
+    let tc = TransClos::from_input(&g);
 
     println!("{}", tc);
     for (_, op) in tc.clos.iter() {

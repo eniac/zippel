@@ -102,9 +102,8 @@ impl<C: ArkConfig, A: Clone> GroebnerBuilder<C, A> {
         Self::from_tc(tc)
     }
 
-    pub fn from_relation(g: &Dag<C, A>) -> Self where A: fmt::Display {
+    pub fn from_relation(g: &Dag<C, A>) -> Self {
         let tc = TransClos::from_relation(g);
-        println!("Transitive closure: \n\n{}", tc);
         Self::from_tc(tc)
     }
 

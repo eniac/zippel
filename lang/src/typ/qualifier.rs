@@ -19,6 +19,14 @@ impl Qualifier {
     pub fn is_public(&self) -> bool {
         matches!(self, Qualifier::Public)
     }
+    pub fn join(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Qualifier::Private, Qualifier::Private) => Qualifier::Private,
+            (Qualifier::Private, Qualifier::Public) => Qualifier::Private,
+            (Qualifier::Public, Qualifier::Private) => Qualifier::Private,
+            (Qualifier::Public, Qualifier::Public) => Qualifier::Public,
+        }
+    }
 }
 
 /// Secret <= Private <= Public

@@ -1,10 +1,9 @@
 use lang::ast::BinOp;
 use lang::id::Vid;
-use lang::typ::{Qualifier, Nothing};
-use share::Ctx;
+use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
-use crate::{Ref, GOp};
+use crate::{Ref, PRef, GOp};
 use backend::{ATyp, ArkConfig};
 use std::fmt;
 
@@ -12,9 +11,9 @@ use std::fmt;
 #[derive(PartialEq, Eq, Clone)]
 pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
-    Inp(Vid, Ctx<Vid, (Qualifier, ATyp)>),
+    Inp(Vid, Vec<PRef>),
     /// Specification relation, annotated with a function or protocol signature
-    Rel(Vid, Ctx<Vid, (Qualifier, ATyp)>),
+    Rel(Vid, Vec<PRef>),
     /// A transcript transaction
     Transcr(GOp<C>, A),
     /// Operation node
@@ -76,7 +75,7 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
-    pub fn args(&self) -> Option<Ctx<Vid, (Qualifier, ATyp)>> {
+    pub fn args(&self) -> Option<Vec<PRef>> {
         match self {
             Node::Inp(_, sig) => Some(sig.clone()),
             Node::Rel(_, sig) => Some(sig.clone()),
@@ -86,10 +85,10 @@ impl<C: ArkConfig, N> Node<C, N> {
 }
 
 impl<C: ArkConfig> Node<C, Nothing> {
-    pub fn inp(f: Vid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
+    pub fn inp(f: Vid, sig: Vec<PRef>) -> Self {
         Node::Inp(f, sig)
     }
-    pub fn rel(f: Vid, sig: Ctx<Vid, (Qualifier, ATyp)>) -> Self {
+    pub fn rel(f: Vid, sig: Vec<PRef>) -> Self {
         Node::Rel(f, sig)
     }
     pub fn coef(op: &GOp<C>) -> Self {
@@ -136,19 +135,19 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
         match self {
             Node::Inp(fid, sig) => {
                 write!(f, "Impl {} (", fid)?;
-                let (v, (q, t)) = sig.first().unwrap();
-                write!(f, "{} {}: {}", q, v, t)?;
-                for (vid, (qual, typ)) in sig.iter().skip(1) {
-                    write!(f, ", {} {}: {}", qual, vid, typ)?;
+                let v= sig.first().unwrap();
+                write!(f, "{}", v.verbose())?;
+                for r in sig.iter().skip(1) {
+                    write!(f, ", {}", r.verbose())?;
                 }
                 write!(f, ")")
             },
             Node::Rel(fid, sig) => {
                 write!(f, "Spec {} (", fid)?;
-                let (v, (q, t)) = sig.first().unwrap();
-                write!(f, "{} {}: {}", q, v, t)?;
-                for (vid, (qual, typ)) in sig.iter().skip(1) {
-                    write!(f, ", {} {}: {}", qual, vid, typ)?;
+                let v= sig.first().unwrap();
+                write!(f, "{}", v.verbose())?;
+                for r in sig.iter().skip(1) {
+                    write!(f, ", {}", r.verbose())?;
                 }
                 write!(f, ")")
             },
