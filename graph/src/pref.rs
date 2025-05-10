@@ -43,6 +43,11 @@ impl PRef {
     pub fn is_private(&self) -> bool {
         self.qualifier.is_private()
     }
+    pub fn is_uniform(&self) -> bool {
+        self.distribution == Distribution::Uniform
+    }
+
+ 
     pub fn node(&self) -> NodeIndex {
         match self.reference {
             Ref::Node(node) => node,
@@ -68,10 +73,14 @@ impl PRef {
     }
 
     pub fn verbose(&self) -> String {
-        if self.typ.size() > 1 {
-            format!("{} {} {}[{}]: {}", self.qualifier, self.distribution, self.reference, self.index, self.typ)
+        if self.typ.size() > 1 && self.distribution.is_uniform() {
+            format!("{} uniform {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+        } else if self.typ.size() > 1 {
+            format!("{} {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+        } else if self.distribution.is_uniform() {
+            format!("{} uniform {}: {}", self.qualifier, self.reference, self.typ)
         } else {
-            format!("{} {} {}: {}: {}", self.qualifier, self.distribution, self.reference, self.typ, self.qualifier)
+            format!("{} {}: {}", self.qualifier, self.reference, self.typ)
         }
     }
 }

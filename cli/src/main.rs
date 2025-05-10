@@ -10,7 +10,7 @@ use costs::Benchmarker;
 use share::unwrap;
 use graph::{
     UDags,
-    analyses::{TransClos, GroebnerBuilder}
+    analyses::{TransClos} //GroebnerBuilder}
 };
 
 #[derive(Parser, Debug)]

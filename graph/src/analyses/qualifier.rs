@@ -1,5 +1,7 @@
 use backend::ArkConfig;
 use petgraph::graph::NodeIndex;
+use petgraph::Direction;
+use petgraph::visit::EdgeRef;
 use share::Ctx;
 use lang::typ::Qualifier;
 use crate::{Dag, UDag, Node, Ref, QDag, GOp};
@@ -10,60 +12,72 @@ pub struct QualifierPropagation {
 
 /// Propagate qualifiers [private, public] through the DAG
 impl QualifierPropagation {
-    pub fn new() -> Self {
-        QualifierPropagation { quals: Ctx::new() }
-    }
-    fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Qualifier {
+    fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
         match op {
-            GOp::Value(_) => Qualifier::Public,
-            GOp::Check(_) => Qualifier::Public,
-            GOp::Ref(r, _) => *self.quals.get(&r.node()).unwrap(),
+            GOp::Value(_) => Some(Qualifier::Public),
+            GOp::Check(_) => Some(Qualifier::Public),
+            GOp::Ref(r, _) => 
+                self.quals.get(&r.node()).map(|v| v.clone()),
             GOp::Ram(box a, _) => self.from_op(a),
             GOp::Coef(box a) => self.from_op(a),
             GOp::Eval(box a) => self.from_op(a),
             GOp::Bin(_, box a, box b, _) => {
-                let qual_a = self.from_op(a);
-                let qual_b = self.from_op(b);
-                qual_a.join(&qual_b)
+                let qual_a = self.from_op(a)?;
+                let qual_b = self.from_op(b)?;
+                Some(qual_a.join(&qual_b))
+
             }
-            GOp::Vec(vs) =>
-                vs.iter().fold(Qualifier::Public, |acc, op| acc.join(&self.from_op(op))),
-            GOp::Random(_) => Qualifier::Private,
-            GOp::Challenge(_) => Qualifier::Public,
+            GOp::Vec(vs) => {
+                let mut qual = Qualifier::Public;
+                for v in vs {
+                    let q = self.from_op(v)?;
+                    qual = qual.join(&q);
+                }
+                Some(qual)
+            }
+            GOp::Random(_) => Some(Qualifier::Private),
+            GOp::Challenge(_) => Some(Qualifier::Public),
         }
     }
 
-    pub fn with_dag<C: ArkConfig>(&mut self, dag: &UDag<C>) -> QDag<C> {
-        let inp = dag.input_node();
-        let mut worklist = vec![inp];
-        while let Some(node) = worklist.pop() {
-            if self.quals.contains(&node) {
+    pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
+        let mut qp = QualifierPropagation { quals: Ctx::new() };
+        let check = dag.find_check().expect("No check found in the DAG");
+        let mut worklist = vec![check];
+
+        while let Some(n) = worklist.pop() {
+            if qp.quals.contains(&n) {
                 continue;
             }
-            match &dag[node] {
+
+            match &dag[n] {
                 Node::Inp(_, args) | Node::Rel(_, args) => {
                     for arg in args {
-                        self.quals.insert(&arg.reference.node(), &arg.qualifier);
+                        qp.quals.insert(&arg.reference.node(), &arg.qualifier);
                     }
-                },
+                    continue;
+                }
                 Node::Transcr(_, _) => {
-                    self.quals.insert(&node, &Qualifier::Public);
+                    qp.quals.insert(&n, &Qualifier::Public);
+                    continue;
                 }
                 Node::Op(op, _) => {
-                    let qual = self.from_op(&op);
-                    self.quals.insert(&node, &qual);
-                },
+                    qp.from_op(&op).and_then(|q| qp.quals.insert(&n, &q));
+                }
             }
-            for next in dag.nodes_from(node) {
-                if !self.quals.contains(&next) {
-                    worklist.push(next);
+
+            // Add parent neighbors to worklist
+            for e in dag.0.edges_directed(n, Direction::Incoming) {
+                // Add neighbors to worklist
+                if !qp.quals.contains(&e.source()) {
+                    worklist.push(e.source());
                 }
             }
         }
 
         Dag(dag.0.map(
             |i, node|
-                node.with_annotation(self.quals.get(&i).unwrap_or_else(|| &Qualifier::Private).clone()),
+                node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Private).clone()),
             |_, e| e.clone()))
     }
 }
@@ -85,8 +99,7 @@ fn qualifier_prop() {
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
-    let mut qp = QualifierPropagation::new();
-    let g = qp.with_dag(&gs[0]);
+    let g = QualifierPropagation::from_dag(&gs[0]);
 
     g.write_pdf("qualifier.pdf").unwrap();
 }

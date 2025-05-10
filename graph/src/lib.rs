@@ -922,7 +922,6 @@ fn graph_sum() {
 
 #[test]
 fn graph_foo() {
-    use analyses::TransClos;
     let ex = r#"
         proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
             let r = random<F>;
@@ -935,19 +934,10 @@ fn graph_foo() {
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
     // Output graph
     gs.write_pdf("graph_foo").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-
-    // Qualfier analysis
-    let mut q = QualifierPropagation::new();
-    let g = q.with_dag(&gs[0]);
-
-    // Test transitive closure
-    let tc = TransClos::from_input(&g);
-    println!("{}", tc);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use backend::ArkConfig;
+use backend::{Value, ArkConfig};
 use crate::GOp;
 use core::cmp::Ordering;
 use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, SubAssign};
@@ -95,6 +95,27 @@ impl<F: Field, V: Var, T: Monomial<V>> MulAssign for SparsePolynomial<F, V, T> {
         }
         self.terms = new_terms;
         self.terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
+    }
+}
+
+impl<C: ArkConfig> From<SparsePolynomial<C::F, GOp<C>, LexDegTerm<GOp<C>>>> for GOp<C> {
+    fn from(p: SparsePolynomial<C::F, GOp<C>, LexDegTerm<GOp<C>>>) -> Self {
+        let mut result = p.terms.first().unwrap().0.clone().into();
+        for (term, coeff) in p.terms.into_iter().skip(1) {
+            result += GOp::from(term) * GOp::Value(Value::Scalar(coeff));
+        }
+        result
+    }
+}
+
+impl<C: ArkConfig> From<LexDegTerm<GOp<C>>> for GOp<C> {
+    fn from(t: LexDegTerm<GOp<C>>) -> Self {
+        let mut result = t.vars.first().unwrap().0.clone();
+        for (var, power) in t.vars.into_iter().skip(1) {
+            let gpow : GOp<C>= power.into();
+            result *= var ^ gpow;
+        }
+        result
     }
 }
 
@@ -703,4 +724,3 @@ impl<C: ArkConfig> Var for GOp<C> {
         }
     }
 }
-

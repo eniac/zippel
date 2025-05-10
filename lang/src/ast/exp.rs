@@ -563,6 +563,21 @@ impl CExp {
     }
 }
 
+impl BinOp {
+    pub fn precedence(&self) -> usize {
+        match self {
+            BinOp::Equ => 0,
+            BinOp::And => 1,
+            BinOp::Add | BinOp::Sub => 2,
+            BinOp::Mul | BinOp::Div => 3,
+            BinOp::Pow => 4,
+            BinOp::Dot => 5,
+            BinOp::Concat => 6,
+            BinOp::Rem => 7,
+        }
+    }
+}
+
 /// Pretty printer instance
 impl<'a, D, A> Pretty<'a, D, A> for BinOp
 where

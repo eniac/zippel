@@ -6,8 +6,9 @@ use lang::id::Vid;
 use backend::{Value, ABase, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
 
 use petgraph::graph::NodeIndex;
-use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use std::fmt;
+use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign, BitAndAssign, Add, Sub, Mul, Div, Rem, BitXor, BitAnd};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub enum Ref {
@@ -68,6 +69,10 @@ impl Ref {
             Ref::Node(_) => None,
             Ref::Var(v, _) => Some(v.clone()),
         }
+    }
+
+    pub fn is_var(&self) -> bool {
+        self.var().is_some()
     }
 }
 
@@ -515,6 +520,41 @@ impl<C: ArkConfig> GOp<C> {
     pub fn is_underscore(&self) -> bool {
         matches!(self, Op::Ref(Ref::Node(_), _))
     }
+
+    /// Inline an operation, except for the nodes specified
+    /// which remain as node identifiers.
+    pub fn inline<F: Fn(&Ref, &GOp<C>)->bool>(&self, vars: &Ctx<Ref, GOp<C>>, except: &F) -> GOp<C> {
+        match self {
+            Op::Ref(r, _) =>
+                if let Some(next) = vars.get(&r) {
+                    if except(r, next) {
+                        return self.clone();
+                    }
+                    next.inline(vars, except)
+                } else {
+                    self.clone()
+                },
+            Op::Bin(op, box a, box b, typ) => {
+                let oa = a.inline(vars, except);
+                let ob = b.inline(vars, except);
+                Op::bin(*op, oa, ob, typ.clone())
+            },
+            Op::Ram(box a, box b) => {
+                let oa = a.inline(vars, except);
+                let ob = b.inline(vars, except);
+                Op::Ram(Box::new(oa), Box::new(ob))
+            },
+            Op::Vec(vs) =>
+                Op::Vec(vs.into_iter().map(|v| v.inline(vars, except))
+                    .collect::<Vec<_>>()),
+            Op::Check(box op) => op.inline(vars, except),
+            Op::Coef(box v) => Op::Coef(Box::new(v.inline(vars, except))),
+            Op::Eval(box v) => Op::Eval(Box::new(v.inline(vars, except))),
+            _ => self.clone()
+        }
+    }
+
+
 }
 
 /// Pretty-printer for Operations
@@ -562,6 +602,110 @@ impl<'a> From<&'a str> for Ref {
     }
 }
 
+impl<C: ArkConfig, R: Clone> AddAssign<Op<C, R>> for Op<C, R> {
+    fn add_assign(&mut self, other: Op<C, R>) {
+        *self = Op::add(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> SubAssign<Op<C, R>> for Op<C, R> {
+    fn sub_assign(&mut self, other: Op<C, R>) {
+        *self = Op::sub(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> MulAssign<Op<C, R>> for Op<C, R> {
+    fn mul_assign(&mut self, other: Op<C, R>) {
+        *self = Op::mul(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> DivAssign<Op<C, R>> for Op<C, R> {
+    fn div_assign(&mut self, other: Op<C, R>) {
+        *self = Op::div(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> RemAssign<Op<C, R>> for Op<C, R> {
+    fn rem_assign(&mut self, other: Op<C, R>) {
+        *self = Op::rem(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> BitXorAssign<Op<C, R>> for Op<C, R> {
+    fn bitxor_assign(&mut self, other: Op<C, R>) {
+        *self = Op::pow(self.clone(), other, self.typ());
+    }
+}
+
+impl<C: ArkConfig, R: Clone> BitAndAssign<Op<C, R>> for Op<C, R> {
+    fn bitand_assign(&mut self, other: Op<C, R>) {
+        *self = Op::and(self.clone(),other);
+    }
+}
+
+impl<C: ArkConfig, R: Clone> Add for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn add(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::add(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> Sub for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn sub(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::sub(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> Mul for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn mul(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::mul(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> Div for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn div(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::div(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> Rem for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn rem(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::rem(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> BitXor for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn bitxor(self, other: Op<C, R>) -> Op<C, R> {
+        let typ = self.typ().clone();
+        Op::pow(self, other, typ)
+    }
+}
+
+impl<C: ArkConfig, R: Clone> BitAnd for Op<C, R> {
+    type Output = Op<C, R>;
+
+    fn bitand(self, other: Op<C, R>) -> Op<C, R> {
+        Op::and(self, other)
+    }
+}
+
 /// Pretty-printer for Operations
 impl<'a, D, C, A, R> Pretty<'a, D, A> for Op<C, R>
 where
@@ -575,13 +719,34 @@ where
         match self {
             Op::Value(v) => allocator.text(format!("{}", v)),
             Op::Bin(op, box a, box b, _) => {
-                allocator.concat(vec![
-                    allocator.text("("),
-                    a.pretty(allocator),
-                    allocator.text(format!(" {} ", op)),
-                    b.pretty(allocator),
-                    allocator.text(")"),
-                ])
+                match (&a, &b) {
+                    // If either operand is itself a binary op with lower precedence,
+                    // we need parens around that operand
+                    (Op::Bin(op1, _, _, _), _) if op1.precedence() < op.precedence() => {
+                        allocator.concat(vec![
+                            allocator.text("("),
+                            a.pretty(allocator),
+                            allocator.text(")"),
+                            allocator.text(format!("{}", op)),
+                            b.pretty(allocator),
+                        ])
+                    },
+                    (_, Op::Bin(op2, _, _, _)) if op2.precedence() < op.precedence() => {
+                        allocator.concat(vec![
+                            a.pretty(allocator),
+                            allocator.text(format!("{}", op)),
+                            allocator.text("("), 
+                            b.pretty(allocator),
+                            allocator.text(")"),
+                        ])
+                    },
+                    // No parens needed
+                    _ => allocator.concat(vec![
+                        a.pretty(allocator),
+                        allocator.text(format!("{}", op)),
+                        b.pretty(allocator),
+                    ])
+                }
             },
             Op::Eval(box v) => allocator.concat([
                 allocator.text("(eval "),
@@ -646,4 +811,3 @@ impl<C: ArkConfig, R> From<CRange> for Op<C, R> {
         Op::Value(Value::Range(r))
     }
 }
-
