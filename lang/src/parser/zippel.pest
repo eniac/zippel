@@ -65,6 +65,7 @@ exp_term  = _{
          | reduce_exp
          | vec_exp
          | ram_exp
+         | pair_exp
          | assert_exp
          | verify_exp
          | let_exp
@@ -84,6 +85,7 @@ exp_term  = _{
     reduce_exp    = { "reduce" ~ "(" ~ bin_op ~ "," ~ exp ~ ")" }     // Reduce operation (left)
     vec_exp       = { "[" ~ exp ~ ("," ~ exp)* ~ "]" }                // vector of elements
     ram_exp       = { id ~ "[" ~ exp ~ "]" }                          // Randm access into a vector
+    pair_exp      = { "pair" ~ "(" ~ exp ~ "," ~ exp ~")" }           // Billinear pairing operation
     range_exp     = { range }                                         // Range expression
     assert_exp    = { "assert" ~ "(" ~ exp ~ ")" }                    // Assertion (Prover) expression
     verify_exp    = { "verify" ~ "(" ~ exp ~ ")"  }                   // Assertion (Verifier) expression

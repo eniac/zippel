@@ -176,6 +176,13 @@ pub enum Exp<N> {
     ///     ```
     Ram(Box<Exp<N>>, Box<Exp<N>>),
 
+    ///     Bilinear pairing
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let g = pair(g1, g2);
+    ///     ```
+    Pair(Box<Exp<N>>, Box<Exp<N>>),
+
     ///     Sample pseudo-random number generator
     ///     **Zippel Code:**
     ///     ```zippel
@@ -250,6 +257,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Var(v) => Ok(Exp::Var(v)),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
+            Exp::Pair(box x, box y) =>
+                Ok(Exp::Pair(Box::new(x.traverse1(f)?), Box::new(y.traverse1(f)?))),
             Exp::Vec(v) =>
                 Ok(Exp::Vec(v.traverse1(f)?)),
             Exp::App(x, ts) =>
@@ -312,7 +321,8 @@ impl TidSubst for CExp {
             | Exp::Map(box a, _, box b)
             | Exp::Ram(box a, box b)
             | Exp::Let(_, box a, box b)
-            | Exp::Log(_, box a, box b) => {
+            | Exp::Log(_, box a, box b)
+            | Exp::Pair(box a, box b) => {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
             },
@@ -342,6 +352,7 @@ impl FreeVars for CExp {
             | Exp::Eval(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
+            | Exp::Pair(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Let(_, box a, box b)
@@ -376,6 +387,7 @@ impl<N> RangeTraversal<N> for Exp<N> {
             Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Log(x, box t, box e) => Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Let(None, box t, box e) => Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?)),
+            Exp::Pair(box t, box e) => Ok(Exp::pair(t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Assert(box x) => Ok(Exp::assert(x.range_traverse(f)?)),
             Exp::Verify(box x) => Ok(Exp::verify(x.range_traverse(f)?)),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
@@ -476,6 +488,9 @@ impl<N> Exp<N> {
     pub fn ram(v: Self, i: Self) -> Self {
         Exp::Ram(Box::new(v), Box::new(i))
     }
+    pub fn pair(t: Self, e: Self) -> Self {
+        Exp::Pair(Box::new(t), Box::new(e))
+    }
     pub fn range(r: Range<N>) -> Self {
         Exp::Range(r)
     }
@@ -541,6 +556,7 @@ impl<N> Exp<N> {
             Exp::Reduce(_, box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
+            Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Let(_, box a, box b) => a.is_pure() && b.is_pure(),
@@ -663,6 +679,12 @@ where
                 allocator.text("random<"),
                 t.pretty(allocator),
                 allocator.text(">"),
+            ]),
+            Exp::Pair(box t, box e) => allocator.concat([
+                t.pretty(allocator),
+                allocator.text("pair("),
+                e.pretty(allocator),
+                allocator.text(")"),
             ]),
             Exp::Range(r) => allocator.concat([
                 r.pretty(allocator),
@@ -955,6 +977,13 @@ impl<'pest> FromPest<'pest> for UExp {
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
+                Rule::pair_exp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::pair(
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                },
                 Rule::app_exp => {
                     let mut inner = pair.into_inner();
                     // Call a function
@@ -1173,6 +1202,13 @@ fn parser_for() {
             Vid::from("i"),
             Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
         ));
+}
+
+#[test]
+fn parser_pair() {
+    let ex = "pair(x, y)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::pair(Exp::varstr("x"), Exp::varstr("y"))));
 }
 
 #[test]

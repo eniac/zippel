@@ -12,5 +12,5 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 10>
         // Proof [pi: G1]
         pi <- (q . ss[0..9]) * g;
 
-        verify(pi * ((s - z) * h) == (c - g * y) * h)
+        verify(pair(pi, (s - z) * h) == pair(c - g * y, h))
 }

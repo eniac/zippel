@@ -208,8 +208,14 @@ impl Lub for ABase {
             (ABase::G1, ABase::Scalar) | (ABase::Scalar, ABase::G1) => Ok(ABase::G1),
             (ABase::G2, ABase::Scalar) | (ABase::Scalar, ABase::G2) => Ok(ABase::G2),
             (ABase::GT, ABase::Scalar) | (ABase::Scalar, ABase::GT) => Ok(ABase::GT),
-            (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
             (a, b) => Err(LubError::mul(&a, &b))
+        }
+    }
+
+    fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
+            (a, b) => Err(LubError::pair(&a, &b))
         }
     }
 
@@ -346,6 +352,23 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n1))
             },
             (a, b) => Err(LubError::mul(&a, &b))
+        }
+    }
+
+    fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+        match (a, b) {
+            // e(G1, G2) * e(G2, G1) = GT
+            (ATyp::Base(a), ATyp::Base(b)) =>
+                ABase::lub_pair(a, b, ctx)
+                    .map(|b| ATyp::Base(b))
+                    .map_err(|e| LubError::next(LubError::pair(&a, &b), e)),
+            // e(Vec<G1>, Vec<G2>) * e(Vec<G2>, Vec<G1>) = Vec<GT>
+            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
+                let t = ATyp::lub_pair(t1, t2, ctx)
+                    .map_err(|e| LubError::next(LubError::pair(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n1))
+            },
+            (a, b) => Err(LubError::pair(&a, &b))
         }
     }
 

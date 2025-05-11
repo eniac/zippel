@@ -40,6 +40,9 @@ pub enum Op<C: ArkConfig, R> {
     /// Random element
     Random(ATyp),
 
+    /// Billinear pairing
+    Pair(Box<Op<C, R>>, Box<Op<C, R>>, ATyp),
+
     /// Random oracle challenge
     Challenge(ATyp),
 
@@ -81,6 +84,7 @@ impl<C: ArkConfig, R> Op<C, R> {
         match &self {
             Op::Value(v) => v.typ(),
             Op::Bin(_, _, _, typ) => typ.clone(),
+            Op::Pair(_, _, typ) => typ.clone(),
             Op::Ref(_, t) => t.clone(),
             Op::Ram(box l, box r) =>
                 match (l.typ(), r.typ()) {
@@ -333,6 +337,16 @@ impl<C: ArkConfig, R> Op<C, R> {
         }
     }
 
+    pub fn pair(v1: Self, v2: Self, typ: ATyp) -> Self {
+        match (v1, v2) {
+            (Op::Value(a), Op::Value(mut b)) => {
+                a.value_pair(&mut b);
+                Op::Value(b)
+            },
+            (v1, v2) => Op::Pair(Box::new(v1), Box::new(v2), typ),
+        }
+    }
+
     pub fn rem(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             // v1 % v2
@@ -486,6 +500,7 @@ impl<C: ArkConfig, R> Op<C, R> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
             Op::Bin(_, box a, box b, _)
+            | Op::Pair(box a, box b, _)
             | Op::Ram(box a, box b) =>
                 a.references().into_iter()
                     .chain(b.references().into_iter())
@@ -751,6 +766,13 @@ where
             Op::Eval(box v) => allocator.concat([
                 allocator.text("(eval "),
                 v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Pair(box a, box b, _) => allocator.concat([
+                allocator.text("(pair "),
+                a.pretty(allocator),
+                allocator.text(", "),
+                b.pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Coef(box v) => allocator.concat([

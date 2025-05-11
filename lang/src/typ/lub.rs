@@ -17,6 +17,8 @@ pub enum LubError {
     Bin(BinOp, String, String),
     #[error("LubError: Cannot take dot-product of {0} . {1}")]
     Dot(String, String),
+    #[error("LubError: Cannot take bilinear pairing of {0} and {1}")]
+    Pair(String, String),
     #[error("LubError: Malformed range {0}\n\n{1}")]
     BadRange(Range<usize>, RangeError),
     #[error("LubError: Kind {0} not found")]
@@ -57,6 +59,9 @@ impl LubError {
     pub fn dot<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::Dot, a.to_string(), b.to_string())
     }
+    pub fn pair<K: fmt::Display>(a: &K, b: &K) -> Self {
+        LubError::Pair(a.to_string(), b.to_string())
+    }
     pub fn and<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Bin(BinOp::And, a.to_string(), b.to_string())
     }
@@ -75,6 +80,7 @@ pub trait Lub where Self: Sized {
     fn lub_div(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_pow(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_dot(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
+    fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_rem(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_and(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
     fn lub_concat(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError>;
@@ -250,6 +256,9 @@ impl Lub for Range<usize> {
 
         Err(LubError::and(&a, &b))
     }
+    fn lub_pair(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
+        Err(LubError::pair(&a, &b))
+    }
 }
 
 /// Least-upper bound of type variables
@@ -327,6 +336,17 @@ impl Lub for Tid {
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (_, _) => Err(LubError::mul(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        }
+    }
+
+    fn lub_pair(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+        let ka = ctx.get(a)
+            .ok_or(LubError::kind_not_found(&a))?;
+        let kb = ctx.get(b)
+            .ok_or(LubError::kind_not_found(&b))?;
+
+        match (ka, kb) {
             // Group multiplication is only allowed for pairing friendly curves
             // G1 * G2 => Pairing(G1, G2)
             // forces G1: Group, G2: Group
@@ -334,9 +354,9 @@ impl Lub for Tid {
                 if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(&a, &b)) {
                     Ok(pid.clone())
                 } else {
-                    Err(LubError::mul(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+                    Err(LubError::pair(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
                 }
-            (_, _) => Err(LubError::mul(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (_, _) => Err(LubError::pair(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
         }
     }
 
@@ -592,6 +612,27 @@ impl Lub for CTyp {
                 }
             },
             (_, _) => Err(LubError::mul(&x, &y))
+        }
+    }
+
+    fn lub_pair(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+        match (x, y) {
+            (CTyp::Base(a), CTyp::Base(b)) =>
+                Ok(CTyp::Base(Tid::lub_pair(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?)),
+            // Vec<A> * Vec<B> = Vec<C> where C = A = B
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
+                if n == m {
+                    Ok(CTyp::vec(&CTyp::lub_pair(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::pair(&x, &y), e))?, *n))
+                } else {
+                    Err(LubError::pair(&x, &y))
+                },
+            // Vec<A> * c = Vec<A>
+            (a, CTyp::Vec(box b, n)) | (CTyp::Vec(box b, n), a) =>
+                Ok(CTyp::vec(&CTyp::lub_pair(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::pair(&x, &y), e))?, *n)),
+            (_, _) => Err(LubError::pair(&x, &y))
         }
     }
 
@@ -852,6 +893,9 @@ fn lub_tid() {
     assert_eq!(Tid::lub_mul(&s1, &g1, &ctx), Ok(g1.clone()));
     assert_eq!(Tid::lub_mul(&g2, &s2, &ctx), Ok(g2.clone()));
 
+    assert_eq!(Tid::lub_pair(&g1, &g2, &ctx), Ok(p.clone()));
+    assert_eq!(Tid::lub_pair(&g2, &g1, &ctx), Ok(p.clone()));
+
     assert_eq!(Tid::lub_div(&f, &f, &ctx), Ok(f.clone()));
     assert_eq!(Tid::lub_div(&s1, &s1, &ctx), Ok(s1.clone()));
     assert!(Tid::lub_div(&s1, &s2, &ctx).is_err());
@@ -908,6 +952,9 @@ fn lub_typ() {
     assert_eq!(CTyp::lub_add(&CTyp::uni(&f, 10), &CTyp::uni(&f, 11), &ctx), Ok(CTyp::uni(&f, 11)));
     assert_eq!(CTyp::lub_add(&CTyp::mle(&f, 10), &CTyp::mle(&f, 11), &ctx), Ok(CTyp::mle(&f, 11)));
     assert_eq!(CTyp::lub_add(&CTyp::vec(&tg1, 10), &CTyp::vec(&tg1, 10), &ctx), Ok(CTyp::vec(&tg1, 10)));
+
+    assert_eq!(CTyp::lub_pair(&tg1, &tg2, &ctx), Ok(tp.clone()));
+    assert_eq!(CTyp::lub_pair(&tg2, &tg1, &ctx), Ok(tp.clone()));
 
     assert_eq!(CTyp::lub_pow(&tf, &tr, &ctx), Ok(tf.clone()));
     assert_eq!(CTyp::lub_pow(&CTyp::vec(&tf, 10), &tr, &ctx), Ok(CTyp::vec(&tf, 10)));

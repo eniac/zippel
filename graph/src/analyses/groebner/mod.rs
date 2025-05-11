@@ -507,7 +507,6 @@ fn groebner_ex3() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
-    println!("============== PRE QUALIFIER PROPAGATION");
     let g = QualifierPropagation::from_dag(&gs[0]);
 
     // Create an object computing the Groebner basis

@@ -10,7 +10,8 @@ use costs::Benchmarker;
 use share::unwrap;
 use graph::{
     UDags,
-    analyses::{TransClos} //GroebnerBuilder}
+    analyses::{TransClos, GroebnerBuilder},
+    analyses::QualifierPropagation
 };
 
 #[derive(Parser, Debug)]
@@ -112,13 +113,14 @@ fn analyze(args: AnalyzeArgs) {
 
     assert!(args.subgraph < gs.len(), "Subgraph index out of bounds");
 
+    // Propagate qualifiers in the DAG to all children
+    let qg= QualifierPropagation::from_dag(&gs[args.subgraph]);
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&gs[args.subgraph]);
+    let mut groebner = GroebnerBuilder::from_input(&qg);
 
     // Compute the Groebner basis
-    groebner.run();
-    let leaks = groebner.get_leaks();
+    let leaks = groebner.run();
 
     println!("{}", groebner);
     if leaks.is_empty() {

@@ -19,6 +19,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const G_SCALAR_MUL: f64 = C::F::MODULUS_BIT_SIZE.pow(2) as f64;
     const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
     const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
+    const G_PAIR: f64 = 32.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
 
     pub fn new() -> Self {
@@ -108,6 +109,16 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (_, _) => unreachable!(),
         }
     }
+
+    pub fn cost_pair(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
+        match (lt, rt) {
+            (ATyp::Base(ABase::G1), ATyp::Base(ABase::G2)) => Self::G_PAIR,
+            (ATyp::Base(ABase::G2), ATyp::Base(ABase::G1)) => Self::G_PAIR,
+            (ATyp::Vec(box lt, n), ATyp::Vec(box rt, _)) =>
+                (*n as f64) * Self::cost_pair(lt, rt, nthreads) / (nthreads as f64),
+            (_, _) => unreachable!(),
+        }
+    }
 }
 
 impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
@@ -127,6 +138,11 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
                     (BinOp::Concat, _, _) => {},
                     _ => unreachable!(),
                 }
+            },
+            Op::Pair(box l, box r, _) => {
+                cost += self.cost(l, nthreads).0;
+                cost += self.cost(r, nthreads).0;
+                cost += Self::cost_pair(&l.typ(), &r.typ(), nthreads);
             },
             Op::Value(_)
             | Op::Ref(_, _)

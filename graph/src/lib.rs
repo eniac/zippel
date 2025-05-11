@@ -615,6 +615,22 @@ impl<C: ArkConfig> UDag<C> {
             // MLE is a noop?
             CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, vctx, vars),
 
+            // Billinear pairing
+            CExp::Pair(box a, box b) => {
+                a.infer(kctx, &fctx.keys(), vctx)?;
+                b.infer(kctx, &fctx.keys(), vctx)?;
+
+                let va = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ))
+                })?;
+
+                Ok(GOp::pair(va, vb, atyp))
+            },
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
                 let ta = a.infer(kctx, &fctx.keys(), vctx)?;
@@ -684,7 +700,6 @@ impl<C: ArkConfig> UDag<C> {
                 // Type of [e]
                 let te = e.infer(kctx, &fctx.keys(), vctx)?;
 
-                println!("Typechecked {} : {}", e, te);
                 // Op for [e]
                 let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, vctx, vars)?;
 

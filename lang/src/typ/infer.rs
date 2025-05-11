@@ -82,6 +82,9 @@ pub enum TypeError {
     #[error("FuncRetError: The return type of function {3} must be {4} but is found:\n\t{0}, {1} |- {2} : {5}")]
     FuncRet(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
 
+    #[error("PairError: Expected group pairing between two pairing-friendly curves:\n\t{0}, {1} |- pair({2}: {3}, {4} : {5})")]
+    Pair(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+
     #[error(transparent)]
     Unify(#[from] UnifyError),
 
@@ -162,6 +165,9 @@ impl<'a> TypeError {
     pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Vid, t: &CTyp, r: &CTyp) -> Self {
         TypeError::FuncRet(kctx.clone(), vctx.clone(), e.clone(), id.clone(), t.clone(), r.clone())
     }
+    pub fn pair(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &CExp, ta: &CTyp, e: &CExp, te: &CTyp) -> Self {
+        TypeError::Pair(kctx.clone(), vctx.clone(), t.clone(), ta.clone(), e.clone(), te.clone())
+    }
 }
 
 /// Type inference for [CExp]
@@ -239,6 +245,16 @@ impl Typeable for CExp {
 
                 // Generalize the type of the parameters
                 Ok(CTyp::vec(&t, n))
+            }
+
+            CExp::Pair(box t, box e) => {
+                let ta = t.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+                let tb = e.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
+
+                CTyp::lub_pair(&ta, &tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
             // Handle +
@@ -379,13 +395,10 @@ impl Typeable for CExp {
                         // Add variable [id] to the context with type [inner]
                         innerctx.insert(&id, &inner);
 
-                        println!("============= Type of {} : {}", id, inner);
-
                         // Type infer the expression [x] with the new context
                         let tx = x.infer(kctx, fctx, &mut innerctx)
                                 .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                        println!("============= Type of {} : {}", x, tx);
                         Ok(CTyp::vec(&tx, n))
                     },
                     _ => Err(TypeError::exp(kctx, vctx, self))

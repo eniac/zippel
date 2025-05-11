@@ -282,6 +282,74 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    #[inline]
+    pub fn value_pair(&self, other: &mut Self) {
+        match (self, &other) {
+            (Value::G1(a), Value::G2(b))
+            | (Value::G2(b), Value::G1(a)) => 
+                *other = Value::GT(C::POps::billinear_map(a, b)),
+            (Value::G1Affine(a), Value::G2Affine(b)) 
+            | (Value::G2Affine(b), Value::G1Affine(a)) => 
+                *other = Value::GT(C::POps::billinear_map(&(*a).into(), &(*b).into())),
+            (Value::G1(a), Value::G2Affine(b)) => 
+                *other = Value::GT(C::POps::billinear_map(a, &(*b).into())),
+            (Value::G2(a), Value::G1Affine(b)) => 
+                *other = Value::GT(C::POps::billinear_map(&(*b).into(), a)),
+            (Value::G1Affine(a), Value::G2(b)) => 
+                *other = Value::GT(C::POps::billinear_map(&(*a).into(), b)),
+            (Value::G2Affine(a), Value::G1(b)) => 
+                *other = Value::GT(C::POps::billinear_map(b, &(*a).into())),
+            // Vectors
+            (Value::VecG1(a), Value::VecG2(b)) =>
+                *other = Value::VecGT(C::POps::billinear_vec_mul(a, b)),
+            (Value::VecG2(b), Value::VecG1(a)) =>
+                *other = Value::VecGT(C::POps::billinear_vec_mul(a, b)),
+            (Value::VecG1Affine(a), Value::VecG2Affine(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &a.iter().map(|a| (*a).into()).collect(),
+                        &b.iter().map(|b| (*b).into()).collect()
+                    )
+                ),
+            (Value::VecG2Affine(a), Value::VecG1Affine(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &b.iter().map(|b| (*b).into()).collect(),
+                        &a.iter().map(|a| (*a).into()).collect()
+                    )
+                ),
+            (Value::VecG1(a), Value::VecG2Affine(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &a,
+                        &b.iter().map(|b| (*b).into()).collect()
+                    )
+                ),
+            (Value::VecG2(a), Value::VecG1Affine(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &b.iter().map(|b| (*b).into()).collect(),
+                        &a
+                    )
+                ),
+            (Value::VecG1Affine(a), Value::VecG2(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &a.iter().map(|a| (*a).into()).collect(),
+                        &b
+                    )
+                ),
+            (Value::VecG2Affine(a), Value::VecG1(b)) =>
+                *other = Value::VecGT(
+                    C::POps::billinear_vec_mul(
+                        &b,
+                        &a.iter().map(|b| (*b).into()).collect(),
+                    )
+                ),
+            _ => panic!("Cannot pair {} and {}", self, other)
+        }
+    }
+
     /// Value multiplication, saves result in other
     #[inline]
     pub fn value_mul(&self, other: &mut Self) {
@@ -366,9 +434,6 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::G1(a) =>
                 match &other {
-                    // Group1 * G2 = GT
-                    Value::G2(_) | Value::G2Affine(_) =>
-                        *other = Value::GT(C::POps::billinear_map(a, other.into_g2_mut())),
                     // Group1 * scalar multiplication
                     Value::Scalar(_) | Value::Index(_) => {
                         let mut group = C::G1Ops::vec_mul(a, &vec![other.into_scalar()]);
@@ -379,9 +444,6 @@ impl<C: ArkConfig> Value<C> {
                         let vr = other.into_vec_scalar_mut();
                         *other = Value::VecG1Affine(C::G1Ops::vec_mul(a, vr));
                     },
-                    // Group1 * Vec<G2>
-                    Value::VecG2(_) | Value::VecG2Affine(_) =>
-                        *other = Value::GT(C::POps::billinear_vec_mul(&vec![*a], other.into_vec_g2_mut())[0]),
                     // Group1 * Vec<T>
                     Value::Vec(_) =>
                         other.into_vec_mut().par_iter_mut()
@@ -390,9 +452,6 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::G2(a) =>
                 match &other {
-                    // G2 * Group1 = GT
-                    Value::G1(_) | Value::G1Affine(_) =>
-                        *other = Value::GT(C::POps::billinear_map(other.into_g1_mut(), a)),
                     // G2 * scalar multiplication
                     Value::Scalar(_) | Value::Index(_) => {
                         let vr = other.into_vec_scalar_mut();
@@ -403,9 +462,6 @@ impl<C: ArkConfig> Value<C> {
                         let vr = other.into_vec_scalar_mut();
                         *other = Value::VecG2Affine(C::G2Ops::vec_mul(a, vr));
                     },
-                    // G2 * Vec<Group1>
-                    Value::VecG1(_) | Value::VecG1Affine(_) =>
-                        *other = Value::GT(C::POps::billinear_vec_mul(other.into_vec_g1_mut(), &vec![*a])[0]),
                     // G2 * Vec<T>
                     Value::Vec(_) =>
                         other.into_vec_mut().par_iter_mut()
@@ -605,13 +661,6 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::VecG1(v) =>
                 match &other {
-                    // Vec<Group1> * G2 = Vec<GT>
-                    Value::G2(_) | Value::G2Affine(_) => {
-                        let g = other.into_g2_mut();
-                        *other = Value::VecGT(v.par_iter()
-                            .map(|a| C::POps::billinear_map(a, g))
-                            .collect())
-                    },
                     // Vec<Group1> * scalar multiplication
                     Value::Index(_) | Value::Scalar(_) => {
                         let a = other.into_scalar();
@@ -631,9 +680,6 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::G1Ops::mul(a, b));
                         *other = Value::VecG1(vr);
                     },
-                    // Vec<Group1> * Vec<G2>
-                    Value::VecG2(_)  | Value::VecG2Affine(_) =>
-                        *other = Value::VecGT(C::POps::billinear_vec_mul(v, other.into_vec_g2_mut())),
                     // Vec<Group1> * Vec<T>
                     Value::Vec(_) =>
                         v.par_iter()
@@ -643,13 +689,6 @@ impl<C: ArkConfig> Value<C> {
                 },
             Value::VecG2(v) =>
                 match &other {
-                    // Vec<G2> * Group1 = Vec<GT>
-                    Value::G1(_) | Value::G1Affine(_) => {
-                        let g = other.into_g1_mut();
-                        *other = Value::VecGT(v.par_iter()
-                            .map(|a| C::POps::billinear_map(g, a))
-                            .collect());
-                    },
                     // Vec<G2> * scalar multiplication
                     Value::Index(_) | Value::Scalar(_) => {
                         let a = other.into_scalar();
@@ -669,9 +708,6 @@ impl<C: ArkConfig> Value<C> {
                             .for_each(|(a, b)| C::G2Ops::mul(a, b));
                         *other = Value::VecG2(vr);
                     },
-                    // Vec<Group1> * Vec<G2>
-                    Value::VecG1(_) | Value::VecG1Affine(_) =>
-                        *other = Value::VecGT(C::POps::billinear_vec_mul(other.into_vec_g1_mut(), v)),
                     // Vec<G2> * Vec<T>
                     Value::Vec(_) =>
                         v.par_iter()
@@ -1624,6 +1660,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Dynamic casts
+    #[inline]
     pub fn into_scalar(&self) -> C::F {
         match self {
             Value::Scalar(f) => *f,
@@ -1631,6 +1668,7 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected scalar, found {}", self),
         }
     }
+    #[inline]
     pub fn into_scalar_mut(&mut self) -> &mut C::F {
         match self {
             Value::Scalar(f) => f,
@@ -1642,6 +1680,7 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    #[inline]
     pub fn into_g1_mut(&mut self) -> &mut C::G1 {
         match self {
             Value::G1(g) => g,
@@ -1652,6 +1691,8 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group1, found {}", self),
         }
     }
+
+    #[inline]
     pub fn into_g2_mut(&mut self) -> &mut C::G2 {
         match self {
             Value::G2(g) => g,
@@ -1662,12 +1703,14 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group2, found {}", self),
         }
     }
+    #[inline]
     pub fn into_gt_mut(&mut self) -> &mut PairingOutput<C::P> {
         match self {
             Value::GT(g) => g,
             _ => panic!("Expected mut groupt, found {}", self),
         }
     }
+    #[inline]
     pub fn into_g1_affine_mut(&mut self) -> &mut C::G1Affine {
         match self {
             Value::G1(g) => {
@@ -1678,6 +1721,7 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group1, found {}", self),
         }
     }
+    #[inline]
     pub fn into_g2_affine_mut(&mut self) -> &mut C::G2Affine {
         match self {
             Value::G2(g) => {
@@ -1688,6 +1732,7 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected mut group2, found {}", self),
         }
     }
+    #[inline]
     pub fn into_vec_scalar_mut(&mut self) -> &mut Vec<C::F> {
         match self {
             Value::VecScalar(v) => v,

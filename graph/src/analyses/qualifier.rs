@@ -21,12 +21,12 @@ impl QualifierPropagation {
             GOp::Ram(box a, _) => self.from_op(a),
             GOp::Coef(box a) => self.from_op(a),
             GOp::Eval(box a) => self.from_op(a),
-            GOp::Bin(_, box a, box b, _) => {
+            GOp::Bin(_, box a, box b, _) 
+            | GOp::Pair(box a, box b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
                 Some(qual_a.join(&qual_b))
-
-            }
+            },
             GOp::Vec(vs) => {
                 let mut qual = Qualifier::Public;
                 for v in vs {
