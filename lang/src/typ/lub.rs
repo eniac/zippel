@@ -806,18 +806,6 @@ impl Lub for CTyp {
                 // Add an element to the vector
                 Ok(CTyp::vec(&t, n + 1))
             },
-            (CTyp::Mle(t1, n), CTyp::Mle(t2, m)) => {
-                // Type [t1] and [t2] should be the same ([t])
-                let t = Tid::lub_equ(&t1, &t2, kctx)
-                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
-                // Add the sizes of the MLEs and pad to the next power of two
-                let (l, r) = log2((1 << n) + (1 << m));
-                if r == 1 {
-                    Ok(CTyp::mle(&t, l))
-                } else {
-                    Ok(CTyp::mle(&t, l + 1))
-                }
-            },
             (ta, tb) => Err(LubError::concat(&ta, &tb))
         }
     }

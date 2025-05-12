@@ -99,7 +99,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
 }
 
 
-proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 8>(
+proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 2>(
     // --- Public Inputs ---
     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)

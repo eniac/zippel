@@ -116,6 +116,8 @@ fn analyze(args: AnalyzeArgs) {
     // Propagate qualifiers in the DAG to all children
     let qg= QualifierPropagation::from_dag(&gs[args.subgraph]);
 
+    println!("\n\nQualifier propagation done");
+
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::from_input(&qg);
 

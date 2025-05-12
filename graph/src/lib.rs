@@ -236,6 +236,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
         // Add the transcript nodes (public) to the arguments
         for node in self.transcript_nodes() {
             if let Some(transcript_id) = self.find_var(node) {
+                if args.iter().any(|a|
+                    matches!(a.reference, Ref::Var(ref v, _) if v == &transcript_id)) {
+                    continue;
+                }
                 let transcript_pref =
                     PRef::from_var(transcript_id, NodeIndex::new(0),
                         self[node].clone().into_op().typ(),
@@ -771,60 +775,79 @@ impl<C: ArkConfig> UDag<C> {
             CExp::App(fid, params) => {
                 // type inference for each parameter
                 let param_types: CTyps = params.iter()
-                        .map(|p| p.infer(kctx, &fctx.keys(), vctx)).collect::<Result<_, _>>()?;
+                        .map(|p| p.infer(kctx, &fctx.keys(), vctx))
+                        .collect::<Result<_, _>>()?;
 
-                // Is it a polynomial or a function?
-                if let Some(CTyp::Uni(tbase, n)) = vctx.get(&fid) {
-                    // It is a polynomial
-                    let k = kctx.get(&tbase).unwrap();
+                // Is it a polynomial, MLE, or a function?
+                match vctx.get(&fid) {
+                    Some(CTyp::Uni(tbase, n)) => {
+                        // It is a polynomial
+                        let k = kctx.get(&tbase).unwrap();
 
-                    // Only field elements can be evaluated and only 1 argument can be given
-                    assert!(k.is_scalar());
-                    assert_eq!(param_types.len(), 1);
+                        // Only field elements can be evaluated and only 1 argument can be given
+                        assert!(k.is_scalar());
+                        assert_eq!(param_types.len(), 1);
 
-                    // Add the argument to the graph
-                    let x_pow = CExp::vec(
-                        (0..*n).map(|i| CExp::pow(params[0].clone(), i.into())).collect());
+                        // Add the argument to the graph
+                        let x_pow = CExp::vec(
+                            (0..*n).map(|i| CExp::pow(params[0].clone(), i.into()))
+                            .collect());
 
-                    let dot_exp = CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
-                    self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
-                } else {
-                    // It is a function. Find all matching functions in function context [fctx]
-                    let matching_sigs = fctx.iter().filter_map(|(sig, body)| {
-                        // If the function name matches
+                        // Polynomial evaluation by dot-product of coefficients with [x_pow]
+                        let dot_exp =
+                            CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
+                        self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                    },
+                    Some(CTyp::Mle(tbase, n)) => {
+                        // It is an MLE
+                        let k = kctx.get(&tbase).unwrap();
+
+                        // Only field elements can be evaluated and only 1 argument can be given
+                        assert!(k.is_scalar());
+                        assert_eq!(param_types.len(), 1);
+
+                        // Add the argument to the Graph
+                        // TODO: https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
+                        unimplemented!("MLE application")
+                    },
+                    _ => {
+                        // It is a function. Find all matching functions in function context [fctx]
+                        let matching_sigs = fctx.iter().filter_map(|(sig, body)| {
+                            // If the function name matches
                         if sig.name == fid {
-                            // The argument types must match the parameter types
-                            let (sig, subs) = sig.clone()
-                                .unify(&param_types, &kctx)
-                                .ok()?;
-                            // Return new signature
-                            Some((sig, body, subs))
-                        } else {
-                            None
-                        }
-                    }).collect::<Vec<_>>();
+                                // The argument types must match the parameter types
+                                let (sig, subs) = sig.clone()
+                                    .unify(&param_types, &kctx)
+                                    .ok()?;
+                                // Return new signature
+                                Some((sig, body, subs))
+                            } else {
+                                None
+                            }
+                        }).collect::<Vec<_>>();
 
-                    // Only one function shoud match (enforced by the type system)
-                    assert_eq!(matching_sigs.len(), 1);
-                    let triple = matching_sigs[0].clone();
-                    let sig = triple.0;
-                    let mut body = triple.1.clone();
-                    let subs = triple.2;
-                    subs.tid_subst(&mut body);
+                        // Only one function shoud match (enforced by the type system)
+                        assert_eq!(matching_sigs.len(), 1);
+                        let triple = matching_sigs[0].clone();
+                        let sig = triple.0;
+                        let mut body = triple.1.clone();
+                        let subs = triple.2;
+                        subs.tid_subst(&mut body);
 
-                    // First add the arguments to the graph
-                    let oparams: Vec<GOp<C>> = params.into_iter()
-                    .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
-                    .collect::<Result<_, _>>()?;
+                        // First add the arguments to the graph
+                        let oparams: Vec<GOp<C>> = params.into_iter()
+                        .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
+                        .collect::<Result<_, _>>()?;
 
-                    // Create a new context
-                    let vctx = sig.args.to_ctx();
-                    let vars =
-                        sig.args.iter().zip(oparams.iter())
-                        .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
+                        // Create a new context
+                        let vctx = sig.args.to_ctx();
+                        let vars =
+                            sig.args.iter().zip(oparams.iter())
+                            .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
 
-                    // Add the body to the graph
-                    self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
+                        // Add the body to the graph
+                        self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
+                    }
                 }
             },
             CExp::Let(Some(id), box l, box r) => {

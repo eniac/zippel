@@ -1,11 +1,14 @@
 pub mod buchberger;
 pub use buchberger::GroebnerBasis;
 
+pub mod sparsepoly;
+pub use sparsepoly::{LexDegTerm, SparsePolynomial};
+
 use crate::{GOp, Op, Ref};
 use lang::typ::{Qualifier, Range};
 use lang::ast::BinOp;
 use crate::QDag;
-use crate::analyses::{TransClos, LexDegTerm, SparsePolynomial};
+use crate::analyses::TransClos;
 use crate::pref::{PRef, LexTerm};
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};

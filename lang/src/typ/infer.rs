@@ -43,6 +43,9 @@ pub enum TypeError {
     #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n\t{0}, {1} |- mle {2}")]
     Mle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
+    #[error("MleError: Must apply MLE to a scalar or vector of scalars:\n\t{0}, {1} |- {2} ( {3} : {4} )")]
+    MleApp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+
     #[error("MapError: Arguments to [for] must be a vector type:\n\t{0}, {1} |- [{2} for {3} in {4}]")]
     Map(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CExp),
 
@@ -125,6 +128,9 @@ impl<'a> TypeError {
     }
     pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn mle_app(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, t: &CTyps) -> Self {
+        TypeError::MleApp(kctx.clone(), vctx.clone(), id.clone(), e.clone(), t.clone())
     }
     pub fn map(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: Vid, r: CExp) -> Self {
         TypeError::Map(kctx.clone(), vctx.clone(), e, id, r)
@@ -497,56 +503,91 @@ impl Typeable for CExp {
                         .map(|p| p.infer(kctx, fctx, vctx)).collect::<Result<_, _>>()
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Is it a polynomial or a function?
-                if let Some(CTyp::Uni(tbase, _)) = vctx.get(&id) {
-                    // It is a polynomial
-                    let k = kctx.get(&tbase).ok_or(
+                // Is it a polynomial, MLE, or a function?
+                match vctx.get(&id) {
+                    Some(CTyp::Uni(tbase, _)) => {
+                        // It is a polynomial
+                        let k = kctx.get(&tbase).ok_or(
                         TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tbase)))?;
 
-                    // Only field elements can be evaluated and only 1 argument can be given
-                    if !k.is_scalar()|| param_types.len() != 1 {
-                        return Err(TypeError::uni(kctx, vctx, id, params, &param_types))
-                    }
+                        // Only field elements can be evaluated and only 1 argument can be given
+                        if !k.is_scalar()|| param_types.len() != 1 {
+                          return Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                        }
 
-                    // The argument must be a field and the same as the polynomial
-                    if let Some(tb) = param_types.0[0].clone().to_scalar(kctx) {
-                        if &tb == tbase {
-                            // The polynomial is a field
-                            Ok(CTyp::base(tbase))
+                        // The argument must be a field and the same as the polynomial
+                        if let Some(tb) = param_types.0[0].clone().to_scalar(kctx) {
+                            if &tb == tbase {
+                                // The polynomial is a field
+                                Ok(CTyp::base(tbase))
+                            } else {
+                                Err(TypeError::uni(kctx, vctx, id, params, &param_types))
+                            }
                         } else {
                             Err(TypeError::uni(kctx, vctx, id, params, &param_types))
                         }
-                    } else {
-                        Err(TypeError::uni(kctx, vctx, id, params, &param_types))
                     }
-                } else {
-                    // It is a function
-                    // Find all matching functions in function context [fctx]
-                    let matching_sigs = fctx.iter().filter_map(|sig| {
-                        // If the function name matches
-                        if &sig.name == id {
-                            // The argument types must match the parameter types
-                            let (vs, _) = sig.clone()
-                                .unify(&param_types, &kctx)
-                                .ok()?;
-                            // Return new signature
-                            Some(vs)
-                        } else {
-                            None
+                    Some(CTyp::Mle(tbase, n)) => {
+                        // It is an MLE
+                        let k = kctx.get(&tbase).ok_or(
+                            TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tbase)))?;
+                        // Only field elements can be evaluated and only 1 argument can be given
+                        if !k.is_scalar()|| param_types.len() != 1 {
+                            return Err(TypeError::mle_app(kctx, vctx, id, params, &param_types))
                         }
-                    }).collect::<Vec<_>>();
 
-                    // Only one function shoud match
-                    if matching_sigs.len() != 1 {
-                        Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::app_multiple(fctx, id, param_types)))
-                    } else {
-                        let sig = &matching_sigs[0];
-                        Ok(sig.ret.clone())
+                        // The argument must be a field and the same as the MLE
+                        match param_types.0[0].clone() {
+                            CTyp::Fin(r) if *n > 0 => 
+                                // Mle<F, n-1>
+                                Ok(CTyp::mle(tbase, n - 1)),
+                            CTyp::Base(tb) if &tb == tbase && *n > 0 => 
+                                // Mle<F, n-1>
+                                Ok(CTyp::mle(tbase, n - 1)),
+                            CTyp::Vec(box CTyp::Base(tb), m) if &tb == tbase && *n == m =>
+                                // Mle<F, n-1>
+                                Ok(CTyp::base(tbase)),
+                            CTyp::Vec(box CTyp::Fin(_), m) if *n == m =>
+                                // Mle<F, n-1>
+                                Ok(CTyp::base(tbase)),
+                            CTyp::Vec(box CTyp::Fin(_), m) if *n > m =>
+                                // Mle<F, n - m>
+                                Ok(CTyp::mle(tbase, n - m)),
+                            CTyp::Vec(box CTyp::Base(tb), m) if &tb == tbase && *n > m =>
+                                // Mle<F, n - m>
+                                Ok(CTyp::mle(tbase, n - m)),
+                            _ => Err(TypeError::mle_app(kctx, vctx, id, params, &param_types))
+                        }
+                    }
+                    _ => {
+                        // It is a function
+                        // Find all matching functions in function context [fctx]
+                        let matching_sigs = fctx.iter().filter_map(|sig| {
+                            // If the function name matches
+                            if &sig.name == id {
+                                // The argument types must match the parameter types
+                                let (vs, _) = sig.clone()
+                                    .unify(&param_types, &kctx)
+                                    .ok()?;
+                                // Return new signature
+                                Some(vs)
+                            } else {
+                                None
+                            }
+                        }).collect::<Vec<_>>();
+
+                        // Only one function shoud match
+                        if matching_sigs.len() != 1 {
+                            Err(TypeError::next(TypeError::exp(kctx, vctx, self), TypeError::app_multiple(fctx, id, param_types)))
+                        } else {
+                            let sig = &matching_sigs[0];
+                            Ok(sig.ret.clone())
+                        }
                     }
                 }
             }
 
-            CExp::Assert(box a) | CExp::Verify(box a)=> {
+            CExp::Assert(box a) | CExp::Verify(box a) => {
                 let t = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
 
@@ -645,7 +686,7 @@ mod tests {
             // Add variable "p" of type "Uni<F, 5>"
             vctx.insert(&Vid::from("p"), &CTyp::Uni(Tid::from("F"), 5));
             // Add variable "m" of type "Mle<F, 3>"
-            vctx.insert(&Vid::from("m"), &CTyp::Mle(Tid::from("F"), 3));
+            vctx.insert(&Vid::from("m"), &CTyp::Mle(Tid::from("F"), 8));
             vctx
         };
     }
@@ -943,12 +984,6 @@ mod tests {
             CExp::concat(CExp::varstr("f2"), CExp::varstr("v2"));
         assert_eq!(fv2_concat.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 5)));
-
-        // Create expression m ++ m
-        let mle_concat =
-            CExp::concat(CExp::varstr("m"), CExp::varstr("m"));
-        assert_eq!(mle_concat.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Mle(Tid::from("F"), 4)));
     }
 
     // Test for equality
@@ -1125,6 +1160,15 @@ mod tests {
 
         let uni_app_vec = CExp::app("p".into(), Exps::from([CExp::varstr("v1")]));
         assert!(uni_app_vec.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // A MLE application to scalar and vector of scalars
+        let mle_app = CExp::app("m".into(), Exps::from([CExp::lit(1)]));
+        assert_eq!(mle_app.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Mle(Tid::from("F"), 7)));
+
+        let mle_app_vec = CExp::app("m".into(), Exps::from([CExp::varstr("v1")]));
+        assert_eq!(mle_app_vec.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Mle(Tid::from("F"), 3)));
     }
 
     // Test for random access

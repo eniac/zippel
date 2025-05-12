@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Index;
 
-use crate::analyses::sparsepoly::{Var, Monomial, SparsePolynomial};
+use crate::analyses::groebner::sparsepoly::{Var, Monomial, SparsePolynomial};
 use share::Ctx;
 use ark_ff::AdditiveGroup;
 use log::debug;
@@ -311,10 +311,10 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
 #[cfg(test)]
 mod groebner_test {
     use ark_bls12_381::Fr as Fp; // Using a prime field
-        use super::*;
-        use ark_ff::One;
-        use share::assert_deq;
-    use crate::analyses::LexDegTerm;
+    use super::*;
+    use ark_ff::One;
+    use share::assert_deq;
+    use crate::analyses::groebner::LexDegTerm;
 
     // For testing we have concrete variables and monomial terms
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

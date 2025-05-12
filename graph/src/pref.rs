@@ -5,7 +5,7 @@ use backend::ArkConfig;
 use crate::{GOp, Op, Ref};
 use lang::typ::{Kind, Qualifier};
 use lang::id::Tid;
-use crate::analyses::{Var, LexDegTerm};
+use crate::analyses::groebner::sparsepoly::{Var, LexDegTerm};
 
 use backend::{Value, ATyp};
 use std::fmt;
