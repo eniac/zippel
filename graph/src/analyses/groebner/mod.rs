@@ -57,7 +57,7 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
     pub fn find_ref(&self, r: &Ref) -> PRef {
         self.vars.iter()
         .find(|v| v.0.reference == *r)
-        .map(|v| v.0.clone())
+        .map(|(v, _)| v.clone())
         .or_else(|| self.args.iter()
             .find(|v| v.id() == r.var() && v.id().is_some())
             .map(|v| v.clone()))
@@ -497,6 +497,7 @@ fn groebner_schnorr() {
     }
 }
 
+#[cfg(test)] use crate::WritePdf;
 /// This example is somewhat contrived. Here is how we leak s = s'.
 /// 1. We have two private inputs s and s'.
 /// 2. a - b = s - s'

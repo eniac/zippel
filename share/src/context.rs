@@ -392,6 +392,10 @@ impl<V: Ord> Set<V> {
         self.0.first()
     }
 
+    pub fn is_disjoint(&self, other: &Set<V>) -> bool {
+        self.0.is_disjoint(&other.0)
+    }
+
     pub fn last(&self) -> Option<&V> {
         self.0.last()
     }

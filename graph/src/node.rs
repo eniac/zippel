@@ -22,12 +22,9 @@ pub enum Node<C: ArkConfig, A> {
 
 impl<C: ArkConfig, N> Node<C, N> {
     pub fn is_op(&self) -> bool {
-        match self {
-            Node::Op(_, _) => true,
-            Node::Transcr(_, _) => true,
-            _ => false,
-        }
+        self.op().is_some()
     }
+
     pub fn is_input(&self) -> bool {
         match self {
             Node::Inp(_, _) => true,
@@ -38,6 +35,14 @@ impl<C: ArkConfig, N> Node<C, N> {
         match self {
             Node::Rel(_, _) => true,
             _ => false,
+        }
+    }
+
+    pub fn op(&self) -> Option<&GOp<C>> {
+        match self {
+            Node::Op(op, _) => Some(op),
+            Node::Transcr(op, _) => Some(op),
+            _ => None,
         }
     }
 
@@ -88,6 +93,15 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Inp(_, sig) => Some(sig.clone()),
             Node::Rel(_, sig) => Some(sig.clone()),
             _ => None,
+        }
+    }
+
+    pub fn add_annotation<M>(&self, ann: M) -> Node<C, (N, M)> where N: Clone {
+        match self {
+            Node::Op(op, n) => Node::Op(op.clone(), (n.clone(), ann)),
+            Node::Transcr(op, n) => Node::Transcr(op.clone(), (n.clone(), ann)),
+            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
+            Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
         }
     }
 }

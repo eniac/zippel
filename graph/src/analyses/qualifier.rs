@@ -84,7 +84,7 @@ impl QualifierPropagation {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::UDags;
+#[cfg(test)] use crate::{WritePdf, UDags};
 #[cfg(test)] use share::unwrap;
 #[test]
 fn qualifier_prop() {

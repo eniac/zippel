@@ -46,7 +46,9 @@ impl PRef {
     pub fn is_uniform(&self) -> bool {
         self.distribution == Distribution::Uniform
     }
-
+    pub fn is_uniform_nz(&self) -> bool {
+        self.distribution == Distribution::UniformNonZero
+    }
  
     pub fn node(&self) -> NodeIndex {
         match self.reference {
@@ -79,6 +81,8 @@ impl PRef {
             format!("{} {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
         } else if self.distribution.is_uniform() {
             format!("{} uniform {}: {}", self.qualifier, self.reference, self.typ)
+        } else if self.distribution.is_uniform_nz() {
+            format!("{} uniform* {}: {}", self.qualifier, self.reference, self.typ)
         } else {
             format!("{} {}: {}", self.qualifier, self.reference, self.typ)
         }
@@ -100,16 +104,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        if self.typ.size() > 1 {
-            allocator.concat([
-                self.reference.pretty(allocator),
-                allocator.text("["),
-                allocator.text(self.index.to_string()),
-                allocator.text("]"),
-            ])
-        } else {
-            self.reference.pretty(allocator)
-        }
+        allocator.text(self.verbose())
     }
 
     fn is_nil(&self) -> bool {

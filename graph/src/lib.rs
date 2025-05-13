@@ -15,7 +15,7 @@ pub use pref::{PRef, LexTerm};
 pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};
-use share::{traversal::ToTraversal1, Ctx};
+use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Vid, Tid};
 use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
@@ -42,11 +42,15 @@ pub type UDag<C> = Dag<C, Nothing>;
 /// Dag with qualifiers
 pub type QDag<C> = Dag<C, Qualifier>;
 
+/// Dag with qualifiers and distributions
+pub type DQDag<C> = Dag<C, (Qualifier, Distribution)>;
+
 /// A collection of dags
 #[derive(Clone)]
 pub struct Dags<C: ArkConfig, A>(Vec<Dag<C, A>>);
 pub type UDags<C> = Dags<C, Nothing>;
 pub type QDags<C> = Dags<C, Qualifier>;
+pub type DQDags<C> = Dags<C, (Qualifier, Distribution)>;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum GraphError {
@@ -56,6 +60,11 @@ pub enum GraphError {
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
     Type(#[from] TypeError)
+}
+
+/// A trait for writing a graph to a PDF file
+pub trait WritePdf {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()>;
 }
 
 impl GraphError {
@@ -90,6 +99,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.node_indices().find(|n| self.0[*n].is_relation())
     }
 
+    pub fn op_nodes(&self) -> Vec<NodeIndex> {
+        self.0.node_indices().filter(|n| self[*n].is_op()).collect()
+    }
+
     pub fn args(&self) -> Vec<PRef> {
         match &self[self.input_node()] {
             Node::Inp(_, args) => args.clone(),
@@ -115,6 +128,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
                     self.add_edge(i, sink, Dep::new(edge_type, Some(v))),
             }
         });
+    }
+
+    /// Returns the reachable nodes (transitive, reflexive closure) from [n] in [direction]
+    pub fn trc(&self, n: NodeIndex, direction: Direction) -> Set<NodeIndex> {
+        let mut closure = Set::new();
+        let mut worklist = vec![n];
+
+        while let Some(n) = worklist.pop() {
+            if closure.contains(&n) {
+                continue;
+            }
+            closure.insert(n);
+            for neighbor in self.0.neighbors_directed(n, direction) {
+                worklist.push(neighbor);
+            }
+        }
+        closure
     }
 
     /// Add a node to the graph (no deduplication)
@@ -148,7 +178,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Annotate the graph using function [f]
-    pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: F) -> Dag<C, B> {
+    pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dag<C, B> {
         Dag(self.0.map(
             |_, node|
                 match node {
@@ -385,12 +415,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
         Dag(combined_graph)
     }
+}
 
+/// Write graphs with string annotations to PDF
+impl<C: ArkConfig> WritePdf for Dag<C, String> {
     /// Write graph to PDF
-    pub fn write_pdf<'a>(&self, filename: &str) -> std::io::Result<()>
-    where
-        A: Clone + fmt::Display
-    {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
         // Write graphviz file
         let fdot: String = format!("{}.dot", filename.to_string());
         // Remove old file if there
@@ -437,6 +467,52 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 }
 
+impl<C: ArkConfig> WritePdf for UDag<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, _| "".to_string()).write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for QDag<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, q| q.to_string()).write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for DQDag<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, (q, d)| format!("{} {}", q, d)).write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for Dags<C, String> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        let mut joined_graph = Dag::new();
+        for g in self.0.iter() {
+            joined_graph = joined_graph.combine_dag(g);
+        }
+        joined_graph.write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for UDags<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, _| "".to_string()).write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for QDags<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, q| q.to_string()).write_pdf(filename)
+    }
+}
+
+impl<C: ArkConfig> WritePdf for DQDags<C> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, (q, d)| format!("{} {}", q, d)).write_pdf(filename)
+    }
+}
+
 /// A collection of DAGs
 impl<C: ArkConfig, A> Dags<C, A> {
     pub fn new() -> Self {
@@ -445,15 +521,6 @@ impl<C: ArkConfig, A> Dags<C, A> {
 
     pub fn pop(&mut self) -> Option<Dag<C, A>> {
         self.0.pop()
-    }
-
-    /// Write graph to PDF
-    pub fn write_pdf<'a>(&self, filename: &str) -> std::io::Result<()> where A: Clone + fmt::Display {
-        let mut joined_graph = Dag::new();
-        for g in self.0.iter() {
-            joined_graph = joined_graph.combine_dag(g);
-        }
-        joined_graph.write_pdf(filename)
     }
 
     pub fn len(&self) -> usize {
@@ -476,6 +543,11 @@ impl<C: ArkConfig, A> Dags<C, A> {
 
     pub fn functions(&self) -> Vec<&Dag<C, A>> {
         self.0.iter().filter(|g| !g.find_check().is_some()).collect()
+    }
+
+    /// Annotate all graphs using function [f]
+    pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dags<C, B> {
+        Dags(self.0.iter().map(|g| g.map_annotations(f)).collect())
     }
 }
 

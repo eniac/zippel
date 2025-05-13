@@ -16,11 +16,53 @@ impl Distribution {
     pub fn is_uniform(&self) -> bool {
         matches!(self, Distribution::Uniform)
     }
-    pub fn is_uniform_nonzero(&self) -> bool {
+    pub fn is_uniform_nz(&self) -> bool {
         matches!(self, Distribution::UniformNonZero)
     }
     pub fn is_nonuniform(&self) -> bool {
         matches!(self, Distribution::Nonuniform)
+    }
+
+    // Assumes independence, adding two distributions
+    pub fn add(&self, other: &Distribution) -> Distribution {
+        match (self, other) {
+            (Distribution::Uniform, Distribution::UniformNonZero) 
+            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
+            (Distribution::Uniform, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
+            (a, b) if a == b => *a,
+            (_, _) => Distribution::Nonuniform,
+        }
+    }
+
+    pub fn sub(&self, other: &Distribution) -> Distribution {
+        match (self, other) {
+            (Distribution::Uniform, Distribution::UniformNonZero) 
+            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
+            (Distribution::Uniform, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
+            (a, b) if a == b => *a,
+            (_, _) => Distribution::Nonuniform,
+        }
+    }
+
+    // Assumes independence, multiplying two distributions
+    pub fn mul(&self, other: &Distribution) -> Distribution {
+        match (self, other) {
+            (Distribution::Uniform, Distribution::UniformNonZero) 
+            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::Uniform,
+            (Distribution::Uniform, Distribution::Uniform) => Distribution::Nonuniform,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::UniformNonZero,
+            (_, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, _) => Distribution::Nonuniform,
+        }
+    }
+
+    pub fn inv(&self) -> Distribution {
+        match self {
+            Distribution::UniformNonZero => Distribution::Uniform,
+            _ => Distribution::Nonuniform,
+        }
     }
 }
 

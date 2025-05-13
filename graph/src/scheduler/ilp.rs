@@ -4,7 +4,7 @@ use grb::ModelSense::Minimize;
 use grb::{add_binvar, add_intvar, attr, c, Expr, Model, Status, Var};
 use petgraph::algo;
 
-use crate::{Dag, UDag, Ref, Node};
+use crate::{Dag, UDag, Ref, Node, WritePdf};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};
 
 #[derive(Debug)]
@@ -23,6 +23,12 @@ pub struct GurobiScheduler {
     num_tasks: usize,
     cost_map: Vec<Vec<f64>>,
     flow_map: Vec<Vec<bool>>,
+}
+
+impl<C: ArkConfig> WritePdf for Dag<C, ThreadAlloc> {
+    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+        self.map_annotations(&|_, a| a.to_string()).write_pdf(filename)
+    }
 }
 
 impl GurobiScheduler {
@@ -314,9 +320,10 @@ fn gurobi_e2e() {
     // Create a new Gurobi ILP solver
     let solver = GurobiScheduler::new(4, &g, &cost_model);
 
-    // Show the costs of the operations in the DAG
-    g.map_annotations(|op, _|
-        (1..5).map(|i| (i, cost_model.cost(op, i))).collect::<Ctx<_, _>>()
+    g.map_annotations(&|op, _|
+        (1..5).map(|i| format!("{}: {}", i, cost_model.cost(op, i)))
+        .collect::<Vec<_>>()
+        .join(", ")
     ).write_pdf("ilp_test").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });

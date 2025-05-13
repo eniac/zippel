@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
+use graph::WritePdf;
 
 use lang::ast::UModule;
 use backend::ArkBls12_381;
