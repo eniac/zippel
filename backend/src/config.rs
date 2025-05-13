@@ -1,7 +1,7 @@
 use core::hash::Hasher;
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::ProverState;
+use spongefish::{BytesToUnitSerialize, ProverState, UnitToBytes};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -21,7 +21,9 @@ use crate::nothing::{NoCurve, NoPairing};
 // use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
-pub trait ArkConfig: Clone + Copy + Send + Sync + 'static + Eq + PartialEq + Ord + PartialOrd + fmt::Display + Hash {
+pub trait ArkConfig:
+    Clone + Copy + Send + Sync + 'static + Eq + PartialEq + Ord + PartialOrd + fmt::Display + Hash
+{
     type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
     type G2: CurveGroup<ScalarField = Self::F, Affine = Self::G2Affine>;
@@ -185,10 +187,10 @@ pub trait ArkScalarOps<F: PrimeField> {
         F::rand(rng)
     }
 
-    #[inline]
-    fn hash(f: &F, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(f).unwrap());
-        unimplemented!("hash not implemented");
+    fn challenge(state: &mut ProverState) -> F {
+        let challenge_bytes: [u8; 64] = state.challenge_bytes().unwrap();
+        state.add_bytes(&challenge_bytes).unwrap();
+        F::from_le_bytes_mod_order(&challenge_bytes)
     }
 
     #[inline]
@@ -196,12 +198,6 @@ pub trait ArkScalarOps<F: PrimeField> {
         let mut v = vec![Self::zero(); n];
         v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
-    }
-
-    #[inline]
-    fn vec_hash(f: &Vec<F>, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(f).unwrap());
-        unimplemented!("vec_hash not implemented");
     }
 
     #[inline]
@@ -242,22 +238,14 @@ pub trait ArkGroupOps<G: CurveGroup> {
     fn rand<R: Rng + ?Sized>(rng: &mut R) -> G {
         G::rand(rng)
     }
-    #[inline]
-    fn hash(g: &G, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(g).unwrap());
-        unimplemented!("hash not implemented");
-    }
+
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<G> {
         let mut v = vec![Self::zero(); n];
         v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
     }
-    #[inline]
-    fn vec_hash(g: &Vec<G>, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(g).unwrap());
-        unimplemented!("vec_hash not implemented");
-    }
+
     /// Group vec operations
     #[inline]
     fn vec_mul(g: &G, f: &Vec<G::Scalar>) -> Vec<G::MulBase> {
@@ -306,22 +294,14 @@ pub trait ArkPairingOps<P: Pairing> {
     fn rand<R: Rng + ?Sized>(rng: &mut R) -> PairingOutput<P> {
         PairingOutput::rand(rng)
     }
-    #[inline]
-    fn hash(g: &PairingOutput<P>, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(g).unwrap());
-        unimplemented!("hash not implemented");
-    }
+
     #[inline]
     fn vec_rand<R: Rng + ?Sized>(rng: &mut R, n: usize) -> Vec<PairingOutput<P>> {
         let mut v = vec![Self::zero(); n];
         v.iter_mut().for_each(|x| *x = Self::rand(rng));
         v
     }
-    #[inline]
-    fn vec_hash(g: &Vec<PairingOutput<P>>, state: &mut ProverState) {
-        // state.add_bytes(to_bytes!(g).unwrap());
-        unimplemented!("vec_hash not implemented");
-    }
+
     /// Group vec operations
     #[inline]
     fn vec_mul(g: &PairingOutput<P>, f: &Vec<P::ScalarField>) -> Vec<PairingOutput<P>> {
@@ -587,3 +567,14 @@ pub type F17 = Fp64<F17Config>;
 #[generator = "3"]
 pub struct F65537Config;
 pub type F65537 = Fp64<F65537Config>;
+
+/// Takes as input a struct, and converts them to a series of bytes. All traits
+/// that implement `CanonicalSerialize` can be automatically converted to bytes
+/// in this manner.
+#[macro_export]
+macro_rules! to_bytes {
+    ($x:expr) => {{
+        let mut buf = ark_std::vec![];
+        ark_serialize::CanonicalSerialize::serialize_compressed($x, &mut buf).map(|_| buf)
+    }};
+}

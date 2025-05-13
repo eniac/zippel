@@ -1136,6 +1136,7 @@ dependencies = [
  "rayon",
  "serial_test",
  "share",
+ "spongefish",
  "thiserror 2.0.12",
 ]
 

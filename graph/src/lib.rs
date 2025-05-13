@@ -6,6 +6,7 @@ mod op;
 pub mod analyses;
 pub mod scheduler;
 pub mod pref;
+pub mod domain_seperator;
 
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
