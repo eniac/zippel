@@ -39,7 +39,9 @@ where
         match &node {
             crate::Node::Inp(c, prefs) => {
                 for pref in prefs.clone() {
-                    self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,pref.typ);
+                    if pref.qualifier.is_public() {
+                        self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,pref.typ);
+                    }
                 }
             }
             _ => {
@@ -53,8 +55,10 @@ where
         match &node {
             crate::Node::Transcr(c, _) => match c {
                 crate::Op::Challenge(c_typ, _) => {
-                    self =
-                        self.add_bytes(C::F::default().compressed_size(), &format!("chall{}", label));
+                    self = self.add_bytes(
+                        C::F::default().compressed_size(),
+                        &format!("chall{}", label),
+                    );
                 }
                 _ => {
                     let typ: ATyp = c.typ();
