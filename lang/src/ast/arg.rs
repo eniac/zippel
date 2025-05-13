@@ -59,6 +59,12 @@ impl<T, N> Arg<T, N> {
     pub fn private_uniform<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
         Arg { qualifier: Qualifier::Private, distribution: Distribution::Uniform, id : Vid::new(id), typ }
     }
+    pub fn public_uniform_nz<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier: Qualifier::Public, distribution: Distribution::UniformNonZero, id : Vid::new(id), typ }
+    }
+    pub fn private_uniform_nz<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+        Arg { qualifier: Qualifier::Private, distribution: Distribution::UniformNonZero, id : Vid::new(id), typ }
+    }
     pub fn is_private(&self) -> bool {
         self.qualifier.is_private()
     }
@@ -299,8 +305,12 @@ fn arg_parser() {
         ]))
     );
 
-    let ex3 = "a: F";
-    let mut pairs = ZippelParser::parse(Rule::arg, ex3).unwrap();
+    let ex = "public uniform* a: F";
+    let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
+    assert_eq!(Arg::from_pest(&mut pairs), Ok(Arg::public_uniform_nz("a", Typ::varstr("F"))));
+
+    let ex = "a: F";
+    let mut pairs = ZippelParser::parse(Rule::arg, ex).unwrap();
     assert_eq!(Arg::from_pest(&mut pairs), Ok(Arg::public("a", Typ::varstr("F"))));
 }
 

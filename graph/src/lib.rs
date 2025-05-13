@@ -11,6 +11,7 @@ pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
 pub use pref::{PRef, LexTerm};
+pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Ctx};
@@ -88,17 +89,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.node_indices().find(|n| self.0[*n].is_relation())
     }
 
-    pub fn input_args(&self) -> Vec<PRef> {
+    pub fn args(&self) -> Vec<PRef> {
         match &self[self.input_node()] {
             Node::Inp(_, args) => args.clone(),
+            Node::Rel(_, args) => args.clone(),
             _ => unreachable!("All Dags should have an input node")
-        }
-    }
-
-    pub fn rel_args(&self) -> Option<Vec<PRef>> {
-        match &self[self.relation_node()?] {
-            Node::Rel(_, args) => Some(args.clone()),
-            _ => None
         }
     }
 
@@ -151,6 +146,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         self.0.node_indices().last().unwrap()
     }
 
+    /// Annotate the graph using function [f]
     pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: F) -> Dag<C, B> {
         Dag(self.0.map(
             |_, node|
@@ -169,12 +165,14 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .find(|edge| edge.weight().is_transcript())
     }
 
+    /// Get all transcript node from the graph
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
         self.0.node_indices()
             .filter(|n| self[*n].is_transcript())
             .collect()
     }
 
+    /// Get the prover graph, by reachability analysis starting from the transcript nodes
     pub fn get_prover(&self) -> Dag<C, A> where A: Clone {
         let mut prover = Dag::new();
         // Add all nodes to the prover graph
@@ -220,6 +218,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         prover
     }
 
+    /// Get the verifier graph, by reachability analysis starting from the verifier assertion
+    /// and stopping at transcript nodes.
     pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError> where A: Clone + fmt::Display {
         let mut verifier = Dag::new();
 
@@ -298,12 +298,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Ok(verifier)
     }
 
-    /// Get the verifier assertion
+    /// Get the verifier assertion, a check node with no outgoing edges
     pub fn find_check(&self) -> Option<NodeIndex> {
         self.node_indices()
             .find_map(|n| match self[n] {
                 Node::Op(Op::Check(_), _)
-                | Node::Transcr(Op::Check(_), _) => Some(n),
+                | Node::Transcr(Op::Check(_), _) if self.nodes_from(n).count() == 0 => Some(n),
                 _ => None
             })
     }
@@ -436,13 +436,14 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 }
 
+/// A collection of DAGs
 impl<C: ArkConfig, A> Dags<C, A> {
     pub fn new() -> Self {
         Dags(Vec::new())
     }
 
-    pub fn pop(&mut self) -> Dag<C, A> {
-        self.0.pop().expect("No graph found")
+    pub fn pop(&mut self) -> Option<Dag<C, A>> {
+        self.0.pop()
     }
 
     /// Write graph to PDF
@@ -457,8 +458,27 @@ impl<C: ArkConfig, A> Dags<C, A> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    /// A protocol has a verifier assertion
+    pub fn get_proto(&self, name: &Vid) -> Option<&Dag<C, A>> {
+        self.protocols().into_iter().find(|g| g[g.input_node()].name() == Some(name)) 
+    }
+
+    /// A function has no verifier assertion
+    pub fn get_function(&self, name: &Vid) -> Option<&Dag<C, A>> {
+        self.functions().into_iter().find(|g| g[g.input_node()].name() == Some(name)) 
+    }
+
+    pub fn protocols(&self) -> Vec<&Dag<C, A>> {
+        self.0.iter().filter(|g| g.find_check().is_some()).collect()
+    }
+
+    pub fn functions(&self) -> Vec<&Dag<C, A>> {
+        self.0.iter().filter(|g| !g.find_check().is_some()).collect()
+    }
 }
 
+/// A collection of DAGs without annotations
 impl<C: ArkConfig> UDags<C> {
     /// Create a collection of Dags from a module
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
@@ -480,7 +500,7 @@ impl<C: ArkConfig> UDags<C> {
 /// Constructors for graphs
 impl<C: ArkConfig> UDag<C> {
     /// Add a new top-level expression to the graph
-    pub fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
+    fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<(), GraphError> {
         let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
@@ -492,7 +512,7 @@ impl<C: ArkConfig> UDag<C> {
     }
 
     /// Add a new declaration to the graph
-    pub fn add_decl(&mut self, sig: CSig, body: CBody, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError> {
+    fn add_decl(&mut self, sig: CSig, body: CBody, fctx: &Ctx<CSig, CBody>) -> Result<(), GraphError> {
         // Kind context
         let kctx = sig.typevars.to_ctx();
         // Add arguments to [vctx] and [vars]
@@ -557,7 +577,7 @@ impl<C: ArkConfig> UDag<C> {
     }
 
     /// Add an expression [exp] to the graph
-    pub fn add_exp(&mut self,
+    fn add_exp(&mut self,
         exp: CExp,
         transcr: &mut NodeIndex,
         edge_type: DepType,
@@ -750,26 +770,28 @@ impl<C: ArkConfig> UDag<C> {
                 let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 Ok(GOp::ram(oa, ob))
             },
-            CExp::Challenge(_) => {
+            CExp::Challenge(_, non_zero) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?;
-                let nchallenge = self.add_node(Node::challenge(&at));
+                let nchallenge = self.add_node(Node::challenge(&at, non_zero));
                 // Add transcript edge to [nchallenge]
                 self.add_edge(*transcr, nchallenge, Dep::transcript());
                 // Update transcript node
                 *transcr = nchallenge;
+
+                // If the challenge is non-zero, add a prover assertion
                 Ok(GOp::underscore(nchallenge, at))
             },
-            CExp::Random(_) => {
+            CExp::Random(_, non_zero) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, vctx, &exp),
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?;
-                let nrand = self.add_node(Node::random(&at));
+                let nrand = self.add_node(Node::random(&at, non_zero));
                 Ok(GOp::underscore(nrand, at))
             },
             CExp::App(fid, params) => {
@@ -981,8 +1003,8 @@ fn graph_foo() {
 #[test]
 fn graph_poly() {
     let ex = r#"
-        proto poly_mul<F: Field>(public a: Uni<F, 16>, public b: Uni<F, 16>) where a == a {
-            let r = random<F>;
+        proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
+            let r = random<F*>;
             let p = a * b;
             verify(p(r) == (a(r) * b(r)));
         }"#;

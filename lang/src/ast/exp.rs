@@ -186,16 +186,16 @@ pub enum Exp<N> {
     ///     Sample pseudo-random number generator
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     let r := random<F>();
+    ///     let r := random<F*>();
     ///     ```
-    Random(Tid),
+    Random(Tid, bool),
 
     ///     Random oracle challenge.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     r <- challenge<F>();
     ///     ```
-    Challenge(Tid),
+    Challenge(Tid, bool),
 
     ///     Represents a let-expression, which binds a value to an identifier.
     ///
@@ -273,8 +273,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
                 Ok(Exp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?))),
             Exp::Reduce(op, box x) =>
                 Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
-            Exp::Challenge(t) => Ok(Exp::Challenge(t)),
-            Exp::Random(t) => Ok(Exp::Random(t)),
+            Exp::Challenge(t, b) => Ok(Exp::Challenge(t, b)),
+            Exp::Random(t, b) => Ok(Exp::Random(t, b)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
             Exp::Eval(box x) =>
                 Ok(Exp::Eval(Box::new(x.traverse1(f)?))),
@@ -307,8 +307,8 @@ impl<N> ToTraversal1<N> for Exps<N> {
 impl TidSubst for CExp {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
-            Exp::Challenge(t) if t == from => *t = to.clone(),
-            Exp::Random(t) if t == from => *t = to.clone(),
+            Exp::Challenge(t, _) if t == from => *t = to.clone(),
+            Exp::Random(t, _) if t == from => *t = to.clone(),
             Exp::Coef(box p)
             | Exp::Mle(box p)
             | Exp::Assert(box p)
@@ -327,7 +327,7 @@ impl TidSubst for CExp {
                 b.tid_subst(from, to);
             },
             Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
-            | Exp::Challenge(_) | Exp::Random(_) => {}
+            | Exp::Challenge(_, _) | Exp::Random(_, _) => {}
         }
     }
 }
@@ -342,7 +342,7 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Bool(_) | Exp::Challenge(_) | Exp::Random(_)
+            Exp::Bool(_) | Exp::Challenge(_, _) | Exp::Random(_, _)
             | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Coef(box p)
             | Exp::Mle(box p)
@@ -471,10 +471,16 @@ impl<N> Exp<N> {
         Exp::Eval(Box::new(e))
     }
     pub fn challenge(t: Tid) -> Self {
-        Exp::Challenge(t)
+        Exp::Challenge(t, false)
+    }
+    pub fn challenge_nz(t: Tid) -> Self {
+        Exp::Challenge(t, true)
     }
     pub fn random(t: Tid) -> Self {
-        Exp::Random(t)
+        Exp::Random(t, false)
+    }
+    pub fn random_nz(t: Tid) -> Self {
+        Exp::Random(t, true)
     }
     pub fn vec(v: Vec<Self>) -> Self {
         Exp::Vec(Exps(v))
@@ -561,7 +567,7 @@ impl<N> Exp<N> {
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Let(_, box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Log(_, box _, box _) => false,
-            Exp::Challenge(_) | Exp::Random(_) => false,
+            Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
             Exp::Eval(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
@@ -670,14 +676,16 @@ where
             Exp::Var(x) => allocator.concat([
                 x.pretty(allocator),
             ]),
-            Exp::Challenge(t) => allocator.concat([
+            Exp::Challenge(t, b) => allocator.concat([
                 allocator.text("challenge<"),
                 t.pretty(allocator),
+                if b { allocator.text("*") } else { allocator.text("") },
                 allocator.text(">"),
             ]),
-            Exp::Random(t) => allocator.concat([
+            Exp::Random(t, b) => allocator.concat([
                 allocator.text("random<"),
                 t.pretty(allocator),
+                if b { allocator.text("*") } else { allocator.text("") },
                 allocator.text(">"),
             ]),
             Exp::Pair(box t, box e) => allocator.concat([
@@ -943,10 +951,18 @@ impl<'pest> FromPest<'pest> for UExp {
                     let exp = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
                 },
-                Rule::challenge_exp =>
-                    Ok(Exp::challenge(Tid::from_pest(&mut pair.into_inner())?)),
-                Rule::random_exp =>
-                    Ok(Exp::random(Tid::from_pest(&mut pair.into_inner())?)),
+                Rule::challenge_exp => {
+                    let mut inner = pair.into_inner();
+                    let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let b = inner.next().is_some();
+                    Ok(Exp::Challenge(tid, b))
+                },
+                Rule::random_exp => {
+                    let mut inner = pair.into_inner();
+                    let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    let b = inner.next().is_some();
+                    Ok(Exp::Random(tid, b))
+                },
                 Rule::vec_exp => {
                     let inner = pair.into_inner();
                     let mut ve = Vec::new();

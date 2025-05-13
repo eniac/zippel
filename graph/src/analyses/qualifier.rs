@@ -35,8 +35,8 @@ impl QualifierPropagation {
                 }
                 Some(qual)
             }
-            GOp::Random(_) => Some(Qualifier::Private),
-            GOp::Challenge(_) => Some(Qualifier::Public),
+            GOp::Random(_, _) => Some(Qualifier::Private),
+            GOp::Challenge(_, _) => Some(Qualifier::Public),
         }
     }
 

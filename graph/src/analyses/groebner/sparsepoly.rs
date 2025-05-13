@@ -719,7 +719,7 @@ impl<V: Var> Ord for LexDegTerm<V> {
 impl<C: ArkConfig> Var for GOp<C> {
     fn eliminate(&self) -> bool {
         match self {
-            GOp::Random(_) => true,
+            GOp::Random(_, _) => true,
             _ => false
         }
     }

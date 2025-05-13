@@ -79,8 +79,8 @@ exp_term  = _{
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
     eval_exp      = { "eval" ~ "(" ~ exp ~ ")" }                      // Evaluation form (FFT) univariate polynomial or MLE
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
-    random_exp    = { "random" ~ "<" ~ id ~ ">" }                     // Uniform random sampling (Prover)
-    challenge_exp = { "challenge" ~ "<" ~ id ~ ">" }                  // Random oracle challenge (Verifier)
+    random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
+    challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension
     reduce_exp    = { "reduce" ~ "(" ~ bin_op ~ "," ~ exp ~ ")" }     // Reduce operation (left)
     vec_exp       = { "[" ~ exp ~ ("," ~ exp)* ~ "]" }                // vector of elements
@@ -102,12 +102,15 @@ stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 tvar  = { id ~ ":" ~ kind_ty }
 tvars = { tvar ~ ("," ~ tvar)* }
 
+/// A scalar must be non-zero
+star = { "*" }
+
 /// Function and protocol arguments
 arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }
    qualifier = { public | private }
    public = { "public" }
    private = { "private" }
-   distribution = { "uniform" }
+   distribution = { "uniform" ~ star? }
 args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols] or [functions].

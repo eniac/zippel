@@ -1,4 +1,4 @@
-use crate::{Dag, GOp, Node, Op, PRef, QDag, Ref};
+use crate::{Dag, GOp, Node, Op, PRef, QDag, Ref, StaticAnalysis};
 use petgraph::graph::NodeIndex;
 use std::fmt;
 use lang::typ::{Distribution, Qualifier};
@@ -131,8 +131,8 @@ impl<C: ArkConfig> TransClos<C> {
         }
         // Otherwise add it
         match &dag[r.node()] {
-            Node::Op(op @ (Op::Challenge(_) | Op::Random(_)), qualifier)
-            | Node::Transcr(op @ (Op::Challenge(_) | Op::Random(_)), qualifier) => {
+            Node::Op(op @ (Op::Challenge(_, _) | Op::Random(_, _)), qualifier)
+            | Node::Transcr(op @ (Op::Challenge(_, _) | Op::Random(_, _)), qualifier) => {
                 let pref = PRef::new(r.clone(), op.typ(), 0, *qualifier, Distribution::Uniform);
                 self.insert(pref, op.clone());
                 Op::Ref(r, op.typ())
@@ -162,6 +162,20 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
             .collect::<fmt::Result>()
     }
 }
+
+impl<C: ArkConfig> StaticAnalysis<C, Qualifier> for TransClos<C> {
+    type Args = ();
+    type Output = Self;
+
+    fn new(g: &Dag<C, Qualifier>) -> Self {
+        Self::from_input(g)
+    }
+
+    fn run(&mut self, args: ()) -> Self {
+        self.clone()
+    }
+}
+
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use lang::typ::Range;

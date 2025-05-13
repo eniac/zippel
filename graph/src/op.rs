@@ -38,13 +38,13 @@ pub enum Op<C: ArkConfig, R> {
     Vec(Vec<Op<C, R>>),
 
     /// Random element
-    Random(ATyp),
+    Random(ATyp, bool),
 
     /// Billinear pairing
     Pair(Box<Op<C, R>>, Box<Op<C, R>>, ATyp),
 
     /// Random oracle challenge
-    Challenge(ATyp),
+    Challenge(ATyp, bool),
 
     /// Convert from evaluation domain to lagrange domain.
     Coef(Box<Op<C, R>>),
@@ -102,8 +102,8 @@ impl<C: ArkConfig, R> Op<C, R> {
                 }
                 ATyp::vec(&typ, vs.len())
             }
-            Op::Random(t) => t.clone(),
-            Op::Challenge(t) => t.clone(),
+            Op::Random(t, _) => t.clone(),
+            Op::Challenge(t, _) => t.clone(),
             Op::Coef(box op) => op.typ(),
             Op::Eval(box op) => op.typ(),
             Op::Check(box op) => op.typ(),
@@ -166,7 +166,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                     .collect::<Vec<_>>()),
             // v[v2]
             (Op::Value(a), Op::Value(b)) => Op::Value(Value::ram(a, b)),
-            // Default constructor
+            // Default constructor  
             (v, i) => Op::Ram(Box::new(v), Box::new(i)),
         }
     }
@@ -486,10 +486,16 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
 
     pub fn challenge(typ: ATyp) -> Op<C, R> {
-        Op::Challenge(typ)
+        Op::Challenge(typ, false)
     }
     pub fn random(typ: ATyp) -> Op<C, R> {
-        Op::Random(typ)
+        Op::Random(typ, false)
+    }
+    pub fn challenge_nz(typ: ATyp) -> Op<C, R> {
+        Op::Challenge(typ, true)
+    }
+    pub fn random_nz(typ: ATyp) -> Op<C, R> {
+        Op::Random(typ, true)
     }
 
     pub fn check(op: Op<C, R>) -> Op<C, R> {
@@ -513,8 +519,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             | Op::Check(box v)
             | Op::Eval(box v) => v.references(),
             Op::Value(_)
-            | Op::Random(_)
-            | Op::Challenge(_) => vec![],
+            | Op::Random(_, _)
+            | Op::Challenge(_, _) => vec![],
         }
     }
 }
@@ -785,8 +791,10 @@ where
                 v.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Challenge(t) => allocator.text(format!("challenge<{}>", t)),
-            Op::Random(t) => allocator.text(format!("random<{}>", t)),
+            Op::Challenge(t, true) => allocator.text(format!("challenge<{}*>", t)),
+            Op::Random(t, true) => allocator.text(format!("random<{}*>", t)),
+            Op::Challenge(t, false) => allocator.text(format!("challenge<{}>", t)),
+            Op::Random(t, false) => allocator.text(format!("random<{}>", t)),
             Op::Ram(box v, box r) => allocator.concat([
                 v.pretty(allocator),
                 allocator.text("["),

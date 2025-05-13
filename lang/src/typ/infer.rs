@@ -432,7 +432,7 @@ impl Typeable for CExp {
                 vctx.get(&id).map(|x| x.clone()).ok_or(TypeError::var_not_found(&id, vctx)),
 
             // Random oracle challenge
-            CExp::Challenge(t) | CExp::Random(t) => {
+            CExp::Challenge(t, _) | CExp::Random(t, _) => {
                 // What kind of [t]?
                 kctx.get(&t).ok_or(
                     TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&t)))?;

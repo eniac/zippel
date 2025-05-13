@@ -146,12 +146,12 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
             },
             Op::Value(_)
             | Op::Ref(_, _)
-            | Op::Random(_) => cost += 1.0,
+            | Op::Random(_, _) => cost += 1.0,
             Op::Ram(box l, box r) =>
                 cost += self.cost(l, nthreads).0 + self.cost(r, nthreads).0,
             Op::Vec(vs) =>
                 cost += vs.iter().fold(0.0, |acc, v| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
-            Op::Challenge(t) => cost += Self::SCALAR_ADD * t.size() as f64,
+            Op::Challenge(t, _) => cost += Self::SCALAR_ADD * t.size() as f64,
             Op::Coef(box op) | Op::Eval(box op) => {
                 let n = op.typ().size() as f64;
                 cost += self.cost(op, nthreads).0 +

@@ -8,12 +8,16 @@ use crate::parser::*;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Distribution {
     Uniform,
+    UniformNonZero,
     Nonuniform
 }
 
 impl Distribution {
     pub fn is_uniform(&self) -> bool {
         matches!(self, Distribution::Uniform)
+    }
+    pub fn is_uniform_nonzero(&self) -> bool {
+        matches!(self, Distribution::UniformNonZero)
     }
     pub fn is_nonuniform(&self) -> bool {
         matches!(self, Distribution::Nonuniform)
@@ -38,6 +42,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             Distribution::Uniform => allocator.text("uniform "),
+            Distribution::UniformNonZero => allocator.text("uniform*"),
             Distribution::Nonuniform => allocator.text(""),
         }
     }
@@ -64,7 +69,15 @@ impl<'pest> FromPest<'pest> for Distribution {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-            Rule::distribution => Ok(Distribution::Uniform),
+            Rule::distribution => {
+                let inner = pair.into_inner();
+                if let Some(star_pair) = inner.peek() {
+                    if star_pair.as_rule() == Rule::star {
+                        return Ok(Distribution::UniformNonZero);
+                    }
+                }
+                Ok(Distribution::Uniform)
+            },
             _ => Err(ConversionError::NoMatch),
         }
     }

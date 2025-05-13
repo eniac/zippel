@@ -10,6 +10,7 @@ use costs::Benchmarker;
 use share::unwrap;
 use graph::{
     UDags,
+    UDag,
     analyses::{TransClos, GroebnerBuilder},
     analyses::QualifierPropagation
 };
@@ -29,24 +30,17 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Execute the zippel compiler
-    Run(RunArgs),
+    Eval(CliArgs),
 
     /// Execute the zippel analysis
-    Analyze(AnalyzeArgs),
+    Analyze(CliArgs),
 
     /// Execute the benchmark suite
     Benchmark(BenchmarkArgs),
 }
 
 #[derive(Parser, Debug)]
-struct RunArgs {
-    /// The path to the text file to read
-    #[arg(value_name = "FILE")]
-    file_path: PathBuf,
-}
-
-#[derive(Parser, Debug)]
-struct AnalyzeArgs {
+struct CliArgs {
     /// The path to the text file to read
     #[arg(value_name = "FILE")]
     file_path: PathBuf,
@@ -56,9 +50,9 @@ struct AnalyzeArgs {
     #[arg(short = 'p', long = "pdf", value_name = "PDF_FILE")]
     pdf_path_opt: Option<PathBuf>,
 
-    /// An optional subgraphy value
-    #[arg(long = "subgraph", short = 's', default_value_t = 0)] // Key part!
-    subgraph: usize,
+    /// An optional subgraph name
+    #[arg(long = "subgraph", short = 's')]
+    subgraph: Option<String>,
 }
 
 // Arguments for the 'benchmark' subcommand
@@ -78,8 +72,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run(run_args) => {
-            run(run_args);
+        Commands::Eval(eval_args) => {
+            eval(eval_args);
         }
         Commands::Analyze(analyze_args) => {
             analyze(analyze_args);
@@ -90,31 +84,40 @@ fn main() {
     }
 }
 
-fn analyze(args: AnalyzeArgs) {
+fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> &'a UDag<ArkBls12_381> {
+    if let Some(proto_name) = &args.subgraph {
+        gs.get_proto(&proto_name.clone().into())
+        .expect(&format!("Protocol {} not found in {}", proto_name, args.file_path.display()))
+    } else {
+        gs.protocols().first()
+        .expect(&format!("No protocols found in {}", args.file_path.display()))
+    }
+}
+
+fn analyze(args: CliArgs) {
+    // Read zippel file
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
         eprintln!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
     });
 
-    let mut pdf_path = args.pdf_path_opt.unwrap_or_else(|| {
-        let mut path = args.file_path.clone();
-        path.set_extension("pdf");
-        path
-    });
-    pdf_path.set_extension("");
-
     println!("Parsing Zippel program: {}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
+    // Save to pdf if provided
+    if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
+        pdf_path.set_extension("");
+        gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
+            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        });
+    }
 
-    assert!(args.subgraph < gs.len(), "Subgraph index out of bounds");
+    // Get protocol by name, or the first one if not provided
+    let g = get_protocol_subgraph(&gs, &args);
 
     // Propagate qualifiers in the DAG to all children
-    let qg= QualifierPropagation::from_dag(&gs[args.subgraph]);
+    let qg= QualifierPropagation::from_dag(&g);
 
     println!("\n\nQualifier propagation done");
 
@@ -135,7 +138,7 @@ fn analyze(args: AnalyzeArgs) {
     }
 }
 
-fn run(args: RunArgs) {
+fn eval(args: CliArgs) {
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
         eprintln!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
@@ -143,15 +146,23 @@ fn run(args: RunArgs) {
 
     println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let mut gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let g = gs.pop();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
+    // Save to pdf if provided
+    if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
+        pdf_path.set_extension("");
+        gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
+            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        });
+    }
+
+    let g = get_protocol_subgraph(&gs, &args);
     let verifier = g.get_verifier().unwrap();
     let prover = g.get_prover();
 
     let combined = verifier.combine_dag(&prover);
 
-    combined.write_pdf("prover_verifier.pdf").unwrap_or_else(|e| {
+    combined.write_pdf("prover_verifier").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // TODO: Runtime

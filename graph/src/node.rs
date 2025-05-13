@@ -49,6 +49,14 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    pub fn name(&self) -> Option<&Vid> {
+        match self {
+            Node::Inp(name, _) => Some(name),
+            Node::Rel(name, _) => Some(name),
+            _ => None,
+        }
+    }
+
     pub fn is_transcript(&self) -> bool {
         matches!(self, Node::Transcr(_, _))
     }
@@ -100,11 +108,11 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
     }
-    pub fn challenge(typ: &ATyp) -> Self {
-        Node::Transcr(GOp::challenge(typ.clone()), Nothing)
+    pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
+        Node::Transcr(GOp::Challenge(typ.clone(), non_zero), Nothing)
     }
-    pub fn random(typ: &ATyp) -> Self {
-        Node::Op(GOp::random(typ.clone()), Nothing)
+    pub fn random(typ: &ATyp, non_zero: bool) -> Self {
+        Node::Op(GOp::Random(typ.clone(), non_zero), Nothing)
     }
     pub fn transcr(op: &GOp<C>) -> Self {
         Node::Transcr(op.clone(), Nothing)

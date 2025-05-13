@@ -8,7 +8,7 @@ use crate::{GOp, Op, Ref};
 use lang::typ::{Qualifier, Range};
 use lang::ast::BinOp;
 use crate::QDag;
-use crate::analyses::TransClos;
+use crate::{analyses::TransClos, StaticAnalysis};
 use crate::pref::{PRef, LexTerm};
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
@@ -243,8 +243,6 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
     }
 }
 
-
-
 impl<'a, C, D, A> Pretty<'a, D, A> for GroebnerBuilder<C>
 where
     C: ArkConfig,
@@ -290,6 +288,19 @@ impl<C: ArkConfig> fmt::Display for GroebnerBuilder<C> {
         <GroebnerBuilder<C> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
+    }
+}
+
+impl<C: ArkConfig> StaticAnalysis<C, Qualifier> for GroebnerBuilder<C> {
+    type Args = ();
+    type Output = Vec<GOp<C>>;
+
+    fn new(g: &QDag<C>) -> Self {
+        Self::from_input(g)
+    }
+
+    fn run(&mut self, args: ()) -> Vec<GOp<C>> {
+        self.run()
     }
 }
 

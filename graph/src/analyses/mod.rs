@@ -6,3 +6,14 @@ pub mod qualifier;
 pub use trans_clos::TransClos;
 pub use groebner::{GroebnerBuilder, GroebnerBasis};
 pub use qualifier::QualifierPropagation;
+
+use backend::ArkConfig;
+use crate::Dag;
+
+/// A trait for static analyses on a DAG
+pub trait StaticAnalysis<C: ArkConfig, A> {
+    type Args;
+    type Output;
+    fn new(g: &Dag<C, A>) -> Self;
+    fn run(&mut self, args: Self::Args) -> Self::Output;
+}
