@@ -21,6 +21,8 @@ trait ZippelDomainSeparator<C: ArkConfig, A> {
 
     /// Add the Schnorr protocol to the domain separator.
     fn from_dag(self, dag: &Dag<C, A>) -> Self;
+    fn from_transcript_node(self, node: &crate::Node<C, A>, label: usize) -> Self;
+    fn from_input_node(self, node: &crate::Node<C, A>) -> Self;
     fn from_atyp(self, typ: ATyp) -> Self;
 }
 
@@ -31,6 +33,39 @@ where
 {
     fn new_zippel_domain_seperator(domsep: &str, dag: &Dag<C, A>) -> Self {
         Self::new(domsep).from_dag(dag)
+    }
+
+    fn from_input_node(mut self, node: &crate::Node<C, A>) -> Self {
+        match &node {
+            crate::Node::Inp(c, prefs) => {
+                for pref in prefs.clone() {
+                    self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,pref.typ);
+                }
+            }
+            _ => {
+                panic!("Not an input node")
+            }
+        }
+        self
+    }
+
+    fn from_transcript_node(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
+        match &node {
+            crate::Node::Transcr(c, _) => match c {
+                crate::Op::Challenge(c_typ, _) => {
+                    self =
+                        self.add_bytes(C::F::default().compressed_size(), &format!("chall{}", label));
+                }
+                _ => {
+                    let typ: ATyp = c.typ();
+                    self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,typ);
+                }
+            },
+            _ => {
+                panic!("Not a transcript node")
+            }
+        }
+        self
     }
 
     fn from_atyp(mut self, typ: ATyp) -> Self {
@@ -73,24 +108,10 @@ where
     }
 
     fn from_dag(mut self, dag: &Dag<C, A>) -> Self {
-        for node in dag.transcript_nodes() {
-            match &dag.0[node] {
-                crate::Node::Transcr(c, _) => match c {
-                    crate::Op::Challenge(c_typ) => {
-                        self = self.add_bytes(
-                            C::F::default().compressed_size(),
-                            &format!("F-{}", node.index()),
-                        );
-                    }
-                    _ => {
-                        let typ: ATyp = c.typ();
-                        self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,typ);
-                    }
-                },
-                _ => {
-                    panic!("Not a transcript node")
-                }
-            }
+        self = self.from_input_node(&dag.0[dag.input_node()]);
+        for transcript_node_index in dag.transcript_nodes() {
+            self = self
+                .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
         }
         self.clone()
     }
