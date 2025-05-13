@@ -286,18 +286,18 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_pair(&self, other: &mut Self) {
         match (self, &other) {
             (Value::G1(a), Value::G2(b))
-            | (Value::G2(b), Value::G1(a)) => 
+            | (Value::G2(b), Value::G1(a)) =>
                 *other = Value::GT(C::POps::billinear_map(a, b)),
-            (Value::G1Affine(a), Value::G2Affine(b)) 
-            | (Value::G2Affine(b), Value::G1Affine(a)) => 
+            (Value::G1Affine(a), Value::G2Affine(b))
+            | (Value::G2Affine(b), Value::G1Affine(a)) =>
                 *other = Value::GT(C::POps::billinear_map(&(*a).into(), &(*b).into())),
-            (Value::G1(a), Value::G2Affine(b)) => 
+            (Value::G1(a), Value::G2Affine(b)) =>
                 *other = Value::GT(C::POps::billinear_map(a, &(*b).into())),
-            (Value::G2(a), Value::G1Affine(b)) => 
+            (Value::G2(a), Value::G1Affine(b)) =>
                 *other = Value::GT(C::POps::billinear_map(&(*b).into(), a)),
-            (Value::G1Affine(a), Value::G2(b)) => 
+            (Value::G1Affine(a), Value::G2(b)) =>
                 *other = Value::GT(C::POps::billinear_map(&(*a).into(), b)),
-            (Value::G2Affine(a), Value::G1(b)) => 
+            (Value::G2Affine(a), Value::G1(b)) =>
                 *other = Value::GT(C::POps::billinear_map(b, &(*a).into())),
             // Vectors
             (Value::VecG1(a), Value::VecG2(b)) =>
@@ -2353,10 +2353,12 @@ fn test_mul_comm() {
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
     assert_deq!(&a * &b, &b * &a);
 
-    // G1 * G2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    assert_deq!(&a * &b, &b * &a);
+    let mut a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+    let mut b1 = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
+    let b2 = b1.clone();
+    Value::value_pair(&a, &mut b1);
+    Value::value_pair(&b2, &mut a);
+    assert_deq!(b1, a);
 }
 
 
