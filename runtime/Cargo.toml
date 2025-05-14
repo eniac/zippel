@@ -12,6 +12,7 @@ graph = { path = "../graph" }
 share = { path = "../share" }
 lang = { path = "../lang" }
 backend = { path = "../backend" }
+num_cpus = "1.16.0"
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }
