@@ -469,7 +469,7 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
 
     pub fn range(r: CRange) -> Op<C, R> {
-        Op::Value(Value::Range(r))
+        Op::Value(Value::VecIndex(r.into_iter().collect()));
     }
     pub fn zero(typ: &ATyp) -> Op<C, R> {
         Op::Value(Value::zero(typ))

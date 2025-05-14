@@ -223,11 +223,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         ))
     }
 
-    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag(self.0.map(
-            |_, node| node.map_refs(f),
-            |_, e| e.clone()
-        ))
+    pub fn neighbors_directed(&self, node_index: NodeIndex, direction: Direction) -> Neighbors<Dep, u32> {
+        self.0.neighbors_directed(node_index, direction)
     }
 
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
