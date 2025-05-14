@@ -32,6 +32,13 @@ impl<C: ArkConfig> WritePdf for Dag<C, ThreadAlloc> {
 }
 
 impl GurobiScheduler {
+    pub fn new_with_system<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM) -> Self {
+        let num_threads: usize = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        Self::new(num_threads - 1, dag, cost_model)
+    }
+
     pub fn new<C: ArkConfig, CM: CostModel<C, Ref>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM) -> Self {
         // Create cost map from the DAG
         let mut cost_map: Vec<Vec<f64>> = vec![vec![0.0; num_threads]; dag.node_count()];
@@ -41,7 +48,8 @@ impl GurobiScheduler {
                     match &dag.0[i] {
                         Node::Inp(_, _) | Node::Rel(_, _) => 0.0,
                         Node::Op(op, _)
-                        | Node::Transcr(op, _) => cost_model.cost(op, j + 1).0.round(), // Round to the nearest integer
+                        | Node::Transcr(op, _) =>
+                            cost_model.cost(op, j + 1).0.round(), // Round to the nearest integer
                     }
             }
         }
