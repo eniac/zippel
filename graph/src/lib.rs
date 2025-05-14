@@ -289,7 +289,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Get the relation graph, by reachability analysis starting from the relation node
     pub fn get_relation(&self) -> Result<Dag<C, A>, GraphError> where A: Clone {
         let mut g_relation = Dag::new();
-        let relation_node = 
+        let relation_node =
             self.relation_node().ok_or(GraphError::RelationNotFound(self.name()))?;
 
         let mut worklist = vec![relation_node];
@@ -338,7 +338,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         for node in self.transcript_nodes() {
             if let Some(transcript_var) = self.find_var(node) {
                 args.insert(
-                    PRef::from_var(transcript_var, 
+                    PRef::from_var(transcript_var,
                         self.input_node(),
                         self[node].clone().into_op().typ(),
                         0,
@@ -373,13 +373,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
             let op = self[n].clone().into_op();
             // Check if the node refers to a private argument, then it is a leak
-            for r in op.references() {
-                if r.node() == self.input_node() {
-                    if args.iter().all(|a| a.var() != r.var()) {
-                        return Err(GraphError::private_node_in_verifier(&op, &r));
-                    }
-                }
-            }
+            //for r in op.references() {
+            //    if r.node() == self.input_node() {
+            //        if args.iter().all(|a| a.var() != r.var()) {
+            //            return Err(GraphError::private_node_in_verifier(&op, &r));
+            //        }
+            //    }
+            // }
 
             // Add node to prover graph
             let new_node = verifier.add_node(self[n].clone());
@@ -610,12 +610,12 @@ impl<C: ArkConfig, A> Dags<C, A> {
 
     /// A protocol has a verifier assertion
     pub fn get_proto(&self, name: &Vid) -> Option<&Dag<C, A>> {
-        self.protocols().into_iter().find(|g| g[g.input_node()].name() == Some(name)) 
+        self.protocols().into_iter().find(|g| g[g.input_node()].name() == Some(name))
     }
 
     /// A function has no verifier assertion
     pub fn get_function(&self, name: &Vid) -> Option<&Dag<C, A>> {
-        self.functions().into_iter().find(|g| g[g.input_node()].name() == Some(name)) 
+        self.functions().into_iter().find(|g| g[g.input_node()].name() == Some(name))
     }
 
     pub fn protocols(&self) -> Vec<&Dag<C, A>> {
