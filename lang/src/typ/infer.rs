@@ -478,7 +478,7 @@ impl Typeable for CExp {
                 let tb = b.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
 
-                // Must be a vector and a Fin type
+                // Must be a vector, Uni, MLE and a Fin type
                 match (ta.clone(), tb.clone()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(r)) =>
                         if r.end <= n {
@@ -489,6 +489,30 @@ impl Typeable for CExp {
                     (CTyp::Vec(box typ, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
                         if r.end <= n {
                             Ok(CTyp::vec(&typ, m))
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
+                    (CTyp::Uni(tbase, n), CTyp::Fin(r)) =>
+                        if r.end <= n {
+                            Ok(CTyp::base(&tbase))
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
+                    (CTyp::Mle(tbase, n), CTyp::Fin(r)) =>
+                        if r.end <= 1<<n {
+                            Ok(CTyp::base(&tbase))
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
+                    (CTyp::Uni(tbase, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
+                        if r.end <= n {
+                            Ok(CTyp::Uni(tbase, r.len()))
+                        } else {
+                            Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
+                        },
+                    (CTyp::Mle(tbase, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
+                        if r.end <= 1<<n {
+                            Ok(CTyp::Mle(tbase, r.len().ilog2() as usize))
                         } else {
                             Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
                         },

@@ -798,6 +798,16 @@ impl Lub for CTyp {
                 // Add elements to the polynomial
                 Ok(CTyp::uni(&a, n + m))
             },
+            // MLE<A, n> ++ Vec<B, m> = MLE<C, n> if n = m and A = B = C
+            (CTyp::Mle(a, n), CTyp::Vec(box b, m))
+            | (CTyp::Vec(box b, m), CTyp::Mle(a, n)) 
+            if n == m => {
+                // Type [a] and [b] should be the same ([t])
+                CTyp::lub_equ(&CTyp::base(a), &b, kctx)
+                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
+                Ok(CTyp::mle(a, n+1))
+            },
+            // Vec<A, n> ++ B = Vec<C, n+1> if A = B = C
             (CTyp::Vec(box a, n), b)
             | (b, CTyp::Vec(box a, n)) => {
                 // Type [a] and [b] should be the same ([t])
@@ -806,6 +816,7 @@ impl Lub for CTyp {
                 // Add an element to the vector
                 Ok(CTyp::vec(&t, n + 1))
             },
+ 
             (ta, tb) => Err(LubError::concat(&ta, &tb))
         }
     }

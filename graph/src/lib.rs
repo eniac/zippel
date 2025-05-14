@@ -19,6 +19,7 @@ use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Fresh, Tid, Vid};
 use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
+use lang::typ::range::CRange;
 use lang::typ::infer::{Typeable, TypeError};
 
 use thiserror::Error;
@@ -981,9 +982,26 @@ impl<C: ArkConfig> UDag<C> {
                         assert!(k.is_scalar());
                         assert_eq!(param_types.len(), 1);
 
-                        // Add the argument to the Graph
-                        // TODO: https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
-                        unimplemented!("MLE application")
+                        // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
+                        let mle_l = CExp::ram(
+                            CExp::var(&fid),
+                            CExp::range(CRange::new(0, n-1))
+                        );
+
+                        let mle_r = CExp::ram(
+                            CExp::var(&fid),
+                            CExp::range(CRange::new(n-1, *n))
+                        );
+
+                        // mle_l + (mle_r - mle_l) * params[0]
+                        let fold = CExp::add(mle_l.clone(),
+                            CExp::mul(
+                                params[0].clone(),
+                                CExp::sub(mle_r, mle_l)
+                            )
+                        );
+
+                        self.add_exp(fold, transcr, edge_type, kctx, fctx, vctx, vars)
                     },
                     _ => {
                         // It is a function. Find all matching functions in function context [fctx]
