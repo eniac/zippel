@@ -30,8 +30,8 @@ impl PRef {
     pub fn from_var(v: Vid, node: NodeIndex, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
         PRef { reference: Ref::Var(v, node), index, typ, qualifier, distribution }
     }
-    pub fn from_ref(reference: Ref, typ: ATyp, qualifier: Qualifier) -> Self {
-        PRef { reference, index: 0, typ, qualifier, distribution: Distribution::default() }
+    pub fn from_ref(reference: Ref, typ: ATyp, qualifier: Qualifier, distribution: Distribution) -> Self {
+        PRef { reference, index: 0, typ, qualifier, distribution }
     }
     pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
         let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
@@ -44,7 +44,11 @@ impl PRef {
         self.qualifier.is_private()
     }
     pub fn is_uniform(&self) -> bool {
-        self.distribution == Distribution::Uniform
+        match self.distribution {
+            Distribution::Uniform
+            | Distribution::UniformNonZero => true,
+            Distribution::Nonuniform => false
+        }
     }
     pub fn is_uniform_nz(&self) -> bool {
         self.distribution == Distribution::UniformNonZero
@@ -56,11 +60,17 @@ impl PRef {
             Ref::Var(_, node) => node,
         }
     }
-    pub fn id(&self) -> Option<Vid> {
+    pub fn var(&self) -> Option<Vid> {
         match &self.reference {
             Ref::Node(_) => None,
             Ref::Var(id, _) => Some(id.clone()),
         }
+    }
+    pub fn has_var(&self, v: &Vid) -> bool {
+        self.var() == Some(v.clone())
+    }
+    pub fn is_var(&self) -> bool {
+        self.var().is_some()
     }
     pub fn into_op<C: ArkConfig>(&self) -> GOp<C> {
         if self.typ.size() > 1 {
@@ -74,9 +84,15 @@ impl PRef {
         PRef { reference: self.reference, index, typ: self.typ, qualifier: self.qualifier, distribution: self.distribution }
     }
 
+    pub fn with_var(self, v: Vid) -> Self {
+        PRef { reference: Ref::Var(v, self.node()), index: self.index, typ: self.typ, qualifier: self.qualifier, distribution: self.distribution }
+    }
+
     pub fn verbose(&self) -> String {
         if self.typ.size() > 1 && self.distribution.is_uniform() {
             format!("{} uniform {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+        } else if self.typ.size() > 1 && self.distribution.is_uniform_nz() {
+            format!("{} uniform* {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
         } else if self.typ.size() > 1 {
             format!("{} {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
         } else if self.distribution.is_uniform() {
@@ -104,7 +120,8 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(self.verbose())
+        self.reference.pretty(allocator)
+        //allocator.text(self.verbose())
     }
 
     fn is_nil(&self) -> bool {
@@ -112,9 +129,11 @@ where
     }
 }
 
+/// For groebner ZK analysis, we want to eliminate private uniform random values,
+/// like prover state, and retain verifier state, and secrets.
 impl Var for PRef {
     fn eliminate(&self) -> bool {
-        self.qualifier == Qualifier::Private && self.distribution == Distribution::Uniform
+        self.qualifier == Qualifier::Private && self.distribution.is_uniform()
     }
 }
 

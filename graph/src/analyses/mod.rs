@@ -2,10 +2,13 @@ pub mod trans_clos;
 pub mod groebner;
 pub mod uniform;
 pub mod qualifier;
+pub mod completeness;
 
 pub use trans_clos::TransClos;
 pub use groebner::{GroebnerBuilder, GroebnerBasis};
 pub use qualifier::QualifierPropagation;
+pub use uniform::UniformityPropagation;
+pub use completeness::CompletenessAnalysis;
 
 use backend::ArkConfig;
 use crate::Dag;

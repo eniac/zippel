@@ -118,46 +118,52 @@ impl UniformityPropagation {
             GOp::Challenge(_, b) => 
                 Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),    
         };
-        println!("From op {} -> {:?}", op, r);
         r
     }
 
-    pub fn new<C: ArkConfig>(dag: &QDag<C>) -> Self {
+    pub fn new() -> Self {
+        Self { ancestors: Ctx::new(), distributions: Ctx::new() }
+    }
+
+    fn find_distribution(&self, r: NodeIndex) -> Distribution {
+        self.distributions.iter()
+        .find(|(dr, _)| dr.node() == r)
+        .map(|(_, d)| *d)
+        .unwrap_or_else(|| Distribution::Nonuniform)
+    }
+
+    pub fn from_dag<C: ArkConfig>(&mut self, dag: &QDag<C>) -> DQDag<C> {
         // Collect the ancestors of each node
         let ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
             dag.node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))
             .collect();
 
-        let mut up = UniformityPropagation {
-            ancestors, 
-            distributions: Ctx::new()
-        };
+        self.ancestors = ancestors;
 
         let inp = dag.input_node();
         let mut worklist = vec![inp];
         for n in dag.op_nodes() {
-            if let Some(d) = up.from_op(&dag[n].clone().into_op()) {
-                up.distributions.insert(&Ref::Node(n), &d);
+            if let Some(d) = self.from_op(&dag[n].clone().into_op()) {
+                self.distributions.insert(&Ref::Node(n), &d);
                 worklist.push(n.into());
             }
         }
 
         while let Some(n) = worklist.pop() {
-            println!("Processing node {} : {}", n.index(), dag[n]);
-            if up.distributions.iter().any(|(r, _)| r.node() == n) {
+            if self.distributions.iter().any(|(r, _)| r.node() == n) {
                 continue;
             }
 
             match &dag[n] {
                 Node::Inp(_, args) | Node::Rel(_, args) => 
                     for arg in args {
-                        up.distributions.insert(&arg.reference, &arg.distribution);
+                        self.distributions.insert(&arg.reference, &arg.distribution);
                     },
                 Node::Transcr(op, _)
                 | Node::Op(op, _) => {
-                    up.from_op(&op)
-                    .and_then(|d| up.distributions.insert(&Ref::Node(n), &d));
+                    self.from_op(&op)
+                    .and_then(|d| self.distributions.insert(&Ref::Node(n), &d));
                 }
             }
 
@@ -168,13 +174,9 @@ impl UniformityPropagation {
             }
         }
 
-        up
-    }
-
-    pub fn from_dag<C: ArkConfig>(&self, dag: &QDag<C>) -> DQDag<C> {
         Dag(dag.0.map(
             |i, node|
-                node.add_annotation(self.distributions.get(&Ref::Node(i)).unwrap_or_else(|| &Distribution::Nonuniform).clone()),
+                node.add_annotation(self.find_distribution(i)),
             |_, e| e.clone()))
     }
 }
@@ -187,7 +189,7 @@ impl fmt::Display for UniformityPropagation {
         }
         write!(f, "Ancestors\n")?;
         for (r, a) in self.ancestors.iter() {
-            write!(f, "\t{}: {:?}\n", r.index(), a)?;
+            write!(f, "\t{}: {}\n", r.index(), a.iter().map(|i| i.index().to_string()).collect::<Vec<_>>().join(", "))?;
         }
         Ok(())
     }
@@ -211,11 +213,10 @@ fn uniformity_prop() {
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let up = UniformityPropagation::new(&g);
-
-    println!("{}", up);
+    let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
+    println!("{}", up);
     g.write_pdf("uniformity").unwrap();
 }
 

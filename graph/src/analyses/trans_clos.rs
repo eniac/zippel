@@ -1,8 +1,8 @@
-use crate::{Dag, GOp, Node, Op, PRef, QDag, Ref, StaticAnalysis};
+use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis};
 use petgraph::graph::NodeIndex;
 use std::fmt;
 use lang::typ::{Distribution, Qualifier};
-use backend::ArkConfig;
+use backend::{ArkConfig, ATyp};
 
 /// Transitive closure on a DAG
 #[derive(Clone)]
@@ -12,17 +12,17 @@ pub struct TransClos<C: ArkConfig> {
 }
 
 impl<C: ArkConfig> TransClos<C> {
-    pub fn from_input(dag: &QDag<C>) -> Self {
+    pub fn from_input(dag: &DQDag<C>) -> Self {
         let start = dag.input_node();
         Self::new(&dag, start)
     }
 
-    pub fn from_relation(dag: &QDag<C>) -> Self {
+    pub fn from_relation(dag: &DQDag<C>) -> Self {
         let start = dag.relation_node().unwrap();
         Self::new(&dag, start)
     }
 
-    pub fn new(dag: &QDag<C>, start: NodeIndex) -> Self {
+    pub fn new(dag: &DQDag<C>, start: NodeIndex) -> Self {
         // Empty transitive closure
         let mut s = Self {
             clos: Vec::new(),
@@ -41,7 +41,7 @@ impl<C: ArkConfig> TransClos<C> {
                 worklist.extend(dag.nodes_from(node));
                 done.push(node);
                 if dag[node].is_op() {
-                    s.trans_clos_ref(dag, Ref::Node(node));
+                    s.trans_clos_ref(dag, dag.find_ref(node));
                 }
             }
         }
@@ -73,7 +73,7 @@ impl<C: ArkConfig> TransClos<C> {
         }
     }
 
-    fn trans_clos_op(&mut self, dag: &QDag<C>, op: GOp<C>) -> GOp<C> {
+    fn trans_clos_op(&mut self, dag: &DQDag<C>, op: GOp<C>) -> GOp<C> {
         match op {
             Op::Ref(r, _) => self.trans_clos_ref(dag, r),
             Op::Bin(op, box a, box b, typ) => {
@@ -116,35 +116,33 @@ impl<C: ArkConfig> TransClos<C> {
                 // Check if the node is a variable, then remove the old node and substitute it
                 self.clos.swap_remove(index);
             }
-            self.clos.push((r.clone(), op.clone()));
-        } else {
-            self.clos.push((r.clone(), op.clone()));
         }
+        self.clos.push((r.clone(), op.clone()));
         // Return it
         Op::Ref(r.reference, op.typ())
     }
 
-    fn trans_clos_ref(&mut self, dag: &QDag<C>, r: Ref) -> GOp<C> {
+    fn trans_clos_ref(&mut self, dag: &DQDag<C>, r: Ref) -> GOp<C> {
         // Check if the node is already in the context
         if let Some(op) = self.find(&r) {
             return Op::Ref(r, op.typ());
         }
         // Otherwise add it
         match &dag[r.node()] {
-            Node::Op(op @ (Op::Challenge(_, _) | Op::Random(_, _)), qualifier)
-            | Node::Transcr(op @ (Op::Challenge(_, _) | Op::Random(_, _)), qualifier) => {
-                let pref = PRef::new(r.clone(), op.typ(), 0, *qualifier, Distribution::Uniform);
+            Node::Op(op @ (Op::Challenge(_, _) | Op::Random(_, _)), (qualifier, distribution))
+            | Node::Transcr(op @ (Op::Challenge(_, _) | Op::Random(_, _)), (qualifier, distribution)) => {
+                let pref = PRef::from_ref(r.clone(), op.typ(), *qualifier, *distribution);
                 self.insert(pref, op.clone());
                 Op::Ref(r, op.typ())
             },
-            Node::Op(op, qualifier)
-            | Node::Transcr(op, qualifier) => {
+            Node::Op(op, (qualifier, distribution))
+            | Node::Transcr(op, (qualifier, distribution)) => {
                 let obin = self.trans_clos_op(dag, op.clone());
-                self.insert(PRef::from_ref(r, op.typ(), *qualifier), obin.clone())
+                self.insert(PRef::from_ref(r, op.typ(), *qualifier, *distribution), obin.clone())
             },
             Node::Inp(_, args) | Node::Rel(_, args) =>
                 if let Some(ref v) = r.var() {
-                    let pref = args.iter().find(|pr| &pr.id().unwrap() == v).unwrap();
+                    let pref = args.iter().find(|pr| pr.has_var(v)).unwrap();
                     Op::Ref(r, pref.typ.clone())
                 } else {
                     unreachable!("Input and relation node should only have variable dependencies")
@@ -163,15 +161,15 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
     }
 }
 
-impl<C: ArkConfig> StaticAnalysis<C, Qualifier> for TransClos<C> {
+impl<C: ArkConfig> StaticAnalysis<C, (Qualifier, Distribution)> for TransClos<C> {
     type Args = ();
     type Output = Self;
 
-    fn new(g: &Dag<C, Qualifier>) -> Self {
+    fn new(g: &DQDag<C>) -> Self {
         Self::from_input(g)
     }
 
-    fn run(&mut self, args: ()) -> Self {
+    fn run(&mut self, _: ()) -> Self {
         self.clone()
     }
 }
@@ -179,9 +177,9 @@ impl<C: ArkConfig> StaticAnalysis<C, Qualifier> for TransClos<C> {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use lang::typ::Range;
-#[cfg(test)] use crate::{analyses::QualifierPropagation, UDags};
+#[cfg(test)] use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
 #[cfg(test)] use share::{Ctx, assert_deq, unwrap};
-#[cfg(test)] use backend::{Value, ATyp, ArkBls12_381};
+#[cfg(test)] use backend::{Value, ArkBls12_381};
 #[test]
 fn trans_clos_simple() {
     let ex = r#"
@@ -197,10 +195,13 @@ fn trans_clos_simple() {
     // Propagate qualifiers
     let g = QualifierPropagation::from_dag(&gs[0]);
 
+    // Uniformity propagation
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
     // Compute transitive closure
     let tc = TransClos::from_input(&g);
 
-    println!("{}", tc);
     for (_, op) in tc.clos.iter() {
         assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
         assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
@@ -249,6 +250,10 @@ fn trans_clos_many() {
 
     // Propagate qualifiers
     let g = QualifierPropagation::from_dag(&gs[0]);
+
+    // Uniformity propagation
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
 
     // Compute transitive closure
     let tc = TransClos::from_input(&g);

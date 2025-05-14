@@ -17,7 +17,7 @@ pub use analyses::StaticAnalysis;
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
-use lang::id::{Vid, Tid};
+use lang::id::{Fresh, Tid, Vid};
 use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
 use lang::typ::infer::{Typeable, TypeError};
 
@@ -56,6 +56,10 @@ pub type DQDags<C> = Dags<C, (Qualifier, Distribution)>;
 pub enum GraphError {
     #[error("Variable not found {0}")]
     VarNotFound(Vid),
+    #[error("Relation not found in {0}")]
+    RelationNotFound(Vid),
+    #[error("Private node found in verifier: {0}: {1}")]
+    PrivateNodeInVerifier(String, String),
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
@@ -73,6 +77,12 @@ impl GraphError {
     }
     pub fn var_not_found(vid: &Vid) -> Self {
         GraphError::VarNotFound(vid.clone())
+    }
+    pub fn private_node_in_verifier<C: ArkConfig>(op: &GOp<C>, r: &Ref) -> Self {
+        GraphError::PrivateNodeInVerifier(op.to_string(), r.to_string())
+    }
+    pub fn relation_not_found(vid: &Vid) -> Self {
+        GraphError::RelationNotFound(vid.clone())
     }
 }
 
@@ -109,6 +119,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
             Node::Rel(_, args) => args.clone(),
             _ => unreachable!("All Dags should have an input node")
         }
+    }
+
+    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A> where A: Clone {
+        Dag(self.0.map(
+            |_, node| node.map_node_indices(f),
+            |_, e| e.clone()
+        ))
     }
 
     /// Dep deduplication
@@ -158,15 +175,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Slow, look around to find a var for a node
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        self.0.edge_references()
-            .find_map(|edge|
-                if edge.source() == node {
-                    match edge.weight() {
-                        Dep(_, v) => v.clone(),
-                    }
+        self.node_indices().find_map(|n| {
+            self[n].references().into_iter().find_map(|r| {
+                if r.node() == node {
+                    r.var()
                 } else {
                     None
-                })
+                }
+            })
+        })
+    }
+
+    pub fn find_ref(&self, node: NodeIndex) -> Ref {
+        if let Some(v) = self.find_var(node) {
+            Ref::Var(v, node)
+        } else {
+            Ref::Node(node)
+        }
     }
 
     pub fn node_indices(&self) -> NodeIndices {
@@ -175,6 +200,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn max_node(&self) -> NodeIndex {
         self.0.node_indices().last().unwrap()
+    }
+
+    pub fn name(&self) -> Vid {
+        let inp = self.input_node();
+        self[inp].name().unwrap().clone()
     }
 
     /// Annotate the graph using function [f]
@@ -191,6 +221,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
         ))
     }
 
+    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Dag<C, A> where A: Clone {
+        Dag(self.0.map(
+            |_, node| node.map_refs(f),
+            |_, e| e.clone()
+        ))
+    }
+
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
         self.0.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
@@ -204,24 +241,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
-    pub fn get_prover(&self) -> Dag<C, A> where A: Clone {
+    pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, NodeIndex>) where A: Clone {
         let mut prover = Dag::new();
         // Add all nodes to the prover graph
         let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
 
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
+        // Add input node first, so it is NodeIndex::new(0)
+        let n_input = prover.add_node(self[self.input_node()].clone());
+        node_map_self.insert(self.input_node(), n_input);
+
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
                 continue;
-            } else if self[n].is_input() {
-                // Add to graph but do not continue the search
-                let new_node = prover.add_node(self.0[n].clone());
-                node_map_self.insert(n, new_node);
-                continue;
             }
             // Add node to prover graph
-            let new_node = prover.add_node(self.0[n].clone());
+            let new_node = prover.add_node(self[n].clone());
             node_map_self.insert(n, new_node);
 
             // Add previous neighbors to worklist
@@ -246,45 +282,76 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
-        prover
+        (prover.map_node_indices(&|n| node_map_self[&n]), node_map_self)
+    }
+
+    /// Get the relation graph, by reachability analysis starting from the relation node
+    pub fn get_relation(&self) -> Result<Dag<C, A>, GraphError> where A: Clone {
+        let mut g_relation = Dag::new();
+        let relation_node = 
+            self.relation_node().ok_or(GraphError::RelationNotFound(self.name()))?;
+
+        let mut worklist = vec![relation_node];
+        let mut node_map_rel = HashMap::<NodeIndex, NodeIndex>::new();
+
+        while let Some(n) = worklist.pop() {
+            if node_map_rel.contains_key(&n) {
+                continue;
+            }
+            let new_node = g_relation.add_node(self[n].clone());
+            node_map_rel.insert(n, new_node);
+            for e in self.0.edges_directed(n, Direction::Outgoing) {
+                worklist.push(e.target());
+            }
+
+            for e in self.0.edges_directed(n, Direction::Outgoing) {
+                worklist.push(e.target());
+            }
+        }
+
+        // Add edges to relation graph using the mapped node indices
+        for edge_ref in self.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_rel.get(&old_source_idx), node_map_rel.get(&old_target_idx))
+            {
+                g_relation.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+        Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
     }
 
     /// Get the verifier graph, by reachability analysis starting from the verifier assertion
     /// and stopping at transcript nodes.
-    pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError> where A: Clone + fmt::Display {
+    pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError> where A: Clone {
         let mut verifier = Dag::new();
 
         // Rebuild the input node to take transcript arguments
-        let (name, mut args) =
-            match &self[self.input_node()] {
-                Node::Inp(name, args) =>
-                    (name.clone(), args.clone()),
-                _ => unreachable!("All Dags should have an input node")
-            };
-        // Remove all private arguments
-        args.retain(|r| r.is_public());
+        let mut args = self.args().into_iter().filter(|pr| pr.is_public()).collect::<Set<_>>();
+        let name = self.name();
 
         // Add the transcript nodes (public) to the arguments
         for node in self.transcript_nodes() {
-            if let Some(transcript_id) = self.find_var(node) {
-                if args.iter().any(|a|
-                    matches!(a.reference, Ref::Var(ref v, _) if v == &transcript_id)) {
-                    continue;
-                }
-                let transcript_pref =
-                    PRef::from_var(transcript_id, NodeIndex::new(0),
+            if let Some(transcript_var) = self.find_var(node) {
+                args.insert(
+                    PRef::from_var(transcript_var, 
+                        self.input_node(),
                         self[node].clone().into_op().typ(),
                         0,
                         Qualifier::Public,
-                        Distribution::default());
-                args.push(transcript_pref);
+                        Distribution::default()));
+            } else {
+                println!("No transcript var found for node: {}", node.index());
             }
         }
         // Associate old node indices with new node indices
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
         // Make new input node
-        let n_input = verifier.add_node(Node::Inp(name, args));
+        let n_input = verifier.add_node(Node::Inp(name, args.clone().into_iter().collect()));
         node_map_self.insert(self.input_node(), n_input);
         // Map all transcript arguments to to the new input node
         for n_transcr in self.transcript_nodes().into_iter() {
@@ -298,11 +365,23 @@ impl<C: ArkConfig, A> Dag<C, A> {
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
                 continue;
-            } // else if self[n].is_private() { // Private nodes should not appear here!
-              //  return Err(GraphError::verifier_error(n, self[n].to_string()));
-              //}
+            } else if !self[n].is_op() {
+                // Already added
+                continue;
+            }
+
+            let op = self[n].clone().into_op();
+            // Check if the node refers to a private argument, then it is a leak
+            for r in op.references() {
+                if r.node() == self.input_node() {
+                    if args.iter().all(|a| a.var() != r.var()) {
+                        return Err(GraphError::private_node_in_verifier(&op, &r));
+                    }
+                }
+            }
+
             // Add node to prover graph
-            let new_node = verifier.add_node(self.0[n].clone());
+            let new_node = verifier.add_node(self[n].clone());
             node_map_self.insert(n, new_node);
 
             // Add parent neighbors to worklist
@@ -326,7 +405,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 verifier.add_edge(*new_source_idx, *new_target_idx, weight);
             }
         }
-        Ok(verifier)
+        Ok(verifier.map_node_indices(&|n| node_map_self[&n]))
     }
 
     /// Get the verifier assertion, a check node with no outgoing edges
@@ -360,6 +439,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Join two DAGs into one
+    /// WARNING: This function does not remap Refs, so it is not safe to use in general.
     pub fn combine_dag(&self, other: &Self) -> Self where A: Clone {
         let mut combined_graph = Graph::with_capacity(
             self.node_count() + other.node_count(),

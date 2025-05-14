@@ -1,7 +1,7 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
 use lang::typ::lub::Lub;
-use lang::typ::Nothing;
+use lang::typ::{self, Nothing};
 use lang::id::Vid;
 use backend::{Value, ABase, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
 
@@ -540,6 +540,43 @@ impl<C: ArkConfig> GOp<C> {
 
     pub fn is_underscore(&self) -> bool {
         matches!(self, Op::Ref(Ref::Node(_), _))
+    }
+
+    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> GOp<C> {
+        match self {
+            Op::Ref(Ref::Node(n), typ) => Op::Ref(Ref::Node(f(*n)), typ.clone()),
+            Op::Ref(Ref::Var(v, n), typ) => Op::Ref(Ref::Var(v.clone(), f(*n)), typ.clone()),
+            Op::Bin(op, box a, box b, typ) => 
+                Op::Bin(*op, Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
+            Op::Ram(box a, box b) => 
+                Op::Ram(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
+            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_node_indices(f)).collect()),
+            Op::Pair(box a, box b, typ) => 
+                Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
+            Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
+            Op::Eval(box op) => Op::Eval(Box::new(op.map_node_indices(f))),
+            _ => self.clone()
+        }
+    }
+
+    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
+        match self {
+            Op::Ref(r, typ) => Op::Ref(f(r.clone()), typ.clone()),
+            Op::Bin(op, box a, box b, typ) => 
+                Op::Bin(*op, Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
+            Op::Ram(box a, box b) => 
+                Op::Ram(Box::new(a.map_refs(f)), Box::new(b.map_refs(f))),
+            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_refs(f)).collect()),
+            Op::Pair(box a, box b, typ) => 
+                Op::Pair(Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
+            Op::Check(box op) => Op::Check(Box::new(op.map_refs(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
+            Op::Eval(box op) => Op::Eval(Box::new(op.map_refs(f))),
+            Op::Value(_)
+            | Op::Random(_, _)
+            | Op::Challenge(_, _) => self.clone(),
+        }
     }
 
     /// Inline an operation, except for the nodes specified

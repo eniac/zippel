@@ -3,6 +3,7 @@ use lang::id::Vid;
 use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
+use petgraph::graph::NodeIndex;
 use crate::{Ref, PRef, GOp};
 use backend::{ATyp, ArkConfig};
 use std::fmt;
@@ -62,6 +63,15 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    pub fn references(&self) -> Vec<Ref> {
+        match self {
+            Node::Op(op, _) => op.references().clone(),
+            Node::Transcr(op, _) => op.references().clone(),
+            Node::Inp(_, args) => args.iter().map(|pr| pr.reference.clone()).collect(),
+            Node::Rel(_, args) => args.iter().map(|pr| pr.reference.clone()).collect(),
+        }
+    }
+
     pub fn is_transcript(&self) -> bool {
         matches!(self, Node::Transcr(_, _))
     }
@@ -102,6 +112,33 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Transcr(op, n) => Node::Transcr(op.clone(), (n.clone(), ann)),
             Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
             Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
+        }
+    }
+
+    pub fn drop_annotation(&self) -> Node<C, Nothing> {
+        match self {
+            Node::Op(op, _) => Node::Op(op.clone(), Nothing),
+            Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
+            Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
+        }
+    }
+
+    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Node<C, N> where N: Clone {
+        match self {
+            Node::Op(op, ann) => Node::Op(op.map_node_indices(f), ann.clone()),
+            Node::Transcr(op, ann) => Node::Transcr(op.map_node_indices(f), ann.clone()),
+            Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
+            Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
+            _ => self.clone(),
+        }
+    }
+
+    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Node<C, N> where N: Clone {
+        match self {
+            Node::Op(op, ann) => Node::Op(op.map_refs(f), ann.clone()),
+            Node::Transcr(op, ann) => Node::Transcr(op.map_refs(f), ann.clone()),
+            _ => self.clone(),
         }
     }
 }
@@ -150,6 +187,7 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn is_var(&self) -> bool {
         matches!(self, Node::Op(GOp::Ref(Ref::Var(_, _), _), _))
     }
+
 }
 
 impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {

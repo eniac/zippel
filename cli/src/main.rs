@@ -13,7 +13,7 @@ use graph::{
     UDags,
     UDag,
     analyses::{TransClos, GroebnerBuilder},
-    analyses::QualifierPropagation
+    analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
 
 #[derive(Parser, Debug)]
@@ -101,8 +101,6 @@ fn analyze(args: CliArgs) {
         eprintln!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
     });
-
-    println!("Parsing Zippel program: {}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
@@ -118,17 +116,18 @@ fn analyze(args: CliArgs) {
     let g = get_protocol_subgraph(&gs, &args);
 
     // Propagate qualifiers in the DAG to all children
-    let qg= QualifierPropagation::from_dag(&g);
+    let g= QualifierPropagation::from_dag(&g);
 
-    println!("\n\nQualifier propagation done");
+    // Then propagate distribution tags (uniformity)
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&qg);
+    let mut groebner = GroebnerBuilder::from_input(&g);
 
-    // Compute the Groebner basis
+    // Symbolically eliminate uniform random variables to find leaks
     let leaks = groebner.run();
 
-    println!("{}", groebner);
     if leaks.is_empty() {
         println!("No leaks found");
     } else {
@@ -137,6 +136,10 @@ fn analyze(args: CliArgs) {
             println!("{}", leak);
         }
     }
+
+    // Next, check for completeness
+    let completeness = CompletenessAnalysis::new(&g);
+    completeness.run();
 }
 
 fn eval(args: CliArgs) {
@@ -159,7 +162,7 @@ fn eval(args: CliArgs) {
 
     let g = get_protocol_subgraph(&gs, &args);
     let verifier = g.get_verifier().unwrap();
-    let prover = g.get_prover();
+    let (prover, _) = g.get_prover();
 
     let combined = verifier.combine_dag(&prover);
 
