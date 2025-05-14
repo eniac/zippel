@@ -17,6 +17,7 @@ use graph::Ref;
 use ark_std::test_rng;
 use rand::Rng;
 use lang::typ::{Nothing, lub::Lub};
+use ark_std::UniformRand;
 
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
@@ -168,7 +169,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let mut rng = ThreadRng::default();
                 println!("running random");
                 return Value::random(&mut rng, ATyp);
-                
+ 
             },
             Op::Challenge(ATyp, _) => {
                 let mut rng = ThreadRng::default();
@@ -176,18 +177,25 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return Value::random(&mut rng, ATyp);
             },
             Op::Pair(box a, box b, ATyp) => {
-
+                let inputs_a_clone = Arc::clone(&inputs);
+                let inputs_b_clone = Arc::clone(&inputs);
+                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let b_val: Value<C> = self.handle_op(b, inputs_b_clone); 
+                return a_val.pair(b_val);
             },
             Op::Coef(box a) => {
+                println!("running coef");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                return a_val.value_ifft();
             }
             Op::Eval(box a)  => {
+                println!("running eval");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                return a_val.value_fft();
             }
         }
-        return Value::Bool(true);                
     }
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<HashMap<Vid, Value<C>>>) {
         // println!("running Node Index: {:?}", node_curr);
@@ -223,6 +231,8 @@ impl<C: ArkConfig> MutexGraph<C> {
         let max_threads: usize = num_cpus::get();
         println!("max threads - {}", max_threads);
         let mut active_threads: usize = 1;
+
+        let mut final_return: Value<C>;
 
         while !ready_nodes.is_empty() || !running_nodes.is_empty() {
             let mut remove_from_ready: Vec<NodeIndex> = Vec::new();
@@ -330,7 +340,21 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
                 }
             }
-
+            // if (remove_from_running == running_nodes) {
+            //     let node_index = remove_from_running.first().unwrap();
+            //     let node = &g.0[*node_index];
+            //     match node {
+            //         Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+            //             let return_val = annotation.return_value.lock().unwrap();
+            //             if return_val.is_some() {
+            //                 final_return = return_val.unwrap();
+            //             }
+            //         },
+            //         Node::Inp(_, _) | Node::Rel(_, _) => {
+            //             panic!("Not possible");
+            //         }
+            //     }
+            // }
             let remove_finished_set: HashSet<NodeIndex> = remove_from_running.into_iter().collect();
             running_nodes.retain(|x| !remove_finished_set.contains(x));
         }
@@ -359,9 +383,11 @@ fn main() {
     //         verify(d == b);
     //     }"#;
     let ex = r#"
-        fn reduction_foo<F: Field>(public a: [F; 10]) -> F {
-            reduce(+, a)
-        }"#;
+        proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
+        let r = random<F*>;
+        let p = a * b;
+        verify(p(r) == (a(r) * b(r)));
+    }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     println!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -370,20 +396,32 @@ fn main() {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
-    let mut tdag_example: TDag<ArkBls12_381> = gs[0].map_annotations(|_, _| 1);   
+    let mut tdag_example: TDag<ArkBls12_381> = gs[0].map_annotations(|_, _| 4);   
     let mut mutex_graph_example = MutexGraph::new(tdag_example);
     // mutex_graph_example.print(); 
     let mut arc_graph = Arc::new(mutex_graph_example);
     let mut inputs: HashMap<Vid, Value<ArkBls12_381>> = HashMap::new();
     let mut rng = test_rng();
     
-    let scalar_vec = Value::VecScalar((1..=10).map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64)).collect::<Vec<_>>());
+    let a_coeffs = (0..4)
+        .map(|_| <<ArkBls12_381 as ArkConfig>::F as UniformRand>::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let a = Value::VecScalar(a_coeffs);
+
+    let b_coeffs = (0..4)
+        .map(|_| <<ArkBls12_381 as ArkConfig>::F as UniformRand>::rand(&mut rng))
+        .collect::<Vec<_>>();
+    let b = Value::VecScalar(b_coeffs);
     
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    inputs.insert(Vid("s".to_string()), a.clone());
-    let v_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    inputs.insert(Vid("v".to_string()), v_val);
-    let a_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    inputs.insert(Vid("a".to_string()), scalar_vec);
-    MutexGraph::run_graph(arc_graph, Arc::new(inputs));
+    // let scalar_vec = Value::VecScalar((1..=10).map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64)).collect::<Vec<_>>());
+    
+    // let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    // inputs.insert(Vid("s".to_string()), a.clone());
+    // let v_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    // inputs.insert(Vid("v".to_string()), v_val);
+    // let a_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    inputs.insert(Vid("a".to_string()), a);
+    inputs.insert(Vid("b".to_string()), b);
+    let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
+    // println!("Result: {}", result);
 }

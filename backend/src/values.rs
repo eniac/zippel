@@ -1787,6 +1787,13 @@ impl<C: ArkConfig> Value<C> {
         other
     }
 
+    #[inline]
+    pub fn pair(self, other:Self) -> Self {
+        let mut other = other;
+        self.value_pair(&mut other);
+        other
+    }
+
     /// Generate a random value, given some parameters
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
@@ -2096,17 +2103,42 @@ impl<C: ArkConfig> Value<C> {
         }
         let mut vec_value = Value::Vec(vec);
         match typ {
-            ATyp::Base(ABase::Scalar) => vec_value.into_vec_scalar_mut(),
-            // ATyp::Base(ABase::Bool) => vec_value.into_vec_bool_mut(),
-            // ATyp::Base(ABase::Fin(r)) => vec_value.into_vec_index_mut(),
-            // ATyp::Base(ABase::G1) => vec_value.into_vec_g1_mut(), 
-            // ATyp::Base(ABase::G2) => vec_value.into_vec_g2_mut(),
-            // ATyp::Base(ABase::GT) => vec_value.into_vec_gt_mut(),
-            // ATyp::Base(ABase::G1Affine) => vec_value.into_vec_g1_affine_mut(),
-            // ATyp::Base(ABase::G2Affine) => vec_value.into_vec_g2_affine_mut(),
+            ATyp::Base(ABase::Scalar) => { vec_value.into_vec_scalar_mut(); vec_value },
+            ATyp::Base(ABase::Bool) => { vec_value.into_vec_bool_mut(); vec_value },
+            ATyp::Base(ABase::Fin(r)) => {
+                match vec_value {
+                    Value::Vec(v) => Value::VecIndex(v.into_iter().map(|i| i.into_index()).collect()),
+                    Value::VecIndex(_) => vec_value,
+                    _ => panic!("Expected Vec or VecIndex, found {}", vec_value)
+                }
+            },
+            ATyp::Base(ABase::G1) => { vec_value.into_vec_g1_mut(); vec_value }, 
+            ATyp::Base(ABase::G2) => { vec_value.into_vec_g2_mut(); vec_value },
+            ATyp::Base(ABase::GT) => { vec_value.into_vec_gt_mut(); vec_value },
             _ => panic!("Not yet implemented for vector")
-        };
-        return vec_value;
+        }
+    }
+
+    pub fn value_ifft(&self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let mut v = v.clone();
+                C::FOps::vec_ifft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar, found {}", self),
+        }
+    }
+
+    pub fn value_fft(&self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let mut v = v.clone();
+                C::FOps::vec_fft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar, found {}", self),
+        }
     }
 }
 
