@@ -80,6 +80,33 @@ impl Ref {
 }
 
 impl<C: ArkConfig, R> Op<C, R> {
+    /// Assign a unique tag to each operation
+    pub fn discriminant_order(&self) -> usize {
+        match &self {
+            Op::Value(_) => 1,
+            Op::Ref(_, _) => 2,
+            Op::Bin(BinOp::Add, _, _, _) => 3,
+            Op::Bin(BinOp::Sub, _, _, _) => 4,
+            Op::Bin(BinOp::Mul, _, _, _) => 5,
+            Op::Bin(BinOp::Div, _, _, _) => 6,
+            Op::Bin(BinOp::Rem, _, _, _) => 7,
+            Op::Bin(BinOp::Dot, _, _, _) => 8,
+            Op::Bin(BinOp::Concat, _, _, _) => 9,
+            Op::Bin(BinOp::Equ, _, _, _) => 10,
+            Op::Bin(BinOp::And, _, _, _) => 11,
+            Op::Bin(BinOp::Pow, _, _, _) => 12,
+            Op::Pair(_, _, _) => 13,
+            Op::Ram(_, _) => 14,
+            Op::Vec(_) => 15,
+            Op::Random(_, _) => 16,
+            Op::Challenge(_, _) => 17,
+            Op::Coef(_) => 18,
+            Op::Eval(_) => 19,
+            Op::Check(_) => 20,
+        }
+    }
+
+    /// Type inference for operations
     pub fn typ(&self) -> ATyp {
         match &self {
             Op::Value(v) => v.typ(),
@@ -166,7 +193,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                     .collect::<Vec<_>>()),
             // v[v2]
             (Op::Value(a), Op::Value(b)) => Op::Value(Value::ram(a, b)),
-            // Default constructor  
+            // Default constructor
             (v, i) => Op::Ram(Box::new(v), Box::new(i)),
         }
     }
@@ -546,12 +573,12 @@ impl<C: ArkConfig> GOp<C> {
         match self {
             Op::Ref(Ref::Node(n), typ) => Op::Ref(Ref::Node(f(*n)), typ.clone()),
             Op::Ref(Ref::Var(v, n), typ) => Op::Ref(Ref::Var(v.clone(), f(*n)), typ.clone()),
-            Op::Bin(op, box a, box b, typ) => 
+            Op::Bin(op, box a, box b, typ) =>
                 Op::Bin(*op, Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
-            Op::Ram(box a, box b) => 
+            Op::Ram(box a, box b) =>
                 Op::Ram(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_node_indices(f)).collect()),
-            Op::Pair(box a, box b, typ) => 
+            Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
             Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
             Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
@@ -563,12 +590,12 @@ impl<C: ArkConfig> GOp<C> {
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
         match self {
             Op::Ref(r, typ) => Op::Ref(f(r.clone()), typ.clone()),
-            Op::Bin(op, box a, box b, typ) => 
+            Op::Bin(op, box a, box b, typ) =>
                 Op::Bin(*op, Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
-            Op::Ram(box a, box b) => 
+            Op::Ram(box a, box b) =>
                 Op::Ram(Box::new(a.map_refs(f)), Box::new(b.map_refs(f))),
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_refs(f)).collect()),
-            Op::Pair(box a, box b, typ) => 
+            Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
             Op::Check(box op) => Op::Check(Box::new(op.map_refs(f))),
             Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
@@ -793,7 +820,7 @@ where
                         allocator.concat(vec![
                             a.pretty(allocator),
                             allocator.text(format!("{}", op)),
-                            allocator.text("("), 
+                            allocator.text("("),
                             b.pretty(allocator),
                             allocator.text(")"),
                         ])

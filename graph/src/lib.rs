@@ -366,8 +366,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
                 continue;
-            } else if !self[n].is_op() {
-                // Already added
+            } else if !self[n].is_op() || self[n].is_transcript() {
+                // Only op nodes are added to the verifier, transcript nodes are already added to the prover
                 continue;
             }
 
@@ -389,6 +389,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             for e in self.0.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 if !node_map_self.contains_key(&e.source()) {
+                    println!("Adding parent {} of {} to worklist", self[e.source()].drop_annotation(), self[n].drop_annotation());
                     worklist.push(e.source());
                 }
             }
