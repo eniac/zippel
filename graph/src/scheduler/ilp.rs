@@ -6,6 +6,7 @@ use petgraph::algo;
 
 use crate::{Dag, UDag, Ref, Node, WritePdf};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};
+use grb::parameter::DoubleParam;
 
 #[derive(Debug)]
 struct LpSolution {
@@ -49,7 +50,7 @@ impl GurobiScheduler {
                         Node::Inp(_, _) | Node::Rel(_, _) => 0.0,
                         Node::Op(op, _)
                         | Node::Transcr(op, _) =>
-                            cost_model.cost(op, j + 1).0.round(), // Round to the nearest integer
+                            (cost_model.cost(op, j + 1).0 / 100.0).round(), // Round to the nearest integer
                     }
             }
         }
@@ -81,8 +82,9 @@ impl GurobiScheduler {
     }
 
     /// Solve the ILP problem for the execution time using Gurobi ILP solver
-    fn optimize_runtime(self) -> LpSolution {
+    fn optimize_runtime(self) -> LpSolution { // miip_gap: f64
         let mut model: Model = Model::new("zippel").unwrap();
+        model.set_param(DoubleParam::MIPGap, 0.20).unwrap();
         // TODO: compute the maximum big_m for each zippel file
         let big_m: f64 = 10000000.0;
         let cores_mat_var: Vec<Vec<Var>> = (0..self.num_tasks)

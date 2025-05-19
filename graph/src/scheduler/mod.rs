@@ -25,6 +25,12 @@ impl fmt::Display for ThreadAlloc {
     }
 }
 
+impl ThreadAlloc {
+    pub fn size(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// This trait implements a scheduling algorithm for the DAG.
 pub trait Scheduler {
     fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C>;

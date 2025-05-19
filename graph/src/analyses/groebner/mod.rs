@@ -189,10 +189,6 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
                         v.into_iter()
                             .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
                             .collect::<Vec<_>>(),
-                    Value::Range(r) =>
-                        r.into_iter()
-                            .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
-                            .collect::<Vec<_>>(),
                     Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(Op::Value(v))).collect(),
                     _ => unreachable!("Unsupported value: {}", v),
                 },
@@ -201,14 +197,6 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
             Op::Ram(box Op::Ref(n, _), box Op::Value(v)) => {
                 let pf = self.find_ref(&n);
                 match v {
-                    Value::Range(r) =>
-                        r.into_iter()
-                            .map(|i| {
-                                let mut pf = pf.clone();
-                                pf.index = i;
-                                SparsePolynomial::var(&pf)
-                            })
-                            .collect::<Vec<_>>(),
                     Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(i))],
                     _ => vec![SparsePolynomial::var(&pf)],
                 }
