@@ -13,12 +13,14 @@ use std::collections::{HashMap, HashSet};
 use share::unwrap;
 use lang::ast::{BinOp, UModule};
 use backend::ArkBls12_381;
-use graph::Ref;
+use graph::{WritePdf, Ref};
 use ark_std::test_rng;
 use rand::Rng;
 use lang::typ::{Nothing, lub::Lub};
 use ark_std::UniformRand;
-
+use graph::scheduler::{ThreadAlloc, TDag, Scheduler, AsymptoticCost};
+use graph::scheduler::ilp::GurobiScheduler;
+use ark_std::time::Instant;
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
     return_value: Mutex<Option<Value<C>>>, 
@@ -36,14 +38,16 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 
 pub struct MutexGraph<C: ArkConfig>(pub Dag<C, Arc<RuntimeInformation<C>>>);
 
-pub type TDag<C: ArkConfig> = Dag<C, usize>;
+// pub type TDag<C: ArkConfig> = Dag<C, usize>;
 
 
 
 impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
         MutexGraph(
-            tdag.map_annotations(|_, nthreads| Arc::new(RuntimeInformation::<C>::new(*nthreads)))
+            tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
+                nthreads.size()
+            )))
         )
     }
 
@@ -65,8 +69,8 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
             },
             Ref::Var(vid, node_index) => {
-                println!("{:?}", vid);
-                println!("getting value");
+                // println!("{:?}", vid);
+                // println!("getting value");
                 let input_val = inputs.contains_key(&vid);
                 if input_val {
                     inputs[&vid].clone()
@@ -108,14 +112,14 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_index_val_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(v, inputs_v_clone);
                 let index_val_value: Value<C> = self.handle_op(index_val, inputs_index_val_clone); 
-                println!("running ram");
+                // println!("running ram");
                 return v_val.ram(index_val_value);
             }
             Op::Check(box a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
 
-                println!("{}", a_val);
+                println!("Running check: {}", a_val);
                 if Value::Bool(true) == a_val {
                     println!("Program Succeeded")
                 }
@@ -129,17 +133,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
                 match BinOperation {
                     BinOp::Add => {
-                        println!("running add");
+                        // println!("running add");
                         return a_val + b_val;
                     },
                     BinOp::Mul => {
-                        println!("running mul");
+                        // println!("running mul");
                         return  a_val * b_val;
                     },
                     BinOp::Equ => {
-                        println!("running equ");
-                        println!("{}", a_val);
-                        println!("{}", b_val);
+                        // println!("running equ");
+                        // println!("{}", a_val);
+                        // println!("{}", b_val);
                         return a_val.value_equ(&b_val);
                     }
                     BinOp::Sub => {
@@ -167,13 +171,13 @@ impl<C: ArkConfig> MutexGraph<C> {
             },
             Op::Random(ATyp, _) => {
                 let mut rng = ThreadRng::default();
-                println!("running random");
+                // println!("running random");
                 return Value::random(&mut rng, ATyp);
  
             },
             Op::Challenge(ATyp, _) => {
                 let mut rng = ThreadRng::default();
-                println!("running challenge");
+                // println!("running challenge");
                 return Value::random(&mut rng, ATyp);
             },
             Op::Pair(box a, box b, ATyp) => {
@@ -184,13 +188,13 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return a_val.pair(b_val);
             },
             Op::Coef(box a) => {
-                println!("running coef");
+                // println!("running coef");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
                 return a_val.value_ifft();
             }
             Op::Eval(box a)  => {
-                println!("running eval");
+                // println!("running eval");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
                 return a_val.value_fft();
@@ -206,19 +210,20 @@ impl<C: ArkConfig> MutexGraph<C> {
         match node {
             Node::Op(operation, annotation) | Node::Transcr(operation, annotation)  => {
                 let return_val = self.handle_op(operation, inputs);
-                println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
+                // println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);  
             },
             Node:: Inp(_, _) | Node::Rel(_, _) => {
-                println!("Not Processing");
+                // println!("Not Processing");
                 // println!("Done for {:?}", node_curr);
             }
         }
 
     }
 
-    pub fn run_graph(g: Arc<MutexGraph<C>>, inputs: Arc<HashMap<Vid, Value<C>>>) {
+    pub fn run_graph(g: Arc<MutexGraph<C>>, inputs: Arc<HashMap<Vid, Value<C>>>) -> Value<C> {
+        let mut final_return: Value<C> = Value::Bool(false);
         let mut ready_nodes: Vec<NodeIndex> = Vec::new();
         let mut running_nodes: Vec<NodeIndex> = Vec::new();
 
@@ -229,10 +234,8 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
 
         let max_threads: usize = num_cpus::get();
-        println!("max threads - {}", max_threads);
+        // println!("max threads - {}", max_threads);
         let mut active_threads: usize = 1;
-
-        let mut final_return: Value<C>;
 
         while !ready_nodes.is_empty() || !running_nodes.is_empty() {
             let mut remove_from_ready: Vec<NodeIndex> = Vec::new();
@@ -263,7 +266,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                     let graph = Arc::clone(&g);
                     let inputs_arc = Arc::clone(&inputs);
                     pool.spawn(move || {
-                        println!("{:?}", node_index);
+                        // println!("{:?}", node_index);
                         graph.handle_node(node_index, inputs_arc);
                     });
 
@@ -340,75 +343,106 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
                 }
             }
-            // if (remove_from_running == running_nodes) {
-            //     let node_index = remove_from_running.first().unwrap();
-            //     let node = &g.0[*node_index];
-            //     match node {
-            //         Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-            //             let return_val = annotation.return_value.lock().unwrap();
-            //             if return_val.is_some() {
-            //                 final_return = return_val.unwrap();
-            //             }
-            //         },
-            //         Node::Inp(_, _) | Node::Rel(_, _) => {
-            //             panic!("Not possible");
-            //         }
-            //     }
-            // }
+            if (remove_from_running == running_nodes && ready_nodes.is_empty()) {
+                let node_index = remove_from_running.first().unwrap();
+                let node = &g.0[*node_index];
+                match node {
+                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                        let return_val = annotation.return_value.lock().unwrap();
+                        if return_val.is_some() {
+                            final_return = return_val.clone().unwrap();
+                        }
+                    },
+                    Node::Inp(_, _) | Node::Rel(_, _) => {
+                    }
+                }
+                match node {
+                    Node::Op(_, _) => {
+                        println!("Op");
+                    }
+                    Node::Transcr(_, _) => {
+                        println!("Transcr");
+                    }
+                    Node::Inp(_, _) => {
+                        println!("Inp");
+                    }
+                    Node::Rel(_, _) => {
+                        println!("Rel");
+                    }
+                }
+            }
             let remove_finished_set: HashSet<NodeIndex> = remove_from_running.into_iter().collect();
             running_nodes.retain(|x| !remove_finished_set.contains(x));
         }
+        final_return
     }
 }
 
+macro_rules! start_timer {
+    ($msg:expr) => {{
+        println!("{}", $msg);
+        Instant::now()
+    }};
+}
 
 fn main() {
     // coef - ifft
     // eval - fft
     use analyses::TransClos;
-    // let ex = r#"
-    //     proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
-    //         let r = random<F>;
-    //         c <- challenge<F>;
-    //         a <- r * c;
-    //         b <- r + c + s;
-    //         x <- v[1..5];
-    //         verify(a * s == b * x[3]);
-    //     }"#;
+    let ex = r#"
+        proto foo<F: Field>(private s: F, public v: [F; 10]) where s == s {
+            let r = random<F>;
+            c <- challenge<F>;
+            a <- r * c;
+            b <- r + c + s;
+            x <- v[1..5];
+            verify(a * s == b * x[3]);
+        }"#;
     // let ex = r#"
     //     proto foo<F: Field>(private s: F, public a: F) where s == s {
     //         let r = random<F>;
     //         d <- r * s;
     //         b <- r * a;
     //         verify(d == b);
-    //     }"#;
+    //     }"#
+    let size = 4;
     let ex = r#"
-        proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
+        proto poly_mul<F: Field, N: 4>(public a: Uni<F, N>, public b: Uni<F, N>) where a == a {
         let r = random<F*>;
         let p = a * b;
         verify(p(r) == (a(r) * b(r)));
     }"#;
+    // let ex =
+    //   r#"fn test<F: Field>(private a: [F; 20]) -> F {
+    //    let r = random<F>;
+    //    (r * a) . (r * a)
+    //   }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    println!("{}", m);
+    // println!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("graph_foo").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        // println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
-    let mut tdag_example: TDag<ArkBls12_381> = gs[0].map_annotations(|_, _| 4);   
-    let mut mutex_graph_example = MutexGraph::new(tdag_example);
-    // mutex_graph_example.print(); 
+    let cost_model = AsymptoticCost::new();
+    let scheduler = GurobiScheduler::new_with_system(&gs[0], &cost_model);
+    let tdag = scheduler.schedule(gs[0].clone());
+    let mut mutex_graph_example = MutexGraph::new(tdag);
+    // let mut tdag_example: TDag<ArkBls12_381> = gs[0].map_annotations(&|_, _| 4);   
+    // let mut mutex_graph_example = MutexGraph::new(tdag_example);
+    // // mutex_graph_example.print(); 
     let mut arc_graph = Arc::new(mutex_graph_example);
+
     let mut inputs: HashMap<Vid, Value<ArkBls12_381>> = HashMap::new();
     let mut rng = test_rng();
     
-    let a_coeffs = (0..4)
+    let a_coeffs = (0..size)
         .map(|_| <<ArkBls12_381 as ArkConfig>::F as UniformRand>::rand(&mut rng))
         .collect::<Vec<_>>();
     let a = Value::VecScalar(a_coeffs);
 
-    let b_coeffs = (0..4)
+    let b_coeffs = (0..size)
         .map(|_| <<ArkBls12_381 as ArkConfig>::F as UniformRand>::rand(&mut rng))
         .collect::<Vec<_>>();
     let b = Value::VecScalar(b_coeffs);
@@ -419,9 +453,13 @@ fn main() {
     // inputs.insert(Vid("s".to_string()), a.clone());
     // let v_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
     // inputs.insert(Vid("v".to_string()), v_val);
-    // let a_val: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+
     inputs.insert(Vid("a".to_string()), a);
     inputs.insert(Vid("b".to_string()), b);
+    
+    let start = start_timer!("Running the graph");
     let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
-    // println!("Result: {}", result);
+    println!("Result: {}", result);
+    let duration = start.elapsed();
+    println!("Time taken: {:?} for size {}", duration, size);
 }

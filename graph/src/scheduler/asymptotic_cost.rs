@@ -69,7 +69,10 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Vec(box lt, n), rt)
             | (lt, ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_mul(lt, rt, nthreads) / (nthreads as f64),
-            (_, _) => unreachable!(),
+            (ATyp::Uni(n), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) =>
+                (*n as f64) * Self::SCALAR_MUL / (nthreads as f64),
+            (a, b) => {println!("{} {}", a, b); unreachable!()}
         }
     }
 

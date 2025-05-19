@@ -57,7 +57,7 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
 
     fn add_tc(&mut self, tc: TransClos<C>) {
         self.args.append(tc.args.clone().into_iter());
-        
+
         for (i, op) in tc.clos.into_iter() {
             self.add_op(i, op);
         }
@@ -150,32 +150,17 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                         .collect::<Vec<_>>(),
                     Value::VecIndex(v) =>
                         v.into_iter()
-                        .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(*i)))
+                                           .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
                         .collect::<Vec<_>>(),
-                    Value::Range(r) =>
-                        r.into_iter()
-                        .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
-                        .collect::<Vec<_>>(),
-                    Value::Vec(v) => 
-                        v.into_iter()
-                        .flat_map(|v| self.to_poly(&Op::value(v)))
-                        .collect(),
-                    _ => vec![]
+                    Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(Op::Value(v))).collect(),
+                    _ => unreachable!("Unsupported value: {}", v),
                 },
             Op::Vec(v) =>
                 v.into_iter().flat_map(|v| self.to_poly(v)).collect(),
             Op::Ram(box Op::Ref(n, _), box Op::Value(v)) => {
                 let pf = self.find_ref(&n);
                 match v {
-                    Value::Range(r) =>
-                        r.into_iter()
-                        .map(|i| {
-                            let mut pf = pf.clone();
-                            pf.index = i;
-                            SparsePolynomial::var(&pf)
-                        })
-                        .collect::<Vec<_>>(),
-                    Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(*i))],
+                    Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(i))],
                     _ => vec![SparsePolynomial::var(&pf)],
                 }
             },

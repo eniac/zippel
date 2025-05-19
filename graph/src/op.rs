@@ -163,34 +163,17 @@ impl<C: ArkConfig, R> Op<C, R> {
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self where R: Clone {
         match (v, i) {
-            // a[r1][r2] = a[r1.compose(r2)]
-            (Op::Ram(box v, box Op::Value(Value::Range(l))), Op::Value(Value::Range(r))) =>
-                Op::ram(v, Op::range(l.compose(&r))),
-            // a[vi][vi'] = a[vi.compose(vi')]
             (Op::Ram(box v, box Op::Value(Value::VecIndex(vl))), Op::Value(Value::VecIndex(vr))) =>
                 Op::ram(v, Op::Value(Value::VecIndex(vr.into_iter()
                     .map(|i| vl[i as usize].clone())
                     .collect::<Vec<_>>()))),
-            // a[vi][r] = a[vi.compose(r)]
-            (Op::Ram(box v, box Op::Value(Value::VecIndex(vl))), Op::Value(Value::Range(r))) =>
-                Op::ram(v, Op::Value(Value::VecIndex(r.into_iter()
-                    .map(|i| vl[i as usize].clone())
-                    .collect::<Vec<_>>()))),
-            // a[r][vi] = a[r.compose(vi)]
-            (Op::Ram(box v, box Op::Value(Value::Range(l))), Op::Value(Value::VecIndex(vr))) =>
-                Op::ram(v, Op::Value(Value::VecIndex(vr.into_iter()
-                    .map(|i| l.compose_index(i))
-                    .collect::<Vec<_>>()))),
-            // a[r1][i] = a[r1.compose_index(i)]
-            (Op::Ram(box v, box Op::Value(Value::Range(r))), Op::Value(Value::Index(i))) =>
-                Op::ram(v, r.compose_index(i as usize).into()),
             (Op::Ram(box v, box Op::Value(Value::VecIndex(vs))), Op::Value(Value::Index(i))) =>
                 Op::ram(v, Op::Value(Value::Index(vs[i].clone()))),
             // [e0, e1, ..., en][i] = e_i
             (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i as usize].clone(),
             // [e0, e1, ..., en][r] = [e_i for i in r]
-            (Op::Vec(vs), Op::Value(Value::Range(r))) =>
-                Op::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
+            // (Op::Vec(vs), Op::Value(Value::Range(r))) =>
+            //     Op::vec(r.into_iter().map(|i| vs[i].clone()).collect::<Vec<_>>()),
             (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) =>
                 Op::vec(vr.into_iter()
                     .map(|i| vs[i as usize].clone())
@@ -469,7 +452,7 @@ impl<C: ArkConfig, R> Op<C, R> {
     }
 
     pub fn range(r: CRange) -> Op<C, R> {
-        Op::Value(Value::VecIndex(r.into_iter().collect()));
+        Op::Value(Value::VecIndex(r.into_iter().collect()))
     }
     pub fn zero(typ: &ATyp) -> Op<C, R> {
         Op::Value(Value::zero(typ))
@@ -906,6 +889,6 @@ impl<C: ArkConfig, R> From<usize> for Op<C, R> {
 
 impl<C: ArkConfig, R> From<CRange> for Op<C, R> {
     fn from(r: CRange) -> Self {
-        Op::Value(Value::Range(r))
+        Op::Value(Value::VecIndex(r.into_iter().collect()))
     }
 }
