@@ -94,6 +94,15 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Dag(Graph::new())
     }
 
+    /// Print all edges in the graph
+    pub fn print_edges(&self) {
+        for edge in self.0.edge_references() {
+            let source = edge.source();
+            let target = edge.target();
+            println!("Edge from {:?} to {:?}", source, target);
+        }
+    }
+
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
         self.0.node_count()

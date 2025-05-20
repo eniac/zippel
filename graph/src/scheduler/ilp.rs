@@ -82,9 +82,9 @@ impl GurobiScheduler {
     }
 
     /// Solve the ILP problem for the execution time using Gurobi ILP solver
-    fn optimize_runtime(self) -> LpSolution { // miip_gap: f64
+    fn optimize_runtime(self, miip_gap: f64) -> LpSolution { 
         let mut model: Model = Model::new("zippel").unwrap();
-        model.set_param(DoubleParam::MIPGap, 0.20).unwrap();
+        model.set_param(DoubleParam::MIPGap, miip_gap).unwrap();
         // TODO: compute the maximum big_m for each zippel file
         let big_m: f64 = 10000000.0;
         let cores_mat_var: Vec<Vec<Var>> = (0..self.num_tasks)
@@ -279,11 +279,11 @@ impl GurobiScheduler {
 }
 
 impl Scheduler for GurobiScheduler {
-    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C> {
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>, miip_gap: f64) -> TDag<C> {
         let num_threads = self.num_threads;
 
         // Call Gurobi and solve the ILP problem
-        let lp_solution = self.optimize_runtime();
+        let lp_solution = self.optimize_runtime(miip_gap);
 
         // Extract the task thread map from the LP solution
         let mut output = vec![Vec::new(); dag.node_count()];
@@ -339,7 +339,7 @@ fn gurobi_e2e() {
     });
 
     // Run the gurobi solver
-    let tg = solver.schedule(g);
+    let tg = solver.schedule(g, 0.20);
 
     tg.write_pdf("scheduler_test").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);

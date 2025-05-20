@@ -4,7 +4,9 @@ use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
 use graph::WritePdf;
-
+use std::collections::HashMap;
+use lang::id::Vid;
+use backend::{ArkConfig, Value, ATyp, ABase};
 use lang::ast::UModule;
 use backend::ArkBls12_381;
 use costs::Benchmarker;
@@ -15,7 +17,13 @@ use graph::{
     analyses::{TransClos, GroebnerBuilder},
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
-
+use graph::scheduler::{ThreadAlloc, TDag, Scheduler, AsymptoticCost};
+use graph::scheduler::ilp::GurobiScheduler;
+use runtime::MutexGraph;
+use std::sync::Arc;
+use graph::Ref;
+use ark_std::test_rng;
+use rand::Rng;
 #[derive(Parser, Debug)]
 #[command(author, version,
     about = "The Zippel language for cryptographic protocols.",
@@ -169,7 +177,90 @@ fn eval(args: CliArgs) {
     combined.write_pdf("prover_verifier").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
-    // TODO: Runtime
+
+    let prover_args = prover.args();
+    let verifier_args = verifier.args();
+
+    let cost_model = AsymptoticCost::new();
+    let miip_gap = 0.50;
+
+    let prover_scheduler = GurobiScheduler::new_with_system(&prover, &cost_model);
+    // let prover_tdag = prover_scheduler.schedule(prover, miip_gap);
+    let prover_tdag = prover.map_annotations(&|_, _| {
+        let mut rng = rand::thread_rng();
+        let mut threads = Vec::new();
+        for _ in 0..3 {
+            threads.push(rng.gen_range(0..prover_scheduler.num_threads()));
+        }
+        ThreadAlloc::new(threads)
+    });
+    let prover_mutex_graph = MutexGraph::new(prover_tdag);
+    let prover_arc_graph = Arc::new(prover_mutex_graph);
+    let verifier_scheduler = GurobiScheduler::new_with_system(&verifier, &cost_model);
+    // let verifier_tdag = verifier_scheduler.schedule(verifier, miip_gap);
+    let verifier_tdag = verifier.map_annotations(&|_, _| {
+        let mut rng = rand::thread_rng();
+        let mut threads = Vec::new();
+        for _ in 0..6 {
+            threads.push(rng.gen_range(0..prover_scheduler.num_threads()));
+        }
+        ThreadAlloc::new(threads)
+    });
+    let verifier_mutex_graph = MutexGraph::new(verifier_tdag);
+    verifier_mutex_graph.print_edges();
+    let verifier_arc_graph = Arc::new(verifier_mutex_graph);
+
+    // TODO: extract inputs from command line
+    let mut inputs: HashMap<Vid, Value<ArkBls12_381>> = HashMap::new();
+
+    // TODO: extract inputs from command line
+    let n_val_const = 2;
+    let mut rng = test_rng();
+
+
+    let g_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+    let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+    
+    let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+    let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+    
+    let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let b_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+
+    inputs.insert(Vid("g_vec".to_string()), g_vec);
+    inputs.insert(Vid("h_vec".to_string()), h_vec);
+    inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
+    inputs.insert(Vid("ip_val_claimed".to_string()), ip_val_claimed);
+    inputs.insert(Vid("u_aux_base".to_string()), u_aux_base);
+    inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
+    inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
+
+    println!("Prover inputs:");
+    for (vid, value) in inputs.iter() {
+        println!("{}: {}", vid, value);
+    }
+    
+    let prover_result = MutexGraph::run_graph(prover_arc_graph, Arc::new(inputs.clone()));
+    println!("Prover result: {:?}", prover_result);
+    let pg_additional_args = verifier_args.iter()
+    .filter(|arg| !prover_args.contains(arg))
+    .zip(prover_result.iter())
+    .map(|(arg, val)| match &arg.reference { 
+        Ref::Node(node) => panic!("Node reference not supported"),
+        Ref::Var(v, _) => (v.clone(), val.clone()),
+    })
+    .collect::<HashMap<Vid, Value<ArkBls12_381>>>();
+    inputs.extend(pg_additional_args);
+    println!("Verifier inputs:");
+    for (vid, value) in inputs.iter() {
+        println!("{}: {}", vid, value);
+    }
+
+    let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
+    println!("Verifier result: {:?}", verifier_result);
+    // Runtime on scheduled prover will return vector of values (transcript)
+    // Runtime on verifier will take transcript and return value boolean (valid/invalid)
 }
 
 fn benchmark(args: BenchmarkArgs) {
