@@ -331,13 +331,16 @@ impl<C: ArkConfig, A> Dag<C, A> {
         let mut verifier = Dag::new();
 
         // Rebuild the input node to take transcript arguments
-        let mut args = self.args().into_iter().filter(|pr| pr.is_public()).collect::<Set<_>>();
+        let mut args = self.args().into_iter().filter(|pr| pr.is_public()).collect::<Vec<_>>();
         let name = self.name();
 
         // Add the transcript nodes (public) to the arguments
         for node in self.transcript_nodes() {
             if let Some(transcript_var) = self.find_var(node) {
-                args.insert(
+                if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
+                    continue;
+                }
+                args.push(
                     PRef::from_var(transcript_var,
                         self.input_node(),
                         self[node].clone().into_op().typ(),
@@ -352,7 +355,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
         // Make new input node
-        let n_input = verifier.add_node(Node::Inp(name, args.clone().into_iter().collect()));
+        let n_input = verifier.add_node(Node::Inp(name, args));
         node_map_self.insert(self.input_node(), n_input);
         // Map all transcript arguments to to the new input node
         for n_transcr in self.transcript_nodes().into_iter() {
