@@ -15,6 +15,12 @@ pub type ThreadId = usize;
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct ThreadAlloc(Vec<ThreadId>);
 
+impl ThreadAlloc {
+    pub fn new(threads: Vec<ThreadId>) -> Self {
+        ThreadAlloc(threads)
+    }
+}
+
 /// A DAG with thread allocations
 pub type TDag<C> = Dag<C, ThreadAlloc>;
 
@@ -33,5 +39,5 @@ impl ThreadAlloc {
 
 /// This trait implements a scheduling algorithm for the DAG.
 pub trait Scheduler {
-    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C>;
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>, miip_gap: f64) -> TDag<C>;
 }

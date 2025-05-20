@@ -108,6 +108,7 @@ impl<C: ArkConfig> Value<C> {
             Value::Scalar(a) => match &other {
                 Value::Index(b) => C::FOps::add(a, &mut C::FOps::from_usize(*b)),
                 Value::Scalar(_) => C::FOps::add(a, other.into_scalar_mut()),
+                Value::G1(other_val) => C::G1Ops::add(&(*other_val).into_affine(), self.clone().into_g1_mut()),
                 _ => panic!("Expected scalar, found {}", other),
             },
             // Group addition
@@ -876,8 +877,10 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    let mut vr = vec![other.into_scalar()];
+
+                    // let vr = other.into_vec_scalar_mut();
+                    C::FOps::vec_inv(&mut vr);
                     *other = Value::VecG1(
                         v.par_iter()
                             .zip((*vr).par_iter())
@@ -1381,11 +1384,15 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecG1(a), Value::VecIndex(b)) => {
                 Value::VecG1(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG1(a), Value::Index(b)) => Value::G1(a[b].clone()),
+            (Value::VecG1(a), Value::Index(b)) => {
+                Value::G1(a[b].clone())
+            },
             (Value::VecG2(a), Value::VecIndex(b)) => {
                 Value::VecG2(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG2(a), Value::Index(b)) => Value::G2(a[b].clone()),
+            (Value::VecG2(a), Value::Index(b)) => {
+                Value::G2(a[b].clone())
+            }
             (Value::VecGT(a), Value::VecIndex(b)) => {
                 Value::VecGT(b.par_iter().map(|i| a[*i]).collect())
             }
@@ -1401,7 +1408,9 @@ impl<C: ArkConfig> Value<C> {
             (Value::Vec(a), Value::VecIndex(b)) => {
                 Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect())
             }
-            (Value::Vec(a), Value::Index(b)) => a[b].clone(),
+            (Value::Vec(a), Value::Index(b)) => {
+                a[b].clone()
+            }
             (Value::Vec(a), Value::Vec(b)) => {
                 Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect())
             }
