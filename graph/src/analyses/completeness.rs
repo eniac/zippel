@@ -1,4 +1,7 @@
+use std::marker::PhantomData;
+
 use backend::ArkConfig;
+use log::debug;
 use crate::{DQDag, Ref, PRef, LexTerm, WritePdf};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerBasis};
 use share::Ctx;
@@ -11,14 +14,11 @@ use lang::id::Vid;
 /// The relation is the pre-image of the verifier, and the implementation is the pre-image of the prover.
 /// We check if the relation is included in the implementation, which means that the implementation is complete.
 /// This is done by checking if the Groebner basis of the relation is included in the Groebner basis of the implementation.
-pub struct CompletenessAnalysis<C: ArkConfig> {
-    lhs: GroebnerBasis<C::F, PRef, LexTerm>,
-    rhs: GroebnerBasis<C::F, PRef, LexTerm>,
-}
+pub struct CompletenessAnalysis;
 
-impl<C: ArkConfig> CompletenessAnalysis<C> {
-    pub fn new(dag: &DQDag<C>) -> Self {
-        let relation = dag.get_relation().unwrap();
+impl CompletenessAnalysis {
+    pub fn run<C: ArkConfig>(dag: &DQDag<C>) -> bool {
+        let spec = dag.get_relation().unwrap();
         let (prover, node_map) = dag.get_prover();
 
         // Prover transcript nodes lost their names, so we need to map them back to the original variables
@@ -29,17 +29,17 @@ impl<C: ArkConfig> CompletenessAnalysis<C> {
 
         // To show completeness, we need to show
         // R_pre \cup R_prover \subseteq R_impl
-        let mut g_prover = GroebnerBuilder::from_input(&prover);
-        g_prover.add_relation(&relation);
+        let mut g_ps = GroebnerBuilder::from_input(&prover);
+        g_ps.add_relation(&spec);
 
         let mut g_impl = GroebnerBuilder::from_input(&dag);
 
         // Compute the Grobner bases
-        g_prover.run();
+        g_ps.run();
         g_impl.run();
 
         // Transcript variables are not in the prover graph, so we need to map them back to the original variables
-        let prover_basis = g_prover.basis().map_vars(&|pr| 
+        let ps_basis = g_ps.basis().map_vars(&|pr| 
             if let Some(v) = transcript_map.get(&pr.node()) {
                 pr.with_var(v.clone())
             } else {
@@ -48,23 +48,10 @@ impl<C: ArkConfig> CompletenessAnalysis<C> {
         );
 
         let impl_basis = g_impl.basis();
-        println!("Prover:\n{}", prover_basis);
-        println!("Impl:\n{}", impl_basis);
+        debug!("Prover:\n{}", ps_basis);
+        debug!("Impl:\n{}", impl_basis);
 
-        CompletenessAnalysis {
-            lhs: prover_basis,
-            rhs: impl_basis,
-        }
-    }
-
-    pub fn run(&self) -> bool {
-        if self.lhs.contains(&self.rhs) {
-            println!("Complete: R_prover >= R_impl");
-            true
-        } else {
-            println!("Incomplete: The relation is not included in the implementation");
-            false
-        }
+        ps_basis.contains(&impl_basis)
     }
 }
 
@@ -96,8 +83,7 @@ fn completeness_test() {
     g.write_pdf("completeness_test").unwrap();
 
     // Completeness analysis
-    let completeness = CompletenessAnalysis::new(&g);
-    assert!(completeness.run());
+    let complete = CompletenessAnalysis::run(&g);
+    assert!(complete);
 
 }
-

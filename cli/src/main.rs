@@ -15,6 +15,7 @@ use graph::{
     analyses::{TransClos, GroebnerBuilder},
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
+use log::{error, warn, debug};
 
 #[derive(Parser, Debug)]
 #[command(author, version,
@@ -72,6 +73,9 @@ fn main() {
     // Parse the command-line arguments using the Args struct
     let cli = Cli::parse();
 
+    // Initialize logging
+    env_logger::init();
+
     match cli.command {
         Commands::Eval(eval_args) => {
             eval(eval_args);
@@ -98,7 +102,7 @@ fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> 
 fn analyze(args: CliArgs) {
     // Read zippel file
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
-        eprintln!("Error reading file {}: \n\t{}", args.file_path.display(), err);
+        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
     });
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
@@ -122,6 +126,16 @@ fn analyze(args: CliArgs) {
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
+    // Write to pdf
+    let pdf_path = args.pdf_path_opt.clone().unwrap_or_else(|| {
+        let mut pdf_path = args.file_path.clone();
+        pdf_path.set_extension("");
+        pdf_path
+    });
+    g.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
+        warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+
     // CompletenessAnalysis in parallel
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(2) // Set the number of threads as needed
@@ -129,8 +143,12 @@ fn analyze(args: CliArgs) {
         .expect("Failed to create thread pool");
 
     pool.install(|| {
-        let completeness = CompletenessAnalysis::new(&g.clone());
-        completeness.run();
+        let completeness = CompletenessAnalysis::run(&g.clone());
+        if completeness {
+            println!("Complete protocol: {}", g.name());
+        } else {
+            println!("Incomplete protocol: {}", g.name());
+        }
     });
 
     // Create an object computing the Groebner basis
@@ -151,7 +169,7 @@ fn analyze(args: CliArgs) {
 
 fn eval(args: CliArgs) {
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
-        eprintln!("Error reading file {}: \n\t{}", args.file_path.display(), err);
+        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
     });
 
@@ -174,7 +192,7 @@ fn eval(args: CliArgs) {
     let combined = verifier.combine_dag(&prover);
 
     combined.write_pdf("prover_verifier").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // TODO: Runtime
 }

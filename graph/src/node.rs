@@ -9,7 +9,7 @@ use backend::{ATyp, ArkConfig};
 use std::fmt;
 
 /// A node in the DAG
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub enum Node<C: ArkConfig, A> {
     /// Entry in the graph, annotated with a function or protocol signature
     Inp(Vid, Vec<PRef>),

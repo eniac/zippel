@@ -39,6 +39,9 @@ pub trait Monomial<V: Var>:
 
     fn is_divided(&self, other: &Self) -> bool;
 
+    fn is_coprime(&self, other: &Self) -> bool {
+        self.gcd(other).is_constant()
+    }
     fn lcm(&self, other: &Self) -> Self;
     fn gcd(&self, other: &Self) -> Self;
 

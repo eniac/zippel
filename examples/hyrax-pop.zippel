@@ -31,16 +31,10 @@ where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
       let b4 = random<F>;
       let b5 = random<F>;
 
-      // Compute commitments using additive notation
-      let commit_alpha = g*b1 + h*b2;
-      let commit_beta = g*b3 + h*b4;
-      // Note: X^b3 becomes X*b3 (scalar multiplication)
-      let commit_delta = X*b3 + h*b5;
-
       // Add commitments to the transcript
-      alpha <- commit_alpha;
-      beta <- commit_beta;
-      delta <- commit_delta;
+      alpha <- g*b1 + h*b2;
+      beta <-  g*b3 + h*b4;
+      delta <- X*b3 + h*b5;
 
       // 2. Derive the Fiat-Shamir challenge 'c'.
       //    Corresponds to Verifier Step 2, made non-interactive.

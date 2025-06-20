@@ -8,6 +8,7 @@ pub mod scheduler;
 pub mod pref;
 pub mod domain_seperator;
 
+use log::debug;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
@@ -263,10 +264,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
             // Add previous neighbors to worklist
             for e in self.0.edges_directed(n, Direction::Incoming) {
-                // Add neighbors to worklist
-                if !node_map_self.contains_key(&e.source()) {
-                    worklist.push(e.source());
-                }
+                worklist.push(e.source());
             }
         }
 
@@ -547,7 +545,7 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
         // std::fs::remove_file(fdot)?;
 
         // Print success
-        println!("Wrote {:?}", std::fs::canonicalize(PathBuf::from(fpdf.clone())));
+        debug!("Wrote {:?}", std::fs::canonicalize(PathBuf::from(fpdf.clone())));
         Ok(())
     }
 }
