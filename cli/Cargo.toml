@@ -12,3 +12,4 @@ graph = { path = "../graph" }
 costs = { path = "../costs" }
 criterion = "0.5.1"
 serde_json = "1.0.140"
+rayon = "1.10.0"

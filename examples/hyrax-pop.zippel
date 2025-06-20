@@ -48,33 +48,21 @@ where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
 
       // 3. Compute the responses (z1..z5).
       //    Corresponds to Prover Step 3.
-      let resp_z1 = b1 + c*x;
-      let resp_z2 = b2 + c*r_X;
-      let resp_z3 = b3 + c*y;
-      let resp_z4 = b4 + c*r_Y;
-      // Compute the more complex scalar part for z5 first
-      let z5_scalar_part = r_Z - r_X * y;
-      let resp_z5 = b5 + c * z5_scalar_part;
 
       // Add responses to the transcript
-      z1 <- resp_z1;
-      z2 <- resp_z2;
-      z3 <- resp_z3;
-      z4 <- resp_z4;
-      z5 <- resp_z5;
+      z1 <- b1 + c*x;
+      z2 <- b2 + c*r_X;
+      z3 <- b3 + c*y;
+      z4 <- b4 + c*r_Y;
+      z5 <- b5 + c * (r_Z - r_X * y);
 
       // --- Verification Logic (encoded using 'verify') ---
       // Combines the three checks from Verifier Step 4.
 
       // Check 1: alpha + X*c == g*z1 + h*z2
-      let check1 = (alpha + X*c == g*z1 + h*z2);
-
       // Check 2: beta + Y*c == g*z3 + h*z4
-      let check2 = (beta + Y*c == g*z3 + h*z4);
-
       // Check 3: delta + Z*c == X*z3 + h*z5
-      let check3 = (delta + Z*c == X*z3 + h*z5);
-
-      // Verify that all checks pass
-      verify(check1 && check2 && check3);
+      verify(alpha + X*c == g*z1 + h*z2
+        && beta + Y*c == g*z3 + h*z4
+        && delta + Z*c == X*z3 + h*z5);
 }

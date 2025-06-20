@@ -451,7 +451,18 @@ impl<V: Ord> Set<V> {
     where
         V: Clone
     {
-        self.0.extract_if(f).collect()
+        let mut s = Set::new();
+        let mut to_remove = Vec::new();
+        for v in self.0.iter() {
+            if f(v) {
+                s.insert(v.clone());
+                to_remove.push(v.clone());
+            }
+        }
+        for v in to_remove {
+            self.0.remove(&v);
+        }
+        s
     }
 
     pub fn retain(&mut self, f: impl Fn(&V) -> bool) {

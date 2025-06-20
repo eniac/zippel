@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
-use graph::WritePdf;
+use graph::{analyses::completeness, WritePdf};
 
 use lang::ast::UModule;
 use backend::ArkBls12_381;
@@ -122,6 +122,17 @@ fn analyze(args: CliArgs) {
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
+    // CompletenessAnalysis in parallel
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2) // Set the number of threads as needed
+        .build()
+        .expect("Failed to create thread pool");
+
+    pool.install(|| {
+        let completeness = CompletenessAnalysis::new(&g.clone());
+        completeness.run();
+    });
+
     // Create an object computing the Groebner basis
     let mut groebner = GroebnerBuilder::from_input(&g);
 
@@ -136,10 +147,6 @@ fn analyze(args: CliArgs) {
             println!("{}", leak);
         }
     }
-
-    // Next, check for completeness
-    let completeness = CompletenessAnalysis::new(&g);
-    completeness.run();
 }
 
 fn eval(args: CliArgs) {

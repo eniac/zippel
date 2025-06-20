@@ -710,6 +710,7 @@ dependencies = [
  "criterion",
  "graph",
  "lang",
+ "rayon",
  "serde_json",
  "share",
 ]
