@@ -5,7 +5,6 @@ use backend::ArkConfig;
 use crate::{GOp, Op, Ref};
 use lang::typ::{Kind, Qualifier};
 use lang::id::Tid;
-use crate::analyses::groebner::sparsepoly::{Var, LexDegTerm};
 
 use backend::{Value, ATyp};
 use std::fmt;
@@ -80,12 +79,8 @@ impl PRef {
         }
     }
 
-    pub fn with_index(self, index: usize) -> Self {
-        PRef { reference: self.reference, index, typ: self.typ, qualifier: self.qualifier, distribution: self.distribution }
-    }
-
-    pub fn with_var(self, v: Vid) -> Self {
-        PRef { reference: Ref::Var(v, self.node()), index: self.index, typ: self.typ, qualifier: self.qualifier, distribution: self.distribution }
+    pub fn with_index(&self, index: usize) -> Self {
+        PRef { reference: self.reference.clone(), index: self.index + index, typ: self.typ.clone(), qualifier: self.qualifier.clone(), distribution: self.distribution.clone() }
     }
 
     pub fn verbose(&self) -> String {
@@ -128,14 +123,3 @@ where
         false
     }
 }
-
-/// For groebner ZK analysis, we want to eliminate private uniform random values,
-/// like prover state, and retain verifier state, and secrets.
-impl Var for PRef {
-    fn eliminate(&self) -> bool {
-        self.qualifier == Qualifier::Private && self.distribution.is_uniform()
-    }
-}
-
-/// A monomial term with [PRef] as the variable type
-pub type LexTerm = LexDegTerm<PRef>;

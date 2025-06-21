@@ -156,6 +156,10 @@ impl<C: ArkConfig, R> Op<C, R> {
         Op::Value(Value::Index(i))
     }
 
+    pub fn value(v: &Value<C>) -> Self {
+        Op::Value(v.clone())
+    }
+
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self where R: Clone {
         match (v, i) {

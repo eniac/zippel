@@ -4,11 +4,14 @@ pub mod uniform;
 pub mod qualifier;
 pub mod completeness;
 
+pub mod knowledge;
+
 pub use trans_clos::TransClos;
 pub use groebner::{GroebnerBuilder, GroebnerBasis};
 pub use qualifier::QualifierPropagation;
 pub use uniform::UniformityPropagation;
 pub use completeness::CompletenessAnalysis;
+pub use knowledge::KnowledgeAnalysis;
 
 use backend::ArkConfig;
 use crate::Dag;

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::Hash;
+use std::ops::Index;
 
 use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::traversal::{ToTraversal2, Traversal};
@@ -89,6 +90,20 @@ where
         <Ctx<_, _> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(80, f)
+    }
+}
+
+impl<K: Ord, V> Index<&K> for Ctx<K, V> {
+    type Output = V;
+    fn index(&self, index: &K) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<K: Ord, V> Index<K> for Ctx<K, V> {
+    type Output = V;
+    fn index(&self, index: K) -> &Self::Output {
+        &self.0[&index]
     }
 }
 
@@ -192,10 +207,10 @@ impl<K, V> Ctx<K, V> {
     pub fn contains(&self, k: &K) -> bool where K: Ord {
         self.0.contains_key(k)
     }
-    pub fn iter(&self) -> std::collections::btree_map::Iter<K, V> {
+    pub fn iter<'a>(&'a self) -> std::collections::btree_map::Iter<'a, K, V> {
         self.0.iter()
     }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut V)> {
+    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)> {
         self.0.iter_mut()
     }
     pub fn modify<F>(&mut self, mut f: F)
@@ -210,7 +225,7 @@ impl<K, V> Ctx<K, V> {
         self.0.retain(f);
     }
 
-    pub fn entry(&mut self, k: K) -> std::collections::btree_map::Entry<K, V> where K: Ord {
+    pub fn entry<'a>(&'a mut self, k: K) -> std::collections::btree_map::Entry<'a, K, V> where K: Ord {
         self.0.entry(k)
     }
 
@@ -402,6 +417,11 @@ impl<V: Ord> Set<V> {
     pub fn contains(&self, k: &V) -> bool {
         self.0.contains(k)
     }
+
+    pub fn find<FF>(&self, f: FF) -> Option<&V> where FF: Fn(&V) -> bool {
+        self.0.iter().find(|v| f(v))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -423,7 +443,7 @@ impl<V: Ord> Set<V> {
         Set(self.0.intersection(&other.0).cloned().collect())
     }
 
-    pub fn iter(&self) -> SetIterator<V> {
+    pub fn iter<'a>(&'a self) -> SetIterator<'a, V> {
         SetIterator {
             iter: self.0.iter(),
         }

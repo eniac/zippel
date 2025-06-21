@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
-use graph::{analyses::completeness, WritePdf};
+use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 
 use lang::ast::UModule;
 use backend::ArkBls12_381;
@@ -99,6 +99,7 @@ fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> 
     }
 }
 
+/// Analysis entry point, analyze a Zippel protocol for completeness and knowledge leaks
 fn analyze(args: CliArgs) {
     // Read zippel file
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
@@ -136,37 +137,22 @@ fn analyze(args: CliArgs) {
         warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
-    // CompletenessAnalysis in parallel
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get() / 2) // Set the number of threads as needed
-        .build()
-        .expect("Failed to create thread pool");
-
-    pool.install(|| {
-        let completeness = CompletenessAnalysis::run(&g.clone());
-        if completeness {
-            println!("Complete protocol: {}", g.name());
-        } else {
-            println!("Incomplete protocol: {}", g.name());
-        }
-    });
+    // Completeness analysis first
+    let mut completeness = CompletenessAnalysis::from_input(&g);
+    if completeness.run() {
+        println!("Complete protocol: {}", g.name());
+    } else {
+        println!("Incomplete protocol: {}", g.name());
+    }
 
     // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&g);
+    let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Symbolically eliminate uniform random variables to find leaks
-    let leaks = groebner.run();
-
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
+    let leaks= kz.run();
 }
 
+/// Runtime entry point, evaluate a Zippel program or protocol
 fn eval(args: CliArgs) {
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
         error!("Error reading file {}: \n\t{}", args.file_path.display(), err);

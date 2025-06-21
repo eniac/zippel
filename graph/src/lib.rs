@@ -12,7 +12,7 @@ use log::debug;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
-pub use pref::{PRef, LexTerm};
+pub use pref::PRef;
 pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};
@@ -243,24 +243,29 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
-    pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, NodeIndex>) where A: Clone {
+    pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, Ref>) where A: Clone {
         let mut prover = Dag::new();
         // Add all nodes to the prover graph
         let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
 
-        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
+        // Map old node indices to new references
+        let mut node_map: HashMap<NodeIndex, Ref> = HashMap::new();
 
         // Add input node first, so it is NodeIndex::new(0)
         let n_input = prover.add_node(self[self.input_node()].clone());
-        node_map_self.insert(self.input_node(), n_input);
+        node_map.insert(self.input_node(), Ref::Node(n_input));
 
         while let Some(n) = worklist.pop() {
-            if node_map_self.contains_key(&n) {
+            if node_map.contains_key(&n) {
                 continue;
             }
             // Add node to prover graph
             let new_node = prover.add_node(self[n].clone());
-            node_map_self.insert(n, new_node);
+            if let Some(v) = self.find_var(n) {
+                node_map.insert(n, Ref::Var(v, new_node));
+            } else {
+                node_map.insert(n, Ref::Node(new_node));
+            }
 
             // Add previous neighbors to worklist
             for e in self.0.edges_directed(n, Direction::Incoming) {
@@ -275,13 +280,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
             let weight = edge_ref.weight().clone();
 
             if let (Some(new_source_idx), Some(new_target_idx)) =
-                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
+                (node_map.get(&old_source_idx), node_map.get(&old_target_idx))
             {
-                prover.add_edge(*new_source_idx, *new_target_idx, weight);
+                prover.add_edge(new_source_idx.node(), new_target_idx.node(), weight);
             }
         }
 
-        (prover.map_node_indices(&|n| node_map_self[&n]), node_map_self)
+        // Remap node indices in Ref to the new node indices
+        let remapped = prover.map_node_indices(&|n| 
+            node_map.get(&n).map(|r| r.node()).unwrap_or_else(||
+                panic!("Aliasing error: node {}: {} in prover not found in {} protocol dag", 
+                    n.index(), self[n].drop_annotation(), self.name())));
+        
+        (remapped, node_map)
     }
 
     /// Get the relation graph, by reachability analysis starting from the relation node

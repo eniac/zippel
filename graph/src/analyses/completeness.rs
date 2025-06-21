@@ -1,9 +1,7 @@
-use std::marker::PhantomData;
-
 use backend::ArkConfig;
 use log::debug;
-use crate::{DQDag, Ref, PRef, LexTerm, WritePdf};
-use crate::analyses::groebner::{GroebnerBuilder, GroebnerBasis};
+use crate::{DQDag, Ref, PRef, WritePdf};
+use crate::analyses::groebner::{GrevLexTerm, GroebnerBasis, GroebnerBuilder};
 use share::Ctx;
 use petgraph::graph::NodeIndex;
 use lang::id::Vid;
@@ -14,44 +12,37 @@ use lang::id::Vid;
 /// The relation is the pre-image of the verifier, and the implementation is the pre-image of the prover.
 /// We check if the relation is included in the implementation, which means that the implementation is complete.
 /// This is done by checking if the Groebner basis of the relation is included in the Groebner basis of the implementation.
-pub struct CompletenessAnalysis;
+pub struct CompletenessAnalysis<C: ArkConfig> {
+    pub prover: GroebnerBuilder<C, GrevLexTerm>,
+    pub verifier: GroebnerBuilder<C, GrevLexTerm>
+}
 
-impl CompletenessAnalysis {
-    pub fn run<C: ArkConfig>(dag: &DQDag<C>) -> bool {
+impl<C: ArkConfig> CompletenessAnalysis<C> {
+    pub fn from_input(dag: &DQDag<C>) -> Self {
         let spec = dag.get_relation().unwrap();
         let (prover, node_map) = dag.get_prover();
 
-        // Prover transcript nodes lost their names, so we need to map them back to the original variables
-        let transcript_map: Ctx<NodeIndex, Vid> = 
-            dag.transcript_nodes()
-            .into_iter()
-            .map(|n| (node_map[&n], dag.find_var(n).unwrap())).collect();
-
         // To show completeness, we need to show
         // R_pre \cup R_prover \subseteq R_impl
-        let mut g_ps = GroebnerBuilder::from_input(&prover);
+        let mut g_ps= GroebnerBuilder::new();
+        g_ps.add_input(&prover);
         g_ps.add_relation(&spec);
 
-        let mut g_impl = GroebnerBuilder::from_input(&dag);
+        let mut g_impl = GroebnerBuilder::new();
+        g_impl.add_input(&dag);
 
-        // Compute the Grobner bases
-        g_ps.run();
-        g_impl.run();
+        Self { prover: g_ps, verifier: g_impl }
+    }
 
-        // Transcript variables are not in the prover graph, so we need to map them back to the original variables
-        let ps_basis = g_ps.basis().map_vars(&|pr| 
-            if let Some(v) = transcript_map.get(&pr.node()) {
-                pr.with_var(v.clone())
-            } else {
-                pr
-            }
-        );
+    pub fn run(&mut self) -> bool {
 
-        let impl_basis = g_impl.basis();
-        debug!("Prover:\n{}", ps_basis);
-        debug!("Impl:\n{}", impl_basis);
+        // Compute the Groebner bases
+        self.prover.run();
+        self.verifier.run();
+        debug!("Prover:\n{}", self.prover);
+        debug!("Impl:\n{}", self.verifier);
 
-        ps_basis.contains(&impl_basis)
+        self.prover.basis.contains(&self.verifier.basis)
     }
 }
 

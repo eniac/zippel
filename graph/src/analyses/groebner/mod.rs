@@ -1,15 +1,17 @@
 pub mod buchberger;
 pub use buchberger::GroebnerBasis;
 
+pub mod monomial;
+pub use monomial::{Monomial, ElimTerm, GrevLexTerm};
 pub mod sparsepoly;
-pub use sparsepoly::{LexDegTerm, SparsePolynomial};
+pub use sparsepoly::SparsePolynomial;
 
 use crate::{GOp, Op, Ref};
 use lang::typ::{Distribution, Qualifier, Range};
 use lang::ast::BinOp;
 use crate::DQDag;
 use crate::{analyses::TransClos, StaticAnalysis};
-use crate::pref::{PRef, LexTerm};
+use crate::pref::PRef;
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig, ArkScalarOps};
@@ -22,33 +24,21 @@ use ark_ff::{One, Zero};
 /// closure of the graph, building a set of equations of polynomials. Non-polynomial
 /// terms are replaced with variables in [npterms].
 #[derive(Clone)]
-pub struct GroebnerBuilder<C: ArkConfig> {
-    equ: GroebnerBasis<C::F, PRef, LexTerm>,
-    vars: Ctx<PRef, GOp<C>>,
-    args: Set<PRef>,
+pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
+    pub basis: GroebnerBasis<C::F, T>,
+    pub np: Ctx<PRef, GOp<C>>,
+    pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
+    pub args: Set<PRef>,
 }
 
-impl<C: ArkConfig> GroebnerBuilder<C> {
+impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
     pub fn new() -> Self {
         Self {
-            equ: GroebnerBasis::empty(0),
-            vars: Ctx::new(),
+            basis: GroebnerBasis::empty(0),
+            np: Ctx::new(),
+            pl: Ctx::new(),
             args: Set::new(),
         }
-    }
-
-    pub fn from_input(g: &DQDag<C>) -> Self {
-        let tc = TransClos::from_input(g);
-        let mut s = Self::new();
-        s.add_tc(tc);
-        s
-    }
-
-    pub fn from_relation(g: &DQDag<C>) -> Self {
-        let tc = TransClos::from_relation(g);
-        let mut s = Self::new();
-        s.add_tc(tc);
-        s
     }
 
     pub fn add_input(&mut self, g: &DQDag<C>) {
@@ -61,20 +51,22 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
         self.add_tc(tc);
     }
 
+    pub fn vars(&self) -> Set<PRef> {
+        self.np.keys().union(self.pl.keys())
+    }
+
     fn add_tc(&mut self, tc: TransClos<C>) {
-        self.vars.append(&tc.clos.clone().into_iter().collect());
         self.args.append(tc.args.clone().into_iter());
         
         for (i, op) in tc.clos.into_iter() {
-            self.vars.insert(&i, &op);
-            self.add_poly(i, op);
+            self.add_op(i, op);
         }
     }
 
     pub fn find_ref(&self, r: &Ref) -> PRef {
-        self.vars.iter()
-        .find(|v| v.0.reference == *r)
-        .map(|(v, _)| v.clone())
+        self.vars()
+        .into_iter()
+        .find(|v| v.reference == *r)
         .or_else(|| self.args.iter()
             .find(|v| v.var() == r.var() && v.is_var())
             .cloned())
@@ -83,76 +75,40 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
         })
     }
 
-    pub fn private(&self) -> Vec<PRef> {
-        self.vars.iter()
-        .filter(|(v, _)| v.is_private()).map(|(v, _)| v.clone())
-        .collect()
+    /// Filter out variables that satisfy the predicate
+    pub fn eliminate<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
+        self.basis.eliminate(f);
+        self.pl.retain(|p, _| !f(p));
+        self.np.retain(|p, _| !f(p));
     }
 
-    pub fn public(&self) -> Vec<PRef> {
-        self.vars.iter()
-        .filter(|(v, _)| v.is_public()).map(|(v, _)| v.clone())
-        .collect()
+    pub fn inline<F: Fn(&PRef) -> bool>(&mut self, f: F) {
+        for p in self.basis.iter_mut() {
+            *p = p.clone().flat_map_vars(&|v|
+                if f(&v) || !self.pl.contains(&v) {
+                    SparsePolynomial::var(&v)
+                } else {
+                    self.pl[v].clone()
+                }
+            );
+        }
     }
 
-    pub fn is_leak(p: &SparsePolynomial<C::F, PRef, LexDegTerm<PRef>>) -> bool {
-        let vars = p.vars();
-        // Contains both secret and public variables, and the secret values are non-uniform random
-        vars.iter().all(|v| !v.is_uniform())
-        && vars.iter().any(|v| v.is_public())
-        && vars.iter().any(|v| v.is_private())
-    }
-
-    pub fn basis(&self) -> GroebnerBasis<C::F, PRef, LexTerm> {
-        self.equ.clone()
-    }
-
-    /// Compute Groebner basis using Buchberger algorithm, the LexDeg variant
-    /// for elimination order. Return the set of polynomials that leak information.
-    pub fn run(&mut self) -> Vec<GOp<C>> {
+    /// Compute Groebner basis using Buchberger algorithm,
+    pub fn run(&mut self) {
         // Compute the Groebner basis using Buchberger algorithm
-        self.equ = self.equ.clone().buchberger_and_reduce();
-
-        // Eliminate intermediate variables
-        self.equ.eliminate();
-
-        // Remove dangling variables
-        self.vars.retain(|v, _| self.equ.iter().any(|p| p.contains(v)));
-
-        // Inline all polynomials except for public variables and terms with uniform random references
-        let except = |r: &Ref, op: &GOp<C>| {
-            let v = self.find_ref(r);
-            v.is_public() || op.references().iter().any(|r| self.find_ref(r).is_uniform())
-        };
-
-        // Build inline context
-        let ref_vars: Ctx<Ref, GOp<C>> = 
-            self.vars.iter().map(|(v, op)| (v.reference.clone(), op.clone())).collect();
-
-        // Inline inline GOp<C> in the polynomial
-        self.equ.iter()
-            .filter(|p| Self::is_leak(p)) 
-            // 1. Create a set of polynomials that leak information
-            .map(|poly| {           
-                // 2. Translate from polynomials to readable programs by inlining GOp<C>
-                let gpoly = 
-                    poly.clone().map_vars(&|v: PRef| v.into_op().inline(&ref_vars, &except));
-                let gop: GOp<C> = gpoly.into();
-                GOp::equ(gop, 0.into())
-            })
-            .collect()
+        self.basis = self.basis.clone().buchberger_and_reduce();
     }
 
-    /// This function converts an operation to a vector of sparse polynomial expressions
-    /// with vector coefficients. This means all vector values have a natural representation
-    /// as the constant polynomials with degree 0.
-    fn to_poly(&mut self, op: GOp<C>) -> Vec<SparsePolynomial<C::F, PRef, LexTerm>> {
+    /// This function converts an operation to a vector of sparse polynomial expressions,
+    /// exploding vectors where possible.
+    fn to_poly(&mut self, op: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
         match op {
             Op::Ref(v, typ) => {
                 let pf = self.find_ref(&v);
                 match typ {
                     ATyp::Vec(box t, n) =>
-                        (0..n).into_iter()
+                        (0..*n).into_iter()
                             .map(|i| {
                                 let mut pf = pf.clone();
                                 pf.index = i;
@@ -161,7 +117,7 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
                             })
                             .collect::<Vec<_>>(),
                     ATyp::Uni(n) =>
-                        (0..n).into_iter()
+                        (0..*n).into_iter()
                             .map(|i| {
                                 let mut pf = pf.clone();
                                 pf.index = i;
@@ -175,26 +131,29 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
             Op::Value(v) =>
                 match v {
                     Value::Scalar(s) => vec![SparsePolynomial::lit(&s)],
-                    Value::Bool(b) => vec![SparsePolynomial::lit(&if b { C::F::one() } else { C::F::zero() })],
-                    Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(i))],
+                    Value::Bool(b) => vec![SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() })],
+                    Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
                     Value::VecBool(v) =>
-                            v.into_iter()
-                            .map(|b| SparsePolynomial::lit(&if b { C::F::one() } else { C::F::zero() }))
-                            .collect::<Vec<_>>(),
+                        v.into_iter()
+                        .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
+                        .collect::<Vec<_>>(),
                     Value::VecScalar(v) =>
                         v.into_iter()
-                            .map(|s| SparsePolynomial::lit(&s))
-                            .collect::<Vec<_>>(),
+                        .map(|s| SparsePolynomial::lit(s))
+                        .collect::<Vec<_>>(),
                     Value::VecIndex(v) =>
                         v.into_iter()
-                            .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
-                            .collect::<Vec<_>>(),
+                        .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(*i)))
+                        .collect::<Vec<_>>(),
                     Value::Range(r) =>
                         r.into_iter()
-                            .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
-                            .collect::<Vec<_>>(),
-                    Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(Op::Value(v))).collect(),
-                    _ => unreachable!("Unsupported value: {}", v),
+                        .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
+                        .collect::<Vec<_>>(),
+                    Value::Vec(v) => 
+                        v.into_iter()
+                        .flat_map(|v| self.to_poly(&Op::value(v)))
+                        .collect(),
+                    _ => vec![]
                 },
             Op::Vec(v) =>
                 v.into_iter().flat_map(|v| self.to_poly(v)).collect(),
@@ -203,72 +162,121 @@ impl<C: ArkConfig> GroebnerBuilder<C> {
                 match v {
                     Value::Range(r) =>
                         r.into_iter()
-                            .map(|i| {
-                                let mut pf = pf.clone();
-                                pf.index = i;
-                                SparsePolynomial::var(&pf)
-                            })
-                            .collect::<Vec<_>>(),
-                    Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(i))],
+                        .map(|i| {
+                            let mut pf = pf.clone();
+                            pf.index = i;
+                            SparsePolynomial::var(&pf)
+                        })
+                        .collect::<Vec<_>>(),
+                    Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(*i))],
                     _ => vec![SparsePolynomial::var(&pf)],
                 }
             },
             // Dynamic indexing, overapproximate
             Op::Ram(box a, _) => self.to_poly(a),
-            _ => unreachable!("Unsupported operation: {}", op),
+            Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
+                self.to_poly(a).into_iter()
+                .zip(self.to_poly(b).into_iter())
+                .map(|(a, b)| a + b)
+                .collect(),
+            Op::Bin(BinOp::Sub, box a, box b, _) =>
+                self.to_poly(a).into_iter()
+                .zip(self.to_poly(b).into_iter())
+                .map(|(a, b)| a - b)
+                .collect(),
+            Op::Bin(BinOp::Mul, box a, box b, _) =>
+                self.to_poly(a).into_iter()
+                .zip(self.to_poly(b).into_iter())
+                .map(|(a, b)| a * b)
+                .collect(),
+            Op::Bin(BinOp::Dot, box a, box b, _) => {
+                vec![self.to_poly(a).into_iter()
+                    .zip(self.to_poly(b).into_iter())
+                    .map(|(a, b)| a * b)
+                    .sum()
+                ]
+            },
+            _ => vec![]
         }
     }
 
-    fn add_poly(&mut self, pr: PRef, op: GOp<C>) {
+    /// Convert an operation to a polynomial and add it to the context
+    fn add_op(&mut self, pr: PRef, op: GOp<C>) {
         match op {
             // Polynomial operations
             Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
                     .enumerate()
-                    .for_each(|(i, (a, b))|
-                 self.equ.push(a + b - SparsePolynomial::var(&pr.clone().with_index(i)))),
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.pl.insert(&pf, &(&a + &b));
+                        self.basis.push(a + b - SparsePolynomial::var(&pf));
+                    }),
             Op::Bin(BinOp::Sub, box a, box b, _) =>
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
                     .enumerate()
-                    .for_each(|(i, (a, b))|
-                        self.equ.push(a - b - SparsePolynomial::var(&pr.clone().with_index(i)))),
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.pl.insert(&pf, &(&a - &b));
+                        self.basis.push(a - b - SparsePolynomial::var(&pf));
+                    }),
             Op::Bin(BinOp::Mul, box a, box b, _) =>
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
                     .enumerate()
-                    .for_each(|(i, (a, b))|
-                        self.equ.push(a * b - SparsePolynomial::var(&pr.clone().with_index(i)))),
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.pl.insert(&pf, &(&a * &b));
+                        self.basis.push(a * b - SparsePolynomial::var(&pf));
+                    }),
             Op::Bin(BinOp::Dot, box a, box b, _) => {
-                let mut sum = SparsePolynomial::zero();
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
-                    .for_each(|(a, b)| sum += a * b);
-                self.equ.push(sum - SparsePolynomial::var(&pr.clone()))
+                let sum = self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+                self.pl.insert(&pr, &sum);
+                self.basis.push(sum - SparsePolynomial::var(&pr))
             },
-            Op::Bin(BinOp::Div, box a, box b, _) =>
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
+            Op::Bin(BinOp::Div, box ref a, box ref b, _) =>
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
                     .enumerate()
-                    .for_each(|(i, (a, b))|
-                        // Add v * ob = oa
-                        self.equ.push(a - b * SparsePolynomial::var(&pr.clone().with_index(i)))),
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.np.insert(&pf, &Op::ram(op.clone(), Op::index(i)));
+                        self.basis.push(a - b * SparsePolynomial::var(&pf));
+                    }),
             Op::Bin(BinOp::Equ, box a, box b, _) =>
-                self.to_poly(a).into_iter()
-                    .zip(self.to_poly(b).into_iter())
-                    .for_each(|(a, b)|
-                        // Add a == b
-                        self.equ.push(a - b)),
-            Op::Check(box a) => self.add_poly(pr, a),
-            _ => {}
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
+                    .for_each(|(a, b)| {
+                        self.pl.insert(&pr, &(&a - &b));
+                        self.pl.insert(&pr, &SparsePolynomial::lit(&C::F::zero()));
+                        self.basis.push(a - b);
+                        self.basis.push(SparsePolynomial::var(&pr));
+                    }),
+            Op::Check(box a) => self.add_op(pr, a),
+            Op::Challenge(_, _) => { self.np.insert(&pr, &op); },
+            Op::Random(_, _) => { self.np.insert(&pr, &op); },
+            Op::Coef(_) => { self.np.insert(&pr, &op); },
+            Op::Eval(_) => { self.np.insert(&pr, &op); },
+            Op::Vec(vs) => {
+                for (i, v) in vs.into_iter().enumerate() {
+                    let pf = pr.with_index(i);
+                    self.add_op(pf, v);
+                }
+            },
+            op => { self.np.insert(&pr, &op); },
         }
     }
 }
 
-impl<'a, C, D, A> Pretty<'a, D, A> for GroebnerBuilder<C>
+impl<'a, C, D, A, T> Pretty<'a, D, A> for GroebnerBuilder<C, T>
 where
     C: ArkConfig,
+    T: Monomial,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -281,18 +289,18 @@ where
                 self.args.into_iter().map(|n| n.pretty(allocator)), ", "
             ),
             allocator.hardline(),
-            allocator.text("Equations: "),
+            allocator.text("Basis: "),
             allocator.hardline(),
             allocator.intersperse(
-                self.equ.into_iter().map(|p| p.pretty(allocator).indent(8)),
+                self.basis.into_iter().map(|p| p.pretty(allocator).indent(8)),
                 allocator.hardline(),
             ),
             allocator.hardline(),
             allocator.hardline(),
-            allocator.text("Variable definitions: "),
+            allocator.text("NP definitions: "),
             allocator.hardline(),
             allocator.intersperse(
-                self.vars.into_iter().map(|(r, op)|
+                self.np.into_iter().map(|(r, op)|
                     allocator.text(r.verbose())
                         .append(allocator.text(": "))
                         .append(op.pretty(allocator)).indent(8)),
@@ -302,278 +310,14 @@ where
     }
 
     fn is_nil(&self) -> bool {
-        self.equ.is_empty() && self.vars.is_empty()
+        self.basis.is_empty() && self.np.is_empty()
     }
 }
 
-impl<C: ArkConfig> fmt::Display for GroebnerBuilder<C> {
+impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerBuilder<C, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <GroebnerBuilder<C> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <GroebnerBuilder<C, T> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
-    }
-}
-
-impl<C: ArkConfig> StaticAnalysis<C, (Qualifier, Distribution)> for GroebnerBuilder<C> {
-    type Args = ();
-    type Output = Vec<GOp<C>>;
-
-    fn new(g: &DQDag<C>) -> Self {
-        Self::from_input(g)
-    }
-
-    fn run(&mut self, _: ()) -> Vec<GOp<C>> {
-        self.run()
-    }
-}
-
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use share::unwrap;
-#[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::analyses::{UniformityPropagation, QualifierPropagation};
-#[cfg(test)] use crate::UDags;
-#[test]
-fn groebner_foo() {
-    let ex = r#"
-        proto foo<F: Field>(private s: F, private s': F) where s == s' {
-            let r = random<F>;
-            c <- challenge<F>;
-            a <- r * c;
-            b <- r  + c + s;
-            verify(a == b);
-        }"#;
-
-    println!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-
-    // Propagate qualifiers
-    let g = QualifierPropagation::from_dag(&gs[0]);
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
-
-
-    // Compute Groebner basis for the implementation
-    let mut groebner = GroebnerBuilder::from_input(&g);
-
-    // Compute the Groebner bases
-    let leaks = groebner.run();
-
-    println!("{}", groebner);
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
-}
-
-#[test]
-fn groebner_bar() {
-
-    let ex = r#"
-        proto foo<F: Field>(private s: F, private s': F) where s == s' {
-            let r = random<F>;
-            a <- r * s;
-            b <- r * s';
-            verify(a == b);
-        }"#;
-
-    println!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-
-    let g_inp = QualifierPropagation::from_dag(&gs[0]);
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
-
-    // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&g);
-
-    // Compute the Groebner basis
-    let leaks = groebner.run();
-
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
-}
-
-#[test]
-fn groebner_baz() {
-
-    let ex = r#"
-        proto baz<F: Field, N: 4..8>(private s: [F; N], private s': F) where s[3] == s' {
-            let r = random<F>;
-            a <- r * s[3];
-            b <- r * s';
-            verify(a == b);
-        }"#;
-
-    println!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-
-    let g_inp = QualifierPropagation::from_dag(&gs[0]);
-
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
-    // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&g);
-
-    // Compute the Groebner basis
-    let leaks = groebner.run();
-
-    println!("{}", groebner);
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
-}
-
-#[test]
-fn groebner_schnorr() {
-
-    let ex = r#"
-        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
-            let r = random<F>;
-            u <- g*r;
-            c <- challenge<F>;
-            z <- r + x*c;
-            verify(g*z == u + h*c);
-        }"#;
-
-    println!("Parsing Schnorr example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    gs.write_pdf("groebner_schnorr").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-
-    let g_inp = QualifierPropagation::from_dag(&gs[0]);
-
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
-
-    // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&g);
-
-    // Compute the Groebner basis
-    let leaks = groebner.run();
-
-    println!("{}", groebner);
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
-}
-
-#[cfg(test)] use crate::WritePdf;
-/// This example is somewhat contrived. Here is how we leak s = s'.
-/// 1. We have two private inputs s and s'.
-/// 2. a - b = s - s'
-/// 3. g*a = g*b from [verify]
-/// 4. g*(a - b) = g *(s - s') = 0 from [2]
-/// 5. s = s' if g != 0.
-#[test]
-fn groebner_ex3() {
-    let ex = r#"
-        proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F, public g: G) where s == s {
-            let r = random<F>;
-            let a = r + s;
-            let b = r + s';
-            c <- g * a;
-            d <- g * b;
-            verify(c == d);
-        }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-
-    let g = QualifierPropagation::from_dag(&gs[0]);
-
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
-
-    // Create an object computing the Groebner basis
-    let mut groebner = GroebnerBuilder::from_input(&g);
-
-
-    // Compute the Groebner basis
-    let leaks = groebner.run();
-
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
-    }
-}
-
-#[test]
-fn groebner_zerocheck() {
-    let ex = r#"
-        proto zerocheck<F: Field>(private p: Uni<F, 16>, public q: Uni<F, 16>) where p == q {
-            let r = random<F>;
-            verify(p(r) == q(r))
-        }"#;
-
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    let g_inp = QualifierPropagation::from_dag(&gs[0]);
-
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
-
-    let mut groebner = GroebnerBuilder::from_input(&g);
-    let leaks = groebner.run();
-
-    println!("Groebner basis:\n{}", groebner);
-    if leaks.is_empty() {
-        println!("No leaks found");
-    } else {
-        println!("Leaks found:\n");
-        for leak in leaks.iter() {
-            println!("{}", leak);
-        }
     }
 }
