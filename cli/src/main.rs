@@ -138,7 +138,7 @@ fn analyze(args: CliArgs) {
 
     // CompletenessAnalysis in parallel
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(2) // Set the number of threads as needed
+        .num_threads(num_cpus::get() / 2) // Set the number of threads as needed
         .build()
         .expect("Failed to create thread pool");
 

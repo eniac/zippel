@@ -10,7 +10,7 @@ use std::fmt;
 /// For elimination order we need a classification of variables into
 /// two classes. The ones which map to [true] are eliminated before
 /// those which map to [false].
-pub trait Var: Clone + PartialEq + Eq + PartialOrd + Ord + fmt::Display {
+pub trait Var: Clone + PartialEq + Eq + PartialOrd + Ord + fmt::Display + Send + Sync {
     fn eliminate(&self) -> bool;
 }
 
@@ -20,6 +20,8 @@ pub trait Monomial<V: Var>:
     + PartialEq
     + Eq
     + Default
+    + Send  
+    + Sync
     + fmt::Display
     + MulAssign
     + Mul<Output = Self>

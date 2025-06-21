@@ -1,5 +1,5 @@
 use ark_ff::Field;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::ops::Index;
 
@@ -7,6 +7,7 @@ use crate::analyses::groebner::sparsepoly::{Var, Monomial, SparsePolynomial};
 use share::Ctx;
 use ark_ff::AdditiveGroup;
 use log::{debug, warn};
+use rayon::prelude::*;
 
 /// A struct representing a Gröbner basis.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,47 +87,31 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
     pub fn reduce(&self, mut p: SparsePolynomial<F, V, T>) -> SparsePolynomial<F, V, T> {
         let mut remainder = SparsePolynomial::zero();
 
+        // The basis against which we reduce. Filter out zeros once.
+        let reducers: Vec<_> = self.basis.iter().filter(|poly| !poly.is_zero()).collect();
+
+
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let mut division_occurred = false;
-            for g in self.basis.iter() {
-                if g.is_zero() { continue; } // Skip zero polynomials in basis if any
-
+            let found_divisor = reducers.par_iter().find_any(|g| {
                 if let Some((g_lc, g_lt)) = g.leading_term() {
-                    // Check if LM(p) is_divided LM(g)
-                    if p_lt.is_divided(&g_lt) {
-                        // Calculate multiplier term and scalar
-                        let multiplier_term = (p_lt / g_lt).expect("Division should succeed if is_divided is true");
-                        // Need coeff division: p_lc / g_lc
-                        let g_lc_inv = g_lc.inverse().expect("Leading coefficient must be invertible");
-                        let multiplier_scalar = p_lc * g_lc_inv;
-
-                        // Calculate the polynomial to subtract: scalar * term * g
-                        let to_subtract = g.mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
-
-                        // p = p - to_subtract
-                        p -= to_subtract;
-                        division_occurred = true;
-                        break; // Restart the check with the new p from the beginning of the basis
-                    }
+                    p_lt.is_divided(&g_lt)
                 } else {
-                     // Basis element g is zero, should ideally not happen in a cleaned basis
-                     // or should be filtered out beforehand.
-                     warn!("Warning: Encountered zero polynomial in basis during reduction.");
+                    false
                 }
-            } // End for g in basis
+            });
 
-            if !division_occurred {
-                // Leading term of p is not divisible by any leading term in basis.
-                // Move LT(p) to the remainder.
-                // Safe to unwrap, we checked p.leading_term() in the while condition
+            if let Some(g) = found_divisor {
+                let (g_lc, g_lt) = g.leading_term().unwrap();
+                let multiplier_term = (p_lt / g_lt).expect("Division should succeed if is_divided is true");
+                let multiplier_scalar = p_lc * g_lc.inverse().expect("Leading coefficient must be invertible");
+                let to_subtract = g.mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
+                p -= to_subtract;
+            } else {
+                // No division occurred, move LT(p) to the remainder.
                 let (lt, lc) = p.terms.pop_first().unwrap(); // BTreeMap specific method
                 remainder.terms.insert(&lt, &lc); // Add to remainder
-
-                // p has been modified by removing its leading term implicitly via pop_first()
-                // No explicit subtraction needed here.
             }
-            // Loop continues with the modified p
         }
 
         remainder
@@ -145,6 +130,8 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
 
         // Initialize the set of critical pairs (indices into G)
         let mut pairs: VecDeque<(usize, usize)> = VecDeque::new();
+        let mut seen = HashSet::new();
+
         for i in 0..g.len() {
             for j in (i + 1)..g.len() {
                 pairs.push_back((i, j));
@@ -152,6 +139,11 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
         }
 
         while let Some((i, j)) = pairs.pop_front() {
+            if seen.contains(&(i, j)) {
+                continue;
+            }
+            seen.insert((i, j));
+
             // Ensure indices are still valid (G might grow)
             if i >= g.len() || j >= g.len() {
                 continue; // Should not happen if pairs are added correctly, but safeguard
@@ -183,7 +175,7 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
                 // Add new critical pairs involving the new polynomial h (index k)
                 // with all existing polynomials in G (indices 0 to k-1)
                 for l in 0..k {
-                     if !Self::skip_pair(l, k, &g) {
+                     if !Self::skip_pair(l, k, &g, &seen) {
                         pairs.push_back((l, k));
                      }
                 }
@@ -197,7 +189,7 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
     }
 
     /// Buchberger's criteria (https://www.andrew.cmu.edu/course/15-355/lectures/lecture11.pdf)
-    fn skip_pair(l: usize, k: usize, g: &GroebnerBasis<F, V, T>) -> bool {
+    fn skip_pair(l: usize, k: usize, g: &GroebnerBasis<F, V, T>, seen: &HashSet<(usize, usize)>) -> bool {
         // Buchberger's first criterion: skip pairs (l, k) if their leading monomials are coprime (LCM is product)
         let lt_l = g[l].leading_term().map(|(_, m)| m);
         let lt_k = g[k].leading_term().map(|(_, m)| m);
@@ -208,13 +200,15 @@ impl<F: Field, V: Var, T: Monomial<V>> GroebnerBasis<F, V, T> {
             }
 
             // Buchberger's second criterion: skip pairs (l, k) if there exists an [i] such that LCM(LT(l), LT(k)) is a multiple of LT(i)
-            for i in 0..g.len() {
+            // and (l, i) and (i, k) have been seen before
+            return (0..g.len()).into_par_iter().any(|i| {
                 if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m) {
-                    if ml.lcm(&mk).is_divided(&lt_i) {
+                    if ml.lcm(&mk).is_divided(&lt_i) && seen.contains(&(l, i)) && seen.contains(&(i, k)) {
                         return true;
                     }
                 }
-            }
+                false
+            });
         }
         false
     }
