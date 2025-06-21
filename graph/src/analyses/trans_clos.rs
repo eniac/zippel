@@ -49,7 +49,7 @@ impl<C: ArkConfig> TransClos<C> {
     }
 
     /// Iterate over the transitive closure
-    pub fn iter(&self) -> std::slice::Iter<(PRef, GOp<C>)> {
+    pub fn iter<'a>(&'a self) -> std::slice::Iter<'a, (PRef, GOp<C>)> {
         self.clos.iter()
     }
 

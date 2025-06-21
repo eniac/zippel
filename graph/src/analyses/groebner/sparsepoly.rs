@@ -421,7 +421,7 @@ where
     }
 }
 
-#[cfg(test)] fn elim_sparse_poly(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, ElimTerm<PRef>> {
+#[cfg(test)] pub fn elim_sparse_poly<F: Field>(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, ElimTerm> {
     let mut vars = Set::new();
 
     let processed_terms =
@@ -431,7 +431,7 @@ where
                 let var = k.clone();
                 vars.insert(var.clone());
                 (var, v)
-            }).collect()), coeff.into()))
+            }).collect::<Vec<_>>()), coeff.into()))
         .collect();
 
     SparsePolynomial {
@@ -439,7 +439,7 @@ where
     }
 }
 
-#[cfg(test)] fn grevlex_sparse_poly(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, GrevLexTerm<PRef>> {
+#[cfg(test)] pub fn grevlex_sparse_poly<F: Field>(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, GrevLexTerm> {
     let mut vars = Set::new();
 
     let processed_terms =
@@ -449,7 +449,7 @@ where
                 let var = k.clone();
                 vars.insert(var.clone());
                 (var, v)
-            }).collect()), coeff.into()))
+            }).collect::<Vec<_>>()), coeff.into()))
         .collect();
 
     SparsePolynomial {

@@ -74,7 +74,8 @@ fn completeness_test() {
     g.write_pdf("completeness_test").unwrap();
 
     // Completeness analysis
-    let complete = CompletenessAnalysis::run(&g);
+    let mut ca = CompletenessAnalysis::from_input(&g);
+    let complete = ca.run();
     assert!(complete);
 
 }

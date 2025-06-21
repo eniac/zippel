@@ -76,10 +76,17 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     /// Filter out variables that satisfy the predicate
-    pub fn eliminate<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
-        self.basis.eliminate(f);
+    pub fn eliminate_var<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
+        self.basis.eliminate_var(f);
         self.pl.retain(|p, _| !f(p));
         self.np.retain(|p, _| !f(p));
+    }
+
+    pub fn eliminate_monomial<F: Fn(&T) -> bool>(&mut self, f: &F) {
+        self.basis.eliminate_monomial(f);
+        let vars = self.basis.vars();
+        self.pl.retain(|p, _| vars.contains(p));
+        self.np.retain(|p, _| vars.contains(p));
     }
 
     pub fn inline<F: Fn(&PRef) -> bool>(&mut self, f: F) {

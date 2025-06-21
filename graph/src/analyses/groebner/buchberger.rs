@@ -3,9 +3,9 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::ops::Index;
 
-use crate::analyses::groebner::{Monomial, GrevLexTerm, SparsePolynomial};
+use crate::analyses::groebner::{Monomial, SparsePolynomial};
 use crate::PRef;
-use share::Ctx;
+use share::{Ctx, Set};
 use ark_ff::AdditiveGroup;
 use log::{debug, warn};
 use rayon::prelude::*;
@@ -72,12 +72,20 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         self.basis.push(poly);
     }
 
-    pub fn eliminate<FF: Fn(&PRef) -> bool>(&mut self, f: &FF) {
+    pub fn eliminate_var<FF: Fn(&PRef) -> bool>(&mut self, f: &FF) {
         self.basis.retain(|p| p.vars().find(|v| f(v)).is_none());
+    }
+
+    pub fn eliminate_monomial<FF: Fn(&T) -> bool>(&mut self, f: &FF) {
+        self.basis.retain(|p| p.terms.iter().any(|(t, _)| !f(t)));
     }
 
     pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut SparsePolynomial<F, T>> {
         self.basis.iter_mut()
+    }
+
+    pub fn vars(&self) -> Set<PRef> {
+        self.basis.iter().flat_map(|p| p.vars().into_iter()).collect()
     }
 
     /// Reduces polynomial `p` with respect to the basis `G`.
@@ -334,22 +342,26 @@ impl<F: Field, T: Monomial> fmt::Display for GroebnerBasis<F, T> {
 #[cfg(test)] use ark_bls12_381::Fr as Fp; // Using a prime field
 #[cfg(test)] use ark_ff::One;
 #[cfg(test)] use share::assert_deq;
-#[cfg(test)] use crate::analyses::groebner::ElimTerm;
+#[cfg(test)] use crate::analyses::groebner::{ElimTerm, GrevLexTerm};
+#[cfg(test)] use lang::typ::{Qualifier, Distribution};
+#[cfg(test)] use lang::id::Vid;
+#[cfg(test)] use petgraph::graph::NodeIndex;
+#[cfg(test)] use backend::ATyp;
 
-#[cfg(test)] fn elim_var<'a>(name: &'a str) -> PRef<'a> {
-    PRef::from_var(Vid::new(name), 0, ATyp::Scalar, 0, Qualifier::Private, Distribution::Uniform)
+#[cfg(test)] fn elim_var<'a>(name: &'a str) -> PRef {
+    PRef::from_var(Vid::new(name), NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Private, Distribution::Uniform)
 }
 
-#[cfg(test)] fn noelim_var<'a>(name: &'a str) -> PRef<'a> {
-    PRef::from_var(Vid::new(name), 0, ATyp::Scalar, 0, Qualifier::Public, Distribution::Nonuniform)
+#[cfg(test)] fn noelim_var<'a>(name: &'a str) -> PRef {
+    PRef::from_var(Vid::new(name), NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Public, Distribution::Nonuniform)
 }
 
 #[cfg(test)] fn elim_term(vars: Vec<(&PRef, usize)>) -> ElimTerm {
-    ElimTerm::from(vars.iter().map(|(v, i)| (v, *i)).collect())
+    ElimTerm::from(vars.into_iter().map(|(v, i)| (v.clone(), i)).collect::<Vec<_>>())
 }
 
 #[cfg(test)] fn grevlex_term(vars: Vec<(&PRef, usize)>) -> GrevLexTerm {
-    GrevLexTerm::from(vars.iter().map(|(v, i)| (v, *i)).collect())
+    GrevLexTerm::from(vars.into_iter().map(|(v, i)| (v.clone(), i)).collect::<Vec<_>>())
 }
 
 #[test]
@@ -393,7 +405,7 @@ fn test_s_polynomial() {
     let x = elim_var("x");
     let y = elim_var("y");
 
-    let f: SparsePolynomial<Fp, ElimTerm<PRef>> = elim_sparse_poly(vec![
+    let f: SparsePolynomial<Fp, ElimTerm> = elim_sparse_poly(vec![
         (Fp::one(), vec![(&x, 2)]), // x^2
         (-Fp::one(), vec![(&y, 1)]), // -y
     ]); // x^2 - y

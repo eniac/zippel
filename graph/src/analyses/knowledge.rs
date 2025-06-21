@@ -49,15 +49,31 @@ impl<C: ArkConfig> KnowledgeAnalysis<C> {
         .collect()
     }
 
+    pub fn eliminate_var(&mut self){
+        self.0.eliminate_var(&|v| ElimTerm::eliminate_var(v));
+    }
+
+    pub fn eliminate_groups(&mut self) {
+        self.0.eliminate_monomial(&|t| {
+            let mono_sum = t.iter()
+            .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
+            .sum::<usize>();
+            mono_sum > 1
+        });
+    }
+
     pub fn run(&mut self) -> bool {
         // Compute the Groebner basis
         self.0.run();
 
         // Delete varieties with elimination variables
-        self.0.eliminate(&|v| ElimTerm::eliminate_var(v));
+        self.eliminate_var();
 
         // Inline all polynomials except for public variables
         self.0.inline(|p| p.is_public());
+
+        // Delete varieties where group elements are multiplied
+        self.eliminate_groups();
 
         if self.0.basis.iter().any(Self::is_leak) {
             warn!("Leak found");

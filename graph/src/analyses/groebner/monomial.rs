@@ -196,6 +196,10 @@ impl GrevLexTerm {
     pub fn new(vars: Ctx<PRef, usize>) -> Self {
         GrevLexTerm(MonoTerm(vars))
     }
+
+    pub fn iter(&self) -> impl Iterator<Item=(&PRef, &usize)> {
+        self.0.iter()
+    }
 }
 
 /// Constructors for ElimTerm
@@ -212,6 +216,10 @@ impl ElimTerm {
 
     pub fn eliminate(&self) -> bool {
         self.0.iter().any(|(v, _)| Self::eliminate_var(v))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=(&PRef, &usize)> {
+        self.0.iter()
     }
 }
 
