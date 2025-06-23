@@ -12,6 +12,7 @@ use lang::ast::BinOp;
 use std::collections::{HashMap, HashSet};
 use lang::id::Vid;
 use graph::Ref;
+use rand::Rng;
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
     return_value: Mutex<Option<Value<C>>>, 
@@ -33,7 +34,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
         MutexGraph(
             tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
-                nthreads.size()
+                nthreads.get()
             )))
         )
     }
@@ -68,6 +69,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 // println!("getting value");
                 let input_val = inputs.contains_key(&vid);
                 if input_val {
+                    // println!("Returning value for {:?} with val {}", vid, inputs[&vid].clone());
                     inputs[&vid].clone()
                 }
                 else {
@@ -76,11 +78,15 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                             let return_val = annotation.return_value.lock().unwrap();
                             match &*return_val {
-                                Some(val) => val.clone(),
+                                Some(val) => {
+                                    // println!("Returning value for {:?} with val {}", vid, val.clone());
+                                    val.clone()
+                                },
                                 None => panic!("Value should exist")
                             }
                         },
                         _ => {
+                            println!("Vid {} has node {:?}", vid, node_index);
                             panic!("No value");
                         }
                     } 
@@ -116,9 +122,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
 
-                println!("Running check: {}", a_val);
+                // println!("Running check: {}", a_val);
                 if Value::Bool(true) == a_val {
-                    println!("Program Succeeded")
+                    // println!("Program Succeeded")
                 }
 
                 return a_val;
@@ -130,11 +136,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
                 match BinOperation {
                     BinOp::Add => {
-                        println!("running add with {} and {}", a_val, b_val);
+                        // println!("running add with {} and {}", a_val, b_val);
                         return a_val + b_val;
                     },
                     BinOp::Mul => {
-                        println!("running mul with {} and {}", a_val, b_val);
+                        // println!("running mul with {} and {} results in {}", a_val, b_val, a_val.clone() * b_val.clone());
                         return  a_val * b_val;
                     },
                     BinOp::Equ => {
@@ -176,7 +182,12 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Challenge(ATyp, _) => {
                 let mut rng = ThreadRng::default();
                 // println!("running challenge");
+                // println!("ATyp: {:?}", ATyp);
+                //TODO: Implement challenge
                 return Value::random(&mut rng, ATyp);
+                // let mut rng = rand::thread_rng();
+                // return Value::<C>::scalar_from_usize(3);
+                //Value::<C>::Index(rng.gen_range(3..4) as usize);
             },
             Op::Pair(box a, box b, ATyp) => {
                 let inputs_a_clone = Arc::clone(&inputs);
@@ -200,13 +211,19 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<HashMap<Vid, Value<C>>>) {
-        println!("running Node Index: {:?}", node_curr);
+        // println!("running Node Index: {:?}", node_curr);
 
         let node = &self.0[node_curr];
         
 
         match node {
-            Node::Op(operation, annotation) | Node::Transcr(operation, annotation)  => {
+            Node::Op(operation, annotation) => {
+                let return_val = self.handle_op(operation, inputs);
+                // println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
+                let mut return_value_lock = annotation.return_value.lock().unwrap();
+                *return_value_lock = Some(return_val);  
+            },
+            Node::Transcr(operation, annotation)  => {
                 let return_val = self.handle_op(operation, inputs);
                 // println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
@@ -240,7 +257,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
             for i in 0..ready_nodes.len() {
                 let node_index = ready_nodes[i];
-                let mut thread_num_val: usize = 0;
+                let thread_num_val;
 
                 match &g.0[node_index] {
                     Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -351,13 +368,48 @@ impl<C: ArkConfig> MutexGraph<C> {
                             final_return.push(return_val.clone().unwrap());
                         }
                     },
-                    Node::Transcr(_, annotation) => {
-                        let transcript_node = g.0.transcript_nodes();
-                        for node in transcript_node {
-                            let return_val = annotation.return_value.lock().unwrap();
-                            if return_val.is_some() {
-                                final_return.push(return_val.clone().unwrap());
+                    Node::Transcr(_, _) => {
+                        let transcript_nodes = g.0.transcript_nodes();
+                        let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+                            let mut has_parent_in_list = HashSet::new();
+                            
+                            for &node in &transcript_nodes {
+                                for parent in g.0.neighbors_directed(node, petgraph::Direction::Incoming) {
+                                    if transcript_nodes.contains(&parent) {
+                                        parent_map.insert(node, parent);
+                                        has_parent_in_list.insert(node);
+                                    }
+                                }
                             }
+
+                            let mut ordered = Vec::new();
+                            let root = transcript_nodes.iter()
+                                .find(|&&n| !has_parent_in_list.contains(&n))
+                                .expect("Cycle detected in transcript nodes");
+                            
+                            let mut current = *root;
+                            ordered.push(current);
+                            while let Some(&child) = transcript_nodes.iter()
+                                .find(|&&n| parent_map.get(&n) == Some(&current)) {
+                                ordered.push(child);
+                                current = child;
+                            }
+
+
+                        for node_transcript in ordered {
+                            let transcript_node = &g.0[node_transcript];
+                            match transcript_node {
+                                Node::Transcr(_, annotation) => {
+                                    let return_val = annotation.return_value.lock().unwrap();
+                                    if return_val.is_some() {
+                                        final_return.push(return_val.clone().unwrap());
+                                    }
+                                }
+                                _ => {
+                                    panic!("Not possible");
+                                }
+                            }
+                            
                         }
                     },
                     Node::Inp(_, _) | Node::Rel(_, _) => {

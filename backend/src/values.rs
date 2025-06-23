@@ -65,6 +65,10 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    pub fn scalar_from_usize(i: usize) -> Self {
+        Value::Scalar(C::FOps::from_usize(i))
+    }
+
     pub fn zero(typ: &ATyp) -> Self {
         match typ {
             ATyp::Base(ABase::Bool) => Value::Bool(false),
@@ -316,9 +320,13 @@ impl<C: ArkConfig> Value<C> {
                     panic!("Cannot multiply bools {} * {}", self, other)
                 }
                 // Index * Index = Index
-                Value::Index(_) => *other.into_index_mut() *= *a,
+                Value::Index(_) => {
+                    *other.into_index_mut() *= *a;
+                }
                 // Index * whatever, cast index to scalar
-                Value::Scalar(_) => C::FOps::mul(&C::FOps::from_usize(*a), other.into_scalar_mut()),
+                Value::Scalar(_) => {
+                    C::FOps::mul(&C::FOps::from_usize(*a), other.into_scalar_mut())
+                },
                 // Index * groups
                 Value::G1(_) | Value::G1Affine(_) => {
                     let group = other.into_g1_mut();
@@ -363,9 +371,15 @@ impl<C: ArkConfig> Value<C> {
                     panic!("Cannot multiply bools {} * {}", self, other)
                 }
                 // Scalar * index, cast index to Scalar
-                Value::Index(b) => C::FOps::mul(a, &mut C::FOps::from_usize(*b)),
+                Value::Index(b) => {
+                    let mut value = C::FOps::from_usize(*b);
+                    C::FOps::mul(a, &mut value);
+                    *other = Value::Scalar(value);
+                },
                 // Scalar * Scalar = Scalar
-                Value::Scalar(_) => C::FOps::mul(a, other.into_scalar_mut()),
+                Value::Scalar(_) => { 
+                    C::FOps::mul(a, other.into_scalar_mut())
+                },
                 // Index * groups
                 Value::G1(_) | Value::G1Affine(_) => {
                     let group = other.into_g1_mut();
@@ -422,8 +436,8 @@ impl<C: ArkConfig> Value<C> {
             Value::G2(a) => match &other {
                 // G2 * scalar multiplication
                 Value::Scalar(_) | Value::Index(_) => {
-                    let vr = other.into_vec_scalar_mut();
-                    *other = Value::VecG2Affine(C::G2Ops::vec_mul(a, vr));
+                    let mut group = C::G2Ops::vec_mul(a, &vec![other.into_scalar()]);
+                    *other = Value::G2Affine(group.remove(0));
                 }
                 // G2 * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
@@ -702,7 +716,9 @@ impl<C: ArkConfig> Value<C> {
             }
             Value::Index(a) => match &other {
                 // Index / Index = Index
-                Value::Index(_) => *other.into_index_mut() /= *a,
+                Value::Index(_) => {
+                    *other = Value::Index(*a / other.into_index())
+                },
                 // Index / whatever, cast index to scalar
                 Value::Scalar(_) => C::FOps::div(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                 // Index / Vectors
@@ -724,7 +740,9 @@ impl<C: ArkConfig> Value<C> {
                 // Scalar / index, cast index to Scalar
                 Value::Index(b) => C::FOps::div(a, &mut C::FOps::from_usize(*b)),
                 // Scalar / Scalar = Scalar
-                Value::Scalar(_) => C::FOps::div(a, other.into_scalar_mut()),
+                Value::Scalar(_) => {
+                    C::FOps::div(a, other.into_scalar_mut())
+                },
                 // Scalar / Vector
                 Value::VecIndex(_) | Value::VecScalar(_) => other
                     .into_vec_scalar_mut()
@@ -850,7 +868,7 @@ impl<C: ArkConfig> Value<C> {
                     let f = other.into_scalar_mut();
                     f.inverse()
                         .expect(format!("Failed to invert scalar {}", f).as_str());
-                    let mut vr = std::iter::repeat(f.clone())
+                    let mut vr = std::iter::repeat(f.clone().inverse().unwrap())
                         .take(v.len())
                         .collect::<Vec<_>>();
                     v.par_iter()
@@ -883,13 +901,12 @@ impl<C: ArkConfig> Value<C> {
                     C::FOps::vec_inv(&mut vr);
                     *other = Value::VecG1(
                         v.par_iter()
-                            .zip((*vr).par_iter())
-                            .map(|(g, f)| {
-                                let mut gm = *g;
-                                C::G1Ops::mul(f, &mut gm);
-                                gm
-                            })
-                            .collect(),
+                        .map(|g| {
+                            let mut gm = *g;
+                            C::G1Ops::mul(&vr[0], &mut gm);
+                            gm
+                        })
+                        .collect(), 
                     );
                 }
                 // Vec<Group1> / Vec<Index>
@@ -915,18 +932,29 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(vr);
+                    let mut vr = vec![other.into_scalar()];
+
+                    // let vr = other.into_vec_scalar_mut();
+                    C::FOps::vec_inv(&mut vr);
                     *other = Value::VecG2(
                         v.par_iter()
-                            .zip((*vr).par_iter())
-                            .map(|(g, f)| {
-                                let mut gm = *g;
-                                C::G2Ops::mul(f, &mut gm);
-                                gm
-                            })
-                            .collect(),
+                        .map(|g| {
+                            let mut gm = *g;
+                            C::G2Ops::mul(&vr[0], &mut gm);
+                            gm
+                        })
+                        .collect(), 
                     );
+                    // *other = Value::VecG2(
+                    //     v.par_iter()
+                    //         .zip((*vr).par_iter())
+                    //         .map(|(g, f)| {
+                    //             let mut gm = *g;
+                    //             C::G2Ops::mul(f, &mut gm);
+                    //             gm
+                    //         })
+                    //         .collect(),
+                    // );
                 }
                 // Vec<Group1> / Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
@@ -1588,7 +1616,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
             ATyp::Base(ABase::Bool) => Value::Bool(rng.next_u32() % 2 == 0),
-            ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) as usize),
+            ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng)%10 as usize),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
@@ -2394,7 +2422,7 @@ fn test_mul_comm() {
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     assert_deq!(&a * &b, &b * &a);
-
+    
     // Vec<Scalar> * Vec<Scalar>
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
@@ -2416,6 +2444,58 @@ fn test_mul_comm() {
     Value::value_pair(&a, &mut b1);
     Value::value_pair(&b2, &mut a);
     assert_deq!(b1, a);
+}
+
+#[test]
+fn inverse_test() {
+    let mut rng = test_rng();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let c = (&a * &b) / b;
+    assert_deq!(&a, &c);
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_g1(10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let c = (&a * &b) / b;
+    assert_deq!(&a, &c);
+    
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_g2(10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let c = (&a * &b) / b;
+    assert_deq!(&a, &c);
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let c = (&a * &b) / b;
+    assert_deq!(&a, &c);
+
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let c = (&a * &b) / b;
+    assert_deq!(&a, &c);
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    let c = &(&b.clone() / &b.clone()) * &a;
+    assert_deq!(&a, &c);
+    assert_deq!(&a * &(&b.clone() / &b.clone()), &(&b.clone() / &b.clone()) * &a);
+    assert_deq!((&a * &b.clone()) / b.clone(), a);
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g1(10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    let c = &(&b.clone() / &b.clone()) * &a;
+    assert_deq!(&a, &c); 
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g2(10));
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    let c = &(&b.clone() / &b.clone()) * &a;
+    assert_deq!(&a, &c); 
+
+    let a = Value::<ArkBls12_381>::scalar_from_usize(1);
+    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
+    let c = (&a/&b).dot(b.clone());
+    assert_deq!(&c, &Value::<ArkBls12_381>::scalar_from_usize(10));
 }
 
 

@@ -18,6 +18,7 @@ ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5.0"
 log = "0.4.27"
+rand = { version = "0.8", features = ["std"] }
 good_lp = { version = "1.13.0", features = [
     "lp-solvers",
 ], default-features = false }
