@@ -9,13 +9,11 @@ fn sum_recursive<F: Field>(
 fn sum_recursive<F: Field, N_current: 1..6>(
     public sum_vec: [F; 2^N_current]         
 ) -> Bool {
+        // random creates two different random values when not included in transcript
         temp <- random<F>;
         temp_transcript <- temp*temp;
 
         temp_transcript == temp*temp && sum_recursive(sum_vec[0..2^(N_current-1)]) && sum_recursive(sum_vec[2^(N_current-1)..2^N_current])
-        //let sum_vec_next = sum_vec[0..2^(N_current - 1)];
-        //sum_recursive(sum_vec_next)
-        //sum_vec == sum_vec
 }
 
 proto sum_test<F: Field, N_val_const: 4>(

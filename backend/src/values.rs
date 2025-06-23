@@ -895,15 +895,13 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let mut vr = vec![other.into_scalar()];
-
-                    // let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(&mut vr);
+                    let f = other.into_scalar();
+                    let f_inv = f.inverse().unwrap();
                     *other = Value::VecG1(
                         v.par_iter()
                         .map(|g| {
                             let mut gm = *g;
-                            C::G1Ops::mul(&vr[0], &mut gm);
+                            C::G1Ops::mul(&f_inv, &mut gm);
                             gm
                         })
                         .collect(), 
@@ -932,29 +930,17 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2(v) => match &other {
                 // Vec<Group1> / scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    let mut vr = vec![other.into_scalar()];
-
-                    // let vr = other.into_vec_scalar_mut();
-                    C::FOps::vec_inv(&mut vr);
+                    let f = other.into_scalar();
+                    let f_inv = f.inverse().unwrap();
                     *other = Value::VecG2(
                         v.par_iter()
                         .map(|g| {
                             let mut gm = *g;
-                            C::G2Ops::mul(&vr[0], &mut gm);
+                            C::G2Ops::mul(&f_inv, &mut gm);
                             gm
                         })
                         .collect(), 
                     );
-                    // *other = Value::VecG2(
-                    //     v.par_iter()
-                    //         .zip((*vr).par_iter())
-                    //         .map(|(g, f)| {
-                    //             let mut gm = *g;
-                    //             C::G2Ops::mul(f, &mut gm);
-                    //             gm
-                    //         })
-                    //         .collect(),
-                    // );
                 }
                 // Vec<Group1> / Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
