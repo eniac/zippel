@@ -8,8 +8,9 @@ use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 use lang::id::Vid;
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
 use lang::ast::UModule;
-use backend::ArkBls12_381;
+// use backend::ArkBls12_381;
 use costs::Benchmarker;
+use backend::ArkBls12_381;
 use share::unwrap;
 use graph::{
     UDags,
@@ -21,11 +22,15 @@ use log::{error, warn, debug};
 
 use graph::scheduler::{ThreadAlloc, TDag, Scheduler, AsymptoticCost};
 use graph::scheduler::ilp::GurobiScheduler;
+use graph::scheduler::local_scheduler::LocalScheduler;
 use runtime::MutexGraph;
 use std::sync::Arc;
 use graph::Ref;
 use ark_std::test_rng;
 use rand::Rng;
+use graph::PRef;
+use std::time::Instant;
+use ark_std::UniformRand;
 
 #[derive(Parser, Debug)]
 #[command(author, version,
@@ -162,6 +167,13 @@ fn analyze(args: CliArgs) {
     let leaks= kz.run();
 }
 
+macro_rules! start_timer {
+    ($msg:expr) => {{
+        println!("{}", $msg);
+        Instant::now()
+    }};
+}
+
 /// Runtime entry point, evaluate a Zippel program or protocol
 fn eval(args: CliArgs) {
     let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
@@ -181,9 +193,15 @@ fn eval(args: CliArgs) {
         });
     }
 
-    let g = get_protocol_subgraph(&gs, &args);
+    let g_temp = get_protocol_subgraph(&gs, &args);
+    let g = g_temp.clone().map_transcript_nodes();
+    g.write_pdf("test_prover_verifier").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+    // g.print_edges();
     let verifier = g.get_verifier().unwrap();
     let (prover, _) = g.get_prover();
+    // verifier.print_edges();
 
     let combined = verifier.combine_dag(&prover);
 
@@ -191,72 +209,87 @@ fn eval(args: CliArgs) {
         warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
+    println!("Graph produced");
+
     let prover_args = prover.args();
     let verifier_args = verifier.args();
 
     let cost_model = AsymptoticCost::new();
-    let miip_gap = 0.50;
+    let limit: f64 = 30.0;
 
-    let prover_scheduler = GurobiScheduler::new_with_system(&prover, &cost_model);
-    // let prover_tdag = prover_scheduler.schedule(prover, miip_gap);
-    let prover_tdag = prover.map_annotations(&|_, _| {
-        let mut rng = rand::thread_rng();
-        let mut threads = Vec::new();
-        for _ in 0..3 {
-            threads.push(rng.gen_range(0..prover_scheduler.num_threads()));
-        }
-        ThreadAlloc::new(threads)
-    });
+    let prover_scheduler = LocalScheduler::new_with_system(&prover, &cost_model, limit);
+    let prover_tdag = prover_scheduler.schedule(prover);
     let prover_mutex_graph = MutexGraph::new(prover_tdag);
     let prover_arc_graph = Arc::new(prover_mutex_graph);
-    let verifier_scheduler = GurobiScheduler::new_with_system(&verifier, &cost_model);
-    // let verifier_tdag = verifier_scheduler.schedule(verifier, miip_gap);
-    let verifier_tdag = verifier.map_annotations(&|_, _| {
-        let mut rng = rand::thread_rng();
-        let mut threads = Vec::new();
-        for _ in 0..6 {
-            threads.push(rng.gen_range(0..prover_scheduler.num_threads()));
-        }
-        ThreadAlloc::new(threads)
-    });
+    let verifier_scheduler = LocalScheduler::new_with_system(&verifier, &cost_model, limit);
+    let verifier_tdag = verifier_scheduler.schedule(verifier);
     let verifier_mutex_graph = MutexGraph::new(verifier_tdag);
-    verifier_mutex_graph.print_edges();
     let verifier_arc_graph = Arc::new(verifier_mutex_graph);
 
+    println!("Graphs created");
     // TODO: extract inputs from command line
-    let n_val_const = 2;
+    let mut inputs: HashMap<Vid, Value<ArkBls12_381>> = HashMap::new();
+
+    // TODO: extract inputs from command line
+    let n_val_const = 1024;
     let mut rng = test_rng();
 
-    let g_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
-    let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+    // proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 4>(
+    //     // --- Public Inputs ---
+    //     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
+    //     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
+    //     public P_initial_commitment: G,   // Corresponds to 'P' in the paper
+    //     public ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
+    //     public u_aux_base: G,             // Corresponds to 'u' in the paper
 
-    let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
-    let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+    //     // --- Private Inputs ---
+    //     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
+    //     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
+    // ) where
+    //         (P_initial_commitment == ((g_vec . a_vec_witness)
+    //         + (h_vec . b_vec_witness)
+    //         + u_aux_base * ip_val_claimed)) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
 
-    let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    let b_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
 
-    // TODO: extract inputs from command line
-    let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        ("n_val_const".into(), Value::from(n_val_const)),
-        ("g_vec".into(), g_vec.clone()),
-        ("h_vec".into(), h_vec.clone()),
-        ("P_initial_commitment".into(), p_initial_commitment.clone()),
-        ("ip_val_claimed".into(), ip_val_claimed.clone()),
-        ("u_aux_base".into(), u_aux_base.clone()),
-        ("a_vec_witness".into(), a_vec_witness.clone()),
-        ("b_vec_witness".into(), b_vec_witness.clone()),
-    ]);
 
-    println!("Prover inputs: {}", inputs);
+    let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
 
-    // Run the prover
-    let prover_result =
-        MutexGraph::run_graph(prover_arc_graph, Arc::new(inputs.clone()));
-    println!("Prover result: {:?}", prover_result);
+    let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
 
-    // Extract verifier inputs from prover result
+    // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let a_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let b_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    let ip_val_claimed: Value<ArkBls12_381> = a_vec_witness.clone().dot(b_vec_witness.clone());
+    let p_initial_commitment: Value<ArkBls12_381> = g_vec.clone().dot(a_vec_witness.clone()) +
+    h_vec.clone().dot(b_vec_witness.clone());
+    // + u_aux_base.clone() * ip_val_claimed.clone();
+    // let p_initial_commitment = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+
+    let sum_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    inputs.insert(Vid("g_vec".to_string()), g_vec);
+    inputs.insert(Vid("h_vec".to_string()), h_vec);
+    inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
+    inputs.insert(Vid("ip_val_claimed".to_string()), ip_val_claimed);
+    inputs.insert(Vid("u_aux_base".to_string()), u_aux_base);
+    inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
+    inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
+    inputs.insert(Vid("sum_vec".to_string()), sum_vec);
+    inputs.insert(Vid("val".to_string()), Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const)));
+
+
+
+    let prover_start = start_timer!("Running the prover");
+    let prover_result = MutexGraph::run_graph(prover_arc_graph, Arc::new(inputs.clone()));
+    let duration_prover = prover_start.elapsed();
+    println!("Time taken for prover: {:?} for size {} with limit {}", duration_prover, n_val_const, limit);
+    println!("");
+    println!("");
+    println!("");
+    println!("");
+
     let pg_additional_args = verifier_args.iter()
         .filter(|arg| !prover_args.contains(arg))
         .zip(prover_result.iter())
@@ -265,18 +298,73 @@ fn eval(args: CliArgs) {
             Ref::Var(v, _) => (v.clone(), val.clone()),
         })
         .collect::<HashMap<Vid, Value<ArkBls12_381>>>();
+    inputs.extend(pg_additional_args);
 
-    inputs.append(pg_additional_args);
-    println!("Verifier inputs: {}", inputs);
-
-    // Run the verifier
-    let verifier_result =
-        MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
-
+    let start = start_timer!("Running the verifier");
+    let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
     println!("Verifier result: {:?}", verifier_result);
-    // Runtime on scheduled prover will return vector of values (transcript)
-    // Runtime on verifier will take transcript and return value boolean (valid/invalid)
+    let duration = start.elapsed();
+    println!("Time taken: {:?} for size {} with limit {}", duration, n_val_const, limit);
 }
+
+
+// KZG starting point
+    // // (private p: Uni<F, 10>, private z: F, public y: F, private s: F, private ss: [F; N],
+    // //     public g: G1, public h: G2)
+    // //     where p(z) == y && [(ss[i] == s^i) for i in 0..N] {
+    //     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
+    //     let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
+    //     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    //     let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    //     let s: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+
+    //     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(10));
+
+    //     let ss: Value<ArkBls12_381> = Value::Vec((0..11).map(|i| {
+    //         s.clone() ^ Value::Index(i)
+    //     }).collect());
+
+    //     inputs.insert(Vid("p".to_string()), p);
+    //     inputs.insert(Vid("g".to_string()), g);
+    //     inputs.insert(Vid("h".to_string()), h);
+    //     inputs.insert(Vid("z".to_string()), z);
+    //     inputs.insert(Vid("y".to_string()), y);
+    //     inputs.insert(Vid("s".to_string()), s);
+    //     inputs.insert(Vid("ss".to_string()), ss);
+
+
+//     let n_val_const = 4;
+//     let mut rng = test_rng();
+
+
+//     let g_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+//     let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+
+//     let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+//     let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+//     let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+
+//     let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+//     let b_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+
+//     inputs.insert(Vid("g_vec".to_string()), g_vec);
+//     inputs.insert(Vid("h_vec".to_string()), h_vec);
+//     inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
+//     inputs.insert(Vid("ip_val_claimed".to_string()), ip_val_claimed);
+//     inputs.insert(Vid("u_aux_base".to_string()), u_aux_base);
+//     inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
+//     inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
+
+// Schnorr working
+// Accept
+//     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
+//  // let h: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)); un comment to break
+//     let x: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+//     let h = g.clone() * x.clone(); // comment to break
+
+//     inputs.insert(Vid("x".to_string()), x);
+//     inputs.insert(Vid("g".to_string()), g);
+//     inputs.insert(Vid("h".to_string()), h);
 
 fn benchmark(args: BenchmarkArgs) {
     // // You can call your benchmark function directly from anywhere

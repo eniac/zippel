@@ -47,8 +47,8 @@ fn run_poly_test() {
     });
 
     let cost_model = AsymptoticCost::new();
-    let scheduler = GurobiScheduler::new_with_system(&gs[0], &cost_model);
-    let tdag = scheduler.schedule(gs[0].clone(), 0.50);
+    let scheduler = GurobiScheduler::new_with_system(&gs[0], &cost_model, .5);
+    let tdag = scheduler.schedule(gs[0].clone());
     let mut mutex_graph_example = MutexGraph::new(tdag);
     let mut arc_graph = Arc::new(mutex_graph_example);
 

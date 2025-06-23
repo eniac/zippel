@@ -34,7 +34,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         P_commitment_k == expected_P_at_base
 }
 
-fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
+fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..11>(
     public g_vec_k: [G; 2^N_current],          // Current g bases for this round
     public h_vec_k: [G; 2^N_current],          // Current h bases for this round
     public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
@@ -63,8 +63,8 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
         // Prover "sends" L and R by adding them to the transcript.
         // L = (g_hi^a_lo) * (h_lo^b_hi) * (u^c_L)  (multiplicative notation)
         // L = g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
-        L_transcript <- g_v_hi . a_p_lo + h_v_lo . b_p_hi + u_base_for_ipa * cL_val;
-        R_transcript <- g_v_lo . a_p_hi + h_v_hi . b_p_lo + u_base_for_ipa * cR_val;
+        L_transcript <- (g_v_hi . a_p_lo) + (h_v_lo . b_p_hi) + (u_base_for_ipa * cL_val);
+        R_transcript <- (g_v_lo . a_p_hi) + (h_v_hi . b_p_lo) + (u_base_for_ipa * cR_val);
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
         x_challenge <- challenge<F>;
@@ -72,18 +72,18 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
         // Both Prover and Verifier compute parameters for the next recursive call:
         // g' = g_lo^(x^-1) * g_hi^x  (multiplicative)
         // g_prime = g_lo * (1/x_challenge) + g_hi * x_challenge (additive)
-        let g_prime_next = g_v_lo / x_challenge + g_v_hi * x_challenge;
-        let h_prime_next = h_v_lo * x_challenge + h_v_hi * (1/x_challenge);
+        let g_prime_next = (g_v_lo/ x_challenge) + (g_v_hi * x_challenge);
+        let h_prime_next = (h_v_lo * x_challenge) + (h_v_hi * (1/x_challenge));
 
         // P' = L^(x^2) * P * R^(x^-2) (multiplicative)
         // P_prime = L_transcript * (x_challenge*x_challenge) + P_commitment_k + R_transcript * ((1/x_challenge)*(1/x_challenge)) (additive)
-        let P_prime_next = L_transcript * (x_challenge*x_challenge)
+        let P_prime_next = (L_transcript * (x_challenge*x_challenge))
                          + P_commitment_k
-                         + R_transcript * ((1/x_challenge)*(1/x_challenge));
+                         + (R_transcript * ((1/x_challenge)*(1/x_challenge)));
 
         // Prover computes a' and b' for its private input to the next recursive call
-        let a_prime_private = a_p_lo * x_challenge + a_p_hi * (1/x_challenge);
-        let b_prime_private = b_p_lo * (1/x_challenge) + b_p_hi * x_challenge;
+        let a_prime_private = (a_p_lo * x_challenge) + (a_p_hi * (1/x_challenge));
+        let b_prime_private = (b_p_lo * (1/x_challenge)) + (b_p_hi * x_challenge);
 
         // Recursively call protocol_2_ipa_recursive for the next smaller problem instance.
         // The N_current for the recursive call is (N_current / 2).
@@ -99,7 +99,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..4>(
 }
 
 
-proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 2>(
+proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 1024>(
     // --- Public Inputs ---
     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
@@ -123,7 +123,7 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 2>(
     //    Translating to additive notation: P_prime = P_initial_commitment + u_aux_base * (x_chal * ip_val_claimed)
     //    'x_chal * ip_val_claimed' is a scalar multiplication.
     //    'u_aux_base * (scalar)' is scalar multiplication of a group element.
-    let P_prime = P_initial_commitment + u_aux_base * (x_chal * ip_val_claimed);
+    let P_prime = P_initial_commitment + (u_aux_base * (x_chal * ip_val_claimed));
 
     //    We also need u^x for the input to Protocol 2.
     //    Translating to additive notation: u_raised_to_x = u_aux_base * x_chal

@@ -23,6 +23,7 @@ pub struct GurobiScheduler {
     num_threads: usize,
     num_tasks: usize,
     cost_map: Vec<Vec<f64>>,
+    miip_gap: f64,
     flow_map: Vec<Vec<bool>>,
 }
 
@@ -33,14 +34,14 @@ impl<C: ArkConfig> WritePdf for Dag<C, ThreadAlloc> {
 }
 
 impl GurobiScheduler {
-    pub fn new_with_system<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM) -> Self {
+    pub fn new_with_system<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM, miip_gap: f64) -> Self {
         let num_threads: usize = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        Self::new(num_threads - 1, dag, cost_model)
+        Self::new(num_threads - 1, dag, cost_model, miip_gap)
     }
 
-    pub fn new<C: ArkConfig, CM: CostModel<C, Ref>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM) -> Self {
+    pub fn new<C: ArkConfig, CM: CostModel<C, Ref>>(num_threads: usize, dag: &UDag<C>, cost_model: &CM, miip_gap: f64) -> Self {
         // Create cost map from the DAG
         let mut cost_map: Vec<Vec<f64>> = vec![vec![0.0; num_threads]; dag.node_count()];
         for i in dag.node_indices() {
@@ -67,14 +68,14 @@ impl GurobiScheduler {
             }
         }
         println!("Flow map extracted from the dag: {:?}", flow_map);
-        GurobiScheduler { num_threads, num_tasks: dag.node_count(), cost_map, flow_map }
+        GurobiScheduler { num_threads, num_tasks: dag.node_count(), cost_map, miip_gap, flow_map }
     }
 
-    pub fn default<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM) -> Self {
+    pub fn default<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM, miip_gap: f64) -> Self {
         let num_threads: usize = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        Self::new(num_threads, dag, cost_model)
+        Self::new(num_threads, dag, cost_model, miip_gap)
     }
 
     pub fn num_threads(&self) -> usize {
@@ -279,8 +280,9 @@ impl GurobiScheduler {
 }
 
 impl Scheduler for GurobiScheduler {
-    fn schedule<C: ArkConfig>(self, dag: UDag<C>, miip_gap: f64) -> TDag<C> {
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C> {
         let num_threads = self.num_threads;
+        let miip_gap = self.miip_gap;
 
         // Call Gurobi and solve the ILP problem
         let lp_solution = self.optimize_runtime(miip_gap);
@@ -296,7 +298,7 @@ impl Scheduler for GurobiScheduler {
         }
         Dag(
             dag.0.map(
-                |a, n| n.with_annotation(ThreadAlloc(output[a.index()].clone())),
+                |a, n| n.with_annotation(ThreadAlloc(output[a.index()].len())),
                 |_, e| e.clone(),
             )
         )
@@ -328,7 +330,7 @@ fn gurobi_e2e() {
     let g = gs[0].clone();
 
     // Create a new Gurobi ILP solver
-    let solver = GurobiScheduler::new(4, &g, &cost_model);
+    let solver = GurobiScheduler::new(4, &g, &cost_model, 0.20);
 
     g.map_annotations(&|op, _|
         (1..5).map(|i| format!("{}: {}", i, cost_model.cost(op, i)))
@@ -339,7 +341,7 @@ fn gurobi_e2e() {
     });
 
     // Run the gurobi solver
-    let tg = solver.schedule(g, 0.20);
+    let tg = solver.schedule(g);
 
     tg.write_pdf("scheduler_test").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);

@@ -90,7 +90,7 @@ impl GraphError {
 }
 
 impl<C: ArkConfig, A> Dag<C, A> {
-    
+
     pub fn new() -> Self {
         Dag(Graph::new())
     }
@@ -108,6 +108,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub fn node_count(&self) -> usize {
         self.0.node_count()
     }
+
+    pub fn nodes_indices(&self) -> Vec<NodeIndex> {
+        self.0.node_indices().collect()
+    }
+
     /// Get the number of edges in the graph
     pub fn edge_count(&self) -> usize {
         self.0.edge_count()
@@ -277,6 +282,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
             // Add previous neighbors to worklist
             for e in self.0.edges_directed(n, Direction::Incoming) {
+                // Add neighbors to worklist
                 worklist.push(e.source());
             }
         }
@@ -295,11 +301,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
 
         // Remap node indices in Ref to the new node indices
-        let remapped = prover.map_node_indices(&|n| 
+        let remapped = prover.map_node_indices(&|n|
             node_map.get(&n).map(|r| r.node()).unwrap_or_else(||
-                panic!("Aliasing error: node {}: {} in prover not found in {} protocol dag", 
+                panic!("Aliasing error: node {}: {} in prover not found in {} protocol dag",
                     n.index(), self[n].drop_annotation(), self.name())));
-        
+
         (remapped, node_map)
     }
 
@@ -340,6 +346,96 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
         Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
+    }
+
+    pub fn process_op(op: GOp<C>, args_name: &Vec<String>) -> GOp<C> {
+        match op {
+            Op::Value(val) => {
+                Op::Value(val)
+            },
+            Op::Ref(r, typ) => {
+                let r_new = match r {
+                    Ref::Node(n) => r,
+                    Ref::Var(v, n) => {
+                        match v {
+                            Vid(v_string) => {
+                                if args_name.contains(&v_string) {
+                                    Ref::Var(Vid(v_string), n)
+                                } else {
+                                    Ref::Var(Vid(v_string + &format!("_{:?}", n)), n)
+                                }
+                            }
+                        }
+                    },
+                };
+                Op::Ref(r_new, typ)
+            },
+            Op::Bin(op, a, b, typ) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                let b_val: GOp<C> = Self::process_op(*b, args_name);
+                Op::Bin(op, Box::new(a_val), Box::new(b_val), typ)
+            },
+            Op::Vec(vec) => {
+                let value_vector: Vec<Op<C, Ref>> = vec.iter().map(|op| Self::process_op(op.clone(), args_name)).collect::<Vec<Op<C, Ref>>>();
+                Op::Vec(value_vector)
+            },
+            Op::Ram(box v, box index_val) => {
+                let v_val: Op<C, Ref> = Self::process_op(v, args_name);
+                let index_val_value: Op<C, Ref> = Self::process_op(index_val, args_name);
+                Op::Ram(Box::new(v_val), Box::new(index_val_value))
+            }
+            Op::Random(typ, val) => {
+                Op::Random(typ, val)
+            },
+            Op::Challenge(typ, val) => {
+                Op::Challenge(typ, val)
+            },
+            Op::Pair(a, b, typ) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                let b_val: GOp<C> = Self::process_op(*b, args_name);
+                Op::Pair(Box::new(a_val), Box::new(b_val), typ)
+            },
+            Op::Coef(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Coef(Box::new(a_val))
+            },
+            Op::Eval(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Eval(Box::new(a_val))
+            },
+            Op::Check(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Check(Box::new(a_val))
+            }
+        }
+    }
+
+    pub fn map_transcript_nodes(&mut self)  -> Dag<C, Nothing> {
+        let args: Vec<PRef> = self.args().into_iter().collect::<Vec<_>>();
+        let mut args_name = Vec::<String>::new();
+        for arg in args {
+            match arg.var() {
+                Some(v) => {
+                    match v {
+                        Vid(v_string) => {
+                            args_name.push(v_string);
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        println!("args_name: {:?}", args_name);
+        Dag(self.0.map(
+            |_, node|
+                match node {
+                    Node::Op(op, _) => Node::Op(Self::process_op(op.clone(), &args_name), Nothing),
+                    Node::Transcr(op, _) => Node::Transcr(Self::process_op(op.clone(), &args_name), Nothing),
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
+                },
+                |_, e| e.clone()
+        ))
     }
 
     /// Get the verifier graph, by reachability analysis starting from the verifier assertion
@@ -421,6 +517,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
 
+            if let Some(new_node) = node_map_self.get(&old_target_idx) {
+                if verifier[*new_node].is_input() {
+                    continue;
+                }
+            }
             if let (Some(new_source_idx), Some(new_target_idx)) =
                 (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
             {
@@ -862,6 +963,25 @@ impl<C: ArkConfig> UDag<C> {
                         return self.add_exp(CExp::coef(CExp::pow(ex, b)),
                             transcr, edge_type, kctx, fctx, vctx, vars);
                     },
+                    (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Base(t), BinOp::Add)
+                    | (CTyp::Uni(_, n), CTyp::Base(t), CTyp::Uni(_, l), BinOp::Add)
+                    if (kctx.get(&t).unwrap().is_scalar())
+                    => {
+                        println!("adding a and b");
+                        let zero_vec: lang::ast::Exp<usize> = CExp::zeroes(n - 1);
+                        let b_vec = CExp::vec(vec![b.clone()]);
+                        let vec_value = CExp::concat(b_vec, zero_vec);
+                        return self.add_exp(CExp::add(a, vec_value), transcr, edge_type, kctx, fctx, vctx, vars);
+                    },
+                    (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Base(t), BinOp::Sub)
+                    if (kctx.get(&t).unwrap().is_scalar())
+                    => {
+                        println!("subtracting a and b");
+                        let zero_vec: lang::ast::Exp<usize> = CExp::zeroes(n - 1);
+                        let b_vec = CExp::vec(vec![b.clone()]);
+                        let vec_value = CExp::concat(b_vec, zero_vec);
+                        return self.add_exp(CExp::sub(a, vec_value), transcr, edge_type, kctx, fctx, vctx, vars);
+                    },
                     _ => ()
                 };
 
@@ -1088,7 +1208,7 @@ impl<C: ArkConfig> UDag<C> {
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 // Record transcript interaction
                 match ol {
-                    GOp::Ref(Ref::Node(n), _) => {
+                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _)=> {
                         self.add_edge(*transcr, n, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(n).unwrap().set_transcript();
                         *transcr = n;

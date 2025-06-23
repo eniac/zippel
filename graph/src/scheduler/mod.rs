@@ -1,4 +1,5 @@
 pub mod ilp;
+pub mod local_scheduler;
 mod cost;
 mod asymptotic_cost;
 
@@ -13,11 +14,15 @@ pub type ThreadId = usize;
 
 /// Allocation of threads to each graph node
 #[derive(Clone, Eq, PartialEq, Debug)]
-pub struct ThreadAlloc(Vec<ThreadId>);
+pub struct ThreadAlloc(usize);
 
 impl ThreadAlloc {
-    pub fn new(threads: Vec<ThreadId>) -> Self {
+    pub fn new(threads: usize) -> Self {
         ThreadAlloc(threads)
+    }
+
+    pub fn get(&self) -> usize {
+        self.0
     }
 }
 
@@ -26,18 +31,11 @@ pub type TDag<C> = Dag<C, ThreadAlloc>;
 
 impl fmt::Display for ThreadAlloc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Threads [{}]",
-            self.0.iter().map(|x| x.to_string()).collect::<Vec<String>>().join(", "))
+        write!(f, "{}", self.0)
     }
 }
-
-impl ThreadAlloc {
-    pub fn size(&self) -> usize {
-        self.0.len()
-    }
-}
-
 /// This trait implements a scheduling algorithm for the DAG.
 pub trait Scheduler {
-    fn schedule<C: ArkConfig>(self, dag: UDag<C>, miip_gap: f64) -> TDag<C>;
+    fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C>;
+    
 }

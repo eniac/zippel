@@ -13,7 +13,7 @@ use ark_ec::models::bn::Bn;
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{AdditiveGroup, Fp64, MontConfig, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
@@ -97,6 +97,10 @@ pub trait ArkScalarOps<F: PrimeField> {
     /// Scalar exponentiation, saves result in f1
     #[inline]
     fn pow(f1: &mut F, i: u64) {
+        if i == 0 {
+            *f1 = F::one();
+            return;
+        }
         let mut i = i;
         while (i % 2) == 0 {
             f1.square_in_place();
@@ -560,13 +564,16 @@ impl<F: PrimeField> ArkConfig for ArkFieldN<F> {
 #[modulus = "17"]
 #[generator = "3"]
 pub struct F17Config;
-pub type F17 = Fp64<F17Config>;
+pub type Mont17 = MontBackend<F17Config, 1>;
+
+pub type F17 = Fp64<Mont17>;
 
 #[derive(MontConfig, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[modulus = "65537"]
 #[generator = "3"]
 pub struct F65537Config;
-pub type F65537 = Fp64<F65537Config>;
+pub type Mont65537 = MontBackend<F65537Config, 1>;
+pub type F65537 = Fp64<Mont65537>;
 
 /// Takes as input a struct, and converts them to a series of bytes. All traits
 /// that implement `CanonicalSerialize` can be automatically converted to bytes

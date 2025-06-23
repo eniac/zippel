@@ -1,0 +1,12 @@
+proto sum_test<G: Group, F: Scalar<G>, N_val_const: 4>(
+    // --- Public Inputs ---
+    public val: [G; N_val_const] 
+) where
+        (val == val) {
+    chal <- challenge<F>;
+    let val2 = (val * chal) / chal;
+
+    let verification_result = val2 == val;
+
+    verify(verification_result);
+}

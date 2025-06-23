@@ -33,6 +33,10 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ABase::G1, ABase::G1) => Self::G_ADD,
             (ABase::G2, ABase::G2) => Self::G_ADD,
             (ABase::GT, ABase::GT) => Self::G_ADD,
+            (ABase::Fin(_), ABase::Scalar) => {
+                println!("base add");
+                2.0
+            }
             (_, _) => unreachable!(),
         }
     }
@@ -44,7 +48,15 @@ impl<C: ArkConfig> AsymptoticCost<C> {
                 (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64),
             (ATyp::Uni(lt), ATyp::Uni(rt)) =>
                 (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64),
-            (_, _) => unreachable!(),
+            (ATyp::Uni(lt), _) => {
+                println!("Here");
+                1.0
+            },
+            (_, _) => {
+                println!("Temporary");
+                1.0
+            }
+            // (_, _) => unreachable!(),
         }
     }
 
@@ -119,7 +131,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Base(ABase::G2), ATyp::Base(ABase::G1)) => Self::G_PAIR,
             (ATyp::Vec(box lt, n), ATyp::Vec(box rt, _)) =>
                 (*n as f64) * Self::cost_pair(lt, rt, nthreads) / (nthreads as f64),
-            (_, _) => unreachable!(),
+            (_, _) => 1.0// unreachable!(),
         }
     }
 }
