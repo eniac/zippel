@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use lang::id::Vid;
 use backend::{ArkConfig, Value, ATyp, ABase};
 use lang::ast::UModule;
-// use backend::ArkBls12_381;
 use costs::Benchmarker;
-use backend::ArkBls12_381;
+// use backend::ArkSecp256k1;
+use backend::ArkSecp256k1;
 use share::unwrap;
 use graph::{
     UDags,
@@ -99,7 +99,7 @@ fn main() {
     }
 }
 
-fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> &'a UDag<ArkBls12_381> {
+fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkSecp256k1>, args: &'a CliArgs) -> &'a UDag<ArkSecp256k1> {
     if let Some(proto_name) = &args.subgraph {
         gs.get_proto(&proto_name.clone().into())
         .expect(&format!("Protocol {} not found in {}", proto_name, args.file_path.display()))
@@ -116,7 +116,7 @@ fn analyze(args: CliArgs) {
         process::exit(1);
     });
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkSecp256k1>::from_module(m));
 
     // Save to pdf if provided
     if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
@@ -171,7 +171,7 @@ fn eval(args: CliArgs) {
 
     println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let gs = unwrap!(UDags::<ArkSecp256k1>::from_module(m));
 
     // Save to pdf if provided
     if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
@@ -216,10 +216,11 @@ fn eval(args: CliArgs) {
 
     println!("Graphs created");
     // TODO: extract inputs from command line
-    let mut inputs: HashMap<Vid, Value<ArkBls12_381>> = HashMap::new();
+    let mut inputs: HashMap<Vid, Value<ArkSecp256k1>> = HashMap::new();
 
     // TODO: extract inputs from command line
     let n_val_const = 1024;
+    let m_val_const = 128;
     let mut rng = test_rng();
     
     // proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 4>(
@@ -239,24 +240,24 @@ fn eval(args: CliArgs) {
     //         + u_aux_base * ip_val_claimed)) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
     
     
-    
-    let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    
-    let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
 
-    // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let a_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    let b_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
-    // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
-    let ip_val_claimed: Value<ArkBls12_381> = a_vec_witness.clone().dot(b_vec_witness.clone());
-    let p_initial_commitment: Value<ArkBls12_381> = g_vec.clone().dot(a_vec_witness.clone()) + 
+    let u_aux_base: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
+    
+    let g_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    let h_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+
+    // let u_aux_base: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+    let a_vec_witness: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let b_vec_witness: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    // let g_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    // let h_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    let ip_val_claimed: Value<ArkSecp256k1> = a_vec_witness.clone().dot(b_vec_witness.clone());
+    let p_initial_commitment: Value<ArkSecp256k1> = g_vec.clone().dot(a_vec_witness.clone()) + 
     h_vec.clone().dot(b_vec_witness.clone()); 
     // + u_aux_base.clone() * ip_val_claimed.clone();
-    // let p_initial_commitment = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+    // let p_initial_commitment = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
 
-    let sum_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let sum_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
     inputs.insert(Vid("g_vec".to_string()), g_vec);
     inputs.insert(Vid("h_vec".to_string()), h_vec);
     inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
@@ -265,9 +266,37 @@ fn eval(args: CliArgs) {
     inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
     inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
     inputs.insert(Vid("sum_vec".to_string()), sum_vec);
-    inputs.insert(Vid("val".to_string()), Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const)));
+    inputs.insert(Vid("val".to_string()), Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const)));
 
-                
+        let g: Value<ArkSecp256k1> = Value::G1(<ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng));
+        let h: Value<ArkSecp256k1> = Value::G2(<ArkSecp256k1 as ArkConfig>::G2::rand(&mut rng));
+        let z: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+        let y: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+        let s: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+    
+        let p: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::Uni(10));
+    
+        let ss: Value<ArkSecp256k1> = Value::Vec((0..11).map(|i| {
+            s.clone() ^ Value::Index(i)
+        }).collect());
+    
+        inputs.insert(Vid("p".to_string()), p);
+        inputs.insert(Vid("g".to_string()), g);
+        inputs.insert(Vid("h".to_string()), h);
+        inputs.insert(Vid("z".to_string()), z);
+        inputs.insert(Vid("y".to_string()), y);
+        inputs.insert(Vid("s".to_string()), s);
+        inputs.insert(Vid("ss".to_string()), ss);
+        let g_a_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+        let g_b_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), m_val_const));
+
+        let a: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+        let b: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(m_val_const));
+    
+        inputs.insert(Vid("g_a_vec".to_string()), g_a_vec);
+        inputs.insert(Vid("g_b_vec".to_string()), g_b_vec);
+        inputs.insert(Vid("a".to_string()), a);
+        inputs.insert(Vid("b".to_string()), b); 
 
     let prover_start = start_timer!("Running the prover");
     let prover_result = MutexGraph::run_graph(prover_arc_graph, Arc::new(inputs.clone()));
@@ -285,14 +314,14 @@ fn eval(args: CliArgs) {
             Ref::Node(node) => panic!("Node reference not supported"),
             Ref::Var(v, _) => (v.clone(), val.clone()),
         })
-        .collect::<HashMap<Vid, Value<ArkBls12_381>>>();
+        .collect::<HashMap<Vid, Value<ArkSecp256k1>>>();
     inputs.extend(pg_additional_args);
 
-    let start = start_timer!("Running the verifier");
-    let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
-    println!("Verifier result: {:?}", verifier_result);
-    let duration = start.elapsed();
-    println!("Time taken: {:?} for size {} with limit {}", duration, n_val_const, limit); 
+    // let start = start_timer!("Running the verifier");
+    // let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
+    // println!("Verifier result: {:?}", verifier_result);
+    // let duration = start.elapsed();
+    // println!("Time taken: {:?} for size {} with limit {}", duration, n_val_const, limit); 
 }
 
 
@@ -300,15 +329,15 @@ fn eval(args: CliArgs) {
     // // (private p: Uni<F, 10>, private z: F, public y: F, private s: F, private ss: [F; N],
     // //     public g: G1, public h: G2)
     // //     where p(z) == y && [(ss[i] == s^i) for i in 0..N] {
-    //     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-    //     let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
-    //     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    //     let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    //     let s: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    //     let g: Value<ArkSecp256k1> = Value::G1(<ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng));
+    //     let h: Value<ArkSecp256k1> = Value::G2(<ArkSecp256k1 as ArkConfig>::G2::rand(&mut rng));
+    //     let z: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+    //     let y: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+    //     let s: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
     
-    //     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(10));
+    //     let p: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::Uni(10));
     
-    //     let ss: Value<ArkBls12_381> = Value::Vec((0..11).map(|i| {
+    //     let ss: Value<ArkSecp256k1> = Value::Vec((0..11).map(|i| {
     //         s.clone() ^ Value::Index(i)
     //     }).collect());
     
@@ -325,15 +354,15 @@ fn eval(args: CliArgs) {
 //     let mut rng = test_rng();
 
 
-//     let g_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
-//     let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+//     let g_vec: Value<ArkSecp256k1> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
+//     let h_vec: Value<ArkSecp256k1> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
     
-//     let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
-//     let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-//     let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
+//     let p_initial_commitment: Value<ArkSecp256k1> = Value::zero(&ATyp::g1());
+//     let ip_val_claimed: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+//     let u_aux_base: Value<ArkSecp256k1> = Value::zero(&ATyp::g1());
     
-//     let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-//     let b_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+//     let a_vec_witness = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+//     let b_vec_witness = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
 
 //     inputs.insert(Vid("g_vec".to_string()), g_vec);
 //     inputs.insert(Vid("h_vec".to_string()), h_vec);
@@ -345,9 +374,9 @@ fn eval(args: CliArgs) {
     
 // Schnorr working
 // Accept
-//     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-//  // let h: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)); un comment to break
-//     let x: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+//     let g: Value<ArkSecp256k1> = Value::G1(<ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng));
+//  // let h: Value<ArkSecp256k1> = Value::G1(<ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng)); un comment to break
+//     let x: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
 //     let h = g.clone() * x.clone(); // comment to break
 
 //     inputs.insert(Vid("x".to_string()), x);
