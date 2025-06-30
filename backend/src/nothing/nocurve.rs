@@ -487,13 +487,18 @@ impl<F: PrimeField> ScalarMul for NoCurve<F> {
     }
 }
 
-impl<F: PrimeField> VariableBaseMSM for NoCurve<F> {}
+impl<F: PrimeField> VariableBaseMSM for NoCurve<F> {
+
+    type Bucket = NoCurve<F>;
+    const ZERO_BUCKET: Self::Bucket = NoCurve(PhantomData);
+}
 
 impl<F: PrimeField> AffineRepr for NoCurve<F> {
     type Config = NoCurve<F>;
     type ScalarField = F;
     type BaseField = F;
     type Group = NoCurve<F>;
+    const ZERO: Self = NoCurve(PhantomData);
 
     // Required methods
     fn xy(&self) -> Option<(Self::BaseField, Self::BaseField)> {

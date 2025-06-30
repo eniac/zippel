@@ -13,6 +13,8 @@ use std::collections::{HashMap, HashSet};
 use lang::id::Vid;
 use graph::Ref;
 use rand::Rng;
+use share::Ctx;
+
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
     return_value: Mutex<Option<Value<C>>>, 
@@ -47,56 +49,28 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
     
-    pub fn get_value(&self, reference: graph::Ref, inputs: Arc<HashMap<Vid, Value<C>>>) -> Value<C> {
-        let val: Value<C> = match reference {
-            Ref::Node(node_index) => {
-                let node = &self.0[node_index];
-                match node {
-                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                        let return_val = annotation.return_value.lock().unwrap();
-                        match &*return_val {
-                            Some(val) => val.clone(),
-                            None => panic!("Value should exist")
-                        }
-                    },
-                    _ => {
-                        panic!("No value");
-                    }
+    pub fn get_value(&self, r: graph::Ref, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
+        let node = r.node();
+
+        match &self.0[node] {
+            Node::Op(_, annotation) 
+            | Node::Transcr(_, annotation) => {
+                let return_val = annotation.return_value.lock().unwrap();
+                match &*return_val {
+                    Some(val) => val.clone(),
+                    None => panic!("Value should exist")
                 }
             },
-            Ref::Var(vid, node_index) => {
-                // println!("{:?}", vid);
-                // println!("getting value");
-                let input_val = inputs.contains_key(&vid);
-                if input_val {
-                    // println!("Returning value for {:?} with val {}", vid, inputs[&vid].clone());
-                    inputs[&vid].clone()
-                }
-                else {
-                    let node = &self.0[node_index];
-                    match node {
-                        Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                            let return_val = annotation.return_value.lock().unwrap();
-                            match &*return_val {
-                                Some(val) => {
-                                    // println!("Returning value for {:?} with val {}", vid, val.clone());
-                                    val.clone()
-                                },
-                                None => panic!("Value should exist")
-                            }
-                        },
-                        _ => {
-                            println!("Vid {} has node {:?}", vid, node_index);
-                            panic!("No value");
-                        }
-                    } 
-                }
+            Node::Inp(_, _) | Node::Rel(_, _) => {
+                let vid = r.var().expect("Input should be a variable");
+                inputs.get(&vid)
+                .expect(format!("Value for {} should exist", vid).as_str())
+                .clone()
             }
-        };
-        return val;
+        }
     }
 
-    pub fn handle_op(&self, operation: &Op<C, Ref>, inputs: Arc<HashMap<Vid, Value<C>>>) -> Value<C>{
+    pub fn handle_op(&self, operation: &Op<C, Ref>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C>{
         match operation {
             Op::Value(val) => {
                 // println!("running value");
@@ -129,12 +103,12 @@ impl<C: ArkConfig> MutexGraph<C> {
 
                 return a_val;
             }
-            Op::Bin(BinOperation, box a, box b, ATyp) => {
+            Op::Bin(op, box a, box b, typ) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
                 let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
-                match BinOperation {
+                match op {
                     BinOp::Add => {
                         // println!("running add with {} and {}", a_val, b_val);
                         return a_val + b_val;
@@ -173,23 +147,23 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
                } 
             },
-            Op::Random(ATyp, _) => {
+            Op::Random(typ, _) => {
                 let mut rng = ThreadRng::default();
                 // println!("running random");
-                return Value::random(&mut rng, ATyp);
+                return Value::random(&mut rng, typ);
  
             },
-            Op::Challenge(ATyp, _) => {
+            Op::Challenge(typ, _) => {
                 let mut rng = ThreadRng::default();
                 // println!("running challenge");
                 // println!("ATyp: {:?}", ATyp);
                 //TODO: Implement challenge
-                return Value::random(&mut rng, ATyp);
+                return Value::random(&mut rng, typ);
                 // let mut rng = rand::thread_rng();
                 // return Value::<C>::scalar_from_usize(3);
                 //Value::<C>::Index(rng.gen_range(3..4) as usize);
             },
-            Op::Pair(box a, box b, ATyp) => {
+            Op::Pair(box a, box b, _) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
@@ -210,7 +184,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
         }
     }
-    pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<HashMap<Vid, Value<C>>>) {
+    pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
 
         let node = &self.0[node_curr];
         
@@ -236,7 +210,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
     }
 
-    pub fn run_graph(g: Arc<MutexGraph<C>>, inputs: Arc<HashMap<Vid, Value<C>>>) -> Vec<Value<C>> {
+    pub fn run_graph(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Vec<Value<C>> {
         let mut final_return: Vec<Value<C>> = Vec::new();
         let mut ready_nodes: Vec<NodeIndex> = Vec::new();
         let mut running_nodes: Vec<NodeIndex> = Vec::new();

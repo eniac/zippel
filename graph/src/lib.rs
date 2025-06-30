@@ -13,7 +13,7 @@ pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
 use petgraph::Directed;
-pub use pref::{PRef, LexTerm};
+pub use pref::PRef;
 pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};

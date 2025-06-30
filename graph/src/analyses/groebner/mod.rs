@@ -107,6 +107,31 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
         self.basis = self.basis.clone().buchberger_and_reduce();
     }
 
+    fn to_poly_value(&mut self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
+        match v {
+            Value::Scalar(s) => vec![SparsePolynomial::lit(&s)],
+            Value::Bool(b) =>
+                vec![SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() })],
+            Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
+            Value::Vec(v) => 
+                v.into_iter()
+                .flat_map(|v| self.to_poly_value(v)).collect(),
+            Value::VecBool(v) =>
+                v.into_iter()
+                .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
+                .collect::<Vec<_>>(),
+            Value::VecScalar(v) =>
+                v.into_iter()
+                .map(|s| SparsePolynomial::lit(s))
+                .collect::<Vec<_>>(),
+            Value::VecIndex(v) =>
+                v.into_iter()
+                .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(*i)))
+                .collect::<Vec<_>>(),
+            _ => unreachable!("Unsupported value: {}", v),
+        }
+    }
+
     /// This function converts an operation to a vector of sparse polynomial expressions,
     /// exploding vectors where possible.
     fn to_poly(&mut self, op: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
@@ -135,32 +160,14 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                     _ => vec![SparsePolynomial::var(&pf)]
                 }
             },
-            Op::Value(v) =>
-                match v {
-                    Value::Scalar(s) => vec![SparsePolynomial::lit(&s)],
-                    Value::Bool(b) => vec![SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() })],
-                    Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
-                    Value::VecBool(v) =>
-                        v.into_iter()
-                        .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
-                        .collect::<Vec<_>>(),
-                    Value::VecScalar(v) =>
-                        v.into_iter()
-                        .map(|s| SparsePolynomial::lit(s))
-                        .collect::<Vec<_>>(),
-                    Value::VecIndex(v) =>
-                        v.into_iter()
-                                           .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(i)))
-                        .collect::<Vec<_>>(),
-                    Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(Op::Value(v))).collect(),
-                    _ => unreachable!("Unsupported value: {}", v),
-                },
+            Op::Value(v) => self.to_poly_value(v),
             Op::Vec(v) =>
                 v.into_iter().flat_map(|v| self.to_poly(v)).collect(),
             Op::Ram(box Op::Ref(n, _), box Op::Value(v)) => {
                 let pf = self.find_ref(&n);
                 match v {
-                    Value::Index(i) => vec![SparsePolynomial::var(&pf.with_index(i))],
+                    Value::Index(i) => 
+                        vec![SparsePolynomial::var(&pf.with_index(*i))],
                     _ => vec![SparsePolynomial::var(&pf)],
                 }
             },

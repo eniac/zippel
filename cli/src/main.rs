@@ -11,7 +11,7 @@ use lang::ast::UModule;
 use costs::Benchmarker;
 // use backend::ArkSecp256k1;
 use backend::ArkSecp256k1;
-use share::unwrap;
+use share::{Ctx, unwrap};
 use graph::{
     UDags,
     UDag,
@@ -227,10 +227,7 @@ fn eval(args: CliArgs) {
     let verifier_arc_graph = Arc::new(verifier_mutex_graph);
 
     println!("Graphs created");
-    // TODO: extract inputs from command line
-    let mut inputs: HashMap<Vid, Value<ArkSecp256k1>> = HashMap::new();
 
-    // TODO: extract inputs from command line
     let n_val_const = 1024;
     let m_val_const = 128;
     let mut rng = test_rng();
@@ -267,17 +264,22 @@ fn eval(args: CliArgs) {
     // + u_aux_base.clone() * ip_val_claimed.clone();
     // let p_initial_commitment = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
 
-    let sum_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    inputs.insert(Vid("g_vec".to_string()), g_vec);
-    inputs.insert(Vid("h_vec".to_string()), h_vec);
-    inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
-    inputs.insert(Vid("ip_val_claimed".to_string()), ip_val_claimed);
-    inputs.insert(Vid("u_aux_base".to_string()), u_aux_base);
-    inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
-    inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
-    inputs.insert(Vid("sum_vec".to_string()), sum_vec);
-    inputs.insert(Vid("val".to_string()),
-        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const)));
+    let sum_vec: Value<ArkSecp256k1> = 
+        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+
+    // TODO: extract inputs from command line
+    let mut inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
+        (Vid("g_vec".to_string()), g_vec),
+        (Vid("h_vec".to_string()), h_vec),
+        (Vid("P_initial_commitment".to_string()), p_initial_commitment),
+        (Vid("ip_val_claimed".to_string()), ip_val_claimed),
+        (Vid("u_aux_base".to_string()), u_aux_base),
+        (Vid("a_vec_witness".to_string()), a_vec_witness),
+        (Vid("b_vec_witness".to_string()), b_vec_witness),
+        (Vid("sum_vec".to_string()), sum_vec),
+        (Vid("val".to_string()),
+            Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const))),
+    ]);
 
     let prover_start = start_timer!("Running the prover");
     let prover_result =
@@ -296,8 +298,8 @@ fn eval(args: CliArgs) {
             Ref::Node(node) => panic!("Node reference not supported"),
             Ref::Var(v, _) => (v.clone(), val.clone()),
         })
-        .collect::<HashMap<Vid, Value<ArkSecp256k1>>>();
-    inputs.extend(pg_additional_args);
+        .collect::<Ctx<Vid, Value<ArkSecp256k1>>>();
+    inputs.append(&pg_additional_args);
 
     let start = start_timer!("Running the verifier");
     let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
