@@ -1122,21 +1122,36 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecScalar(a), Value::VecGT(b)) | (Value::VecGT(b), Value::VecScalar(a)) => {
                 *other = Value::GT(C::POps::vec_dot(b, a))
             }
-            (Value::VecIndex(_), Value::VecG1(b)) | (Value::VecG1(b), Value::VecIndex(_)) => {
+            (Value::VecG1(b), Value::VecIndex(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 Self::value_dot(&Value::VecG1Affine(vg), other);
             }
-            (Value::VecIndex(_), Value::VecG2(b)) | (Value::VecG2(b), Value::VecIndex(_)) => {
+            (Value::VecIndex(_), Value::VecG1(b)) => {
+                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                *other = Value::VecG1Affine(vg);
+                Self::value_dot(self, other);  
+            }
+            (Value::VecG2(b), Value::VecIndex(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 Self::value_dot(&Value::VecG2Affine(vg), other);
             }
-            (Value::VecScalar(_), Value::VecG1(b)) | (Value::VecG1(b), Value::VecScalar(_)) => {
+            (Value::VecG1(b), Value::VecScalar(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 Self::value_dot(&Value::VecG1Affine(vg), other);
             }
-            (Value::VecScalar(_), Value::VecG2(b)) | (Value::VecG2(b), Value::VecScalar(_)) => {
+            (Value::VecScalar(_), Value::VecG1(b)) => {
+                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                *other = Value::VecG1Affine(vg);
+                Self::value_dot(self, other); 
+            }
+            (Value::VecG2(b), Value::VecScalar(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 Self::value_dot(&Value::VecG2Affine(vg), other);
+            }
+            (Value::VecScalar(_), Value::VecG2(b)) => {
+                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                *other = Value::VecG2Affine(vg);
+                Self::value_dot(self, other); 
             }
             (Value::VecIndex(a), Value::VecIndex(b)) => {
                 *other = Value::Index(a.par_iter().zip(b.par_iter()).map(|(a, b)| *a * *b).sum())
@@ -1167,21 +1182,7 @@ impl<C: ArkConfig> Value<C> {
                             },
                         ),
                 );
-            }
-            (Value::VecG1(a), Value::VecG2(b)) | (Value::VecG2(b), Value::VecG1(a)) => {
-                *other = Value::GT(
-                    a.par_iter()
-                        .zip(b.par_iter())
-                        .map(|(a, b)| C::POps::billinear_map(a, b))
-                        .reduce(
-                            || C::POps::zero(),
-                            |mut a, b| {
-                                C::POps::add(&b, &mut a);
-                                a
-                            },
-                        ),
-                )
-            }
+            },
             (Value::Vec(a), _) => a
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())

@@ -859,8 +859,10 @@ impl<C: ArkConfig> UDag<C> {
         edge_type: DepType,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
+        println!("Testing");
         // Type inference for [self]
         let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
+        println!("Testing 2");
         // Convert [CExp] to [Op] while creating the graph
         match exp.clone() {
             // Literals get appended to the last node [self.it]
@@ -980,6 +982,7 @@ impl<C: ArkConfig> UDag<C> {
                         let zero_vec: lang::ast::Exp<usize> = CExp::zeroes(n - 1);
                         let b_vec = CExp::vec(vec![b.clone()]);
                         let vec_value = CExp::concat(b_vec, zero_vec);
+                        println!("vec_value: {}", vec_value);
                         return self.add_exp(CExp::sub(a, vec_value), transcr, edge_type, kctx, fctx, vctx, vars);
                     },
                     _ => ()

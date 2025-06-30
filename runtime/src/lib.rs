@@ -211,7 +211,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<HashMap<Vid, Value<C>>>) {
-        // println!("running Node Index: {:?}", node_curr);
 
         let node = &self.0[node_curr];
         
@@ -281,7 +280,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                     let graph = Arc::clone(&g);
                     let inputs_arc = Arc::clone(&inputs);
                     pool.spawn(move || {
-                        // println!("{:?}", node_index);
                         graph.handle_node(node_index, inputs_arc);
                     });
 
