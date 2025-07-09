@@ -1,21 +1,16 @@
-proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 10>
-        (private p: Uni<F, 10>, private z: F, public y: F, private s: F, private ss: [F; N],
+proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 16>
+        (private p: Uni<F, N>, public z: F, public y: F, public s: G2, public ss: [G1; N],
         public g: G1, public h: G2)
-        where p(z) == y && [(ss[i] == s^i) for i in 0..N] {
+        where p(z) == y && ss[0] == g && [(pair(ss[i], h) == pair(ss[i-1], s)) for i in 1..N] {
 
         // Commitment [c: G1]
-        c <- (p . ss) * g;
+        c <- (p . ss);
 
-
-        let qn = p - y;
-        // q(X) = p(X) - y / X - y
-        // let q = (p - y) / coef([-y, 1]); 
-        
-        // p(X) = X - y
+        // q(X) = p(X) / X - y
+        let q = p / coef([-y, 1]); // p(X) = X - y
 
         // Proof [pi: G1]
-        // pi <- (q . ss[0..9]) * g;
+        pi <- (q . ss[0..(N-1)]);
 
-        // verify(pair(pi, (s - z) * h) == pair(c - g * y, h))
-        verify (c == c)
+        verify(pair(pi, s - z*h) == pair(c - g * y, h))
 }
