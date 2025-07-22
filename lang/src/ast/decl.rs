@@ -514,7 +514,7 @@ fn fn_parser2() {
     let ex = concat!(
         "fn test<F: Field>(public a: F) -> F {\n",
         "    let v = [1,2,3];\n",
-        "    p <- coef(v * [0,1,2]);\n",
+        "    p <- ifft(v * [0,1,2]);\n",
         "    x <- challenge<F>;\n",
         "    p(x)\n",
         "}"
@@ -527,7 +527,7 @@ fn fn_parser2() {
         GTyp::varstr("F"),
         UExp::letx(Vid::from("v"), UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
             UExp::logx(Vid::from("p"),
-                UExp::coef(UExp::mul(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]))),
+                UExp::ifft(UExp::mul(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]))),
                 UExp::logx(Vid::from("x"), UExp::challenge(Tid::from("F")),
                     UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])))))
     ));

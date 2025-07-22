@@ -150,11 +150,14 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn rel(f: Vid, sig: Vec<PRef>) -> Self {
         Node::Rel(f, sig)
     }
-    pub fn coef(op: &GOp<C>) -> Self {
-        Node::Op(GOp::coef(op.clone()), Nothing)
+    pub fn poly(op: &GOp<C>) -> Self {
+        Node::Op(GOp::poly(op.clone()), Nothing)
     }
-    pub fn eval(op: &GOp<C>) -> Self {
-        Node::Op(GOp::eval(op.clone()), Nothing)
+    pub fn ifft(op: &GOp<C>) -> Self {
+        Node::Op(GOp::ifft(op.clone()), Nothing)
+    }
+    pub fn fft(op: &GOp<C>) -> Self {
+        Node::Op(GOp::fft(op.clone()), Nothing)
     }
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)

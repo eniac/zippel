@@ -1,10 +1,9 @@
 use clap::{Subcommand, Parser};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
 use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
-use ark_ff::fields::Field;
 
 use lang::id::Vid;
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
@@ -58,19 +57,19 @@ enum Commands {
 }
 
 #[derive(Parser, Debug)]
-struct CliArgs {
+pub struct CliArgs {
     /// The path to the text file to read
     #[arg(value_name = "FILE")]
-    file_path: PathBuf,
+    pub file_path: PathBuf,
 
     /// Optional path for the pdf file
     /// If not provided, defaults to <INPUT_FILE>.pdf
     #[arg(short = 'p', long = "pdf", value_name = "PDF_FILE")]
-    pdf_path_opt: Option<PathBuf>,
+    pub pdf_path_opt: Option<PathBuf>,
 
     /// An optional subgraph name
     #[arg(long = "subgraph", short = 's')]
-    subgraph: Option<String>,
+    pub subgraph: Option<String>,
 }
 
 // Arguments for the 'benchmark' subcommand
@@ -185,13 +184,14 @@ macro_rules! start_timer {
     }};
 }
 
-fn test() {
+pub fn test() {
     println!("test2");
 }
 
-fn compile<C: ArkConfig>(file_path: String) -> UDags<C>{
-    let zfile = fs::read_to_string(&file_path).unwrap_or_else(|err| {
-        error!("Error reading file {}: \n\t{}", file_path, err);
+pub fn compile<C: ArkConfig>(args: CliArgs) -> UDags<C>{
+    println!("Compiling file: {}", args.file_path.display());
+    let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
+        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
         process::exit(1);
     });
 
@@ -201,43 +201,52 @@ fn compile<C: ArkConfig>(file_path: String) -> UDags<C>{
     gs
 }
 
-fn get_combined_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
+pub fn get_combined_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
     let args = CliArgs { file_path: file_path, pdf_path_opt: pdf_path_opt, subgraph: subgraph };
     let g_temp = get_protocol_subgraph_api(&graph, &args);
     let g = g_temp.clone().map_transcript_nodes();
     g
 }
 
-fn get_verifier_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
+pub fn get_verifier_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
     let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
     let verifier = g.get_verifier().unwrap();
     verifier
 }
 
-fn get_prover_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
+pub fn get_prover_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
     let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
     let (prover, _) = g.get_prover();
     prover
 }
 
-fn schedule_graph<C: ArkConfig>(graph: UDag<C>, cost_model: AsymptoticCost<C>, limit: f64) -> TDag<C> {
+pub fn schedule_graph<C: ArkConfig>(graph: UDag<C>, cost_model: AsymptoticCost<C>, limit: f64) -> TDag<C> {
     let scheduler = LocalScheduler::new_with_system(&graph, &cost_model, limit);
     let tdag = scheduler.schedule(graph);
     tdag
 }
 
-fn run_prover<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
+pub fn run_prover<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
     let mutex_graph = MutexGraph::new(graph);
     let arc_graph = Arc::new(mutex_graph);
     let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
     result
 }
 
-fn run_verifier<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
+pub fn run_verifier<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
     let mutex_graph = MutexGraph::new(graph);
     let arc_graph = Arc::new(mutex_graph);
     let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
     result
+}
+
+pub fn get_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) {
+    println!("Getting graph");
+    let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
+    g.write_pdf("new_prover_verifier").unwrap_or_else(|e| {
+        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    });
+    println!("Printed it");
 }
 /// Runtime entry point, evaluate a Zippel program or protocol
 fn eval(args: CliArgs) {
@@ -249,7 +258,6 @@ fn eval(args: CliArgs) {
 
     println!("Parsing Zippel program:\n{}", zfile);
     let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    println!("Concretized module:\n{:?}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Save to pdf if provided
@@ -259,10 +267,6 @@ fn eval(args: CliArgs) {
             println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
         });
     }
-
-    gs.write_pdf("testing").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
 
     let g_temp = get_protocol_subgraph(&gs, &args);
     let g = g_temp.clone().map_transcript_nodes();
@@ -318,16 +322,16 @@ fn eval(args: CliArgs) {
     //         (P_initial_commitment == ((g_vec . a_vec_witness)
     //         + (h_vec . b_vec_witness)
     //         + u_aux_base * ip_val_claimed)) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
-    // let u_aux_base: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::g1());
+    // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
 
-    // let g_vec: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    // let h_vec: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
 
-    // // let u_aux_base: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
-    // let a_vec_witness: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    // let b_vec_witness: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    // // let g_vec: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
-    // // let h_vec: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    // // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    // let a_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    // let b_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    // // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
+    // // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
     // let ip_val_claimed: Value<ArkBls12_381> = a_vec_witness.clone().dot(b_vec_witness.clone());
     // let p_initial_commitment: Value<ArkBls12_381> = g_vec.clone().dot(a_vec_witness.clone()) +
     // h_vec.clone().dot(b_vec_witness.clone());
@@ -348,59 +352,52 @@ fn eval(args: CliArgs) {
     //     (Vid("a_vec_witness".to_string()), a_vec_witness),
     //     (Vid("b_vec_witness".to_string()), b_vec_witness),
     //     (Vid("sum_vec".to_string()), sum_vec),
-    //     (Vid("val".to_string()),q
+    //     (Vid("val".to_string()),
     //         Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const))),
     // ]);
-
-
-    let n_size = 4;
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input.clone());
-
-    let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
     
-    let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let s_temp: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-    
+    // (private p: Uni<F, N>, public z: F, public y: F, public s: G2, public ss: [G1; N],
+    // public g: G1, public h: G2)
+    // where p(z) == y && ss[0] == g && [(pair(ss[i], h) == pair(ss[i-1], s)) for i in 1..N]
 
-    // let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-    // let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-  
-    // let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-    let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
-    let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|i| {
-        // println!("i: {}", i);
-        // println!("test: {}", s.clone() ^ Value::Index(i));
-        // s.clone() ^ Value::Index(i)
-        g_input.clone()
-    }).collect());
 
-    let ss_index = Value::VecScalar((0..n_size).map(|i |{
-        tau_input.clone().pow(&[i as u64])
-    }).collect());
 
-    let ss = ss_g.clone() * ss_index.clone();
-    let s = s_temp.clone() * tau.clone();
+        let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
+        let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
+        let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+        // let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+        let s_temp: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
+        
 
-    let z_val: Value<ArkBls12_381> = Value::Vec((0..n_size).map(|i| {
-        z.clone() ^ Value::Index(i)
-    }).collect());
-    
-    let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
+        let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(16));
 
-    let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-            (Vid("p".to_string()), p),
-            (Vid("g".to_string()), g),
-            (Vid("h".to_string()), h),
-            (Vid("z".to_string()), z),
-            (Vid("y".to_string()), y),
-            (Vid("s".to_string()), s),
-            (Vid("ss".to_string()), ss),
-            (Vid("tau".to_string()), tau),
-        ]);
+        let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+        let ss: Value<ArkBls12_381> = Value::Vec((0..16).map(|i| {
+            // println!("i: {}", i);
+            // println!("test: {}", s.clone() ^ Value::Index(i));
+            // s.clone() ^ Value::Index(i)
+            g.clone() * (tau.clone() ^ Value::Index(i))
+        }).collect());
+
+        println!("ss: {}", ss);
+        let s = s_temp.clone() * tau.clone();
+
+        let z_val: Value<ArkBls12_381> = Value::Vec((0..16).map(|i| {
+            z.clone() ^ Value::Index(i)
+        }).collect());
+        
+        let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
+        
+        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (Vid("p".to_string()), p),
+                (Vid("g".to_string()), g),
+                (Vid("h".to_string()), h),
+                (Vid("z".to_string()), z),
+                (Vid("y".to_string()), y),
+                (Vid("s".to_string()), s),
+                (Vid("ss".to_string()), ss),
+            ]);
+
 
     let prover_start = start_timer!("Running the prover");
     let prover_result =
@@ -434,13 +431,13 @@ fn eval(args: CliArgs) {
     // // (private p: Uni<F, 10>, private z: F, public y: F, private s: F, private ss: [F; N],
     // //     public g: G1, public h: G2)
     // //     where p(z) == y && [(ss[i] == s^i) for i in 0..N] {
-    //     let g: Value<ArkBls12_381> = Value::G1(<ArkField17 as ArkConfig>::G1::rand(&mut rng));
-    //     let h: Value<ArkBls12_381> = Value::G2(<ArkField17 as ArkConfig>::G2::rand(&mut rng));
-    //     let z: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
-    //     let y: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
-    //     let s: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
+    //     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
+    //     let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
+    //     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    //     let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    //     let s: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
 
-    //     let p: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::Uni(10));
+    //     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(10));
 
     //     let ss: Value<ArkBls12_381> = Value::Vec((0..11).map(|i| {
     //         s.clone() ^ Value::Index(i)
@@ -463,7 +460,7 @@ fn eval(args: CliArgs) {
 //     let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
 
 //     let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
-//     let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
+//     let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
 //     let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
 
 //     let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
@@ -479,9 +476,9 @@ fn eval(args: CliArgs) {
 
 // Schnorr working
 // Accept
-//     let g: Value<ArkBls12_381> = Value::G1(<ArkField17 as ArkConfig>::G1::rand(&mut rng));
-//  // let h: Value<ArkBls12_381> = Value::G1(<ArkField17 as ArkConfig>::G1::rand(&mut rng)); un comment to break
-//     let x: Value<ArkBls12_381> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
+//     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
+//  // let h: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)); un comment to break
+//     let x: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
 //     let h = g.clone() * x.clone(); // comment to break
 
 //     inputs.insert(Vid("x".to_string()), x);

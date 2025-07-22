@@ -13,6 +13,7 @@ pub enum ABase {
     Scalar,
     Bool,
     Fin(CRange),
+    Poly,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -40,6 +41,9 @@ impl ATyp {
     }
     pub fn bool() -> Self {
         ATyp::Base(ABase::Bool)
+    }
+    pub fn poly() -> Self {
+        ATyp::Base(ABase::Poly)
     }
     pub fn fin(r: CRange) -> Self {
         ATyp::Base(ABase::Fin(r))
@@ -505,7 +509,8 @@ impl fmt::Display for ABase {
             ABase::Scalar => write!(f, "Scalar"),
             ABase::G1 => write!(f, "G1"),
             ABase::G2 => write!(f, "G2"),
-            ABase::GT => write!(f, "GT")
+            ABase::GT => write!(f, "GT"),
+            ABase::Poly => write!(f, "Poly"),
         }
     }
 }

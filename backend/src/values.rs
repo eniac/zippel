@@ -1,4 +1,5 @@
 use ark_ec::pairing::PairingOutput;
+use ark_poly::{Polynomial,DenseUVPolynomial, univariate::DensePolynomial};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_ff::{PrimeField, Zero};
@@ -38,6 +39,8 @@ pub enum Value<C: ArkConfig> {
     VecG2Affine(Vec<C::G2Affine>),
     /// Vectors of vectors etc
     Vec(Vec<Value<C>>),
+    /// Polynomial of scalars
+    Poly(DensePolynomial<C::F>),
 }
 
 impl<C: ArkConfig> Value<C> {
@@ -45,6 +48,7 @@ impl<C: ArkConfig> Value<C> {
     /// Higher values correspond to constructors defined earlier.
     pub fn discriminant_order(&self) -> u8 {
         match self {
+            Value::Poly(_) => 18,
             Value::Bool(_) => 17,
             Value::VecBool(_) => 16,
             Value::Index(_) => 15,
@@ -107,11 +111,17 @@ impl<C: ArkConfig> Value<C> {
             Value::Index(a) => match &other {
                 Value::Index(_) => *other.into_index_mut() += *a,
                 Value::Scalar(_) => C::FOps::add(&C::FOps::from_usize(*a), other.into_scalar_mut()),
+                Value::Poly(b) => {
+                    *other = Value::Poly(b + DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]))
+                },
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
                 Value::Index(b) => C::FOps::add(a, &mut C::FOps::from_usize(*b)),
                 Value::Scalar(_) => C::FOps::add(a, other.into_scalar_mut()),
+                Value::Poly(b) => {
+                    *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![*a]) + b);
+                }
                 Value::G1(other_val) => C::G1Ops::add(&(*other_val).into_affine(), self.clone().into_g1_mut()),
                 _ => panic!("Expected scalar, found {}", other),
             },
@@ -122,6 +132,15 @@ impl<C: ArkConfig> Value<C> {
             Value::G2(a) => C::G2Ops::add(&(*a).into_affine(), other.into_g2_mut()),
             Value::GT(a) => C::POps::add(a, other.into_gt_mut()),
             // The same but for vectors (scalars)
+            Value::Poly(a)  => match &other {
+                Value::Poly(b) => {
+                    *other = Value::Poly(a + b);
+                },
+                Value::Scalar(_) | Value::Index(_) => {
+                    *other = Value::Poly(a + DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]));
+                },
+                _ => panic!("Expected polynomial or scalar, found {}", other)
+            },
             Value::VecIndex(vs) => match &other {
                 Value::VecIndex(_) => vs
                     .par_iter()
@@ -181,11 +200,17 @@ impl<C: ArkConfig> Value<C> {
             Value::Index(a) => match &other {
                 Value::Index(b) => *other.into_index_mut() = *a - *b,
                 Value::Scalar(_) => C::FOps::sub(&C::FOps::from_usize(*a), other.into_scalar_mut()),
+                Value::Poly(b) => {
+                    *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]) - b);
+                },
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
                 Value::Index(b) => C::FOps::sub(a, &mut C::FOps::from_usize(*b)),
                 Value::Scalar(_) => C::FOps::sub(a, other.into_scalar_mut()),
+                Value::Poly(b) => {
+                    *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![*a]) - b);
+                },
                 _ => panic!("Expected scalar, found {}", other),
             },
             // Group addition
@@ -241,6 +266,16 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_sub(b)),
+            Value::Poly(a)  => match &other {
+                Value::Poly(b) => {
+                    *other = Value::Poly(a - b);
+                },
+                Value::Scalar(_) | Value::Index(_) => {
+                    // *other = Value::Scalar(a.evaluate(&other.into_scalar()));
+                    *other = Value::Poly(a - DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]));
+                },
+                _ => panic!("Expected polynomial or scalar, found {}", other)
+            },
         }
     }
 
@@ -315,6 +350,15 @@ impl<C: ArkConfig> Value<C> {
             Value::Bool(_) | Value::VecBool(_) => {
                 panic!("Cannot multiply bools {} * {}", self, other)
             }
+            Value::Poly(a)  => match &other {
+                Value::Poly(b) => {
+                    *other = Value::Poly(a * b);
+                },
+                Value::Scalar(_) | Value::Index(_) => {
+                    *other = Value::Poly(a * DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]));
+                },
+                _ => panic!("Expected polynomial or scalar, found {}", other)
+            },
             Value::Index(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
@@ -365,6 +409,10 @@ impl<C: ArkConfig> Value<C> {
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
+                Value::Poly(_) => {
+                    let mut a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]);
+                    *other = Value::Poly(a_poly * other.into_poly());
+                }
             },
             Value::Scalar(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
@@ -414,6 +462,10 @@ impl<C: ArkConfig> Value<C> {
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
+                Value::Poly(_) => {
+                    let mut a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![a.clone()]);
+                    *other = Value::Poly(a_poly * other.into_poly());
+                }
             },
             Value::G1(a) => match &other {
                 // Group1 * scalar multiplication
@@ -548,6 +600,9 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::Index(*a).value_mul(b)),
+                Value::Poly(_) => {
+                    panic!("Cannot multiply Vec<Index> and Poly");
+                }
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> * Index
@@ -602,6 +657,11 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1(v) => match &other {
                 // Vec<Group1> * scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
+                    println!("running g1 mul");
+                    println!("");
+                    println!("");
+                    println!("");
+                    println!("");
                     let a = other.into_scalar();
                     *other = Value::VecG1(
                         v.par_iter()
@@ -615,6 +675,9 @@ impl<C: ArkConfig> Value<C> {
                 }
                 // Vec<Group1> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
+                    println!("running g1 mul 2");
+                    println!("");
+                    println!("");
                     // TODO: There has to be a better way to do this...
                     let vl = &*other.into_vec_scalar_mut();
                     let mut vr = v.clone();
@@ -1010,6 +1073,19 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_div(b)),
+            Value::Poly(p) => {
+                match &other {
+                    Value::Poly(o) => {
+                        *other = Value::Poly(p.clone() / o.clone());
+                    }
+                    Value::Scalar(_) | Value::Index(_) => {
+                        let f_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]);
+                        *other = Value::Poly(p.clone() / f_poly);
+                    }
+                    _ => panic!("Expected poly, found {}", other),
+                }
+            }
+            _ => panic!("Not implemented"),
         }
     }
 
@@ -1149,10 +1225,10 @@ impl<C: ArkConfig> Value<C> {
                 Self::value_dot(&Value::VecG2Affine(vg), other);
             }
             (Value::VecScalar(_), Value::VecG2(b)) => {
-                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vg: Vec<<C as ArkConfig>::G2Affine> = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 *other = Value::VecG2Affine(vg);
                 Self::value_dot(self, other); 
-            }
+            } 
             (Value::VecIndex(a), Value::VecIndex(b)) => {
                 *other = Value::Index(a.par_iter().zip(b.par_iter()).map(|(a, b)| *a * *b).sum())
             }
@@ -1194,6 +1270,8 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn dot(self, other: Self) -> Self {
         let mut other = other;
+        println!("other: {}", other.clone());
+        println!("test running dot");
         self.value_dot(&mut other);
         other
     }
@@ -1202,6 +1280,13 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_concat(self, other: Self) -> Self {
         let mut other = other;
         self.concat(&mut other);
+        other
+    }
+
+    #[inline]
+    pub fn value_eval(self, other: Self) -> Self {
+        let mut other = other;
+        self.eval(&mut other);
         other
     }
 
@@ -1348,6 +1433,9 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(b.par_iter())
                 .all(|(a, b)| Value::equ(a, &Value::G2Affine(*b))),
+            (Value::Poly(a), Value::Poly(b)) => {
+                a.coeffs.par_iter().zip(b.coeffs.par_iter()).all(|(a, b)| *a == *b)
+            },
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }
@@ -1430,6 +1518,19 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect())
             }
             (a, b) => panic!("Cannot do {}[{}]", a, b),
+        }
+    }
+
+    #[inline]
+    pub fn eval(self, other: &mut Self) {
+        match (&self, &other) {
+            (Value::Poly(a), Value::VecIndex(b)) => {
+                *other = Value::VecScalar(b.par_iter().map(|i| a.evaluate(&C::FOps::from_usize(*i))).collect());
+            },
+            (Value::Poly(a), Value::VecScalar(b)) => {
+                *other = Value::VecScalar(b.par_iter().map(|i| a.evaluate(i)).collect());
+            },
+            _ => panic!("Cannot eval if not poly or index"),
         }
     }
 
@@ -1596,6 +1697,7 @@ impl<C: ArkConfig> Value<C> {
                     *r = Value::Vec(a);
                 }
             },
+            _ => panic!("Not implemented"),
         }
     }
 
@@ -1619,6 +1721,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
             ATyp::Uni(n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            _ => panic!("Not implemented"),
         }
     }
 
@@ -1653,6 +1756,7 @@ impl<C: ArkConfig> Value<C> {
                 }
                 ATyp::Vec(Box::new(typ), v.len())
             }
+            Value::Poly(_) => ATyp::poly(),
         }
     }
 
@@ -1663,6 +1767,14 @@ impl<C: ArkConfig> Value<C> {
             Value::Scalar(f) => *f,
             Value::Index(i) => C::FOps::from_usize(*i),
             _ => panic!("Expected scalar, found {}", self),
+        }
+    }
+
+    #[inline]
+    pub fn into_poly(&self) -> DensePolynomial<C::F> {
+        match self {
+            Value::Poly(p) => p.clone(),
+            _ => panic!("Expected poly, found {}", self),
         }
     }
     #[inline]
@@ -1898,6 +2010,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecIndex(a) => a.par_iter().all(|a| *a == 0),
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::Poly(a) => a.coeffs.par_iter().all(|a| a.is_zero()),
         }
     }
 
@@ -1921,6 +2034,26 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G2) => { vec_value.into_vec_g2_mut(); vec_value },
             ATyp::Base(ABase::GT) => { vec_value.into_vec_gt_mut(); vec_value },
             _ => panic!("Not yet implemented for vector")
+        }
+    }
+
+    pub fn value_poly(&self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let mut poly = vec![];// DensePolynomial::<C::F>::zero();
+                for i in v.iter() {
+                    poly.push(*i);
+                }
+                Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(poly))
+            },
+            Value::VecIndex(v) => {
+                let mut poly = vec![];// DensePolynomial::<C::F>::zero();
+                for i in v.iter() {
+                    poly.push(C::FOps::from_usize(*i));
+                }
+                Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(poly))
+            },
+            _ => panic!("Expected vec scalar, found {}", self),
         }
     }
 
@@ -1983,6 +2116,13 @@ impl<C: ArkConfig> Mul for Value<C> {
     type Output = Value<C>;
 
     fn mul(self, other: Self) -> Self::Output {
+        println!("running mul");
+        println!("self: {}", self);
+        println!("other: {}", other);
+        println!("");
+        println!("");
+        println!("");
+        println!("");
         let mut other = other;
         self.value_mul(&mut other);
         other
@@ -2196,6 +2336,9 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                     write!(f, "{}, ", i)?;
                 }
                 write!(f, "]")
+            },
+            Value::Poly(a) => {
+                write!(f, "Poly({:?})", a.coeffs)
             }
         }
     }
@@ -2433,6 +2576,32 @@ fn test_mul_comm() {
     assert_deq!(b1, a);
 }
 
+
+#[test]
+fn coef_eval_test() {
+    let mut rng = test_rng();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
+    let c = ((&a).value_fft()).value_ifft();
+    // assert_deq!(&c, &a);
+    
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
+    let c = ((&a).value_ifft()).value_fft();
+    assert_deq!(&c, &a);
+}
+
+#[test]
+fn pairing_test() {
+    let mut rng = test_rng();
+    let P = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+    let Q = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
+    let S = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
+    let pair1 = (P.clone() + Q.clone()).pair(S.clone());
+    let pair2 = P.clone().pair(S.clone());
+    let pair3 = Q.clone().pair(S.clone());
+    let pair4 = pair2 + pair3;
+    assert_deq!(&pair1, &pair4);
+}
+
 #[test]
 fn inverse_test() {
     let mut rng = test_rng();
@@ -2483,6 +2652,14 @@ fn inverse_test() {
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
     let c = (&a/&b).dot(b.clone());
     assert_deq!(&c, &Value::<ArkBls12_381>::scalar_from_usize(10));
+
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(2));
+    let b= a.clone() * a.clone();
+    let c = b.clone() / a.clone();
+    println!("a: {}", a);
+    println!("b: {}", b);
+    println!("c: {}", c);
+    assert_deq!(&a, &c);
 }
 
 

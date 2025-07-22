@@ -91,8 +91,8 @@ impl<C: ArkConfig> TransClos<C> {
                 Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(dag, v))
                     .collect::<Vec<_>>()),
             Op::Check(box op) => self.trans_clos_op(dag, op),
-            Op::Coef(box v) => Op::Coef(Box::new(self.trans_clos_op(dag, v))),
-            Op::Eval(box v) => Op::Eval(Box::new(self.trans_clos_op(dag, v))),
+            Op::Ifft(box v) => Op::Ifft(Box::new(self.trans_clos_op(dag, v))),
+            Op::Fft(box v) => Op::Fft(Box::new(self.trans_clos_op(dag, v))),
             op => op
         }
     }

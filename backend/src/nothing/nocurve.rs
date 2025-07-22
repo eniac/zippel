@@ -522,6 +522,9 @@ impl<F: PrimeField> AffineRepr for NoCurve<F> {
     fn mul_by_cofactor_to_group(&self) -> Self::Group {
         panic!("{}", NOCURVE_ERR)
     }
+    fn is_zero(&self) -> bool {
+        true
+    }
 }
 
 impl<F: PrimeField> CurveGroup for NoCurve<F> {

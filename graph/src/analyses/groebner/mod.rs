@@ -259,8 +259,8 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
             Op::Check(box a) => self.add_op(pr, a),
             Op::Challenge(_, _) => { self.np.insert(&pr, &op); },
             Op::Random(_, _) => { self.np.insert(&pr, &op); },
-            Op::Coef(_) => { self.np.insert(&pr, &op); },
-            Op::Eval(_) => { self.np.insert(&pr, &op); },
+            Op::Ifft(_) => { self.np.insert(&pr, &op); },
+            Op::Fft(_) => { self.np.insert(&pr, &op); },
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {
                     let pf = pr.with_index(i);
