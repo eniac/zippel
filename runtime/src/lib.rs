@@ -53,7 +53,6 @@ impl<C: ArkConfig> MutexGraph<C> {
     
     pub fn get_value(&self, r: graph::Ref, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         let node = r.node();
-        // println!("node: {:?}", node);
 
         match &self.0[node] {
             Node::Op(_, annotation) 
@@ -66,8 +65,6 @@ impl<C: ArkConfig> MutexGraph<C> {
             },
             Node::Inp(_, _) | Node::Rel(_, _) => {
                 let vid = r.var().expect("Input should be a variable");
-                // println!("vid: {}", vid);
-                // println!("value: {}", inputs.get(&vid).unwrap());
                 inputs.get(&vid)
                 .expect(format!("Value for {} should exist", vid).as_str())
                 .clone()
@@ -78,14 +75,12 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn handle_op(&self, operation: &Op<C, Ref>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C>{
         match operation {
             Op::Value(val) => {
-                // println!("running value");
                 return val.clone();
             },
             Op::Ref(r, ATyp) => {
                return self.get_value(r.clone(), inputs); 
             },
             Op::Vec(vec) => {
-                // println!("running vec");
                 let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
                 return  Value::value_vec(value_vector);
             },
@@ -94,17 +89,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_index_val_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(v, inputs_v_clone);
                 let index_val_value: Value<C> = self.handle_op(index_val, inputs_index_val_clone); 
-                // println!("running ram");
                 return v_val.ram(index_val_value);
             }
             Op::Check(box a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-
-                // println!("Running check: {}", a_val);
-                if Value::Bool(true) == a_val {
-                    // println!("Program Succeeded")
-                }
 
                 return a_val;
             }
@@ -115,47 +104,29 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
                 match op {
                     BinOp::Add => {
-                        // println!("running add with {} and {}", a_val, b_val);
                         return a_val + b_val;
                     },
                     BinOp::Mul => {
-                        // println!("running mul with {} and {} results in {}", a_val, b_val, a_val.clone() * b_val.clone());
                         return  a_val * b_val;
                     },
                     BinOp::Equ => {
-                        // println!("running equ");
-                        // println!("{}", a_val);
-                        // println!("");
-                        // println!("{}", b_val);
+                        println!("Equ: {} {}", a_val.clone(), b_val.clone());
                         return a_val.value_equ(&b_val);
                     }
                     BinOp::Sub => {
-                        // println!("running sub with {} and {}", a_val, b_val);
                         return a_val - b_val;
                     },
                     BinOp::Div => {
-                        // println!("--------------------------------");
-                        // println!("running div");
-                        // println!("a_val: {}", a_val);
-                        // println!("b_val: {}", b_val);
-                        // println!("a_val / b_val: {}", a_val.clone() / b_val.clone());
-                        // println!();
                         return a_val / b_val;
                     },
                     BinOp::Pow => {
                         return a_val ^ b_val;
                     },
                     BinOp::Dot => {
-                        // println!("running dot start");
-                        // println!("a_val: {}", a_val);
-                        // println!("");
-                        // println!("b_val: {}", b_val);
+                        println!("Dot: {} {}", a_val.clone(), b_val.clone());
                         return a_val.dot(b_val);
                     },
                     BinOp::Concat => {
-                        // println!("running concat");
-                        // println!("a_val: {}", a_val);
-                        // println!("b_val: {}", b_val);
                         return a_val.value_concat(b_val);
                     },
                     BinOp::Rem => {
@@ -168,30 +139,21 @@ impl<C: ArkConfig> MutexGraph<C> {
             },
             Op::Random(typ, _) => {
                 let mut rng = ThreadRng::default();
-                // println!("running random");
                 return Value::random(&mut rng, typ);
  
             },
             Op::Challenge(typ, _) => {
                 let mut rng = ThreadRng::default();
-                // println!("running challenge");
-                // println!("ATyp: {:?}", ATyp);
                 //TODO: Implement challenge
                 return Value::random(&mut rng, typ);
-                // let mut rng = rand::thread_rng();
-                // return Value::<C>::scalar_from_usize(3);
-                //Value::<C>::Index(rng.gen_range(3..4) as usize);
             },
             Op::Eval(box p, box x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
                 let p_val: Value<C> = self.handle_op(p, inputs_p_clone);
                 let x_val: Value<C> = self.handle_op(x, inputs_x_clone);
-                // println!("eval p_val: {}", p_val.clone());
-                // println!("eval x_val: {}", x_val.clone());
-                let ret = p_val.value_eval(x_val);
-                println!("p_val.value_eval(x_val): {}", ret);
-                return ret;
+                println!("Eval: {} {}", p_val.clone(), x_val.clone());
+                return p_val.value_eval(x_val);
             }
             Op::Pair(box a, box b, _) => {
                 let inputs_a_clone = Arc::clone(&inputs);
@@ -203,23 +165,16 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Poly(box a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                // println!("poly a_val: {}", a_val.clone());
                 return a_val.value_poly();
             }
             Op::Ifft(box a) => {
-                // println!("running coef");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                // println!("coef a_val: {}", a_val.clone());
-                // println!("coef a_val.value_ifft(): {}", a_val.clone().value_ifft());
                 return a_val.value_ifft();
             }
             Op::Fft(box a)  => {
-                // println!("running eval");
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                // println!("eval a_val: {}", a_val.clone());
-                // println!("eval a_val.value_fft(): {}", a_val.clone().value_fft());
                 return a_val.value_fft();
             }
         }

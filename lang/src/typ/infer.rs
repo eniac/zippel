@@ -211,6 +211,12 @@ impl Typeable for CExp {
                         let i = b.to_scalar(kctx).ok_or(TypeError::ifft(kctx, &vctx, self))?;
                         Ok(CTyp::Uni(i, n))
                     },
+                    // CTyp::Uni(T, n) => {
+                    //     // let i = b.to_scalar(kctx).ok_or(TypeError::Ifft(kctx, &vctx, self))?;
+
+                    //     let i = Box::new(T, n);
+                    //     Ok(CTyp::Vec(i,n))
+                    // }, 
                     _ => Err(TypeError::ifft(kctx, &vctx, self))
                 }
             }

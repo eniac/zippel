@@ -271,7 +271,6 @@ impl<C: ArkConfig> Value<C> {
                     *other = Value::Poly(a - b);
                 },
                 Value::Scalar(_) | Value::Index(_) => {
-                    // *other = Value::Scalar(a.evaluate(&other.into_scalar()));
                     *other = Value::Poly(a - DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]));
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
@@ -657,11 +656,6 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1(v) => match &other {
                 // Vec<Group1> * scalar multiplication
                 Value::Index(_) | Value::Scalar(_) => {
-                    println!("running g1 mul");
-                    println!("");
-                    println!("");
-                    println!("");
-                    println!("");
                     let a = other.into_scalar();
                     *other = Value::VecG1(
                         v.par_iter()
@@ -675,9 +669,6 @@ impl<C: ArkConfig> Value<C> {
                 }
                 // Vec<Group1> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
-                    println!("running g1 mul 2");
-                    println!("");
-                    println!("");
                     // TODO: There has to be a better way to do this...
                     let vl = &*other.into_vec_scalar_mut();
                     let mut vr = v.clone();
@@ -1270,8 +1261,6 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn dot(self, other: Self) -> Self {
         let mut other = other;
-        println!("other: {}", other.clone());
-        println!("test running dot");
         self.value_dot(&mut other);
         other
     }
@@ -1746,7 +1735,7 @@ impl<C: ArkConfig> Value<C> {
                 let min = *v.iter().min().unwrap();
                 let max = *v.iter().max().unwrap();
                 ATyp::Vec(Box::new(ATyp::fin(CRange::new(min, max + 1))), v.len())
-            }
+            },
             Value::Vec(v) => {
                 let typ = v[0].typ();
                 for i in v.iter().skip(1) {
@@ -1755,8 +1744,8 @@ impl<C: ArkConfig> Value<C> {
                     }
                 }
                 ATyp::Vec(Box::new(typ), v.len())
-            }
-            Value::Poly(_) => ATyp::poly(),
+            },
+            Value::Poly(n) => ATyp::uni(n.degree()),
         }
     }
 
@@ -2116,13 +2105,6 @@ impl<C: ArkConfig> Mul for Value<C> {
     type Output = Value<C>;
 
     fn mul(self, other: Self) -> Self::Output {
-        println!("running mul");
-        println!("self: {}", self);
-        println!("other: {}", other);
-        println!("");
-        println!("");
-        println!("");
-        println!("");
         let mut other = other;
         self.value_mul(&mut other);
         other
@@ -2656,9 +2638,6 @@ fn inverse_test() {
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(2));
     let b= a.clone() * a.clone();
     let c = b.clone() / a.clone();
-    println!("a: {}", a);
-    println!("b: {}", b);
-    println!("c: {}", c);
     assert_deq!(&a, &c);
 }
 

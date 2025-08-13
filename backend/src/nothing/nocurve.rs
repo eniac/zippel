@@ -420,7 +420,7 @@ impl<F: PrimeField> Zero for NoCurve<F> {
         panic!("{}", NOCURVE_ERR);
     }
     fn is_zero(&self) -> bool {
-        true
+        panic!("{}", NOCURVE_ERR);
     }
 }
 

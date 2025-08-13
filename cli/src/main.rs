@@ -7,7 +7,7 @@ use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 use ark_ff::fields::Field;
 
 use lang::id::Vid;
-use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
+use backend::{ArkConfig, ArkField17, ArkBls12_381, Value, ATyp, ABase};
 use lang::ast::UModule;
 use costs::Benchmarker;
 // use backend::ArkBls12_381
@@ -370,7 +370,9 @@ fn eval(args: CliArgs) {
     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    // let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let tau = Value::<ArkBls12_381>::Scalar(tau_input.clone());
+
     let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|i| {
         // println!("i: {}", i);
         // println!("test: {}", s.clone() ^ Value::Index(i));
@@ -400,6 +402,7 @@ fn eval(args: CliArgs) {
             (Vid("s".to_string()), s),
             (Vid("ss".to_string()), ss),
             (Vid("tau".to_string()), tau),
+            (Vid("ss_index".to_string()), ss_index),
         ]);
 
     let prover_start = start_timer!("Running the prover");
