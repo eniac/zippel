@@ -38,6 +38,7 @@ impl UniformityPropagation {
             GOp::Value(_) => Set::new(),
             GOp::Check(box op) => self.op_ancestors(op),
             GOp::Poly(box op) => self.op_ancestors(op),
+            GOp::Coef(box op) => self.op_ancestors(op),
             GOp::Eval(box p, box x) => {
                 let p_ancestors = self.op_ancestors(p);
                 let x_ancestors = self.op_ancestors(x);
@@ -66,6 +67,7 @@ impl UniformityPropagation {
             .cloned(),
             GOp::Ram(box a, _) => self.from_op(a),
             GOp::Poly(box a) => self.from_op(a),
+            GOp::Coef(box op) => self.from_op(op),
             GOp::Eval(box p, box x) => {
                 let dist_p = self.from_op(p)?;
                 let dist_x = self.from_op(x)?;

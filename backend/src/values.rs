@@ -2026,6 +2026,19 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    pub fn value_coef(&self) -> Self {
+        match self {
+            Value::Poly(p) => {
+                let mut poly = vec![];
+                for i in p.coeffs.iter() {
+                    poly.push(*i);
+                }
+                Value::VecScalar(poly)
+            },
+            _ => panic!("Expected poly, found {}", self),
+        }
+    }
+
     pub fn value_poly(&self) -> Self {
         match self {
             Value::VecScalar(v) => {

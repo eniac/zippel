@@ -404,7 +404,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
             Op::Poly(a) => {
                 let a_val: GOp<C> = Self::process_op(*a, args_name);
                 Op::Poly(Box::new(a_val))
-            }
+            },
+            Op::Coef(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Coef(Box::new(a_val))
+            },
             Op::Ifft(a) => {
                 let a_val: GOp<C> = Self::process_op(*a, args_name);
                 Op::Ifft(Box::new(a_val))
@@ -912,7 +916,23 @@ impl<C: ArkConfig> UDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ)
                     )
                 })?))
-            }
+            },
+
+            CExp::Coef(box v) => {
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let npoly = self.add_node(Node::coef(&child));
+
+                self.add_edges(edge_type, npoly, child);
+
+                Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ)
+                    )
+                })?))
+            },
+
             // Create a new [ifft], [fft] or [mle] node
             CExp::Ifft(box v) => {
                 // Add child first

@@ -110,7 +110,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                         return  a_val * b_val;
                     },
                     BinOp::Equ => {
-                        println!("Equ: {} {}", a_val.clone(), b_val.clone());
                         return a_val.value_equ(&b_val);
                     }
                     BinOp::Sub => {
@@ -123,7 +122,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                         return a_val ^ b_val;
                     },
                     BinOp::Dot => {
-                        println!("Dot: {} {}", a_val.clone(), b_val.clone());
                         return a_val.dot(b_val);
                     },
                     BinOp::Concat => {
@@ -152,8 +150,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_x_clone = Arc::clone(&inputs);
                 let p_val: Value<C> = self.handle_op(p, inputs_p_clone);
                 let x_val: Value<C> = self.handle_op(x, inputs_x_clone);
-                println!("Eval: {} {}", p_val.clone(), x_val.clone());
                 return p_val.value_eval(x_val);
+            }
+            Op::Coef(box a) => {
+                let inputs_a_clone = Arc::clone(&inputs);
+                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                return a_val.value_coef();
             }
             Op::Pair(box a, box b, _) => {
                 let inputs_a_clone = Arc::clone(&inputs);

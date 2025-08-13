@@ -61,6 +61,7 @@ exp_term  = _{
          | fft_exp
          | poly_exp
          | eval_exp
+         | coef_exp
          | challenge_exp
          | random_exp
          | map_exp
@@ -82,6 +83,7 @@ exp_term  = _{
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
+    coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)

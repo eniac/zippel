@@ -142,6 +142,13 @@ pub enum Exp<N> {
     ///     ```
     Eval(Box<Exp<N>>, Box<Exp<N>>),
 
+    ///     Get vector of coefficients of polynomial
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let v = coef(poly(1,2,3));
+    ///     ```
+    Coef(Box<Exp<N>>),
+
     ///     Multilinear extension of a matrix, polynomial, etc.
     ///     **Zippel Code:**
     ///     ```zippel
@@ -272,6 +279,7 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Ifft(box p) => Ok(Exp::Ifft(Box::new(p.traverse1(f)?))),
             Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
             Exp::Eval(box p, box x) => Ok(Exp::Eval(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
+            Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
             Exp::Pair(box x, box y) =>
                 Ok(Exp::Pair(Box::new(x.traverse1(f)?), Box::new(y.traverse1(f)?))),
@@ -331,6 +339,7 @@ impl TidSubst for CExp {
             | Exp::Assert(box p)
             | Exp::Verify(box p)
             | Exp::Reduce(_, box p)
+            | Exp::Coef(box p)
             | Exp::Fft(box p) => p.tid_subst(from, to),
             Exp::Vec(v)
             | Exp::App(_, v) => v.tid_subst(from, to),
@@ -368,6 +377,7 @@ impl FreeVars for CExp {
             | Exp::Reduce(_, box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
+            | Exp::Coef(box p)
             | Exp::Fft(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
@@ -407,6 +417,8 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
             Exp::Fft(box x) =>
                 Ok(Exp::fft(x.range_traverse(f)?)),
+            Exp::Coef(box x) =>
+                Ok(Exp::coef(x.range_traverse(f)?)),
             Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Log(x, box t, box e) => Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Let(None, box t, box e) => Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?)),
@@ -499,6 +511,9 @@ impl<N> Exp<N> {
     pub fn eval(p: Self, x: Self) -> Self {
         Exp::Eval(Box::new(p), Box::new(x))
     }
+    pub fn coef(a: Self) -> Self {
+        Exp::Coef(Box::new(a))
+    }
     pub fn challenge(t: Tid) -> Self {
         Exp::Challenge(t, false)
     }
@@ -587,6 +602,7 @@ impl<N> Exp<N> {
         match self {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
             Exp::Ifft(box p) => p.is_pure(),
+            Exp::Coef(box p) => p.is_pure(),
             Exp::Poly(box p) => p.is_pure(),
             Exp::Mle(box p) => p.is_pure(),
             Exp::Reduce(_, box p) => p.is_pure(),
@@ -677,6 +693,11 @@ where
             ]),
             Exp::Poly(p) => allocator.concat([
                 allocator.text("poly("),
+                p.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::Coef(p) => allocator.concat([
+                allocator.text("coef("),
                 p.pretty(allocator),
                 allocator.text(")"),
             ]),
@@ -988,6 +1009,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::ifft_exp => Ok(Exp::ifft(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
                 Rule::minus_exp => {
                     let mut inner = pair.into_inner();
@@ -1215,6 +1237,16 @@ fn parser_eval() {
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::eval(Exp::varstr("poly"), Exp::from(3)))
+    );
+}
+
+#[test]
+fn parser_coef() {
+    let ex = "coef(poly(1,2,3))";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::coef(Exp::poly(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)]))))
     );
 }
 

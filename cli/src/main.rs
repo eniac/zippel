@@ -357,7 +357,8 @@ fn eval(args: CliArgs) {
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::G1(g_input.clone());
 
-    let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
+    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let h: Value<ArkBls12_381> = Value::G2(h_input.clone());
     
     let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let s_temp: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
@@ -392,6 +393,7 @@ fn eval(args: CliArgs) {
     }).collect());
     
     let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
+    let h_val: Value<ArkBls12_381> = Value::G2(h_input.clone() * tau_input.clone());;
 
     let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
             (Vid("p".to_string()), p),
@@ -399,10 +401,11 @@ fn eval(args: CliArgs) {
             (Vid("h".to_string()), h),
             (Vid("z".to_string()), z),
             (Vid("y".to_string()), y),
-            (Vid("s".to_string()), s),
+            // (Vid("s".to_string()), s),
             (Vid("ss".to_string()), ss),
-            (Vid("tau".to_string()), tau),
-            (Vid("ss_index".to_string()), ss_index),
+            // (Vid("tau".to_string()), tau),
+            // (Vid("ss_index".to_string()), ss_index),
+            (Vid("h_val".to_string()), h_val),
         ]);
 
     let prover_start = start_timer!("Running the prover");

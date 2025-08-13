@@ -55,6 +55,9 @@ pub enum Op<C: ArkConfig, R> {
     /// Polynomial 
     Poly(Box<Op<C, R>>),
 
+    /// Coefficients of a polynomial
+    Coef(Box<Op<C, R>>),
+
     /// Evaluate a polynomial at a point
     Eval(Box<Op<C, R>>, Box<Op<C, R>>),
 
@@ -111,6 +114,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Check(_) => 20,
             Op::Poly(_) => 21,
             Op::Eval(_, _) => 22,
+            Op::Coef(_) => 23,
         }
     }
 
@@ -144,6 +148,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Check(box op) => op.typ(),
             Op::Poly(box op) => op.typ(),
             Op::Eval(box p, box x) => x.typ(),
+            Op::Coef(box op) => op.typ(),
         }
     }
 
@@ -454,6 +459,10 @@ impl<C: ArkConfig, R> Op<C, R> {
     pub fn poly(op: Self) -> Op<C, R> {
         Op::Poly(Box::new(op))
     }
+
+    pub fn coef(op: Self) -> Op<C, R> {
+        Op::Coef(Box::new(op))
+    }
     
     pub fn ifft(op: Self) -> Op<C, R> {
         match op {
@@ -551,11 +560,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ifft(box v)
             | Op::Check(box v)
             | Op::Poly(box v)
+            | Op::Coef(box v)
             | Op::Fft(box v) => v.references(),
-            // Op::Eval(box p, box x) => 
-            //     p.references().into_iter()
-            //     .chain(x.references().into_iter())
-            //     .collect(),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => vec![],
@@ -593,6 +599,7 @@ impl<C: ArkConfig> GOp<C> {
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
             Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
             Op::Poly(box op) => Op::Poly(Box::new(op.map_node_indices(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
             Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
             Op::Ifft(box op) => Op::Ifft(Box::new(op.map_node_indices(f))),
             Op::Fft(box op) => Op::Fft(Box::new(op.map_node_indices(f))),
@@ -617,6 +624,7 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Random(_, _)
             | Op::Challenge(_, _) => self.clone(),
             Op::Poly(box op) => Op::Poly(Box::new(op.map_refs(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
             Op::Eval(box p, box x) => Op::Eval(Box::new(p.map_refs(f)), Box::new(x.map_refs(f))),
         }
     }
@@ -855,6 +863,11 @@ where
             ]),
             Op::Poly(box v) => allocator.concat([
                 allocator.text("(poly "),
+                v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Coef(box v) => allocator.concat([
+                allocator.text("(coef "),
                 v.pretty(allocator),
                 allocator.text(")"),
             ]),

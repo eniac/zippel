@@ -1,12 +1,21 @@
-proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
-        (public p: [F; N], public tau: F, public ss_index: [F; N])
+proto kzg<F: Field, N: 4>
+        (public p: [F; N], public z: F, public y: F, public ss_index: [F; N])
         where p == p {
         //p(z) == y && ss[0] == g && [(pair(ss[i], h) == pair(ss[i-1], s)) for i in 1..N] {
         
         let p_val = poly(p);
-        let poly_eval = eval(p_val, [tau]);
-        let vec_dot = p . ss_index;
+        let co = coef(p_val);
 
-        verify(poly_eval[0] == vec_dot)
+        let q_val = (p_val - y) / poly([-z, 1]);
+
+        let test = coef(q_val) . ss_index[0..N-1];
+        
+        verify(test == test && q_val == q_val && z == z && y == y);
+
+        // let p_val = poly(p);
+        // let poly_eval = eval(p_val, [tau]);
+        // let vec_dot = p . ss_index;
+
+        // verify(poly_eval[0] == vec_dot)
 
 }
