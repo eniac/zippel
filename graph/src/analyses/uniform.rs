@@ -37,8 +37,15 @@ impl UniformityPropagation {
             GOp::Ram(box a, _) => self.op_ancestors(a),
             GOp::Value(_) => Set::new(),
             GOp::Check(box op) => self.op_ancestors(op),
+            GOp::Poly(box op) => self.op_ancestors(op),
             GOp::Coef(box op) => self.op_ancestors(op),
-            GOp::Eval(box op) => self.op_ancestors(op),
+            GOp::Eval(box p, box x) => {
+                let p_ancestors = self.op_ancestors(p);
+                let x_ancestors = self.op_ancestors(x);
+                p_ancestors.union(x_ancestors)
+            },
+            GOp::Ifft(box op) => self.op_ancestors(op),
+            GOp::Fft(box op) => self.op_ancestors(op),
             GOp::Random(_, _) => Set::new(),
             GOp::Challenge(_, _) => Set::new(),
             GOp::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
@@ -59,8 +66,19 @@ impl UniformityPropagation {
             .or(self.distributions.iter().find(|(dr, _)| dr.node() == r.node()).map(|dr| dr.1))
             .cloned(),
             GOp::Ram(box a, _) => self.from_op(a),
-            GOp::Coef(box a) => self.from_op(a),
-            GOp::Eval(box a) => self.from_op(a),
+            GOp::Poly(box a) => self.from_op(a),
+            GOp::Coef(box op) => self.from_op(op),
+            GOp::Eval(box p, box x) => {
+                let dist_p = self.from_op(p)?;
+                let dist_x = self.from_op(x)?;
+                if self.is_independent(p, x) {
+                    Some(dist_x.mul(&dist_x.inv()))
+                } else {
+                    Some(Distribution::Nonuniform)
+                }
+            }
+            GOp::Ifft(box a) => self.from_op(a),
+            GOp::Fft(box a) => self.from_op(a),
             GOp::Bin(BinOp::Add, box a, box b, _) 
             | GOp::Bin(BinOp::Concat, box a, box b, _) => {
                 let dist_a = self.from_op(a)?;

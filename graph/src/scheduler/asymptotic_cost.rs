@@ -49,11 +49,9 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Uni(lt), ATyp::Uni(rt)) =>
                 (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64),
             (ATyp::Uni(lt), _) => {
-                println!("Here");
                 1.0
             },
             (_, _) => {
-                println!("Temporary");
                 1.0
             }
             // (_, _) => unreachable!(),
@@ -84,7 +82,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Uni(n), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) =>
                 (*n as f64) * Self::SCALAR_MUL / (nthreads as f64),
-            (a, b) => {println!("{} {}", a, b); unreachable!()}
+            (a, b) => {println!("{} {}", a, b); 1.0}//unreachable!()} TODO: fix this
         }
     }
 
@@ -96,7 +94,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
            (ATyp::Vec(box lt, n), rt)
             | (lt, ATyp::Vec(box rt, n)) =>
                 (*n as f64) * Self::cost_div(lt, rt, nthreads) / (nthreads as f64),
-            (_, _) => unreachable!(),
+            (_, _) => 1.0,//unreachable!(),
         }
     }
 
@@ -167,12 +165,15 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
             Op::Vec(vs) =>
                 cost += vs.iter().fold(0.0, |acc, v| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
             Op::Challenge(t, _) => cost += Self::SCALAR_ADD * t.size() as f64,
-            Op::Coef(box op) | Op::Eval(box op) => {
+            Op::Ifft(box op) | Op::Fft(box op) => {
                 let n = op.typ().size() as f64;
                 cost += self.cost(op, nthreads).0 +
                     (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
             },
             Op::Check(box op) => cost += self.cost(op, nthreads).0,
+            Op::Poly(box op) => cost += 1.0,
+            Op::Eval(box p, box x) => cost += 1.0,
+            Op::Coef(box op) => cost += 1.0,
         };
         cost.into()
     }

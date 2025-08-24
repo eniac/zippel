@@ -47,10 +47,19 @@ pub enum Op<C: ArkConfig, R> {
     Challenge(ATyp, bool),
 
     /// Convert from evaluation domain to lagrange domain.
-    Coef(Box<Op<C, R>>),
+    Ifft(Box<Op<C, R>>),
 
     /// Convert from lagrange domain to evaluation domain
-    Eval(Box<Op<C, R>>),
+    Fft(Box<Op<C, R>>),
+
+    /// Polynomial 
+    Poly(Box<Op<C, R>>),
+
+    /// Coefficients of a polynomial
+    Coef(Box<Op<C, R>>),
+
+    /// Evaluate a polynomial at a point
+    Eval(Box<Op<C, R>>, Box<Op<C, R>>),
 
     /// Assertion or verification check
     Check(Box<Op<C, R>>),
@@ -100,9 +109,12 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Vec(_) => 15,
             Op::Random(_, _) => 16,
             Op::Challenge(_, _) => 17,
-            Op::Coef(_) => 18,
-            Op::Eval(_) => 19,
+            Op::Ifft(_) => 18,
+            Op::Fft(_) => 19,
             Op::Check(_) => 20,
+            Op::Poly(_) => 21,
+            Op::Eval(_, _) => 22,
+            Op::Coef(_) => 23,
         }
     }
 
@@ -131,9 +143,12 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
-            Op::Coef(box op) => op.typ(),
-            Op::Eval(box op) => op.typ(),
+            Op::Ifft(box op) => op.typ(),
+            Op::Fft(box op) => op.typ(),
             Op::Check(box op) => op.typ(),
+            Op::Poly(box op) => op.typ(),
+            Op::Eval(box p, box x) => x.typ(),
+            Op::Coef(box op) => op.typ(),
         }
     }
 
@@ -158,6 +173,10 @@ impl<C: ArkConfig, R> Op<C, R> {
 
     pub fn value(v: &Value<C>) -> Self {
         Op::Value(v.clone())
+    }
+
+    pub fn eval(p: Self, x: Self) -> Self {
+        Op::Eval(Box::new(p), Box::new(x))
     }
 
     /// Random access simplifications
@@ -238,12 +257,12 @@ impl<C: ArkConfig, R> Op<C, R> {
                         Op::add(l, r, t.clone()))
                     .collect())
             },
-            // Commuting conversion (eval a + eval b) = eval (a + b)
-            (Op::Eval(box l), Op::Eval(box r)) =>
-                Op::Eval(Box::new(Op::add(l, r, typ))),
-            // Commuting conversion (coef a + coef b) = coef (a + b)
-            (Op::Coef(box l), Op::Coef(box r)) =>
-                Op::Coef(Box::new(Op::add(l, r, typ))),
+            // Commuting conversion (fft a + fft b) = fft (a + b)
+            (Op::Fft(box l), Op::Fft(box r)) =>
+                Op::Fft(Box::new(Op::add(l, r, typ))),
+            // Commuting conversion (ifft a + ifft b) = ifft (a + b)
+            (Op::Ifft(box l), Op::Ifft(box r)) =>
+                Op::Ifft(Box::new(Op::add(l, r, typ))),
             (v1, v2) => Op::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
         }
     }
@@ -272,13 +291,13 @@ impl<C: ArkConfig, R> Op<C, R> {
                         Op::sub(l, r, t.clone()))
                     .collect())
             },
-            // Commuting conversion (eval a - eval b) = eval (a - b)
-            (Op::Eval(box l), Op::Eval(box r)) =>
-                Op::Eval(Box::new(Op::sub(l, r, typ))),
-            // Commuting conversion (coef a - coef b) = coef (a - b)
-            (Op::Coef(box l), Op::Coef(box r)) =>
-                Op::Coef(Box::new(Op::sub(l, r, typ))),
-            (v1, v2) => Op::Bin(BinOp::Add, Box::new(v1), Box::new(v2), typ),
+            // Commuting conversion (fft a - fft b) = fft (a - b)
+            (Op::Fft(box l), Op::Fft(box r)) =>
+                Op::Fft(Box::new(Op::sub(l, r, typ))),
+            // Commuting conversion (ifft a - ifft b) = ifft (a - b)
+            (Op::Ifft(box l), Op::Ifft(box r)) =>
+                Op::Ifft(Box::new(Op::sub(l, r, typ))),
+            (v1, v2) => Op::Bin(BinOp::Sub, Box::new(v1), Box::new(v2), typ),
         }
     }
 
@@ -437,17 +456,25 @@ impl<C: ArkConfig, R> Op<C, R> {
         }
     }
 
+    pub fn poly(op: Self) -> Op<C, R> {
+        Op::Poly(Box::new(op))
+    }
+
     pub fn coef(op: Self) -> Op<C, R> {
+        Op::Coef(Box::new(op))
+    }
+    
+    pub fn ifft(op: Self) -> Op<C, R> {
         match op {
-            Op::Eval(box op) => op,
-            _ => Op::Coef(Box::new(op)),
+            Op::Fft(box op) => op,
+            _ => Op::Ifft(Box::new(op)),
         }
     }
 
-    pub fn eval(op: Self) -> Op<C, R> {
+    pub fn fft(op: Self) -> Op<C, R> {
         match op {
-            Op::Coef(box op) => op,
-            op => Op::Eval(Box::new(op)),
+            Op::Ifft(box op) => op,
+            op => Op::Fft(Box::new(op)),
         }
     }
 
@@ -520,6 +547,7 @@ impl<C: ArkConfig, R> Op<C, R> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
             Op::Bin(_, box a, box b, _)
+            | Op::Eval(box a, box b)
             | Op::Pair(box a, box b, _)
             | Op::Ram(box a, box b) =>
                 a.references().into_iter()
@@ -529,9 +557,11 @@ impl<C: ArkConfig, R> Op<C, R> {
                 vs.into_iter()
                     .flat_map(|v| v.references())
                     .collect(),
-            Op::Coef(box v)
+            Op::Ifft(box v)
             | Op::Check(box v)
-            | Op::Eval(box v) => v.references(),
+            | Op::Poly(box v)
+            | Op::Coef(box v)
+            | Op::Fft(box v) => v.references(),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => vec![],
@@ -567,9 +597,12 @@ impl<C: ArkConfig> GOp<C> {
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_node_indices(f)).collect()),
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
-            Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
+            Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
+            Op::Poly(box op) => Op::Poly(Box::new(op.map_node_indices(f))),
             Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
-            Op::Eval(box op) => Op::Eval(Box::new(op.map_node_indices(f))),
+            Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
+            Op::Ifft(box op) => Op::Ifft(Box::new(op.map_node_indices(f))),
+            Op::Fft(box op) => Op::Fft(Box::new(op.map_node_indices(f))),
             _ => self.clone()
         }
     }
@@ -585,11 +618,14 @@ impl<C: ArkConfig> GOp<C> {
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
             Op::Check(box op) => Op::Check(Box::new(op.map_refs(f))),
-            Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
-            Op::Eval(box op) => Op::Eval(Box::new(op.map_refs(f))),
+            Op::Ifft(box op) => Op::Ifft(Box::new(op.map_refs(f))),
+            Op::Fft(box op) => Op::Fft(Box::new(op.map_refs(f))),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => self.clone(),
+            Op::Poly(box op) => Op::Poly(Box::new(op.map_refs(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
+            Op::Eval(box p, box x) => Op::Eval(Box::new(p.map_refs(f)), Box::new(x.map_refs(f))),
         }
     }
 
@@ -620,8 +656,8 @@ impl<C: ArkConfig> GOp<C> {
                 Op::Vec(vs.into_iter().map(|v| v.inline(vars, except))
                     .collect::<Vec<_>>()),
             Op::Check(box op) => op.inline(vars, except),
-            Op::Coef(box v) => Op::Coef(Box::new(v.inline(vars, except))),
-            Op::Eval(box v) => Op::Eval(Box::new(v.inline(vars, except))),
+            Op::Ifft(box v) => Op::Ifft(Box::new(v.inline(vars, except))),
+            Op::Fft(box v) => Op::Fft(Box::new(v.inline(vars, except))),
             _ => self.clone()
         }
     }
@@ -820,9 +856,26 @@ where
                     ])
                 }
             },
-            Op::Eval(box v) => allocator.concat([
-                allocator.text("(eval "),
+            Op::Fft(box v) => allocator.concat([
+                allocator.text("(fft "),
                 v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Poly(box v) => allocator.concat([
+                allocator.text("(poly "),
+                v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Coef(box v) => allocator.concat([
+                allocator.text("(coef "),
+                v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Eval(box p, box x) => allocator.concat([
+                allocator.text("(eval "),
+                p.pretty(allocator),
+                allocator.text(", "),
+                x.pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Pair(box a, box b, _) => allocator.concat([
@@ -832,8 +885,8 @@ where
                 b.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Coef(box v) => allocator.concat([
-                allocator.text("(coef "),
+            Op::Ifft(box v) => allocator.concat([
+                allocator.text("(ifft "),
                 v.pretty(allocator),
                 allocator.text(")"),
             ]),

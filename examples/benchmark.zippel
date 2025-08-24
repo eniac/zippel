@@ -1,0 +1,10 @@
+proto benchmark<G: Group, F: Scalar<G>, N_val_const: 10240, M_val_const: 1280>(
+    // --- Public Inputs ---
+    public g_a_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
+    public g_b_vec: [G; M_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
+    private a: [F; N_val_const],   // Corresponds to 'P' in the paper
+    private b: [F; M_val_const]) where
+        (a == a) {
+    c <- a . g_a_vec + b . g_b_vec;
+    verify(c == c);
+}

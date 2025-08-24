@@ -37,7 +37,16 @@ pub enum TypeError {
     #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- {2} != {3} \n\n\t{4}")]
     Vec(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
 
-    #[error("CoefficientError: Argument to [coef] must be a vector of fields:\n\t{0}, {1} |- coef {2}")]
+    #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
+    Ifft(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+
+    #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
+    Poly(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+
+    #[error("EvalError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
+    Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
+
+    #[error("CoefError: Arguments to [coef] must be a polynomial:\n\t{0}, {1} |- coef {2}")]
     Coef(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n\t{0}, {1} |- mle {2}")]
@@ -67,8 +76,8 @@ pub enum TypeError {
     #[error("InterpolateError: Expects a field vector:\n\t{0}, {1} |- interpolate ( {2}: {3})")]
     Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error("EvaluateError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- evaluate ( {2}: {3})")]
-    Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    #[error("FftError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- fft ( {2}: {3})")]
+    Fft(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
@@ -123,8 +132,17 @@ impl<'a> TypeError {
     pub fn vec(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CTyp, t: &CTyp, r: TypeError) -> Self {
         TypeError::Vec(kctx.clone(), vctx.clone(), e.clone(), t.clone(), Box::new(r))
     }
+    pub fn ifft(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn poly(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
+    }
     pub fn coef(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Coef(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+        TypeError::Eval(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
@@ -153,8 +171,8 @@ impl<'a> TypeError {
     pub fn interp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
-    pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
-        TypeError::Eval(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+    pub fn fft(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+        TypeError::Fft(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
     pub fn ram(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
@@ -187,8 +205,8 @@ impl Typeable for CExp {
             // Booleans
             CExp::Bool(_) => Ok(CTyp::Bool),
 
-            // Infer the type of a univariate polynomial from its coefficients' vector
-            CExp::Coef(box v) => {
+            // Infer the type of a univariate polynomial from ifft
+            CExp::Ifft(box v) => {
                 // Infer the type of its argument
                 let typ = v.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
@@ -196,10 +214,63 @@ impl Typeable for CExp {
                 // It must be a vector of fields, or a vector of Fin
                 match typ {
                     CTyp::Vec(box b, n) => {
-                        let i = b.to_scalar(kctx).ok_or(TypeError::coef(kctx, &vctx, self))?;
+                        let i = b.to_scalar(kctx).ok_or(TypeError::ifft(kctx, &vctx, self))?;
                         Ok(CTyp::Uni(i, n))
                     },
+                    // CTyp::Uni(T, n) => {
+                    //     // let i = b.to_scalar(kctx).ok_or(TypeError::Ifft(kctx, &vctx, self))?;
+
+                    //     let i = Box::new(T, n);
+                    //     Ok(CTyp::Vec(i,n))
+                    // }, 
+                    _ => Err(TypeError::ifft(kctx, &vctx, self))
+                }
+            }
+            
+            CExp::Poly(box v) => {
+                let typ = v.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match typ {
+                    CTyp::Vec(box b, n) => {
+                        let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, &vctx, self))?;
+                        Ok(CTyp::Uni(i, n))
+                    },
+                    _ => Err(TypeError::poly(kctx, &vctx, self))
+                }
+            }
+
+            CExp::Coef(box p) => {
+                let typ = p.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match typ {
+                    CTyp::Uni(tid, n) => {
+                        let k = kctx.get(&tid).ok_or(
+                            TypeError::lub(TypeError::exp(kctx, vctx, self), LubError::kind_not_found(&tid)))?;
+                        // Only field elements can be evaluated
+                        if k.is_scalar() {
+                            Ok(CTyp::vec(&CTyp::Base(tid), n))
+                        } else {
+                            Err(TypeError::coef(kctx, vctx, self))
+                        }
+                    },
                     _ => Err(TypeError::coef(kctx, &vctx, self))
+                }
+            }
+
+            CExp::Eval(box p, box x) => {
+                let p_typ = p.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let x_typ = x.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match (p_typ, x_typ) {
+                    (CTyp::Uni(i, n), CTyp::Vec(b, _)) => {
+                        let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
+                        Ok(CTyp::Vec(b, n))
+                    }
+                    _ => Err(TypeError::eval(kctx, &vctx, p, x))
                 }
             }
 
@@ -440,8 +511,8 @@ impl Typeable for CExp {
                 Ok(CTyp::base(t))
             }
 
-            // Convert a polynomial to its evaluation form
-            CExp::Eval(box a) => {
+            // Convert a polynomial to its fft form
+            CExp::Fft(box a) => {
                 let t = a.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self),  e))?;
 
@@ -454,7 +525,7 @@ impl Typeable for CExp {
                         if k.is_scalar() {
                             Ok(CTyp::vec(&CTyp::Base(tid), n))
                         } else {
-                            Err(TypeError::eval(kctx, vctx, &a, &t))
+                            Err(TypeError::fft(kctx, vctx, &a, &t))
                         }
                     },
                     CTyp::Mle(tid, n) => {
@@ -464,10 +535,10 @@ impl Typeable for CExp {
                         if k.is_scalar() {
                             Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
                         } else {
-                            Err(TypeError::eval(kctx, vctx, &a, &t))
+                            Err(TypeError::fft(kctx, vctx, &a, &t))
                         }
                     },
-                    _ => Err(TypeError::eval(kctx, vctx, &a, &t))
+                    _ => Err(TypeError::fft(kctx, vctx, &a, &t))
                 }
             },
 
@@ -1089,12 +1160,12 @@ mod tests {
 
     // Test interpolate
     #[test]
-    fn test_coef() {
+    fn test_ifft() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an interpolation expressionin coef([1, 2, 3], [1, 2, 3])
-        let interp1 = CExp::coef(
+        // Create an interpolation expressionin ifft([1, 2, 3], [1, 2, 3])
+        let interp1 = CExp::ifft(
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::lit(2),
@@ -1104,7 +1175,7 @@ mod tests {
         assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Uni(Tid::from("F"), 3)));
 
-        let interp_bad = CExp::coef(
+        let interp_bad = CExp::ifft(
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::varstr("g1"),
@@ -1113,15 +1184,56 @@ mod tests {
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
-    // Test evaluation
     #[test]
-    fn test_eval() {
+    fn test_poly() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an evaluation expression eval(coef([f1,2,3]))
-        let eval1 = CExp::eval(
-            CExp::coef(
+        // Create an interpolation expressionin poly([1, 2, 3], [1, 2, 3])
+        let interp1 = CExp::poly(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::lit(2),
+                CExp::lit(3),
+            ]));
+
+        assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Uni(Tid::from("F"), 3)));
+
+        let interp_bad = CExp::poly(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::varstr("g1"),
+            ]));
+
+        assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    #[test]
+    fn test_coef() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        let interp1 = CExp::coef(CExp::poly(
+            CExp::vec(vec![
+                CExp::varstr("f1"),
+                CExp::lit(2),
+                CExp::lit(3),
+            ])));
+        
+        assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3)));
+    }
+
+    // Test evaluation
+    #[test]
+    fn test_fft() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // Create an evaluation expression eval(ifft([f1,2,3]))
+        let eval1 = CExp::fft(
+            CExp::ifft(
                 CExp::vec(
                     vec![
                         CExp::varstr("f1"),
@@ -1132,7 +1244,7 @@ mod tests {
         assert_eq!(eval1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3)));
 
-        let eval_bad = CExp::eval(
+        let eval_bad = CExp::fft(
             CExp::vec(vec![
                 CExp::varstr("f1"),
             ]));

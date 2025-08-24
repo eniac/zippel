@@ -505,7 +505,7 @@ impl fmt::Display for ABase {
             ABase::Scalar => write!(f, "Scalar"),
             ABase::G1 => write!(f, "G1"),
             ABase::G2 => write!(f, "G2"),
-            ABase::GT => write!(f, "GT")
+            ABase::GT => write!(f, "GT"),
         }
     }
 }

@@ -51,6 +51,7 @@ impl UModule {
         // Catch duplicate declarations here
         let mut m = Ctx::new();
         for d in decls.into_iter() {
+            println!("Decl: {:?}", d);
             m.insert_with(d.sig, d.body,
                 &|sig, _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
         }
