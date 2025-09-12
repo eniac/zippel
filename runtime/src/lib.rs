@@ -2,10 +2,11 @@
 #![feature(trait_alias)]
 #![feature(box_patterns)]
 use petgraph::graph::{self as petgraph_graph, EdgeIndex, NodeIndex};
+use spongefish::{ProverState, DomainSeparator, DuplexSpongeInterface, DefaultHash, BytesToUnitSerialize};
 use petgraph::graph::Graph;
 use std::sync::{Arc, Mutex};
-use backend::{ArkConfig, Value};
-use graph::{Dag, Node, Op, Dep};
+use backend::{ArkConfig, Value, value_to_bytes};
+use graph::{domain_seperator, Dag, Dep, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
 use lang::ast::BinOp;
@@ -16,6 +17,7 @@ use rand::Rng;
 use share::Ctx;
 use std::time::Duration;
 use std::thread;
+use domain_seperator::ZippelDomainSeparator;
 
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
@@ -32,20 +34,29 @@ impl<C: ArkConfig> RuntimeInformation<C> {
 }
 
 
-pub struct MutexGraph<C: ArkConfig>(pub Dag<C, Arc<RuntimeInformation<C>>>);
+pub struct MutexGraph<C: ArkConfig> {
+    mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
+}
 
 impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
-        MutexGraph(
-            tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
+        // let domain_seperator = <DomainSeparator<H> as domain_seperator::ZippelDomainSeparator::<C, Arc<RuntimeInformation<C>>>>::new_zippel_domain_seperator(
+        //     "domain_separator",
+        //     &tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
+        //         nthreads.get()
+        //     ))),
+        // );
+        MutexGraph {
+            mutex_graph:tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
                 nthreads.get()
-            )))
-        )
+            ))),
+            // prover_state: ProverState::new(&domain_seperator, rand::rngs::OsRng)
+        }
     }
 
     pub fn print_edges(&self) {
-        for node in self.0.node_indices() {
-            for neighbor in self.0.neighbors_directed(node, petgraph::Direction::Outgoing) {
+        for node in self.mutex_graph.node_indices() {
+            for neighbor in self.mutex_graph.neighbors_directed(node, petgraph::Direction::Outgoing) {
                 println!("Edge from {:?} to {:?}", node, neighbor);
             }
         }
@@ -54,7 +65,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn get_value(&self, r: graph::Ref, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         let node = r.node();
 
-        match &self.0[node] {
+        match &self.mutex_graph[node] {
             Node::Op(_, annotation) 
             | Node::Transcr(_, annotation) => {
                 let return_val = annotation.return_value.lock().unwrap();
@@ -183,7 +194,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     }
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
 
-        let node = &self.0[node_curr];
+        let node = &self.mutex_graph[node_curr];
         
 
         match node {
@@ -199,21 +210,23 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);  
             },
-            Node:: Inp(_, _) | Node::Rel(_, _) => {
-                // println!("Not Processing");
-                // println!("Done for {:?}", node_curr);
+            Node:: Inp(_, _) => { 
+            },
+            Node::Rel(_, _) => {
             }
         }
 
     }
 
-    pub fn run_graph(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Vec<Value<C>> {
+    pub fn run_graph<H: DuplexSpongeInterface>(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>, prover_state: &mut ProverState<H>) -> Vec<Value<C>> {
+        // add in context for the challenge
+
         let mut final_return: Vec<Value<C>> = Vec::new();
         let mut ready_nodes: Vec<NodeIndex> = Vec::new();
         let mut running_nodes: Vec<NodeIndex> = Vec::new();
 
-        for node in g.0.node_indices() {
-            if g.0.neighbors_directed(node, petgraph::Direction::Incoming).count() == 0 {
+        for node in g.mutex_graph.node_indices() {
+            if g.mutex_graph.neighbors_directed(node, petgraph::Direction::Incoming).count() == 0 {
                 ready_nodes.push(node);
             }
         }
@@ -229,7 +242,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let node_index = ready_nodes[i];
                 let thread_num_val;
 
-                match &g.0[node_index] {
+                match &g.mutex_graph[node_index] {
                     Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                         thread_num_val = annotation.thread_num;
                     },
@@ -244,16 +257,45 @@ impl<C: ArkConfig> MutexGraph<C> {
                         .build()
                         .unwrap();
 
-                    // let dependencies: Vec<NodeIndex> = g.0
-                    //     .neighbors_directed(node_index, petgraph::Direction::Incoming)
-                    //     .collect();
+                    // check if node is a challenge node
+                    let mut challenge_node = false;
+                    let mut input_node = false;
+                    let node = &g.mutex_graph[node_index];
+                    match node {
+                        Node::Op(op, annotation) | Node::Transcr(op, annotation) => {
+                            match op {
+                                GOp::Challenge(c_typ, _) => {
+                                    // println!("Challenge node");
+                                    let return_val = Value::<C>::challenge(prover_state);
+                                    // println!("Return val: {}", return_val);
+                                    let mut return_value_lock = annotation.return_value.lock().unwrap();
+                                    *return_value_lock = Some(return_val); 
+                                    challenge_node = true;
+                                }
+                                _ => {}
+                            }
+                        },
+                        Node::Inp(c, prefs) => {
+                            for pref in prefs.clone() {
+                                if pref.qualifier.is_public() {
+                                    // println!("Input node");
+                                    prover_state.add_bytes(&value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap()).unwrap();
+                                }
+                            }
+                            input_node = true;
+                        },
+                        Node::Rel(_, _) => {}
+                    } 
 
-                    let graph = Arc::clone(&g);
-                    let inputs_arc = Arc::clone(&inputs);
-                    pool.spawn(move || {
-                        graph.handle_node(node_index, inputs_arc);
-                    });
+                    if !challenge_node && !input_node {
 
+                        let graph = Arc::clone(&g);
+                        let inputs_arc = Arc::clone(&inputs);
+                        pool.spawn(move || {
+                            graph.handle_node(node_index, inputs_arc);
+                        });
+
+                    }
                     running_nodes.push(node_index);
                     active_threads += thread_num_val;
                     remove_from_ready.push(node_index);
@@ -267,7 +309,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             for i in 0..running_nodes.len() {
                 let node_index = running_nodes[i];
 
-                let finished: bool = match &g.0[node_index] {
+                let finished: bool = match &g.mutex_graph[node_index] {
                     Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                         let return_val = annotation.return_value.lock().unwrap();
                         return_val.is_some()
@@ -277,9 +319,15 @@ impl<C: ArkConfig> MutexGraph<C> {
 
                 if finished {
                     remove_from_running.push(node_index);
-                    match &g.0[node_index] {
-                        Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                    match &g.mutex_graph[node_index] {
+                        Node::Op(_, annotation) => {
                             active_threads -= annotation.thread_num;
+                        },
+                        Node::Transcr(_, annotation) => {
+                            active_threads -= annotation.thread_num;
+                            let serialized_return_val = value_to_bytes(&annotation.return_value.lock().unwrap().clone().unwrap()).unwrap();
+                            // println!("Serialized return val: {:?}", serialized_return_val);
+                            prover_state.add_bytes(&serialized_return_val).unwrap();
                         },
                         Node::Inp(_, _) | Node::Rel(_, _) => {
                             
@@ -287,12 +335,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
 
                     let mut fix_finished_requirements: Vec<NodeIndex> = Vec::new();
-                    let dependents = g.0.neighbors_directed(node_index, petgraph::Direction::Outgoing);
+                    let dependents = g.mutex_graph.neighbors_directed(node_index, petgraph::Direction::Outgoing);
                     for dependent in dependents {
-                        let incoming_nodes: Vec<_> = g.0.neighbors_directed(dependent, petgraph::Direction::Incoming).collect();
+                        let incoming_nodes: Vec<_> = g.mutex_graph.neighbors_directed(dependent, petgraph::Direction::Incoming).collect();
                         let mut ready: bool = true;
                         for income_node in &incoming_nodes {
-                            let mut finished_requirements_lock = match &g.0[dependent] {
+                            let mut finished_requirements_lock = match &g.mutex_graph[dependent] {
                                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                                     annotation.finished_requirements.lock().unwrap()
                                 },
@@ -313,7 +361,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         }
                     }
                     for dependent in fix_finished_requirements {
-                        let node = &g.0[dependent];
+                        let node = &g.mutex_graph[dependent];
                 
                         match node {
                             Node::Op(_, annotation) | Node::Transcr(_, annotation)  => {
@@ -329,7 +377,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
             if remove_from_running == running_nodes && ready_nodes.is_empty() {
                 let node_index = remove_from_running.first().unwrap();
-                let node = &g.0[*node_index];
+                let node = &g.mutex_graph[*node_index];
                 match node {
                     Node::Op(_, annotation) => {
                         let return_val = annotation.return_value.lock().unwrap();
@@ -338,12 +386,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                         }
                     },
                     Node::Transcr(_, _) => {
-                        let transcript_nodes = g.0.transcript_nodes();
+                        let transcript_nodes = g.mutex_graph.transcript_nodes();
                         let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
                             let mut has_parent_in_list = HashSet::new();
                             
                             for &node in &transcript_nodes {
-                                for parent in g.0.neighbors_directed(node, petgraph::Direction::Incoming) {
+                                for parent in g.mutex_graph.neighbors_directed(node, petgraph::Direction::Incoming) {
                                     if transcript_nodes.contains(&parent) {
                                         parent_map.insert(node, parent);
                                         has_parent_in_list.insert(node);
@@ -366,7 +414,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
 
                         for node_transcript in ordered {
-                            let transcript_node = &g.0[node_transcript];
+                            let transcript_node = &g.mutex_graph[node_transcript];
                             match transcript_node {
                                 Node::Transcr(_, annotation) => {
                                     let return_val = annotation.return_value.lock().unwrap();

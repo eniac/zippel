@@ -8,12 +8,13 @@ use crate::types::Lub;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::GroupDomainSeparator;
-use spongefish::{BytesToUnitSerialize, DomainSeparator, ProverState};
+use spongefish::{BytesToUnitSerialize, DomainSeparator, ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
-
 use crate::{to_bytes, ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps};
+use std::io::Write;
+use ark_serialize::{CanonicalSerialize,SerializationError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -43,6 +44,119 @@ pub enum Value<C: ArkConfig> {
     Poly(DensePolynomial<C::F>),
 }
 
+fn serialize_value_internal<C: ArkConfig, W: Write>(
+    value: &Value<C>,
+    writer: &mut W,
+) -> Result<(), SerializationError> {
+    match value {
+        Value::Bool(b) => {
+            b.serialize_compressed(writer)
+        }
+        Value::VecBool(vec) => {
+            (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for b in vec {
+                b.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Index(i) => {
+            (*i as u64).serialize_compressed(writer)
+        }
+        Value::Scalar(f) => {
+            // println!("Scalar: {}", f);
+            f.serialize_compressed(writer)
+        }
+        Value::VecIndex(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for i in vec {
+                (*i as u64).serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecScalar(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for f in vec {
+                f.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::G1(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::G2(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::GT(gt) => {
+            gt.serialize_compressed(writer)
+        }
+        Value::VecG1(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecG2(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecGT(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for gt in vec {
+                gt.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::G1Affine(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::G2Affine(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::VecG1Affine(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecG2Affine(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Vec(values) => {
+            // (values.len() as u64).serialize_compressed(&mut *writer)?;
+            for v in values {
+                serialize_value_internal(v, &mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Poly(poly) => {
+            poly.serialize_compressed(writer)
+        }
+    }
+}
+
+pub fn serialize_value<C: ArkConfig, W: Write>(
+    value: &Value<C>,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    serialize_value_internal(value, &mut writer)
+}
+
+pub fn value_to_bytes<C: ArkConfig>(value: &Value<C>) -> Result<Vec<u8>, SerializationError> {
+    let mut buffer = Vec::new();
+    serialize_value(value, &mut buffer)?;
+    Ok(buffer)
+}
+
+
 impl<C: ArkConfig> Value<C> {
     /// Returns an integer representing the constructor order.
     /// Higher values correspond to constructors defined earlier.
@@ -69,6 +183,7 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    
     pub fn scalar_from_usize(i: usize) -> Self {
         Value::Scalar(C::FOps::from_usize(i))
     }
@@ -1433,11 +1548,11 @@ impl<C: ArkConfig> Value<C> {
         Value::Bool(Value::equ(self, other))
     }
 
-    pub fn challenge(state: &mut ProverState) -> Self {
+    pub fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> Self {
         Value::Scalar(C::FOps::challenge(state))
     }
 
-    pub fn hash(&self, state: &mut ProverState) {
+    pub fn hash<H: DuplexSpongeInterface>(&self, state: &mut ProverState<H>) {
         match self {
             Value::Bool(b) => state.add_bytes(&to_bytes!(b).unwrap()).unwrap(),
             Value::VecBool(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),

@@ -11,36 +11,31 @@ use spongefish::{
     ByteDomainSeparator, DefaultHash, DomainSeparator, DuplexSpongeInterface,
     codecs::arkworks_algebra::{FieldDomainSeparator, GroupDomainSeparator},
 };
-
+use std::collections::{HashMap, HashSet};
+use petgraph::graph::{NodeIndex};
 use crate::{Dag, UDags, domain_seperator};
 
 /// Extend the domain separator with the Schnorr protocol.
-trait ZippelDomainSeparator<C: ArkConfig, A> {
-    /// Shortcut: create a new schnorr proof with statement + proof.
-    fn new_zippel_domain_seperator(domsep: &str, dag: &Dag<C, A>) -> Self;
+pub struct ZippelDomainSeparator<H: DuplexSpongeInterface> (
+    pub DomainSeparator<H>
+);
 
-    /// Add the Schnorr protocol to the domain separator.
-    fn from_dag(self, dag: &Dag<C, A>) -> Self;
-    fn from_transcript_node(self, node: &crate::Node<C, A>, label: usize) -> Self;
-    fn from_input_node(self, node: &crate::Node<C, A>) -> Self;
-    fn from_atyp(self, typ: ATyp) -> Self;
-}
-
-impl<H, C, A> ZippelDomainSeparator<C, A> for DomainSeparator<H>
+impl<H> ZippelDomainSeparator<H>
 where
-    H: DuplexSpongeInterface,
-    C: ArkConfig,
+    H: DuplexSpongeInterface
 {
-    fn new_zippel_domain_seperator(domsep: &str, dag: &Dag<C, A>) -> Self {
-        Self::new(domsep).from_dag(dag)
+    pub fn new_zippel_domain_seperator<C: ArkConfig, A>(domsep: &str, dag: &Dag<C, A>) -> Self {
+        Self(DomainSeparator::<H>::new(domsep)).from_dag(dag)
     }
 
-    fn from_input_node(mut self, node: &crate::Node<C, A>) -> Self {
+    pub fn from_input_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>) -> Self {
+        
+        let mut size: usize = 0;
         match &node {
             crate::Node::Inp(c, prefs) => {
                 for pref in prefs.clone() {
                     if pref.qualifier.is_public() {
-                        self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,pref.typ);
+                        self = Self::from_atyp::<C>(self,pref.typ);
                     }
                 }
             }
@@ -51,19 +46,31 @@ where
         self
     }
 
-    fn from_transcript_node(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
+    pub fn from_challenge_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
         match &node {
             crate::Node::Transcr(c, _) => match c {
-                crate::Op::Challenge(c_typ, _) => {
-                    self = self.add_bytes(
+                crate::Op::Challenge(typ, _) => {
+                    // println!("Challenge node squeeze");
+                    self = Self(self.0.squeeze(
                         C::F::default().compressed_size(),
                         &format!("chall{}", label),
-                    );
-                }
-                _ => {
-                    let typ: ATyp = c.typ();
-                    self = <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<C, A>>::from_atyp(self,typ);
-                }
+                    ));
+
+                },
+                _ => {}
+            },
+            _ => {
+
+            }
+        }
+        self
+    }
+
+    pub fn from_transcript_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
+        match &node {
+            crate::Node::Transcr(c, _) => {
+                let typ: ATyp = c.typ();
+                self = Self::from_atyp::<C>(self,typ);
             },
             _ => {
                 panic!("Not a transcript node")
@@ -72,36 +79,37 @@ where
         self
     }
 
-    fn from_atyp(mut self, typ: ATyp) -> Self {
+    pub fn from_atyp<C: ArkConfig>(mut self, typ: ATyp) -> Self {
         match typ {
             ATyp::Base(base) => match base {
                 ABase::G1 => {
-                    self = self.add_bytes(C::G1::default().compressed_size(), "G1");
+                    // println!("G1 add bytes");
+                    self = Self(self.0.add_bytes(C::G1::default().compressed_size(), "G1"));
                 }
                 ABase::G2 => {
-                    self = self.add_bytes(C::G2::default().compressed_size(), "G2");
+                    // println!("G2 add bytes");
+                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "G2"));
                 }
                 ABase::GT => {
                     todo!()
                 }
                 ABase::Scalar => {
-                    self = self.add_bytes(C::F::default().compressed_size(), "F");
+                    // println!("Scalar add bytes");
+                    self = Self(self.0.add_bytes(C::F::default().compressed_size(), "F"));
                 }
                 _ => {
                     panic!("Cannot add this base element to transcript");
                 }
             },
             ATyp::Vec(another_typ, size) => {
-                self = self.add_bytes(
-                    C::F::default().compressed_size() * size,
-                    &format!("Vec-{}", size),
-                );
+                // println!("REACHING HERE vec with size: {:?}", C::F::default().compressed_size() * size);
+                // self = Self(self.0.add_bytes(
+                //     C::F::default().compressed_size() * size,
+                //     &format!("Vec-{}", size),
+                // ));
                 for _ in 0..size {
                     self =
-                    <spongefish::DomainSeparator<H> as domain_seperator::ZippelDomainSeparator<
-                        C,
-                        A,
-                    >>::from_atyp(self, *another_typ.clone());
+                    Self::from_atyp::<C>(self, *another_typ.clone());
                 }
             }
             _ => {
@@ -111,13 +119,49 @@ where
         self
     }
 
-    fn from_dag(mut self, dag: &Dag<C, A>) -> Self {
-        self = self.from_input_node(&dag.0[dag.input_node()]);
-        for transcript_node_index in dag.transcript_nodes() {
-            self = self
-                .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
-        }
-        self.clone()
+    pub fn from_dag<C: ArkConfig, A>(mut self, dag: &Dag<C, A>) -> Self {
+        let input_node_index = dag.input_node();
+        let node = &dag.0[input_node_index];
+        self = self.from_input_node(&node);
+
+        let transcript_nodes = dag.transcript_nodes();
+       
+        if !transcript_nodes.is_empty() {
+            let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+            let mut has_parent_in_list = HashSet::new();
+            
+            for &node in &transcript_nodes {
+                for parent in dag.neighbors_directed(node, petgraph::Direction::Incoming) {
+                    if transcript_nodes.contains(&parent) {
+                        parent_map.insert(node, parent);
+                        has_parent_in_list.insert(node);
+                    }
+                }
+            }        
+
+            let mut ordered = Vec::new();
+            let root = transcript_nodes.iter()
+                .find(|&&n| !has_parent_in_list.contains(&n))
+                .expect("Cycle detected in transcript nodes");
+            
+            let mut current = *root;
+            ordered.push(current);
+            while let Some(&child) = transcript_nodes.iter()
+                .find(|&&n| parent_map.get(&n) == Some(&current)) {
+                ordered.push(child);
+                current = child;
+            }
+            for transcript_node_index in ordered {
+                self = self.from_challenge_node(&dag.0[transcript_node_index], transcript_node_index.index());
+                self = self
+                    .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
+            }  
+        }      
+
+        
+        println!("");
+        println!("");
+        Self(self.0.clone())
     }
 }
 
@@ -134,9 +178,9 @@ fn test_domain_separator() {
 "#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let domain_seperator = DomainSeparator::<DefaultHash>::new_zippel_domain_seperator(
+    let domain_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(
         "test_domain_separator",
         &gs[0],
     );
-    println!("Domain Seperator: {:?}", domain_seperator);
+    println!("Domain Seperator: {:?}", domain_seperator.0);
 }
