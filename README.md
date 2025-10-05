@@ -43,6 +43,7 @@ To install the Zippel compiler, you need to have [Rust](https://www.rust-lang.or
    ```
 
 ## Usage
+To create an example, add a .zippel file to the examples folder with the zippel code. Then create a new folder in examples. You can copy from the ipa example, making sure to switch file path and arguments.
 ## Zippel Language Overview
 ## Examples
 ## Contributing

@@ -193,7 +193,6 @@ pub trait ArkScalarOps<F: PrimeField> {
 
     fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> F {
         let challenge_bytes: [u8; 32] = state.challenge_bytes().unwrap();
-        // state.add_bytes(&challenge_bytes).unwrap();
         F::from_le_bytes_mod_order(&challenge_bytes)
     }
 
