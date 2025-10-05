@@ -109,9 +109,11 @@ fn main() {
 
 fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> &'a UDag<ArkBls12_381> {
     if let Some(proto_name) = &args.subgraph {
+        println!("Getting protocol subgraph: {}", proto_name);
         gs.get_proto(&proto_name.clone().into())
         .expect(&format!("Protocol {} not found in {}", proto_name, args.file_path.display()))
     } else {
+        println!("Getting first protocol subgraph");
         gs.protocols().first()
         .expect(&format!("No protocols found in {}", args.file_path.display()))
     }
@@ -306,7 +308,7 @@ fn eval(args: CliArgs) {
 
     let n_val_const = 2;
     let m_val_const = 128;
-    let mut rng = test_rng();
+    let mut rng = rand::rngs::OsRng;
 
     // proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 4>(
     //     // --- Public Inputs ---

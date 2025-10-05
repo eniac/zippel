@@ -278,7 +278,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Inp(c, prefs) => {
                             for pref in prefs.clone() {
                                 if pref.qualifier.is_public() {
-                                    // println!("Input node");
                                     prover_state.add_bytes(&value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap()).unwrap();
                                 }
                             }
@@ -326,7 +325,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Transcr(_, annotation) => {
                             active_threads -= annotation.thread_num;
                             let serialized_return_val = value_to_bytes(&annotation.return_value.lock().unwrap().clone().unwrap()).unwrap();
-                            // println!("Serialized return val: {:?}", serialized_return_val);
                             prover_state.add_bytes(&serialized_return_val).unwrap();
                         },
                         Node::Inp(_, _) | Node::Rel(_, _) => {
