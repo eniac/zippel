@@ -16,20 +16,20 @@ impl QualifierPropagation {
         match op {
             GOp::Value(_) => Some(Qualifier::Public),
             GOp::Check(_) => Some(Qualifier::Public),
-            GOp::Ref(r, _) => 
+            GOp::Ref(r, _) =>
                 self.quals.get(&r.node()).map(|v| v.clone()),
             GOp::Ram(box a, _) => self.from_op(a),
-            GOp::Poly(box a) => self.from_op(a),
-            GOp::Coef(box a) => self.from_op(a),
+            GOp::Poly(box a)
+            | GOp::Mle(box a)
+            | GOp::Coef(box a)
+            | GOp::Ifft(box a)
+            | GOp::Fft(box a) => self.from_op(a),
             GOp::Eval(box p, box x) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            GOp::Coef(box a) => self.from_op(a),
-            GOp::Ifft(box a) => self.from_op(a),
-            GOp::Fft(box a) => self.from_op(a),
-            GOp::Bin(_, box a, box b, _) 
+            GOp::Bin(_, box a, box b, _)
             | GOp::Pair(box a, box b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;

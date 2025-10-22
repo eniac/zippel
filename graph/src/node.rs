@@ -153,6 +153,9 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn poly(op: &GOp<C>) -> Self {
         Node::Op(GOp::poly(op.clone()), Nothing)
     }
+    pub fn mle(op: &GOp<C>) -> Self {
+        Node::Op(GOp::mle(op.clone()), Nothing)
+    }
     pub fn coef(op: &GOp<C>) -> Self {
         Node::Op(GOp::coef(op.clone()), Nothing)
     }

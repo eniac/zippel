@@ -38,6 +38,7 @@ impl UniformityPropagation {
             GOp::Value(_) => Set::new(),
             GOp::Check(box op) => self.op_ancestors(op),
             GOp::Poly(box op) => self.op_ancestors(op),
+            GOp::Mle(box op) => self.op_ancestors(op),
             GOp::Coef(box op) => self.op_ancestors(op),
             GOp::Eval(box p, box x) => {
                 let p_ancestors = self.op_ancestors(p);
@@ -49,7 +50,7 @@ impl UniformityPropagation {
             GOp::Random(_, _) => Set::new(),
             GOp::Challenge(_, _) => Set::new(),
             GOp::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
-            GOp::Pair(box a, box b, _) 
+            GOp::Pair(box a, box b, _)
             | GOp::Bin(_, box a, box b, _) => {
                 let a_ancestors = self.op_ancestors(a);
                 let b_ancestors = self.op_ancestors(b);
@@ -61,13 +62,16 @@ impl UniformityPropagation {
     fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Distribution> {
         let r = match op {
             GOp::Value(_) => Some(Distribution::Nonuniform),
-            GOp::Check(box op) => self.from_op(op),
             GOp::Ref(r, _) => self.distributions.get(&r)
             .or(self.distributions.iter().find(|(dr, _)| dr.node() == r.node()).map(|dr| dr.1))
             .cloned(),
-            GOp::Ram(box a, _) => self.from_op(a),
-            GOp::Poly(box a) => self.from_op(a),
-            GOp::Coef(box op) => self.from_op(op),
+            GOp::Ram(box a, _)
+            | GOp::Poly(box a)
+            | GOp::Mle(box a)
+            | GOp::Check(box a)
+            | GOp::Ifft(box a)
+            | GOp::Fft(box a)
+            | GOp::Coef(box a) => self.from_op(a),
             GOp::Eval(box p, box x) => {
                 let dist_p = self.from_op(p)?;
                 let dist_x = self.from_op(x)?;
@@ -77,9 +81,7 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             }
-            GOp::Ifft(box a) => self.from_op(a),
-            GOp::Fft(box a) => self.from_op(a),
-            GOp::Bin(BinOp::Add, box a, box b, _) 
+            GOp::Bin(BinOp::Add, box a, box b, _)
             | GOp::Bin(BinOp::Concat, box a, box b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
@@ -89,7 +91,7 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             },
-            GOp::Bin(BinOp::Sub, box a, box b, _) 
+            GOp::Bin(BinOp::Sub, box a, box b, _)
             | GOp::Bin(BinOp::Equ, box a, box b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
@@ -121,7 +123,7 @@ impl UniformityPropagation {
                 }
             },
             GOp::Bin(BinOp::Rem, _, _, _)
-            | GOp::Bin(BinOp::Pow, _, _, _) => 
+            | GOp::Bin(BinOp::Pow, _, _, _) =>
                 Some(Distribution::Nonuniform),
             GOp::Vec(vs) => {
                 let mut distr = self.from_op(vs.first().unwrap())?;
@@ -131,10 +133,10 @@ impl UniformityPropagation {
                 }
                 Some(distr)
             },
-            GOp::Random(_, b) => 
+            GOp::Random(_, b) =>
                 Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),
-            GOp::Challenge(_, b) => 
-                Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),    
+            GOp::Challenge(_, b) =>
+                Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),
         };
         r
     }
@@ -152,7 +154,7 @@ impl UniformityPropagation {
 
     pub fn from_dag<C: ArkConfig>(&mut self, dag: &QDag<C>) -> DQDag<C> {
         // Collect the ancestors of each node
-        let ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
+        let ancestors: Ctx<NodeIndex, Set<NodeIndex>> =
             dag.node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))
             .collect();
@@ -174,7 +176,7 @@ impl UniformityPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => 
+                Node::Inp(_, args) | Node::Rel(_, args) =>
                     for arg in args {
                         self.distributions.insert(&arg.reference, &arg.distribution);
                     },

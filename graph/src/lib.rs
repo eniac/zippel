@@ -405,6 +405,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 let a_val: GOp<C> = Self::process_op(*a, args_name);
                 Op::Poly(Box::new(a_val))
             },
+            Op::Mle(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Mle(Box::new(a_val))
+            },
             Op::Coef(a) => {
                 let a_val: GOp<C> = Self::process_op(*a, args_name);
                 Op::Coef(Box::new(a_val))
@@ -439,7 +443,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 None => {}
             }
         }
-        println!("args_name: {:?}", args_name);
         Dag(self.0.map(
             |_, node|
                 match node {
@@ -519,7 +522,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
             for e in self.0.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 if !node_map_self.contains_key(&e.source()) {
-                    println!("Adding parent {} of {} to worklist", self[e.source()].drop_annotation(), self[n].drop_annotation());
                     worklist.push(e.source());
                 }
             }
@@ -897,7 +899,7 @@ impl<C: ArkConfig> UDag<C> {
                 let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
 
                 let eval_op = GOp::eval(vp, vx);
-                
+
                 println!("eval_op: {}", eval_op);
 
                 Ok(eval_op)
@@ -972,8 +974,21 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(GOp::vec(vs.0.traverse1(&mut |v|
                             self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars))?)),
 
-            // MLE is a noop?
-            CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, vctx, vars),
+            // MLE
+            CExp::Mle(box v) => {
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let npoly = self.add_node(Node::mle(&child));
+
+                self.add_edges(edge_type, npoly, child);
+
+                Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ)
+                    )
+                })?))
+            },
 
             // Billinear pairing
             CExp::Pair(box a, box b) => {
@@ -995,79 +1010,6 @@ impl<C: ArkConfig> UDag<C> {
             CExp::Bin(op, box a, box b) => {
                 let ta = a.infer(kctx, &fctx.keys(), vctx)?;
                 let tb = b.infer(kctx, &fctx.keys(), vctx)?;
-
-                // Convert polynomials to vectors
-                // match (&typ, ta, tb, op) {
-                //     // Polynomial multiplication and division
-                //     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r),
-                //         BinOp::Mul) => {
-                //         let mut ex_a = a.clone();
-                //         let mut ex_b = b.clone();
-                //         // Pad with zeroes
-                //         if &l < n {
-                //             ex_a = CExp::concat(a, CExp::zeroes(*n - l + 1));
-                //         }
-                //         if &r < n {
-                //             ex_b = CExp::concat(b, CExp::zeroes(*n - r + 1));
-                //         }
-                //         println!("Adding ifft: {:?} {:?} {:?}", ex_a, ex_b, op);
-                //         println!("a n: {:?}, b n: {:?}, n: {:?}", l, r, n);
-                //         return self.add_exp(CExp::poly(CExp::bin(op, CExp::fft(ex_a), CExp::fft(ex_b))),
-                //                 transcr, edge_type, kctx, fctx, vctx, vars);
-                //     },
-                //     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Uni(_, r), BinOp::Div) => {
-
-                //         let mut ex_a = a.clone();
-                //         let mut ex_b = b.clone();
-                //         let max_lr = cmp::max(l, r);
-                //         let mut max_lub = 1;
-                //         while max_lub < max_lr {
-                //             max_lub <<= 1;
-                //         }
-                        
-                //         if l < max_lub {
-                //             ex_a = CExp::concat(a, CExp::zeroes(max_lub - l ));
-                //         }
-                //         if r < max_lub {
-                //             ex_b = CExp::concat(b, CExp::zeroes(max_lub - r ));
-                //         }
-                //         println!("Adding div: {:?} {:?} {:?}", ex_a, ex_b, op);
-                //         println!("a n: {:?}, b n: {:?}, max_lub: {:?}", l, r, max_lub);
-                //         return self.add_exp(CExp::poly(CExp::bin(op, CExp::fft(ex_a), CExp::fft(ex_b))),
-                //                 transcr, edge_type, kctx, fctx, vctx, vars);
-                //     },
-                //     // Polynomial remainder
-                //     (CTyp::Uni(_, _n), CTyp::Uni(_, _l), CTyp::Uni(_, _r), BinOp::Rem) =>
-                //         unimplemented!("Polynomial remainder"),
-                //     // Polynomial exponentiation
-                //     (CTyp::Uni(_, n), CTyp::Uni(_, l), _, BinOp::Pow) => {
-                //         // Pad with zeroes
-                //         let ex = CExp::fft(CExp::concat(a, CExp::zeroes(*n - l)));
-                //         return self.add_exp(CExp::poly(CExp::pow(ex, b)),
-                //             transcr, edge_type, kctx, fctx, vctx, vars);
-                //     },
-                //     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Base(t), BinOp::Add)
-                //     | (CTyp::Uni(_, n), CTyp::Base(t), CTyp::Uni(_, l), BinOp::Add)
-                //     if (kctx.get(&t).unwrap().is_scalar())
-                //     => {
-                //         println!("adding a and b");
-                //         let zero_vec: lang::ast::Exp<usize> = CExp::zeroes(n - 1);
-                //         let b_vec = CExp::vec(vec![b.clone()]);
-                //         let vec_value = CExp::concat(b_vec, zero_vec);
-                //         return self.add_exp(CExp::add(a, vec_value), transcr, edge_type, kctx, fctx, vctx, vars);
-                //     },
-                //     (CTyp::Uni(_, n), CTyp::Uni(_, l), CTyp::Base(t), BinOp::Sub)
-                //     if (kctx.get(&t).unwrap().is_scalar())
-                //     => {
-                //         println!("subtracting a and b");
-                //         let zero_vec: lang::ast::Exp<usize> = CExp::zeroes(n - 1);
-                //         let b_vec = CExp::vec(vec![b.clone()]);
-                //         let vec_value = CExp::concat(b_vec, zero_vec);
-                //         println!("vec_value: {}", vec_value);
-                //         return self.add_exp(CExp::sub(a, vec_value), transcr, edge_type, kctx, fctx, vctx, vars);
-                //     },
-                //     _ => ()
-                // };
 
                 // Add children first
                 let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
