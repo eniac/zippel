@@ -190,7 +190,7 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    
+
     pub fn scalar_from_usize(i: usize) -> Self {
         Value::Scalar(C::FOps::from_usize(i))
     }
@@ -358,10 +358,10 @@ impl<C: ArkConfig> Value<C> {
                     *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![*a]) - b);
                 },
                 Value::Mle(b) => {
-                    
+
                     let sub_evals = b.iter().map(|&eval| *a - eval).collect();
                     *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, sub_evals));
-                } 
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             // Group addition
@@ -599,7 +599,7 @@ impl<C: ArkConfig> Value<C> {
                     *other = Value::Scalar(value);
                 },
                 // Scalar * Scalar = Scalar
-                Value::Scalar(_) => { 
+                Value::Scalar(_) => {
                     C::FOps::mul(a, other.into_scalar_mut())
                 },
                 // Index * groups
@@ -1140,7 +1140,7 @@ impl<C: ArkConfig> Value<C> {
                             C::G1Ops::mul(&f_inv, &mut gm);
                             gm
                         })
-                        .collect(), 
+                        .collect(),
                     );
                 }
                 // Vec<Group1> / Vec<Index>
@@ -1175,7 +1175,7 @@ impl<C: ArkConfig> Value<C> {
                             C::G2Ops::mul(&f_inv, &mut gm);
                             gm
                         })
-                        .collect(), 
+                        .collect(),
                     );
                 }
                 // Vec<Group1> / Vec<Index>
@@ -1387,7 +1387,7 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecIndex(_), Value::VecG1(b)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 *other = Value::VecG1Affine(vg);
-                Self::value_dot(self, other);  
+                Self::value_dot(self, other);
             }
             (Value::VecG2(b), Value::VecIndex(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
@@ -1400,7 +1400,7 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecScalar(_), Value::VecG1(b)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 *other = Value::VecG1Affine(vg);
-                Self::value_dot(self, other); 
+                Self::value_dot(self, other);
             }
             (Value::VecG2(b), Value::VecScalar(_)) => {
                 let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
@@ -1409,8 +1409,8 @@ impl<C: ArkConfig> Value<C> {
             (Value::VecScalar(_), Value::VecG2(b)) => {
                 let vg: Vec<<C as ArkConfig>::G2Affine> = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
                 *other = Value::VecG2Affine(vg);
-                Self::value_dot(self, other); 
-            } 
+                Self::value_dot(self, other);
+            }
             (Value::VecIndex(a), Value::VecIndex(b)) => {
                 *other = Value::Index(a.par_iter().zip(b.par_iter()).map(|(a, b)| *a * *b).sum())
             }
@@ -1737,7 +1737,7 @@ impl<C: ArkConfig> Value<C> {
                 }
                 if curr_size == vals.len() {
                     *other = Value::Scalar(mle.evaluate(&vals));
-                } 
+                }
             },
             _ => panic!("Cannot eval if not poly or index"),
         }
@@ -2241,7 +2241,7 @@ impl<C: ArkConfig> Value<C> {
                     _ => panic!("Expected Vec or VecIndex, found {}", vec_value)
                 }
             },
-            ATyp::Base(ABase::G1) => { vec_value.into_vec_g1_mut(); vec_value }, 
+            ATyp::Base(ABase::G1) => { vec_value.into_vec_g1_mut(); vec_value },
             ATyp::Base(ABase::G2) => { vec_value.into_vec_g2_mut(); vec_value },
             ATyp::Base(ABase::GT) => { vec_value.into_vec_gt_mut(); vec_value },
             _ => panic!("Not yet implemented for vector")
@@ -2282,7 +2282,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
 
-    
+
 
     pub fn value_mle(&self) -> Self {
         match self {
@@ -2826,7 +2826,7 @@ fn test_mul_comm() {
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     assert_deq!(&a * &b, &b * &a);
-    
+
     // Vec<Scalar> * Vec<Scalar>
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
@@ -2855,11 +2855,11 @@ fn test_mul_comm() {
 fn coef_eval_test() {
     let mut rng = test_rng();
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = ((a).value_fft()).value_ifft();
+    let c = a.value_fft().value_ifft();
     assert_deq!(&c, &a);
-    
+
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = ((a).value_ifft()).value_fft();
+    let c = a.value_ifft().value_fft();
     assert_deq!(&c, &a);
 }
 
@@ -2888,7 +2888,7 @@ fn inverse_test() {
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let c = (&a * &b) / b;
     assert_deq!(&a, &c);
-    
+
     let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_g2(10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let c = (&a * &b) / b;
@@ -2915,12 +2915,12 @@ fn inverse_test() {
     let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g1(10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
     let c = &(&b.clone() / &b.clone()) * &a;
-    assert_deq!(&a, &c); 
+    assert_deq!(&a, &c);
 
     let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g2(10));
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
     let c = &(&b.clone() / &b.clone()) * &a;
-    assert_deq!(&a, &c); 
+    assert_deq!(&a, &c);
 
     let a = Value::<ArkBls12_381>::scalar_from_usize(1);
     let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
