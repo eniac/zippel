@@ -5,7 +5,7 @@ pub mod types;
 pub mod nothing;
 
 pub use nothing::{NoField, NoCurve, NoPairing};
-pub use values::{Value};
+pub use values::{Value, value_to_bytes};
 pub use types::{ABase, ATyp};
 pub use config::{
     ArkScalarOps,

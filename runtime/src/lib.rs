@@ -190,6 +190,25 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
                 return a_val.value_fft();
             }
+            Op::Mle(box a) => {
+                let inputs_a_clone = Arc::clone(&inputs);
+                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                return a_val.value_mle();
+            }
+            Op::FixVar(box p, box x) => {
+                let inputs_p_clone = Arc::clone(&inputs);
+                let inputs_x_clone = Arc::clone(&inputs);
+                let p_val: Value<C> = self.handle_op(p, inputs_p_clone);
+                let x_val: Value<C> = self.handle_op(x, inputs_x_clone);
+                return p_val.value_fix_var(x_val);
+            }
+            Op::EvalMle(box p, box x) => {
+                let inputs_p_clone = Arc::clone(&inputs);
+                let inputs_x_clone = Arc::clone(&inputs);
+                let p_val: Value<C> = self.handle_op(p, inputs_p_clone);
+                let x_val: Value<C> = self.handle_op(x, inputs_x_clone);
+                return p_val.value_eval_mle(x_val);
+            }
         }
     }
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
@@ -265,9 +284,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Op(op, annotation) | Node::Transcr(op, annotation) => {
                             match op {
                                 GOp::Challenge(c_typ, _) => {
-                                    // println!("Challenge node");
                                     let return_val = Value::<C>::challenge(prover_state);
-                                    // println!("Return val: {}", return_val);
                                     let mut return_value_lock = annotation.return_value.lock().unwrap();
                                     *return_value_lock = Some(return_val); 
                                     challenge_node = true;

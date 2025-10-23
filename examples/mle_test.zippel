@@ -1,0 +1,18 @@
+proto ipa_wrapper<F: Field>(
+    // --- Public Inputs ---
+    public x: F
+) where (x == x) {
+
+    let mle1 = mle([0, 1, 2, 6]);
+
+    let p = poly([1]);
+    let test = fixVar(mle1, [5]);
+    let mle2 = mle([5, 22]);
+
+    let mle3 = mle([2, 3, 2, 6]);
+    let epoint = evalMle(mle3, [1, 17]);
+
+    x_chal <- challenge<F>;
+
+    verify(epoint == 54);
+}

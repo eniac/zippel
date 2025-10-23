@@ -380,7 +380,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 let p_val: GOp<C> = Self::process_op(p, args_name);
                 let x_val: GOp<C> = Self::process_op(x, args_name);
                 Op::Eval(Box::new(p_val), Box::new(x_val))
-            }
+            },
+            Op::FixVar(box p, box x) => {
+                let p_val: GOp<C> = Self::process_op(p, args_name);
+                let x_val: GOp<C> = Self::process_op(x, args_name);
+                Op::FixVar(Box::new(p_val), Box::new(x_val))
+            },
+            Op::EvalMle(box p, box x) => {
+                let p_val: GOp<C> = Self::process_op(p, args_name);
+                let x_val: GOp<C> = Self::process_op(x, args_name);
+                Op::EvalMle(Box::new(p_val), Box::new(x_val))
+            },
             Op::Vec(vec) => {
                 let value_vector: Vec<Op<C, Ref>> = vec.iter().map(|op| Self::process_op(op.clone(), args_name)).collect::<Vec<Op<C, Ref>>>();
                 Op::Vec(value_vector)
@@ -420,7 +430,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
             Op::Check(a) => {
                 let a_val: GOp<C> = Self::process_op(*a, args_name);
                 Op::Check(Box::new(a_val))
+            },
+            Op::Mle(a) => {
+                let a_val: GOp<C> = Self::process_op(*a, args_name);
+                Op::Mle(Box::new(a_val))
             }
+
         }
     }
 
@@ -898,9 +913,25 @@ impl<C: ArkConfig> UDag<C> {
 
                 let eval_op = GOp::eval(vp, vx);
                 
-                println!("eval_op: {}", eval_op);
-
                 Ok(eval_op)
+            },
+
+            CExp::FixVar(box p, box x) => {
+                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let fix_var_op = GOp::fix_var(vp, vx);
+                
+                Ok(fix_var_op)
+            },
+
+            CExp::EvalMle(box p, box x) => {
+                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let eval_mle_op = GOp::eval_mle(vp, vx);
+                
+                Ok(eval_mle_op)
             },
 
             CExp::Poly(box v) => {
@@ -972,8 +1003,23 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(GOp::vec(vs.0.traverse1(&mut |v|
                             self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars))?)),
 
+
             // MLE is a noop?
-            CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, vctx, vars),
+            // CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, vctx, vars),
+            CExp::Mle(box v) => {
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let nmle = self.add_node(Node::mle(&child));
+
+                self.add_edges(edge_type, nmle, child);
+
+                Ok(GOp::underscore(nmle, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ)
+                    )
+                })?))
+            },
 
             // Billinear pairing
             CExp::Pair(box a, box b) => {

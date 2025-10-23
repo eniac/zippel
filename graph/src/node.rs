@@ -162,6 +162,9 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn fft(op: &GOp<C>) -> Self {
         Node::Op(GOp::fft(op.clone()), Nothing)
     }
+    pub fn mle(op: &GOp<C>) -> Self {
+        Node::Op(GOp::mle(op.clone()), Nothing)
+    }
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
     }

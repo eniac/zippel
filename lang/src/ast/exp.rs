@@ -156,6 +156,20 @@ pub enum Exp<N> {
     ///     ```
     Mle(Box<Exp<N>>),
 
+    ///     Fix variables of a multilinear
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let g = fixVar(x, y);
+    ///     ```
+    FixVar(Box<Exp<N>>, Box<Exp<N>>),
+
+    ///     Evaluate multilinear expression
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let g = evalMle(x, y);
+    ///     ```
+    EvalMle(Box<Exp<N>>, Box<Exp<N>>),
+
     ///     A vector of elements
     ///     **Zippel Code:**
     ///     ```zippel
@@ -281,6 +295,8 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Eval(box p, box x) => Ok(Exp::Eval(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
+            Exp::FixVar(box p, box x) => Ok(Exp::FixVar(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
+            Exp::EvalMle(box p, box x) => Ok(Exp::EvalMle(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
             Exp::Pair(box x, box y) =>
                 Ok(Exp::Pair(Box::new(x.traverse1(f)?), Box::new(y.traverse1(f)?))),
             Exp::Vec(v) =>
@@ -346,6 +362,8 @@ impl TidSubst for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Eval(box a, box b)
+            | Exp::FixVar(box a, box b)
+            | Exp::EvalMle(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b)
@@ -383,6 +401,8 @@ impl FreeVars for CExp {
             Exp::Bin(_, box a, box b)
             | Exp::Pair(box a, box b)
             | Exp::Eval(box a, box b)
+            | Exp::FixVar(box a, box b)
+            | Exp::EvalMle(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Let(_, box a, box b)
@@ -409,6 +429,10 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::Vec(v.range_traverse(f)?)),
             Exp::Eval(box p, box x) =>
                 Ok(Exp::eval(p.range_traverse(f)?, x.range_traverse(f)?)),
+            Exp::FixVar(box p, box x) =>
+                Ok(Exp::fix_var(p.range_traverse(f)?, x.range_traverse(f)?)),
+            Exp::EvalMle(box p, box x) =>
+                Ok(Exp::eval_mle(p.range_traverse(f)?, x.range_traverse(f)?)),
             Exp::Bin(op, box x, box y) =>
                 Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?)),
             Exp::Map(box x, id, box r) =>
@@ -511,6 +535,12 @@ impl<N> Exp<N> {
     pub fn eval(p: Self, x: Self) -> Self {
         Exp::Eval(Box::new(p), Box::new(x))
     }
+    pub fn fix_var(p: Self, x: Self) -> Self {
+        Exp::FixVar(Box::new(p), Box::new(x))
+    }
+    pub fn eval_mle(p: Self, x: Self) -> Self {
+        Exp::EvalMle(Box::new(p), Box::new(x))
+    }
     pub fn coef(a: Self) -> Self {
         Exp::Coef(Box::new(a))
     }
@@ -609,6 +639,8 @@ impl<N> Exp<N> {
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Eval(box p, box x) => p.is_pure() && x.is_pure(),
+            Exp::FixVar(box p, box x) => p.is_pure() && x.is_pure(),
+            Exp::EvalMle(box p, box x) => p.is_pure() && x.is_pure(),
             Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
@@ -711,6 +743,20 @@ where
             Exp::Mle(p) => allocator.concat([
                 allocator.text("mle("),
                 p.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::FixVar(p, x) => allocator.concat([
+                allocator.text("fixVar("),
+                p.pretty(allocator),
+                allocator.text(", "),
+                x.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::EvalMle(p, x) => allocator.concat([
+                allocator.text("evalMle("),
+                p.pretty(allocator),
+                allocator.text(","),
+                x.pretty(allocator),
                 allocator.text(")"),
             ]),
             Exp::Vec(ts) => allocator.concat([
@@ -1017,6 +1063,20 @@ impl<'pest> FromPest<'pest> for UExp {
                     let exp = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
                 },
+                Rule::fix_var_exp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::fix_var(
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                },
+                Rule::eval_mle_exp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::eval_mle(
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                }
                 Rule::challenge_exp => {
                     let mut inner = pair.into_inner();
                     let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
@@ -1072,7 +1132,7 @@ impl<'pest> FromPest<'pest> for UExp {
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
-                }
+                },
                 Rule::app_exp => {
                     let mut inner = pair.into_inner();
                     // Call a function
@@ -1237,6 +1297,26 @@ fn parser_eval() {
     assert_eq!(
         UExp::from_pest(&mut pairs),
         Ok(Exp::eval(Exp::varstr("poly"), Exp::from(3)))
+    );
+}
+
+#[test]
+fn parser_fix_var() {
+    let ex = "fixVar(x, [1, 2, 3])";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::fix_var(Exp::varstr("x"), Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
+    );
+}
+
+#[test]
+fn parser_eval_mle() {
+    let ex = "evalMle(x, [1, 2, 3])";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::eval_mle(Exp::varstr("x"), Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
     );
 }
 

@@ -23,6 +23,8 @@ pub enum ATyp {
     Vec(Box<ATyp>, usize),
     /// Univariate polynomial in coefficient form
     Uni(usize),
+    /// Multilinear extension
+    Mle(usize)
 }
 
 impl ATyp {
@@ -68,7 +70,9 @@ impl ATyp {
     pub fn vec(t: &ATyp, n: usize) -> Self {
         ATyp::Vec(Box::new(t.clone()), n)
     }
-
+    pub fn mle(n: usize) -> Self {
+        ATyp::Mle(n)
+    }
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
@@ -87,6 +91,10 @@ impl ATyp {
 
     pub fn is_uni(&self) -> bool {
         matches!(self, ATyp::Uni(_))
+    }
+
+    pub fn is_mle(&self) -> bool {
+        matches!(self, ATyp::Mle(_))
     }
 
     pub fn is_fin(&self) -> bool {
@@ -114,6 +122,7 @@ impl ATyp {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
             ATyp::Uni(n) => *n,
+            ATyp::Mle(n) => *n
         }
     }
 
@@ -515,6 +524,7 @@ impl fmt::Display for ATyp {
             ATyp::Base(b) => write!(f, "{}", b),
             ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
             ATyp::Uni(n) => write!(f, "Uni<{}>", n),
+            ATyp::Mle(n) => write!(f, "Mle<{}>", n),
         }
     }
 }

@@ -52,7 +52,8 @@ where
                 crate::Op::Challenge(typ, _) => {
                     // println!("Challenge node squeeze");
                     self = Self(self.0.squeeze(
-                        C::F::default().compressed_size(),
+                        // C::F::default().compressed_size(),
+                        32,
                         &format!("chall{}", label),
                     ));
 

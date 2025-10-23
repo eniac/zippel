@@ -1,8 +1,9 @@
 use ark_ec::pairing::PairingOutput;
-use ark_poly::{Polynomial,DenseUVPolynomial, univariate::DensePolynomial};
+use ark_poly::{Polynomial,DenseUVPolynomial, univariate::DensePolynomial, DenseMultilinearExtension, MultilinearExtension};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_ff::{PrimeField, Zero};
+use ark_std::log2;
 use lang::typ::{Nothing, CRange};
 use crate::types::Lub;
 use rand::Rng;
@@ -42,6 +43,8 @@ pub enum Value<C: ArkConfig> {
     Vec(Vec<Value<C>>),
     /// Polynomial of scalars
     Poly(DensePolynomial<C::F>),
+    /// Multilinear polynomial
+    Mle(DenseMultilinearExtension<C::F>),
 }
 
 fn serialize_value_internal<C: ArkConfig, W: Write>(
@@ -140,6 +143,9 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
         Value::Poly(poly) => {
             poly.serialize_compressed(writer)
         }
+        Value::Mle(mle) => {
+            mle.serialize_compressed(writer)
+        }
     }
 }
 
@@ -162,6 +168,7 @@ impl<C: ArkConfig> Value<C> {
     /// Higher values correspond to constructors defined earlier.
     pub fn discriminant_order(&self) -> u8 {
         match self {
+            Value::Mle(_) => 19,
             Value::Poly(_) => 18,
             Value::Bool(_) => 17,
             Value::VecBool(_) => 16,
@@ -256,6 +263,7 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::Mle(_) => panic!("Cannot add MLE {} + {}", self, other),
             Value::VecIndex(vs) => match &other {
                 Value::VecIndex(_) => vs
                     .par_iter()
@@ -390,6 +398,7 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::Mle(_) => panic!("Cannot subtract MLE {} - {}", self, other),
         }
     }
 
@@ -477,6 +486,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
                 }
+                Value::Mle(_) => panic!("Cannot multiply MLE {} * {}", self, other),
                 // Index * Index = Index
                 Value::Index(_) => {
                     *other.into_index_mut() *= *a;
@@ -532,6 +542,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
                 }
+                Value::Mle(_) => panic!("Cannot multiply MLE {} * {}", self, other),
                 // Scalar * index, cast index to Scalar
                 Value::Index(b) => {
                     let mut value = C::FOps::from_usize(*b);
@@ -642,6 +653,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
                 }
+                Value::Mle(_) => panic!("Cannot multiply MLE {} * {}", self, other),
                 // Vec<Index> * Index
                 Value::Index(i) => {
                     *other = Value::VecIndex(v.par_iter().map(|a| *a * *i).collect())
@@ -869,6 +881,7 @@ impl<C: ArkConfig> Value<C> {
                     .for_each(|(a, b)| Value::GT(*a).value_mul(b)),
                 _ => panic!("Expected scalar, found {}", other),
             },
+            Value::Mle(mle) => panic!("Cannot multiply MLE {} * {}", self, other),
             Value::Vec(v) => v
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
@@ -1540,6 +1553,9 @@ impl<C: ArkConfig> Value<C> {
             (Value::Poly(a), Value::Poly(b)) => {
                 a.coeffs.par_iter().zip(b.coeffs.par_iter()).all(|(a, b)| *a == *b)
             },
+            (Value::Mle(a), Value::Mle(b)) => {
+                a.evaluations.par_iter().zip(b.evaluations.par_iter()).all(|(a, b)| *a == *b)
+            },
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }
@@ -1861,6 +1877,7 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(typ), v.len())
             },
             Value::Poly(n) => ATyp::uni(n.degree()),
+            Value::Mle(mle) => ATyp::uni(mle.degree()),
         }
     }
 
@@ -2115,6 +2132,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Poly(a) => a.coeffs.par_iter().all(|a| a.is_zero()),
+            Value::Mle(a) => a.evaluations.par_iter().all(|a| a.is_zero()),
         }
     }
 
@@ -2169,6 +2187,82 @@ impl<C: ArkConfig> Value<C> {
                     poly.push(C::FOps::from_usize(*i));
                 }
                 Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(poly))
+            },
+            _ => panic!("Expected vec scalar, found {}", self),
+        }
+    }
+
+    pub fn value_eval_mle(&self, other: Value<C>) -> Value<C> {
+        match self {
+            Value::Mle(mle) => {
+                match other {
+                    Value::VecScalar(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(*i);
+                        }
+                        Value::Scalar(mle.evaluate(&vals))
+                    }
+                    Value::VecIndex(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(C::FOps::from_usize(*i));
+                        }
+                        Value::Scalar(mle.evaluate(&vals))
+                    }
+                    _ => panic!("Expected vec scalar or vec index, found {}", other),
+                }
+            }
+            _ => panic!("Expected mle, found {}", self),
+        }
+    }
+    
+    pub fn value_fix_var(&self, other: Value<C>) -> Value<C> {
+        match self {
+            Value::Mle(mle) => {
+                match other {
+                    Value::VecScalar(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(*i);
+                        }
+                        Value::Mle(mle.fix_variables(&vals))
+                    },
+                    Value::VecIndex(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(C::FOps::from_usize(*i));
+                        }
+                        Value::Mle(mle.fix_variables(&vals))
+                    },
+                    _ => panic!("Expected vec scalar or vec index, found {}", other),
+                }
+            }
+            _ => panic!("Expected mle, found {}", self),
+        }
+    }
+
+    pub fn value_mle(&self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let mut mle = vec![];
+                for i in v.iter() {
+                    mle.push(*i);
+                }
+                let size = log2(mle.len());
+                println!("MLE size: {}", size);
+                println!("MLE: {:?}", mle);
+                Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
+            },
+            Value::VecIndex(v) => {
+                let mut mle = vec![];
+                for i in v.iter() {
+                    mle.push(C::FOps::from_usize(*i));
+                }
+                let size = log2(mle.len());
+                println!("MLE size: {}", size);
+                println!("MLE: {:?}", mle);
+                Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
             },
             _ => panic!("Expected vec scalar, found {}", self),
         }
@@ -2449,6 +2543,9 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
             },
             Value::Poly(a) => {
                 write!(f, "Poly({:?})", a.coeffs)
+            },
+            Value::Mle(a) => {
+                write!(f, "Mle({:?})", a.evaluations)
             }
         }
     }
