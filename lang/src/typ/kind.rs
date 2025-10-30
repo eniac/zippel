@@ -57,6 +57,13 @@ impl Kind {
             _ => false
         }
     }
+
+    pub fn get_pairing_of(&self, a: &Tid) -> Option<(Tid, Tid)> {
+        match self {
+            Kind::Pairing(x, y) => if x == a || y == a { Some((x, y)) } else { None }
+            _ => None
+        }
+    }
 }
 
 
