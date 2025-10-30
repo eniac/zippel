@@ -125,18 +125,17 @@ impl ATyp {
                 match k {
                     Kind::Field => Some(ATyp::scalar()),
                     Kind::Group => {
-                        // If this is a pairing assign the right pairing types
-                        for (og, _) in kctx.iter().filter(|(t, k)| k.is_group() && *t != b) {
-                            if let Some((_, Kind::Pairing(x, y))) = kctx.find_one(|t, k| k.is_pairing(&og, t)) {
-                                if &x == b {
-                                    return Some(ATyp::g1());
-                                } else if &y == b {
-                                    return Some(ATyp::g2());
-                                }
+                        if let Some((x, y)) = kctx.find_map(|t, k| k.get_pairing_of(b)) {
+                            // If this is a pairing assign the right pairing types
+                            if x == b {
+                                Some(ATyp::g1())
+                            } else {
+                                Some(ATyp::g2())
                             }
+                        } else {
+                            // Otherwise, return the group type
+                            Some(ATyp::g1())
                         }
-                        // Otherwise, return the group type
-                        Some(ATyp::g1())
                     },
                     Kind::Pairing(_, _) => Some(ATyp::gt()),
                     Kind::Scalar(_) => Some(ATyp::scalar()),
