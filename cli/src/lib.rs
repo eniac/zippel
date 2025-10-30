@@ -117,9 +117,13 @@ impl<C:ArkConfig> ZippelHandler<C> {
         println!("PDF written");
         
 
+        println!("Getting prover");
         let (prover, _) = g.clone().get_prover();
+        println!("Prover");
         self.prover_graph = Some(prover.clone());
+        println!("Getting verifier");
         let verifier = g.clone().get_verifier().unwrap();
+        println!("Verifier");
         self.verifier_graph = Some(verifier.clone());
 
 
@@ -131,6 +135,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
     }
 
     pub fn combined_graph_pdf(&self, filename: &str) {
+        println!("Writing Combined PDF");
         self.combined_graph.as_ref().unwrap().write_pdf(filename).unwrap_or_else(|e| {
             println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
         });

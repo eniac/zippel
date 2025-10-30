@@ -50,10 +50,8 @@ where
         match &node {
             crate::Node::Transcr(c, _) => match c {
                 crate::Op::Challenge(typ, _) => {
-                    // println!("Challenge node squeeze");
                     self = Self(self.0.squeeze(
-                        // C::F::default().compressed_size(),
-                        32,
+                        C::F::default().compressed_size(),
                         &format!("chall{}", label),
                     ));
 
@@ -84,18 +82,15 @@ where
         match typ {
             ATyp::Base(base) => match base {
                 ABase::G1 => {
-                    // println!("G1 add bytes");
                     self = Self(self.0.add_bytes(C::G1::default().compressed_size(), "G1"));
                 }
                 ABase::G2 => {
-                    // println!("G2 add bytes");
                     self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "G2"));
                 }
                 ABase::GT => {
-                    todo!()
+                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "GT"));
                 }
                 ABase::Scalar => {
-                    // println!("Scalar add bytes");
                     self = Self(self.0.add_bytes(C::F::default().compressed_size(), "F"));
                 }
                 _ => {
@@ -103,11 +98,6 @@ where
                 }
             },
             ATyp::Vec(another_typ, size) => {
-                // println!("REACHING HERE vec with size: {:?}", C::F::default().compressed_size() * size);
-                // self = Self(self.0.add_bytes(
-                //     C::F::default().compressed_size() * size,
-                //     &format!("Vec-{}", size),
-                // ));
                 for _ in 0..size {
                     self =
                     Self::from_atyp::<C>(self, *another_typ.clone());
@@ -160,8 +150,6 @@ where
         }      
 
         
-        println!("");
-        println!("");
         Self(self.0.clone())
     }
 }

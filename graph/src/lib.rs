@@ -261,7 +261,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         let mut prover = Dag::new();
         // Add all nodes to the prover graph
         let mut worklist: Vec<NodeIndex> = self.transcript_nodes();
-
+        println!("Transcript nodes: {:?}", worklist);
         // Map old node indices to new references
         let mut node_map: HashMap<NodeIndex, Ref> = HashMap::new();
 

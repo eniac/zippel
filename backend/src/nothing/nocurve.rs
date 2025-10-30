@@ -499,7 +499,7 @@ impl<F: PrimeField> AffineRepr for NoCurve<F> {
     type BaseField = F;
     type Group = NoCurve<F>;
     const ZERO: Self = NoCurve(PhantomData);
-    const GENERATOR: Self = NoCurve(PhantomData);
+    // const GENERATOR: Self = NoCurve(PhantomData);
 
     // Required methods
     fn xy(&self) -> Option<(Self::BaseField, Self::BaseField)> {

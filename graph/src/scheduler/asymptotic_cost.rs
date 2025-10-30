@@ -34,7 +34,6 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ABase::G2, ABase::G2) => Self::G_ADD,
             (ABase::GT, ABase::GT) => Self::G_ADD,
             (ABase::Fin(_), ABase::Scalar) => {
-                println!("base add");
                 2.0
             }
             (_, _) => unreachable!(),

@@ -360,8 +360,8 @@ fn eval(args: CliArgs) {
     ]);
 
 
-    // let n_size = 4;
-    // let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let n_size = 4;
+    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     // let g: Value<ArkBls12_381> = Value::G1(g_input.clone());
 
     // let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
@@ -377,20 +377,20 @@ fn eval(args: CliArgs) {
     // // let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
     // let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
     // let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    // let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     // // let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    // let tau = Value::<ArkBls12_381>::Scalar(tau_input.clone());
+    let tau = Value::<ArkBls12_381>::Scalar(tau_input.clone());
 
-    // let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|i| {
-    //     // println!("i: {}", i);
-    //     // println!("test: {}", s.clone() ^ Value::Index(i));
-    //     // s.clone() ^ Value::Index(i)
-    //     g_input.clone()
-    // }).collect());
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|i| {
+        // println!("i: {}", i);
+        // println!("test: {}", s.clone() ^ Value::Index(i));
+        // s.clone() ^ Value::Index(i)
+        g_input.clone()
+    }).collect());
 
-    // let ss_index = Value::VecScalar((0..n_size).map(|i |{
-    //     tau_input.clone().pow(&[i as u64])
-    // }).collect());
+    let ss_index = Value::VecScalar((0..n_size).map(|i |{
+        tau_input.clone().pow(&[i as u64])
+    }).collect());
 
     // let ss = ss_g.clone() * ss_index.clone();
     // let s = s_temp.clone() * tau.clone();

@@ -219,13 +219,11 @@ impl<C: ArkConfig> MutexGraph<C> {
         match node {
             Node::Op(operation, annotation) => {
                 let return_val = self.handle_op(operation, inputs);
-                // println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);  
             },
             Node::Transcr(operation, annotation)  => {
                 let return_val = self.handle_op(operation, inputs);
-                // println!("Done for {:?} with output {}", node_curr, return_val.clone()); 
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);  
             },
@@ -251,7 +249,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
 
         let max_threads: usize = num_cpus::get();
-        // println!("max threads - {}", max_threads);
         let mut active_threads: usize = 1;
 
         while !ready_nodes.is_empty() || !running_nodes.is_empty() {

@@ -144,6 +144,12 @@ impl ATyp {
                                 }
                             }
                         }
+                        if *b == Tid::new("G2") {
+                            return Some(ATyp::g2());
+                        }
+                        if *b == Tid::new("GT") {
+                            return Some(ATyp::gt());
+                        }
                         // Otherwise, return the group type
                         Some(ATyp::g1())
                     },

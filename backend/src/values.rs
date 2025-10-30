@@ -1650,6 +1650,32 @@ impl<C: ArkConfig> Value<C> {
             (Value::Poly(a), Value::VecScalar(b)) => {
                 *other = Value::VecScalar(b.par_iter().map(|i| a.evaluate(i)).collect());
             },
+            (Value::Mle(mle), Value::VecIndex(v)) => {
+                let mut vals = vec![];
+                for i in v.iter() {
+                    vals.push(C::FOps::from_usize(*i));
+                }
+                let curr_size = mle.num_vars();
+                if curr_size > vals.len() {
+                    *other = Value::Mle(mle.fix_variables(&vals));
+                }
+                if curr_size == vals.len() {
+                    *other = Value::Scalar(mle.evaluate(&vals));
+                }
+            },
+            (Value::Mle(mle), Value::VecScalar(v)) => {
+                let mut vals = vec![];
+                for i in v.iter() {
+                    vals.push(*i);
+                }
+                let curr_size = mle.num_vars();
+                if curr_size > vals.len() {
+                    *other = Value::Mle(mle.fix_variables(&vals));
+                }
+                if curr_size == vals.len() {
+                    *other = Value::Scalar(mle.evaluate(&vals));
+                } 
+            },
             _ => panic!("Cannot eval if not poly or index"),
         }
     }
@@ -2250,8 +2276,6 @@ impl<C: ArkConfig> Value<C> {
                     mle.push(*i);
                 }
                 let size = log2(mle.len());
-                println!("MLE size: {}", size);
-                println!("MLE: {:?}", mle);
                 Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
             },
             Value::VecIndex(v) => {
@@ -2260,8 +2284,6 @@ impl<C: ArkConfig> Value<C> {
                     mle.push(C::FOps::from_usize(*i));
                 }
                 let size = log2(mle.len());
-                println!("MLE size: {}", size);
-                println!("MLE: {:?}", mle);
                 Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
             },
             _ => panic!("Expected vec scalar, found {}", self),
@@ -2787,12 +2809,12 @@ fn test_mul_comm() {
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
-    let c = ((&a).value_fft()).value_ifft();
-    // assert_deq!(&c, &a);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
+    let c = ((a).value_fft()).value_ifft();
+    assert_deq!(&c, &a);
     
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
-    let c = ((&a).value_ifft()).value_fft();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
+    let c = ((a).value_ifft()).value_fft();
     assert_deq!(&c, &a);
 }
 

@@ -508,7 +508,7 @@ impl Field for NoField {
     type BasePrimeField = Self;
     const SQRT_PRECOMP: Option<SqrtPrecomputation<Self>> = None;
     const ONE: Self = NoField{};
-    const NEG_ONE: Self = NoField{};
+    // const NEG_ONE: Self = NoField{};
 
     // Required methods
     fn extension_degree() -> u64 {

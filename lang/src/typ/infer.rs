@@ -46,6 +46,9 @@ pub enum TypeError {
     #[error("EvalError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
     Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
 
+    #[error("EvalMleTooManyArgumentsError: Arguments to [eval] for a multilinear extension had too many arguments:\n\t{0}, {1} |- evalMle {2} {3}")]
+    EvalMleTooManyArguments(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
+
     #[error("CoefError: Arguments to [coef] must be a polynomial:\n\t{0}, {1} |- coef {2}")]
     Coef(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
@@ -149,6 +152,9 @@ impl<'a> TypeError {
     }
     pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::Eval(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+    }
+    pub fn evalMleTooManyArguments(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+        TypeError::EvalMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
@@ -282,6 +288,17 @@ impl Typeable for CExp {
                         let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         Ok(CTyp::Vec(b, n))
                     }
+                    (CTyp::Mle(i, n), CTyp::Vec(b, len_vec)) => {
+                        let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
+                        if len_vec == n {
+                           return Ok(*b); 
+                        }
+                        if len_vec < n {
+                            return Ok(CTyp::Mle(i, n - len_vec));
+                        }
+                        return Err(TypeError::evalMleTooManyArguments(kctx, &vctx, p, x));
+                        
+                    },
                     _ => Err(TypeError::eval(kctx, &vctx, p, x))
                 }
             }
@@ -298,8 +315,12 @@ impl Typeable for CExp {
 
                 match typ {
                     CTyp::Vec(box b, n) => {
+                        let n_pow = n.ilog2() as usize;
+                        if 2_usize.pow(n_pow as u32) != n {
+                            return Err(TypeError::mle(kctx, &vctx, self));
+                        }
                         let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, &vctx, self))?;
-                        Ok(CTyp::Mle(i, n))
+                        Ok(CTyp::Mle(i, n_pow))
                     },
                     _ => Err(TypeError::mle(kctx, &vctx, self))
                 }
@@ -312,7 +333,7 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (p_typ, x_typ) {
-                    (CTyp::Mle(i, n), CTyp::Vec(b, _)) => {
+                    (CTyp::Mle(i,n), CTyp::Vec(b, _)) => {
                         let i = b.to_scalar(kctx).ok_or(TypeError::fixVar(kctx, &vctx, p, x))?;
                         Ok(CTyp::Mle(i, n))
                     }
