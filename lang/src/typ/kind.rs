@@ -60,7 +60,7 @@ impl Kind {
 
     pub fn get_pairing_of(&self, a: &Tid) -> Option<(Tid, Tid)> {
         match self {
-            Kind::Pairing(x, y) => if x == a || y == a { Some((x, y)) } else { None }
+            Kind::Pairing(x, y) => if x == a || y == a { Some((x.clone(), y.clone())) } else { None }
             _ => None
         }
     }

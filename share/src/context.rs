@@ -121,7 +121,7 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
-    pub fn find_map<FF, Y>(&self, f: FF) -> Option<(&K, &V)> where FF: Fn(&K, &V) -> Option<Y> {
+    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y> where FF: Fn(&K, &V) -> Option<Y> {
         self.0.iter().find_map(|(k, v)| f(k, v))
     }
 

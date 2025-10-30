@@ -136,7 +136,7 @@ impl ATyp {
                     Kind::Group => {
                         if let Some((x, y)) = kctx.find_map(|t, k| k.get_pairing_of(b)) {
                             // If this is a pairing assign the right pairing types
-                            if x == b {
+                            if &x == b {
                                 Some(ATyp::g1())
                             } else {
                                 Some(ATyp::g2())
