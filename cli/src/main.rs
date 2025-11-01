@@ -388,7 +388,7 @@ fn eval(args: CliArgs) {
         g_input.clone()
     }).collect());
 
-    let ss_index = Value::VecScalar((0..n_size).map(|i |{
+    let ss_index: Value<ArkBls12_381> = Value::VecScalar((0..n_size).map(|i |{
         tau_input.clone().pow(&[i as u64])
     }).collect());
 
