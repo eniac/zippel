@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
+use lang::typ::{Qualifier, Distribution};
+use graph::Dag;
 use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 use lang::id::Vid;
-use lang::typ::{Qualifier, Distribution};
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
 use lang::ast::{UModule, CModule};
 use costs::Benchmarker;
@@ -15,7 +16,6 @@ use share::{Ctx, unwrap};
 use graph::{
     UDags,
     UDag,
-    Dag,
     analyses::{TransClos, GroebnerBuilder},
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
@@ -37,6 +37,7 @@ use ark_std::UniformRand;
 use lang::ast::Args;
 
 /// Command line arguments
+/// Command line arguments
 #[derive(Parser, Debug)]
 pub struct CliArgs {
     /// The path to the text file to read
@@ -48,6 +49,8 @@ pub struct CliArgs {
     #[arg(short = 'p', long = "pdf", value_name = "PDF_FILE")]
     pub pdf_path_opt: Option<PathBuf>,
 
+    /// An optional subgraph index to print to PDF
+    #[arg(long = "subgraph", short = 's', value_name = "SUBGRAPH_NAME")]
     /// An optional subgraph index to print to PDF
     #[arg(long = "subgraph", short = 's', value_name = "SUBGRAPH_NAME")]
     pub subgraph: Option<String>,
@@ -83,31 +86,9 @@ pub struct ZippelHandler<C:ArkConfig> {
     pub public_inputs: Option<Ctx<Vid, Value<C>>>,
     pub prover_args: Option<Vec<PRef>>,
     pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
-    
 }
 
-// let g_analyze = QualifierPropagation::from_dag(&g_temp); 
-
-//         let mut up = UniformityPropagation::new();        
-//         let g_analyze = up.from_dag(&g_analyze);
-//         self.analyze_graph = Some(g_analyze);
-
-// pub fn analyze_completeness(&self) {
-//         let g_analyze = self.analyze_graph.as_ref().unwrap();
-//         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-//         if completeness.run() {
-//             println!("Complete protocol: {}", g_analyze.name());
-//         } else {
-//             println!("Incomplete protocol: {}", g_analyze.name());
-//         }
-//     }
-
-//     pub fn analyze_knowledge(&self) {
-//         let g_analyze = self.analyze_graph.as_ref().unwrap();
-//         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
-//         let leaks = knowledge.run();
-//         println!("Leaks: {:?}", leaks);
-//     }
+  
 
 impl<C:ArkConfig> ZippelHandler<C> {
     pub fn new(cli_args: CliArgs) -> Self {
@@ -159,7 +140,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
             g.write_pdf(str_path.as_str()).unwrap_or_else(|e| {
                 error!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
                 process::exit(2);
-            });
+            })
         }
     }
 
@@ -175,11 +156,28 @@ impl<C:ArkConfig> ZippelHandler<C> {
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
         let g_analyze = QualifierPropagation::from_dag(&gs[0].clone()); 
+        self.parse();
+
+        debug!("Concretizing module type variables");
+        self.concrete_module = Some(self.sized_module.as_ref().unwrap().concretize().unwrap());
+
+        debug!("Creating graphs from module");
+        let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
+        self.output_pdf(&gs, "symbolic_protocol_graph");
+
+        let g_analyze = QualifierPropagation::from_dag(&gs[0].clone()); 
 
         let mut up = UniformityPropagation::new();        
         let g_analyze = up.from_dag(&g_analyze);
         self.analyze_graph = Some(g_analyze);
 
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
+
+        debug!("Projecting prover");
         // Extract protocol subgraph and rename inner nodes
         let g = self.get_protocol_subgraph(&gs)
             .clone()
@@ -204,6 +202,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
     //Schedule prover with default scheduler
     pub fn default_schedule_prover(&self) -> TDag<C> {
         let scheduler = LocalScheduler::new_with_system(self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
+        let scheduler = LocalScheduler::new_with_system(self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
         scheduler.schedule(self.prover_graph.as_ref().unwrap().clone())
     }
 
@@ -219,6 +218,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
 
+        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &prover.clone());
         let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &prover.clone());
         let mut prover_state = ProverState::new(&prover_seperator.0, rand::rngs::OsRng);
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(prover_scheduled)), Arc::new(inputs.clone()), &mut prover_state);
@@ -241,6 +241,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
        // convert proof to inputs 
        let verifier_args = verifier.args();
        debug!("Verifier args: {:?}", verifier_args);
+       debug!("Verifier args: {:?}", verifier_args);
        let pg_additional_args = verifier_args.iter()
             .filter(|arg| !prover_args.contains(arg))
             .zip(proof.iter())
@@ -255,21 +256,22 @@ impl<C:ArkConfig> ZippelHandler<C> {
        
         
         let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &verifier.clone());
+        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &verifier.clone());
         let mut verifier_state = ProverState::new(&verifier_seperator.0, rand::rngs::OsRng);
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
         result
     }
-
-    pub fn analyze_completeness(&self) {
+    
+   pub fn analyze_completeness(&self) {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-            if completeness.run() {
-                println!("Complete protocol: {}", g_analyze.name());
-            } else {
-                println!("Incomplete protocol: {}", g_analyze.name());
+        if completeness.run() {
+            println!("Complete protocol: {}", g_analyze.name());
+        } else {
+            println!("Incomplete protocol: {}", g_analyze.name());
         }
     }
-        
+
     pub fn analyze_knowledge(&self) {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
@@ -279,7 +281,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
 }
 
 fn benchmark(args: BenchmarkArgs) {
-    // // You can call your benchmark function directly from anywhere
+    // // You can call your benchmark function directly from anywhere 
     let criterion = Criterion::default().with_output_color(true);
     let benchmarker = Benchmarker::with_criterion(criterion);
     // benchmarker.run_benches();
