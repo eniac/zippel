@@ -2286,7 +2286,7 @@ impl<C: ArkConfig> Value<C> {
                 let size = log2(mle.len());
                 Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
             },
-            _ => panic!("Expected vec scalar, found {}", self),
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 
@@ -2297,7 +2297,12 @@ impl<C: ArkConfig> Value<C> {
                 C::FOps::vec_ifft(&mut v);
                 Value::VecScalar(v)
             },
-            _ => panic!("Expected vec scalar, found {}", self),
+            Value::VecIndex(v) => {
+                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
+                C::FOps::vec_ifft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 
@@ -2308,7 +2313,12 @@ impl<C: ArkConfig> Value<C> {
                 C::FOps::vec_fft(&mut v);
                 Value::VecScalar(v)
             },
-            _ => panic!("Expected vec scalar, found {}", self),
+            Value::VecIndex(v) => {
+                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
+                C::FOps::vec_fft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 }
