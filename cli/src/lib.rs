@@ -5,6 +5,7 @@ use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
 use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 use lang::id::Vid;
+use lang::typ::{Qualifier, Distribution};
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
 use lang::ast::{UModule, CModule};
 use costs::Benchmarker;
@@ -14,6 +15,7 @@ use share::{Ctx, unwrap};
 use graph::{
     UDags,
     UDag,
+    Dag,
     analyses::{TransClos, GroebnerBuilder},
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
@@ -80,7 +82,32 @@ pub struct ZippelHandler<C:ArkConfig> {
     pub entry_point: Option<String>,
     pub public_inputs: Option<Ctx<Vid, Value<C>>>,
     pub prover_args: Option<Vec<PRef>>,
+    pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
+    
 }
+
+// let g_analyze = QualifierPropagation::from_dag(&g_temp); 
+
+//         let mut up = UniformityPropagation::new();        
+//         let g_analyze = up.from_dag(&g_analyze);
+//         self.analyze_graph = Some(g_analyze);
+
+// pub fn analyze_completeness(&self) {
+//         let g_analyze = self.analyze_graph.as_ref().unwrap();
+//         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
+//         if completeness.run() {
+//             println!("Complete protocol: {}", g_analyze.name());
+//         } else {
+//             println!("Incomplete protocol: {}", g_analyze.name());
+//         }
+//     }
+
+//     pub fn analyze_knowledge(&self) {
+//         let g_analyze = self.analyze_graph.as_ref().unwrap();
+//         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
+//         let leaks = knowledge.run();
+//         println!("Leaks: {:?}", leaks);
+//     }
 
 impl<C:ArkConfig> ZippelHandler<C> {
     pub fn new(cli_args: CliArgs) -> Self {
@@ -93,7 +120,8 @@ impl<C:ArkConfig> ZippelHandler<C> {
             verifier_graph: None, 
             entry_point: None, 
             public_inputs: None, 
-            prover_args: None 
+            prover_args: None,
+            analyze_graph: None
         }
     }
 
@@ -146,6 +174,12 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
+        let g_analyze = QualifierPropagation::from_dag(&gs[0].clone()); 
+
+        let mut up = UniformityPropagation::new();        
+        let g_analyze = up.from_dag(&g_analyze);
+        self.analyze_graph = Some(g_analyze);
+
         // Extract protocol subgraph and rename inner nodes
         let g = self.get_protocol_subgraph(&gs)
             .clone()
@@ -154,10 +188,12 @@ impl<C:ArkConfig> ZippelHandler<C> {
 
         debug!("Projecting prover");
         let (prover, _) = g.clone().get_prover();
+        self.prover_graph = Some(prover.clone());
         self.output_pdf(&prover, "prover_graph");
 
         debug!("Projecting verifier");
         let verifier = g.clone().get_verifier().unwrap();
+        self.verifier_graph = Some(verifier.clone());
         self.output_pdf(&verifier, "verifier_graph");
 
         debug!("Combining prover and verifier");
@@ -222,6 +258,23 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let mut verifier_state = ProverState::new(&verifier_seperator.0, rand::rngs::OsRng);
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
         result
+    }
+
+    pub fn analyze_completeness(&self) {
+        let g_analyze = self.analyze_graph.as_ref().unwrap();
+        let mut completeness = CompletenessAnalysis::from_input(g_analyze);
+            if completeness.run() {
+                println!("Complete protocol: {}", g_analyze.name());
+            } else {
+                println!("Incomplete protocol: {}", g_analyze.name());
+        }
+    }
+        
+    pub fn analyze_knowledge(&self) {
+        let g_analyze = self.analyze_graph.as_ref().unwrap();
+        let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
+        let leaks = knowledge.run();
+        println!("Leaks: {:?}", leaks);
     }
 }
 

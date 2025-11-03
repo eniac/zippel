@@ -11,6 +11,10 @@ path = "src/mle_example/main.rs"
 name = "kzg"
 path = "src/kzg/main.rs"
 
+[[bin]]
+name = "ipa"
+path = "src/ipa/main.rs"
+
 [dependencies]
 cli = { path = "../cli" }
 ark-std = "0.5.0"

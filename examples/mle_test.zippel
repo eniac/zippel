@@ -3,24 +3,18 @@ proto mle<F: Field>(
     public x: F
 ) where (x == x) {
 
-    // let mle1 = poly([1, 2, 3, 4]); // mle([0, 1, 2, 6]);
+    // let mle1 = mle([0, 1, 2, 6]);
+
+    // let mle_fixed = eval(mle1, [5]);
+
+    // let mle2 = mle([3, 12]);
+
+    // let mle_sum = mle1 + mle2; 
+
+    let mlex = mle([4, 12]);
+    let mle2 = mle([3, 12]);
+    let mle_res = mle([2, 6]);
+    let mlesum = mlex / 2;
+    verify(mle_res == mlesum);
     
-
-    // let test = eval(mle1, [5]);
-    // let mle2 = mle([5, 22]);
-
-    let p = poly([x, x]); 
-    // mle([2, 3, 2, 6]);
-    // let epoint = eval(p, [1, 17]);
-
-    // point1 <- challenge<F>;
-    // point2 <- challenge<F>;
-
-    let epoint2 = eval(p, [x]);
-    // let epoint2 = x;
-    epoint1 <- epoint2;
-    // let epoint1 = epoint2;
-
-    // verify(epoint2 == eval(p, [point1, point2])) // && test == mle2  && epoint == 54);
-    verify(p == p && epoint1 == epoint1);
 }

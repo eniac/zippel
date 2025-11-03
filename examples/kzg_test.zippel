@@ -5,7 +5,6 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         
         let p_val = poly(p);
         c <- p . ss;
-        // let c = p . ss;
 
         let q_val = (p_val - y) / poly([-z, 1]);
 

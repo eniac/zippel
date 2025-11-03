@@ -28,6 +28,8 @@ fn main() {
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     println!("Verifier result for mle test: {:?}", verifier_result);
     println!("Finished KZG example");
+    
+    handler.analyze_completeness();
 }
 
 

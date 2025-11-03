@@ -5,7 +5,7 @@ use lang::id::Vid;
 use share::Ctx;
 
 fn main() {
-    let path = PathBuf::from("../ipa.zippel");
+    let path = PathBuf::from("ipa.zippel");
     let args = CliArgs { file_path: path, pdf_path_opt: None, subgraph: None };
     let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
@@ -19,6 +19,10 @@ fn main() {
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     println!("Verifier result: {:?}", verifier_result);
+
+
+    handler.analyze_completeness();
+    handler.analyze_knowledge();
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

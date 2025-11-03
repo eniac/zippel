@@ -13,14 +13,16 @@ fn main() {
     handler.compile();
     println!("Compiled and wrote PDF");
     let inputs = prover_create_inputs();
-    // let prover_scheduled = handler.default_schedule_prover();
-    // let proof = handler.run_prover(prover_scheduled, inputs);
+    let prover_scheduled = handler.default_schedule_prover();
+    let proof = handler.run_prover(prover_scheduled, inputs);
     println!("Ran prover");
 
-    // let verifier_scheduled = handler.default_schedule_verifier();
-    // let verifier_result = handler.run_verifier(verifier_scheduled, proof);
-    // println!("Verifier result for mle test: {:?}", verifier_result);
+    let verifier_scheduled = handler.default_schedule_verifier();
+    let verifier_result = handler.run_verifier(verifier_scheduled, proof);
+    println!("Verifier result for mle test: {:?}", verifier_result);
     println!("Finished MLE example");
+
+    handler.analyze_completeness();
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

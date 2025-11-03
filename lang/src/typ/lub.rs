@@ -480,6 +480,7 @@ impl Lub for CTyp {
     }
 
     fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+        println!("Here 1 CTyp::add with x: {:?}, y: {:?}", x, y);
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_add(a, b, ctx)
@@ -540,7 +541,15 @@ impl Lub for CTyp {
             // Indices can act like univariate polynomials
             (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
                 Ok(CTyp::uni(b, *n)),
-            (_, _) => Err(LubError::add(&x, &y))
+            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
+                let t = Tid::lub_add(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
+                Ok(CTyp::Mle(t, *n))
+            },
+            (CTyp::Mle(a, n), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Mle(a, n)) => {
+                Ok(CTyp::Mle(a.clone(), *n))
+            }
+            (_, _) => Err(LubError::add(&x, &y)),
         }
     }
 
@@ -605,6 +614,14 @@ impl Lub for CTyp {
             // Indices can act like univariate polynomials
             (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
                 Ok(CTyp::uni(b, *n)),
+            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
+                let t = Tid::lub_sub(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
+                Ok(CTyp::Mle(t, *n))
+            },
+            (CTyp::Mle(a, n), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Mle(a, n)) => {
+                Ok(CTyp::Mle(a.clone(), *n))
+            }    
             (_, _) => Err(LubError::sub(&x, &y))
         }
     }
