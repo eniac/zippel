@@ -6,7 +6,7 @@ use std::{fs::{self, File}, io::Write};
 use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
 use lang::id::Vid;
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
-use lang::ast::UModule;
+use lang::ast::{UModule, CModule};
 use costs::Benchmarker;
 // use backend::ArkBls12_381
 // use backend::ArkBls12_381;
@@ -34,7 +34,7 @@ use std::time::Instant;
 use ark_std::UniformRand;
 use lang::ast::Args;
 
-
+/// Command line arguments
 #[derive(Parser, Debug)]
 pub struct CliArgs {
     /// The path to the text file to read
@@ -46,9 +46,16 @@ pub struct CliArgs {
     #[arg(short = 'p', long = "pdf", value_name = "PDF_FILE")]
     pub pdf_path_opt: Option<PathBuf>,
 
-    /// An optional subgraph name
-    #[arg(long = "subgraph", short = 's')]
+    /// An optional subgraph index to print to PDF
+    #[arg(long = "subgraph", short = 's', value_name = "SUBGRAPH_NAME")]
     pub subgraph: Option<String>,
+}
+
+/// PDF graph pretty-printing options
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
+pub struct PdfOpts {
+    pub path: PathBuf,
+    pub index: usize,
 }
 
 // Arguments for the 'benchmark' subcommand
@@ -63,87 +70,104 @@ struct BenchmarkArgs {
     iterations: u32,
 }
 
-pub struct ZippelHandler<C:ArkConfig>{
-    args: CliArgs,
-    combined_graph: Option<UDag<C>>,
-    prover_graph: Option<UDag<C>>,
-    verifier_graph: Option<UDag<C>>,
-    public_inputs: Option<Ctx<Vid, Value<C>>>,
-    prover_args: Option<Vec<PRef>>,
+pub struct ZippelHandler<C:ArkConfig> {
+    pub cli_args: CliArgs,
+    pub sized_module: Option<UModule>,
+    pub concrete_module: Option<CModule>,
+    pub proto_graph: Option<UDag<C>>,
+    pub prover_graph: Option<UDag<C>>,
+    pub verifier_graph: Option<UDag<C>>,
+    pub entry_point: Option<String>,
+    pub public_inputs: Option<Ctx<Vid, Value<C>>>,
+    pub prover_args: Option<Vec<PRef>>,
 }
 
 impl<C:ArkConfig> ZippelHandler<C> {
-    pub fn new(args: CliArgs) -> Self {
-        ZippelHandler { args, combined_graph: None, prover_graph: None, verifier_graph: None, public_inputs: None, prover_args: None }
+    pub fn new(cli_args: CliArgs) -> Self {
+        ZippelHandler { 
+            cli_args,
+            sized_module: None, 
+            concrete_module: None, 
+            proto_graph: None, 
+            prover_graph: None, 
+            verifier_graph: None, 
+            entry_point: None, 
+            public_inputs: None, 
+            prover_args: None 
+        }
     }
 
     fn get_protocol_subgraph<'a>(&self, gs: &'a UDags<C>) -> &'a UDag<C> {
-        if let Some(proto_name) = &self.args.subgraph {
-            println!("Getting protocol subgraph: {}", proto_name);
-            gs.get_proto(&proto_name.clone().into())
-            .expect(&format!("Protocol {} not found in {}", proto_name, self.args.file_path.display()))
+        if let Some(main_proto) = &self.cli_args.subgraph {
+            debug!("Getting protocol: {}", main_proto);
+            gs.get_proto(main_proto)
+              .expect(&format!("Protocol {} not found in {}", main_proto, self.cli_args.file_path.display()))
         } else {
-            println!("Getting first protocol subgraph");
             gs.protocols().first()
-            .expect(&format!("No protocols found in {}", self.args.file_path.display()))
+              .expect(&format!("No protocols found in {}", self.cli_args.file_path.display()))
+        }
+    }
+
+    pub fn parse(&mut self) {
+        debug!("Parsing file: {}", self.cli_args.file_path.display());
+        let zfile = fs::read_to_string(&self.cli_args.file_path).unwrap_or_else(|err| {
+            error!("Error reading file {}: \n\t{}", self.cli_args.file_path.display(), err);
+            process::exit(1);
+        });
+        // At this point we cannot recover from parse errors, so throw
+        self.sized_module = Some(UModule::from_str(&zfile).unwrap());
+    }
+
+    /// Will output a PDF if a path is provided, noop otherwise
+    pub fn output_pdf<'a, D: WritePdf>(&self, g: &D, msg: &'a str) {
+        if let Some(pdf_path) = &self.cli_args.pdf_path_opt {
+            let os_str = pdf_path.clone().into_os_string();
+            let mut str_path = os_str.into_string().unwrap();
+            if str_path.ends_with(".pdf") {
+                str_path = str_path.strip_suffix(".pdf").unwrap().to_string();
+            }
+            str_path = str_path + "_" + msg + ".pdf";
+            debug!("Writing {} PDF to {}", msg, str_path);
+            g.write_pdf(str_path.as_str()).unwrap_or_else(|e| {
+                error!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+                process::exit(2);
+            });
         }
     }
 
     // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
     pub fn compile(&mut self) {
-        println!("Compiling file: {}", self.args.file_path.display());
-        let zfile = fs::read_to_string(&self.args.file_path).unwrap_or_else(|err| {
-            error!("Error reading file {}: \n\t{}", self.args.file_path.display(), err);
-            process::exit(1);
-        });
+        self.parse();
 
-        println!("Parsing Zippel program:\n{}", zfile);
-        let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-        println!("Concretized module:\n{:?}", m);
-        let gs = unwrap!(UDags::<C>::from_module(m));
+        debug!("Concretizing module type variables");
+        self.concrete_module = Some(self.sized_module.as_ref().unwrap().concretize().unwrap());
 
-        gs.write_pdf("testing_compile").unwrap_or_else(|e| {
-            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-        });
+        debug!("Creating graphs from module");
+        let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
+        self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        let g_temp = self.get_protocol_subgraph(&gs);
-        let g = g_temp.clone().map_transcript_nodes();
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
 
-
-        println!("Writing PDF");
-        g.write_pdf("api_testing_prover_verifier").unwrap_or_else(|e| {
-            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-        });
-        println!("PDF written");
-        
-
-        println!("Getting prover");
+        debug!("Projecting prover");
         let (prover, _) = g.clone().get_prover();
-        println!("Prover");
-        self.prover_graph = Some(prover.clone());
-        println!("Getting verifier");
+        self.output_pdf(&prover, "prover_graph");
+
+        debug!("Projecting verifier");
         let verifier = g.clone().get_verifier().unwrap();
-        println!("Verifier");
-        self.verifier_graph = Some(verifier.clone());
+        self.output_pdf(&verifier, "verifier_graph");
 
-
-        self.combined_graph = Some(verifier.combine_dag(&prover));
-
-        self.combined_graph.as_ref().unwrap().write_pdf("prover_verifier_compile").unwrap_or_else(|e| {
-            warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-        });
-    }
-
-    pub fn combined_graph_pdf(&self, filename: &str) {
-        println!("Writing Combined PDF");
-        self.combined_graph.as_ref().unwrap().write_pdf(filename).unwrap_or_else(|e| {
-            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-        });
+        debug!("Combining prover and verifier");
+        let combined = verifier.combine_dag(&prover);
+        self.output_pdf(&combined, "combined_graph");
     }
 
     //Schedule prover with default scheduler
     pub fn default_schedule_prover(&self) -> TDag<C> {
-        let scheduler = LocalScheduler::new_with_system(&self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
+        let scheduler = LocalScheduler::new_with_system(self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
         scheduler.schedule(self.prover_graph.as_ref().unwrap().clone())
     }
 
@@ -159,7 +183,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
 
-        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.args.file_path.display().to_string(), &prover.clone());
+        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &prover.clone());
         let mut prover_state = ProverState::new(&prover_seperator.0, rand::rngs::OsRng);
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(prover_scheduled)), Arc::new(inputs.clone()), &mut prover_state);
         result
@@ -180,7 +204,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
 
        // convert proof to inputs 
        let verifier_args = verifier.args();
-       println!("Verifier args: {:?}", verifier_args);
+       debug!("Verifier args: {:?}", verifier_args);
        let pg_additional_args = verifier_args.iter()
             .filter(|arg| !prover_args.contains(arg))
             .zip(proof.iter())
@@ -194,7 +218,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
         inputs.append(&pg_additional_args);
        
         
-        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.args.file_path.display().to_string(), &verifier.clone());
+        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &verifier.clone());
         let mut verifier_state = ProverState::new(&verifier_seperator.0, rand::rngs::OsRng);
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
         result

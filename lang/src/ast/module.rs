@@ -1,5 +1,5 @@
 use crate::ast::{Sig, Body, CSig};
-use crate::ast::decl::UDecls;
+use crate::ast::decl::{UDecls, UDecl, CDecl, DeclError};
 
 use std::fmt;
 use thiserror::Error;
@@ -7,24 +7,24 @@ use bumpalo::Bump;
 use from_pest::{ConversionError, FromPest};
 use pest::Parser;
 
-use crate::typ::SizeSubsts;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::ToTraversal1;
-use crate::typ::{Size, EvalError, RangeError, RangeTraversal};
+use crate::typ::Size;
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Module<N>(pub Ctx<Sig<N>, Body<N>>);
 
+
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
     #[error("Overlaping declarations: {0}")]
     OverlapDeclaration(CSig),
-    #[error("ModuleError: Error evaluating size type variables: \n\n{0}")]
-    EvalError(#[from] EvalError),
-    #[error("ModuleError: Invalid ranges in declaration {0}: \n\n{1}")]
-    InvalidRange(CSig, RangeError),
+    #[error("Declaration error: {0}")]
+    DeclarationError(#[from] DeclError),
+    #[error("Declaration not found: {0}")]
+    DeclarationNotFound(String),
 }
 
 /// Polymorphic module with symbolic sizes
@@ -37,14 +37,19 @@ impl<N> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> std::collections::btree_map::Iter<Sig<N>, Body<N>> {
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, Sig<N>, Body<N>> {
         self.0.iter()
     }
+    pub fn get_names<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        self.0.iter().map(|(sig, _)| sig.name.0.as_str())
+    }
 }
-/// Entry point to the zippel compiler.
-/// Parse a Zippel declarations list into a polymorphic,
-/// untyped module, with symbolic sizes.
+
+/// Polymorphic module with symbolic sizes
 impl UModule {
+    /// Entry point to the zippel compiler.
+    /// Parse a Zippel declarations list into a polymorphic,
+    /// untyped module, with symbolic sizes.
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         let decls = UDecls::from_pest(&mut pairs)?;
@@ -65,33 +70,26 @@ impl UModule {
         Self::from_str(stored_str)
     }
 
+    /// Get a declaration by name
+    pub fn get_decl<'a>(&self, defn: &'a str) -> Result<UDecl, ModuleError> {
+        self.0.iter().find_map(|(sig, body)| 
+            if sig.name.0.as_str() == defn {
+                Some(UDecl { sig: sig.clone(), body: body.clone() })
+            } else { 
+                None
+            }).ok_or(ModuleError::DeclarationNotFound(defn.to_string()))
+    }
+
     /// Concretize sizes in all declarations to generate a CModule
-    pub fn concretize(self) -> Result<CModule, ModuleError> {
+    pub fn concretize(&self) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
-        for (sig, body) in self.into_iter() {
 
-            // Generate all possible size substitutions for this declaration (guaranteed non-empty)
-            let all_substs = SizeSubsts::from_typevars(&sig.typevars);
-
-            // For each size substitution, evaluate the sizes
+        for name in self.get_names() {
+            let decl = self.get_decl(name)?;
+            let all_substs = decl.get_size_substitutions()?;
             for substs in all_substs.into_iter() {
-                // Evaluate all sizes in the body
-                let b = body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
-
-                // Evaluate all sizes in the signature
-                let mut s = sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
-
-                // Remove typevars substituted
-                s.typevars = s.typevars.into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
-
-                // Check the ranges
-                b.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
-                    .map_err(|e| ModuleError::InvalidRange(s.clone(), e))?;
-                s.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
-                    .map_err(|e| ModuleError::InvalidRange(s.clone(), e))?;
-
-                // No size substitutions, just add the declaration with concrete sizes
-                ctx.insert_with(s, b,
+                let cdecl = decl.concretize(&substs)?;
+                ctx.insert_with(cdecl.sig, cdecl.body,
                     &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
             }
         }

@@ -11,7 +11,6 @@ fn main() {
     let args = CliArgs { file_path: path, pdf_path_opt: None, subgraph: None };
     let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
-    handler.combined_graph_pdf("mle_test_prover_verifier2");
     println!("Compiled and wrote PDF");
     let inputs = prover_create_inputs();
     // let prover_scheduled = handler.default_schedule_prover();
@@ -26,7 +25,7 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar())),
     ]);
 

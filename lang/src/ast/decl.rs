@@ -3,12 +3,13 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use pest::Parser;
 use bumpalo::Bump;
+use thiserror::Error;
 
 use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal};
+use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError};
 use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
 
@@ -43,6 +44,14 @@ pub enum Body<N> {
 pub struct Decl<N> {
     pub sig: Sig<N>,
     pub body: Body<N>,
+}
+
+#[derive(Error, PartialEq, Debug)]
+pub enum DeclError {
+    #[error("DeclError: Error evaluating size type variables: \n\n{0}")]
+    EvalError(#[from] EvalError),
+    #[error("DeclError: Invalid ranges in declaration {0}: \n\n{1}")]
+    InvalidRange(CSig, RangeError),
 }
 
 impl<N> Body<N> {
@@ -91,7 +100,7 @@ impl<N> Decl<N> {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
-    }
+    }    
 }
 
 /// A collection of declarations
@@ -107,7 +116,7 @@ pub type CBody = Body<usize>;
 /// Untyped decl with symbolic sizes
 pub type UDecl =  Decl<Size>;
 
-/// Concrete sized decl                    // Rela
+/// Concrete sized declaration
 pub type CDecl = Decl<usize>;
 
 /// Untyped declarations with symbolic sizes
@@ -118,14 +127,34 @@ pub type CDecls = Decls<usize>;
 
 
 impl UDecl {
+    /// Parse a string into a Zippel declaration
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
         UDecl::from_pest(&mut pairs)
     }
+
+    /// Each declaration has typevariables that can be concretized to different sizes.
+    /// This method returns all possible size substitutions for the declaration
+    pub fn get_size_substitutions(&'_ self) -> Result<Set<SizeSubsts>, DeclError> {
+        Ok(SizeSubsts::from_typevars(&self.sig.typevars))
+    }
+
+    /// Concretize a declaration with a given size substitution
+    pub fn concretize<'a, 'b>(&'a self, substs: &'b SizeSubsts) -> Result<CDecl, DeclError> {
+        let csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+        let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+
+        // Check the ranges
+        Ok(CDecl {
+            sig: csig.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+                .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
+            body: cbody.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+                .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
+        })
+    }
 }
 
-/// .zippel files get parses to [UDecls] that
-/// is the entry point to the zippel compiler
+/// .zippel files get parsed to [UDecls].
 impl UDecls {
     /// Parse a string into a Zippel declarations list
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {

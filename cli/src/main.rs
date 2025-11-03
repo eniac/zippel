@@ -208,7 +208,7 @@ fn compile<C: ArkConfig>(file_path: String) -> UDags<C>{
 fn get_combined_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
     let args = CliArgs { file_path: file_path, pdf_path_opt: pdf_path_opt, subgraph: subgraph };
     let g_temp = get_protocol_subgraph_api(&graph, &args);
-    let g = g_temp.clone().map_transcript_nodes();
+    let g = g_temp.clone().rename_inner_nodes();
     g
 }
 
@@ -269,13 +269,13 @@ fn eval(args: CliArgs) {
     });
 
     let g_temp = get_protocol_subgraph(&gs, &args);
-    let g = g_temp.clone().map_transcript_nodes();
+    let g = g_temp.clone().rename_inner_nodes();
     g.write_pdf("test_prover_verifier").unwrap_or_else(|e| {
         println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
     // g.print_edges();
     let verifier = g.get_verifier().unwrap();
-    let (prover, _) = g.get_prover();
+    let prover = g.get_prover().0;
     // verifier.print_edges();
 
     let combined = verifier.combine_dag(&prover);

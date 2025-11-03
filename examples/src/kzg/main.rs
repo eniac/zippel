@@ -10,10 +10,14 @@ fn main() {
     println!("Starting KZG example");
     println!("Current working directory: {:?}", std::env::current_dir().unwrap());
     let path = PathBuf::from("kzg_test.zippel");
-    let args = CliArgs { file_path: path, pdf_path_opt: None, subgraph: None };
+    let args = CliArgs { 
+        file_path: path, 
+        pdf_path_opt: Some(PathBuf::from("kzg_test.pdf")),
+        subgraph: None 
+    };
+    
     let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
-    handler.combined_graph_pdf("kzg_test_prover_verifier2");
     println!("Compiled and wrote PDF");
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

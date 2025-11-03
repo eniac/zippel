@@ -349,121 +349,29 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
     }
 
-    pub fn process_op(op: GOp<C>, args_name: &Vec<String>) -> GOp<C> {
-        match op {
-            Op::Value(val) => {
-                Op::Value(val)
-            },
-            Op::Ref(r, typ) => {
-                let r_new = match r {
-                    Ref::Node(n) => r,
-                    Ref::Var(v, n) => {
-                        match v {
-                            Vid(v_string) => {
-                                if args_name.contains(&v_string) {
-                                    Ref::Var(Vid(v_string), n)
-                                } else {
-                                    Ref::Var(Vid(v_string + &format!("_{:?}", n)), n)
-                                }
-                            }
-                        }
+    pub fn rename_inner_nodes(&mut self)  -> Dag<C, A> where A: Clone {
+        let arg_names: Vec<String> = self.args().iter().map(|arg| arg.var().unwrap().0).collect();
+        debug!("args_name: {:?}", arg_names);
+        self.map_ops(&|op| op.map_refs(&|r| 
+            match r {
+                Ref::Var(Vid(s), n) =>
+                    if arg_names.contains(&s) {
+                        Ref::Var(Vid(s), n)
+                    } else {
+                        Ref::Var(Vid(s + &format!("_{:?}", n)), n)
                     },
-                };
-                Op::Ref(r_new, typ)
-            },
-            Op::Bin(op, a, b, typ) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                let b_val: GOp<C> = Self::process_op(*b, args_name);
-                Op::Bin(op, Box::new(a_val), Box::new(b_val), typ)
-            },
-            Op::Eval(box p, box x) => {
-                let p_val: GOp<C> = Self::process_op(p, args_name);
-                let x_val: GOp<C> = Self::process_op(x, args_name);
-                Op::Eval(Box::new(p_val), Box::new(x_val))
-            },
-            Op::FixVar(box p, box x) => {
-                let p_val: GOp<C> = Self::process_op(p, args_name);
-                let x_val: GOp<C> = Self::process_op(x, args_name);
-                Op::FixVar(Box::new(p_val), Box::new(x_val))
-            },
-            Op::EvalMle(box p, box x) => {
-                let p_val: GOp<C> = Self::process_op(p, args_name);
-                let x_val: GOp<C> = Self::process_op(x, args_name);
-                Op::EvalMle(Box::new(p_val), Box::new(x_val))
-            },
-            Op::Vec(vec) => {
-                let value_vector: Vec<Op<C, Ref>> = vec.iter().map(|op| Self::process_op(op.clone(), args_name)).collect::<Vec<Op<C, Ref>>>();
-                Op::Vec(value_vector)
-            },
-            Op::Ram(box v, box index_val) => {
-                let v_val: Op<C, Ref> = Self::process_op(v, args_name);
-                let index_val_value: Op<C, Ref> = Self::process_op(index_val, args_name);
-                Op::Ram(Box::new(v_val), Box::new(index_val_value))
-            }
-            Op::Random(typ, val) => {
-                Op::Random(typ, val)
-            },
-            Op::Challenge(typ, val) => {
-                Op::Challenge(typ, val)
-            },
-            Op::Pair(a, b, typ) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                let b_val: GOp<C> = Self::process_op(*b, args_name);
-                Op::Pair(Box::new(a_val), Box::new(b_val), typ)
-            },
-            Op::Poly(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Poly(Box::new(a_val))
-            },
-            Op::Coef(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Coef(Box::new(a_val))
-            },
-            Op::Ifft(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Ifft(Box::new(a_val))
-            },
-            Op::Fft(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Fft(Box::new(a_val))
-            },
-            Op::Check(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Check(Box::new(a_val))
-            },
-            Op::Mle(a) => {
-                let a_val: GOp<C> = Self::process_op(*a, args_name);
-                Op::Mle(Box::new(a_val))
-            }
-
-        }
+                _ => r,
+            }))
     }
 
-    pub fn map_transcript_nodes(&mut self)  -> Dag<C, Nothing> {
-        let args: Vec<PRef> = self.args().into_iter().collect::<Vec<_>>();
-        let mut args_name = Vec::<String>::new();
-        for arg in args {
-            match arg.var() {
-                Some(v) => {
-                    match v {
-                        Vid(v_string) => {
-                            args_name.push(v_string);
-                        }
-                    }
-                }
-                None => {}
-            }
-        }
-        println!("args_name: {:?}", args_name);
-        Dag(self.0.map(
-            |_, node|
-                match node {
-                    Node::Op(op, _) => Node::Op(Self::process_op(op.clone(), &args_name), Nothing),
-                    Node::Transcr(op, _) => Node::Transcr(Self::process_op(op.clone(), &args_name), Nothing),
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
-                },
-                |_, e| e.clone()
+    pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A> where A: Clone {
+        Dag(self.0.map(|_, node| 
+            match node {
+                Node::Op(op, ann) => Node::Op(f(op), ann.clone()),
+                Node::Transcr(op, ann) => Node::Transcr(f(op), ann.clone()),
+                _ => node.clone(),
+            },
+        |_, e| e.clone()
         ))
     }
 
@@ -516,9 +424,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 continue;
             }
 
-            let op = self[n].clone().into_op();
             // Check if the node refers to a private argument, then it is a leak
-            //for r in op.references() {
+            // let op = self[n].clone().into_op();
+            // for r in op.references() {
             //    if r.node() == self.input_node() {
             //        if args.iter().all(|a| a.var() != r.var()) {
             //            return Err(GraphError::private_node_in_verifier(&op, &r));
@@ -760,13 +668,13 @@ impl<C: ArkConfig, A> Dags<C, A> {
     }
 
     /// A protocol has a verifier assertion
-    pub fn get_proto(&self, name: &Vid) -> Option<&Dag<C, A>> {
-        self.protocols().into_iter().find(|g| g[g.input_node()].name() == Some(name))
-    }
-
-    /// A function has no verifier assertion
-    pub fn get_function(&self, name: &Vid) -> Option<&Dag<C, A>> {
-        self.functions().into_iter().find(|g| g[g.input_node()].name() == Some(name))
+    pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
+        self.protocols().into_iter().find(|g| 
+            if let Some(v) = g[g.input_node()].name() {
+                &v.0 == name
+            } else {
+                false
+            })
     }
 
     pub fn protocols(&self) -> Vec<&Dag<C, A>> {
@@ -794,7 +702,7 @@ impl<C: ArkConfig> UDags<C> {
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
 
         for (sig, body) in m.into_iter() {
-            println!("Adding declaration: {:?}", sig);
+            debug!("Adding declaration: {:?}", sig);
             let mut g = UDag::new();
             g.add_decl(sig.clone(), body.clone(), &fctx)?;
             gs.0.push(g);
@@ -809,7 +717,7 @@ impl<C: ArkConfig> UDag<C> {
     fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<(), GraphError> {
-        println!("Adding top-level expression: {:?}", exp);
+        debug!("Adding top-level expression: {:?}", exp);
         let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
         if !matches!(op, GOp::Ref(Ref::Node(_), _)) {
             let nr = self.add_node(Node::ret(&op));
@@ -852,7 +760,7 @@ impl<C: ArkConfig> UDag<C> {
         // Add the body to the Graph
         match body {
             CBody::Proto { body, relation } => {
-                println!("Adding proto: {:?}", sig);
+                debug!("Adding proto: {:?}", sig);
                 // Start node
                 let mut start = self.add_node(Node::inp(sig.name.clone(), asig.clone()));
                 let vars =
@@ -891,10 +799,10 @@ impl<C: ArkConfig> UDag<C> {
         edge_type: DepType,
         kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
-        println!("Adding expressions: {:?}", exp);
+        debug!("Adding expressions: {:?}", exp);
         // Type inference for [self]
         let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
-        println!("Type of expression: {:?}", typ);
+        debug!("Type of expression: {:?}", typ);
         // Convert [CExp] to [Op] while creating the graph
         match exp.clone() {
             // Literals get appended to the last node [self.it]
@@ -1039,8 +947,8 @@ impl<C: ArkConfig> UDag<C> {
             },
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
-                let ta = a.infer(kctx, &fctx.keys(), vctx)?;
-                let tb = b.infer(kctx, &fctx.keys(), vctx)?;
+                a.infer(kctx, &fctx.keys(), vctx)?;
+                b.infer(kctx, &fctx.keys(), vctx)?;
 
                 // Add children first
                 let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
@@ -1203,19 +1111,19 @@ impl<C: ArkConfig> UDag<C> {
                     },
                     _ => {
                         // It is a function. Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx.iter().filter_map(|(sig, body)| {
+                        let matching_sigs = fctx.iter().filter_map(|(sig, body)|
                             // If the function name matches
-                        if sig.name == fid {
-                                // The argument types must match the parameter types
-                                let (sig, subs) = sig.clone()
-                                    .unify(&param_types, &kctx)
-                                    .ok()?;
-                                // Return new signature
-                                Some((sig, body, subs))
-                            } else {
-                                None
-                            }
-                        }).collect::<Vec<_>>();
+                            if sig.name == fid {
+                                    // The argument types must match the parameter types
+                                    let (sig, subs) = sig.clone()
+                                        .unify(&param_types, &kctx)
+                                        .ok()?;
+                                    // Return new signature
+                                    Some((sig, body, subs))
+                                } else {
+                                    None
+                                }
+                        ).collect::<Vec<_>>();
 
                         // Only one function shoud match (enforced by the type system)
                         assert_eq!(matching_sigs.len(), 1);
@@ -1227,8 +1135,8 @@ impl<C: ArkConfig> UDag<C> {
 
                         // First add the arguments to the graph
                         let oparams: Vec<GOp<C>> = params.into_iter()
-                        .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
-                        .collect::<Result<_, _>>()?;
+                           .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
+                           .collect::<Result<_, _>>()?;
 
                         // Create a new context
                         let vctx = sig.args.to_ctx();
@@ -1265,7 +1173,7 @@ impl<C: ArkConfig> UDag<C> {
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 // Record transcript interaction
                 match ol {
-                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _)=> {
+                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
                         self.add_edge(*transcr, n, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(n).unwrap().set_transcript();
                         *transcr = n;
