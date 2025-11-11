@@ -56,7 +56,6 @@ impl UModule {
         // Catch duplicate declarations here
         let mut m = Ctx::new();
         for d in decls.into_iter() {
-            println!("Decl: {:?}", d);
             m.insert_with(d.sig, d.body,
                 &|sig, _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
         }
@@ -70,28 +69,21 @@ impl UModule {
         Self::from_str(stored_str)
     }
 
-    /// Get a declaration by name
-    pub fn get_decl<'a>(&self, defn: &'a str) -> Result<UDecl, ModuleError> {
-        self.0.iter().find_map(|(sig, body)| 
-            if sig.name.0.as_str() == defn {
-                Some(UDecl { sig: sig.clone(), body: body.clone() })
-            } else { 
-                None
-            }).ok_or(ModuleError::DeclarationNotFound(defn.to_string()))
+    pub fn iter_decls(&self) -> impl Iterator<Item = UDecl> + '_ {
+        self.0.iter().map(|(sig, body)| UDecl { sig: sig.clone(), body: body.clone() })
     }
 
     /// Concretize sizes in all declarations to generate a CModule
     pub fn concretize(&self) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
 
-        for name in self.get_names() {
-            let decl = self.get_decl(name)?;
-            let all_substs = decl.get_size_substitutions()?;
-            for substs in all_substs.into_iter() {
+        for decl in self.iter_decls() {
+             let all_substs = decl.get_size_substitutions()?;
+             for substs in all_substs.into_iter() {
                 let cdecl = decl.concretize(&substs)?;
-                ctx.insert_with(cdecl.sig, cdecl.body,
-                    &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
-            }
+                 ctx.insert_with(cdecl.sig, cdecl.body,
+                     &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
+             }
         }
         // Return the concretized module
         Ok(Module(ctx))

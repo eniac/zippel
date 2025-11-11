@@ -158,13 +158,10 @@ impl<K, V> Ctx<K, V> {
         FF: Fn(&K,&V,&V) -> Result<K, E>
     {
         match self.0.get(&k) {
-            Some(v1) => 
-                if v1 != &v {
-                    let k = f(&k, &v, &v1)?;
-                    self.insert_with(k, v, f)
-                } else {
-                    Ok(())
-                },
+            Some(v1) => {
+                let k = f(&k, &v, &v1)?;
+                self.insert_with(k, v, f)
+            },
             None => {
                 self.0.insert(k, v);
                 Ok(())
