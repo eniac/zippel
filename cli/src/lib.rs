@@ -144,6 +144,44 @@ impl<C:ArkConfig> ZippelHandler<C> {
         }
     }
 
+    pub fn compile_second(&mut self) {
+        let zfile = fs::read_to_string(&self.cli_args.file_path).unwrap_or_else(|err| {
+            error!("Error reading file {}: \n\t{}", self.cli_args.file_path.display(), err);
+            process::exit(1);
+        });
+    
+        println!("Parsing Zippel program:\n{}", zfile);
+        let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
+        println!("Concretized module:\n{:?}", m);
+        let gs = unwrap!(UDags::<C>::from_module(m));
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
+
+        debug!("Projecting prover");
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
+
+        debug!("Projecting prover");
+        let (prover, _) = g.clone().get_prover();
+        self.prover_graph = Some(prover.clone());
+        self.output_pdf(&prover, "prover_graph");
+
+        debug!("Projecting verifier");
+        let verifier = g.clone().get_verifier().unwrap();
+        self.verifier_graph = Some(verifier.clone());
+        self.output_pdf(&verifier, "verifier_graph");
+
+        debug!("Combining prover and verifier");
+        let combined = verifier.combine_dag(&prover);
+        self.output_pdf(&combined, "combined_graph");    
+    }
+
     // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
     pub fn compile(&mut self) {
         self.parse();

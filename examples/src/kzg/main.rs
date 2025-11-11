@@ -8,7 +8,6 @@ use ark_ff::fields::Field;
 
 fn main() {
     println!("Starting KZG example");
-    println!("Current working directory: {:?}", std::env::current_dir().unwrap());
     let path = PathBuf::from("kzg_test.zippel");
     let args = CliArgs { 
         file_path: path, 
