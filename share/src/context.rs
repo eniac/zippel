@@ -154,14 +154,17 @@ impl<K, V> Ctx<K, V> {
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
     where
         K: Ord + Clone,
-        V: Clone,
+        V: Clone + Eq,
         FF: Fn(&K,&V,&V) -> Result<K, E>
     {
         match self.0.get(&k) {
-            Some(v1) => {
-                let k = f(&k, &v, &v1)?;
-                self.insert_with(k, v, f)
-            }
+            Some(v1) => 
+                if v1 != &v {
+                    let k = f(&k, &v, &v1)?;
+                    self.insert_with(k, v, f)
+                } else {
+                    Ok(())
+                },
             None => {
                 self.0.insert(k, v);
                 Ok(())
