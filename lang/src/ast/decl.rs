@@ -141,8 +141,12 @@ impl UDecl {
 
     /// Concretize a declaration with a given size substitution
     pub fn concretize<'a, 'b>(&'a self, substs: &'b SizeSubsts) -> Result<CDecl, DeclError> {
-        let csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+
+        let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
+
+        // Remove typevars substituted
+        csig.typevars = csig.typevars.into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
 
         // Check the ranges
         Ok(CDecl {
