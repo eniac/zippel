@@ -700,8 +700,9 @@ impl<C: ArkConfig> UDags<C> {
             m.iter().map(|(sig, body)|
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
 
+        println!("fctx: {}", fctx);
         for (sig, body) in m.into_iter() {
-            debug!("Adding declaration: {:?}", sig);
+            debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
             g.add_decl(sig.clone(), body.clone(), &fctx)?;
             gs.0.push(g);
