@@ -29,9 +29,9 @@ use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbor
 use std::process::Command;
 use std::fmt;
 use std::ops::Index;
-pub use std::collections::HashMap;
 use std::path::PathBuf;
 use std::cmp;
+use std::collections::{HashMap, HashSet};
 
 /// Represents graphs in the Zippel language
 /// graph intermediate representation (Graph IR)
@@ -251,9 +251,36 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Get all transcript node from the graph
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
-        self.0.node_indices()
+        let transcript_nodes_list: Vec<NodeIndex> = self.0.node_indices()
             .filter(|n| self[*n].is_transcript())
-            .collect()
+            .collect();
+        let mut ordered = Vec::new();
+        if !transcript_nodes_list.is_empty() {
+            let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+            let mut has_parent_in_list = HashSet::new();
+            
+            for &node in &transcript_nodes_list {
+                for parent in self.0.neighbors_directed(node, petgraph::Direction::Incoming) {
+                    if transcript_nodes_list.contains(&parent) {
+                        parent_map.insert(node, parent);
+                        has_parent_in_list.insert(node);
+                    }
+                }
+            }        
+ 
+            let root = transcript_nodes_list.iter()
+                .find(|&&n| !has_parent_in_list.contains(&n))
+                .expect("Cycle detected in transcript nodes");
+            
+            let mut current = *root;
+            ordered.push(current);
+            while let Some(&child) = transcript_nodes_list.iter()
+                .find(|&&n| parent_map.get(&n) == Some(&current)) {
+                ordered.push(child);
+                current = child;
+            }  
+        }
+        ordered
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes

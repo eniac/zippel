@@ -116,38 +116,12 @@ where
         self = self.from_input_node(&node);
 
         let transcript_nodes = dag.transcript_nodes();
-       
-        if !transcript_nodes.is_empty() {
-            let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-            let mut has_parent_in_list = HashSet::new();
-            
-            for &node in &transcript_nodes {
-                for parent in dag.neighbors_directed(node, petgraph::Direction::Incoming) {
-                    if transcript_nodes.contains(&parent) {
-                        parent_map.insert(node, parent);
-                        has_parent_in_list.insert(node);
-                    }
-                }
-            }        
-
-            let mut ordered = Vec::new();
-            let root = transcript_nodes.iter()
-                .find(|&&n| !has_parent_in_list.contains(&n))
-                .expect("Cycle detected in transcript nodes");
-            
-            let mut current = *root;
-            ordered.push(current);
-            while let Some(&child) = transcript_nodes.iter()
-                .find(|&&n| parent_map.get(&n) == Some(&current)) {
-                ordered.push(child);
-                current = child;
-            }
-            for transcript_node_index in ordered {
-                self = self.from_challenge_node(&dag.0[transcript_node_index], transcript_node_index.index());
-                self = self
-                    .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
-            }  
-        }      
+           
+        for transcript_node_index in transcript_nodes {
+            self = self.from_challenge_node(&dag.0[transcript_node_index], transcript_node_index.index());
+            self = self
+            .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
+        }       
 
         
         Self(self.0.clone())

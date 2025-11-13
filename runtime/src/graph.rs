@@ -40,17 +40,10 @@ pub struct MutexGraph<C: ArkConfig> {
 
 impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
-        // let domain_seperator = <DomainSeparator<H> as domain_seperator::ZippelDomainSeparator::<C, Arc<RuntimeInformation<C>>>>::new_zippel_domain_seperator(
-        //     "domain_separator",
-        //     &tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
-        //         nthreads.get()
-        //     ))),
-        // );
         MutexGraph {
             mutex_graph:tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
                 nthreads.get()
             ))),
-            // prover_state: ProverState::new(&domain_seperator, rand::rngs::OsRng)
         }
     }
 
@@ -399,33 +392,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                     },
                     Node::Transcr(_, _) => {
                         let transcript_nodes = g.mutex_graph.transcript_nodes();
-                        let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-                            let mut has_parent_in_list = HashSet::new();
-                            
-                            for &node in &transcript_nodes {
-                                for parent in g.mutex_graph.neighbors_directed(node, petgraph::Direction::Incoming) {
-                                    if transcript_nodes.contains(&parent) {
-                                        parent_map.insert(node, parent);
-                                        has_parent_in_list.insert(node);
-                                    }
-                                }
-                            }
-
-                            let mut ordered = Vec::new();
-                            let root = transcript_nodes.iter()
-                                .find(|&&n| !has_parent_in_list.contains(&n))
-                                .expect("Cycle detected in transcript nodes");
-                            
-                            let mut current = *root;
-                            ordered.push(current);
-                            while let Some(&child) = transcript_nodes.iter()
-                                .find(|&&n| parent_map.get(&n) == Some(&current)) {
-                                ordered.push(child);
-                                current = child;
-                            }
 
 
-                        for node_transcript in ordered {
+                        for node_transcript in transcript_nodes {
                             let transcript_node = &g.mutex_graph[node_transcript];
                             match transcript_node {
                                 Node::Transcr(_, annotation) => {
