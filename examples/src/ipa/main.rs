@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     let path = PathBuf::from("ipa.zippel");
-    let args = CliArgs { file_path: path, pdf_path_opt: None, subgraph: None };
+    let args = CliArgs { file_path: path, pdf_path_opt: Some(PathBuf::from("ipa.pdf")), subgraph: None };
     let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
 

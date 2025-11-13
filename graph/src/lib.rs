@@ -600,6 +600,7 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
         // Remove DOT file
         // std::fs::remove_file(fdot)?;
 
+        println!("Wrote PDF to {:?}", fpdf);
         // Print success
         debug!("Wrote {:?}", std::fs::canonicalize(PathBuf::from(fpdf.clone())));
         Ok(())

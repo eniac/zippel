@@ -155,7 +155,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        let g_analyze = QualifierPropagation::from_dag(&gs[0].clone()); 
+        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs)); 
 
         let mut up = UniformityPropagation::new();        
         let g_analyze = up.from_dag(&g_analyze);

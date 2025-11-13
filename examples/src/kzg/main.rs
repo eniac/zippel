@@ -29,6 +29,7 @@ fn main() {
     println!("Finished KZG example");
     
     handler.analyze_completeness();
+    handler.analyze_knowledge();
 }
 
 
