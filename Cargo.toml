@@ -1,4 +1,4 @@
 [workspace]
 
-members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "cli"]
+members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "cli", "examples"]
 resolver = "2"

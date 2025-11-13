@@ -58,6 +58,8 @@ exp_term  = _{
          | "(" ~ exp ~ ")"
          | ifft_exp
          | mle_exp
+         | fix_var_exp
+         | eval_mle_exp
          | fft_exp
          | poly_exp
          | eval_exp
@@ -85,6 +87,8 @@ exp_term  = _{
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
+    fix_var_exp   = { "fixVar" ~ "(" ~ exp ~ "," ~ exp ~ ")" }        // Fix variables of a multilinear 
+    eval_mle_exp  = { "evalMle" ~ "(" ~ exp ~ "," ~ exp ~ ")" }       // Evaluate multilinear expression
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension

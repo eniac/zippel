@@ -23,6 +23,8 @@ pub enum ATyp {
     Vec(Box<ATyp>, usize),
     /// Univariate polynomial in coefficient form
     Uni(usize),
+    /// Multilinear extension
+    Mle(usize)
 }
 
 impl ATyp {
@@ -68,7 +70,9 @@ impl ATyp {
     pub fn vec(t: &ATyp, n: usize) -> Self {
         ATyp::Vec(Box::new(t.clone()), n)
     }
-
+    pub fn mle(n: usize) -> Self {
+        ATyp::Mle(n)
+    }
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
@@ -87,6 +91,10 @@ impl ATyp {
 
     pub fn is_uni(&self) -> bool {
         matches!(self, ATyp::Uni(_))
+    }
+
+    pub fn is_mle(&self) -> bool {
+        matches!(self, ATyp::Mle(_))
     }
 
     pub fn is_fin(&self) -> bool {
@@ -114,6 +122,7 @@ impl ATyp {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
             ATyp::Uni(n) => *n,
+            ATyp::Mle(n) => *n
         }
     }
 
@@ -125,18 +134,17 @@ impl ATyp {
                 match k {
                     Kind::Field => Some(ATyp::scalar()),
                     Kind::Group => {
-                        // If this is a pairing assign the right pairing types
-                        for (og, _) in kctx.iter().filter(|(t, k)| k.is_group() && *t != b) {
-                            if let Some((_, Kind::Pairing(x, y))) = kctx.find_one(|t, k| k.is_pairing(&og, t)) {
-                                if &x == b {
-                                    return Some(ATyp::g1());
-                                } else if &y == b {
-                                    return Some(ATyp::g2());
-                                }
+                        if let Some((x, y)) = kctx.find_map(|t, k| k.get_pairing_of(b)) {
+                            // If this is a pairing assign the right pairing types
+                            if &x == b {
+                                Some(ATyp::g1())
+                            } else {
+                                Some(ATyp::g2())
                             }
+                        } else {
+                            // Otherwise, return the group type
+                            Some(ATyp::g1())
                         }
-                        // Otherwise, return the group type
-                        Some(ATyp::g1())
                     },
                     Kind::Pairing(_, _) => Some(ATyp::gt()),
                     Kind::Scalar(_) => Some(ATyp::scalar()),
@@ -515,6 +523,7 @@ impl fmt::Display for ATyp {
             ATyp::Base(b) => write!(f, "{}", b),
             ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
             ATyp::Uni(n) => write!(f, "Uni<{}>", n),
+            ATyp::Mle(n) => write!(f, "Mle<{}>", n),
         }
     }
 }

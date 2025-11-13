@@ -1,0 +1,14 @@
+proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 1>(
+    // --- Public Inputs ---
+    public P_initial_commitment: G,   // Corresponds to 'P' in the paper
+    public ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
+    public u_aux_base: G,             // Corresponds to 'u' in the paper
+
+    // --- Private Inputs ---
+    private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
+    private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
+) {
+    x_chal <- challenge<F>;
+
+    verify(x_chal == x_chal);
+}

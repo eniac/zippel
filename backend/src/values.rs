@@ -1,19 +1,21 @@
 use ark_ec::pairing::PairingOutput;
-use ark_poly::{Polynomial,DenseUVPolynomial, univariate::DensePolynomial};
+use ark_poly::{Polynomial,DenseUVPolynomial, univariate::DensePolynomial, DenseMultilinearExtension, MultilinearExtension};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_ff::{PrimeField, Zero};
+use ark_std::log2;
 use lang::typ::{Nothing, CRange};
 use crate::types::Lub;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::codecs::arkworks_algebra::GroupDomainSeparator;
-use spongefish::{BytesToUnitSerialize, DomainSeparator, ProverState};
+use spongefish::{BytesToUnitSerialize, DomainSeparator, ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
-
 use crate::{to_bytes, ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps};
+use std::io::Write;
+use ark_serialize::{CanonicalSerialize,SerializationError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value<C: ArkConfig> {
@@ -41,13 +43,132 @@ pub enum Value<C: ArkConfig> {
     Vec(Vec<Value<C>>),
     /// Polynomial of scalars
     Poly(DensePolynomial<C::F>),
+    /// Multilinear polynomial
+    Mle(DenseMultilinearExtension<C::F>),
 }
+
+fn serialize_value_internal<C: ArkConfig, W: Write>(
+    value: &Value<C>,
+    writer: &mut W,
+) -> Result<(), SerializationError> {
+    match value {
+        Value::Bool(b) => {
+            b.serialize_compressed(writer)
+        }
+        Value::VecBool(vec) => {
+            (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for b in vec {
+                b.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Index(i) => {
+            (*i as u64).serialize_compressed(writer)
+        }
+        Value::Scalar(f) => {
+            // println!("Scalar: {}", f);
+            f.serialize_compressed(writer)
+        }
+        Value::VecIndex(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for i in vec {
+                (*i as u64).serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecScalar(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for f in vec {
+                f.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::G1(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::G2(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::GT(gt) => {
+            gt.serialize_compressed(writer)
+        }
+        Value::VecG1(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecG2(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecGT(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for gt in vec {
+                gt.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::G1Affine(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::G2Affine(g) => {
+            g.serialize_compressed(writer)
+        }
+        Value::VecG1Affine(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::VecG2Affine(vec) => {
+            // (vec.len() as u64).serialize_compressed(&mut *writer)?;
+            for g in vec {
+                g.serialize_compressed(&mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Vec(values) => {
+            // (values.len() as u64).serialize_compressed(&mut *writer)?;
+            for v in values {
+                serialize_value_internal(v, &mut *writer)?;
+            }
+            Ok(())
+        }
+        Value::Poly(poly) => {
+            poly.serialize_compressed(writer)
+        }
+        Value::Mle(mle) => {
+            mle.serialize_compressed(writer)
+        }
+    }
+}
+
+pub fn serialize_value<C: ArkConfig, W: Write>(
+    value: &Value<C>,
+    mut writer: W,
+) -> Result<(), SerializationError> {
+    serialize_value_internal(value, &mut writer)
+}
+
+pub fn value_to_bytes<C: ArkConfig>(value: &Value<C>) -> Result<Vec<u8>, SerializationError> {
+    let mut buffer = Vec::new();
+    serialize_value(value, &mut buffer)?;
+    Ok(buffer)
+}
+
 
 impl<C: ArkConfig> Value<C> {
     /// Returns an integer representing the constructor order.
     /// Higher values correspond to constructors defined earlier.
     pub fn discriminant_order(&self) -> u8 {
         match self {
+            Value::Mle(_) => 19,
             Value::Poly(_) => 18,
             Value::Bool(_) => 17,
             Value::VecBool(_) => 16,
@@ -69,6 +190,7 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    
     pub fn scalar_from_usize(i: usize) -> Self {
         Value::Scalar(C::FOps::from_usize(i))
     }
@@ -81,6 +203,8 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
+            ATyp::Uni(n) => Value::Poly(DensePolynomial::<C::F>::zero()),
+            ATyp::Mle(n) => Value::Mle(DenseMultilinearExtension::<C::F>::zero()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -111,9 +235,12 @@ impl<C: ArkConfig> Value<C> {
             Value::Index(a) => match &other {
                 Value::Index(_) => *other.into_index_mut() += *a,
                 Value::Scalar(_) => C::FOps::add(&C::FOps::from_usize(*a), other.into_scalar_mut()),
-                Value::Poly(b) => {
-                    *other = Value::Poly(b + DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]))
-                },
+                Value::Poly(b) =>
+                    *other = Value::Poly(b + DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)])),
+                Value::Mle(b) => {
+                    let added_evals = b.iter().map(|&eval| eval + C::FOps::from_usize(*a)).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, added_evals));
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
@@ -121,6 +248,10 @@ impl<C: ArkConfig> Value<C> {
                 Value::Scalar(_) => C::FOps::add(a, other.into_scalar_mut()),
                 Value::Poly(b) => {
                     *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![*a]) + b);
+                },
+                Value::Mle(b) => {
+                    let added_evals = b.iter().map(|&eval| eval + *a).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, added_evals));
                 }
                 Value::G1(other_val) => C::G1Ops::add(&(*other_val).into_affine(), self.clone().into_g1_mut()),
                 _ => panic!("Expected scalar, found {}", other),
@@ -140,6 +271,17 @@ impl<C: ArkConfig> Value<C> {
                     *other = Value::Poly(a + DensePolynomial::<C::F>::from_coefficients_vec(vec![other.into_scalar()]));
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
+            },
+            Value::Mle(a) => match &other {
+                Value::Mle(b) => {
+                    *other =  Value::Mle(b + a);
+                },
+                Value::Scalar(_) | Value::Index(_) => {
+                    let scalar = other.into_scalar();
+                    let added_evals = a.iter().map(|&eval| eval + scalar).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(a.num_vars, added_evals));
+                },
+                _ => panic!("Expected multilinear polynomial or scalar, found {}", other)
             },
             Value::VecIndex(vs) => match &other {
                 Value::VecIndex(_) => vs
@@ -203,6 +345,10 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(b) => {
                     *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]) - b);
                 },
+                Value::Mle(b) => {
+                    let sub_evals = b.iter().map(|&eval| C::FOps::from_usize(*a) - eval).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, sub_evals));
+                },
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
@@ -211,6 +357,11 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(b) => {
                     *other = Value::Poly(DensePolynomial::<C::F>::from_coefficients_vec(vec![*a]) - b);
                 },
+                Value::Mle(b) => {
+                    
+                    let sub_evals = b.iter().map(|&eval| *a - eval).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, sub_evals));
+                } 
                 _ => panic!("Expected scalar, found {}", other),
             },
             // Group addition
@@ -275,6 +426,18 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::Mle(a) => match &other {
+                Value::Mle(b) => {
+                    *other = Value::Mle(a - b);
+                },
+                Value::Scalar(_) | Value::Index(_) => {
+                    let scalar = other.into_scalar();
+                    let sub_evals = a.iter().map(|&eval| eval - scalar).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(a.num_vars, sub_evals));
+                },
+                _ => panic!("Expected multilinear polynomial or scalar, found {}", other)
+            }
+            Value::Mle(_) => panic!("Cannot subtract MLE {} - {}", self, other),
         }
     }
 
@@ -358,6 +521,14 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::Mle(a) => match &other {
+                Value::Scalar(_) | Value::Index(_) => {
+                    let scalar = other.into_scalar();
+                    let mul_evals = a.iter().map(|&eval| eval * scalar).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(a.num_vars, mul_evals));
+                },
+                _ => panic!("Expected scalar, found {}", other)
+            },
             Value::Index(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
@@ -409,8 +580,12 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
                 Value::Poly(_) => {
-                    let mut a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]);
+                    let a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![C::FOps::from_usize(*a)]);
                     *other = Value::Poly(a_poly * other.into_poly());
+                },
+                Value::Mle(b) => {
+                    let mul_evals = b.iter().map(|&eval| eval * C::FOps::from_usize(*a)).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, mul_evals));
                 }
             },
             Value::Scalar(a) => match &other {
@@ -462,9 +637,13 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
                 Value::Poly(_) => {
-                    let mut a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![a.clone()]);
+                    let a_poly = DensePolynomial::<C::F>::from_coefficients_vec(vec![a.clone()]);
                     *other = Value::Poly(a_poly * other.into_poly());
-                }
+                },
+                Value::Mle(b) => {
+                    let mul_evals = b.iter().map(|&eval| eval * a.clone()).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(b.num_vars, mul_evals));
+                },
             },
             Value::G1(a) => match &other {
                 // Group1 * scalar multiplication
@@ -601,6 +780,9 @@ impl<C: ArkConfig> Value<C> {
                     .for_each(|(a, b)| Value::Index(*a).value_mul(b)),
                 Value::Poly(_) => {
                     panic!("Cannot multiply Vec<Index> and Poly");
+                },
+                Value::Mle(_) => {
+                    panic!("Cannot multiply Vec<Index> and MLE");
                 }
             },
             Value::VecScalar(v) => match &other {
@@ -1075,7 +1257,16 @@ impl<C: ArkConfig> Value<C> {
                     }
                     _ => panic!("Expected poly, found {}", other),
                 }
-            }
+            },
+            Value::Mle(p) => match &other {
+                Value::Scalar(_) | Value::Index(_) => {
+                    let f = other.into_scalar().inverse()
+                        .expect(format!("Failed to invert scalar {}", other).as_str());
+                    let div_evals = p.iter().map(|&eval| eval * f).collect();
+                    *other = Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(p.num_vars, div_evals));
+                }
+                _ => panic!("Expected scalar, found {}", other),
+            },
             _ => panic!("Not implemented"),
         }
     }
@@ -1425,6 +1616,9 @@ impl<C: ArkConfig> Value<C> {
             (Value::Poly(a), Value::Poly(b)) => {
                 a.coeffs.par_iter().zip(b.coeffs.par_iter()).all(|(a, b)| *a == *b)
             },
+            (Value::Mle(a), Value::Mle(b)) => {
+                a.evaluations.par_iter().zip(b.evaluations.par_iter()).all(|(a, b)| *a == *b)
+            },
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }
@@ -1433,11 +1627,11 @@ impl<C: ArkConfig> Value<C> {
         Value::Bool(Value::equ(self, other))
     }
 
-    pub fn challenge(state: &mut ProverState) -> Self {
+    pub fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> Self {
         Value::Scalar(C::FOps::challenge(state))
     }
 
-    pub fn hash(&self, state: &mut ProverState) {
+    pub fn hash<H: DuplexSpongeInterface>(&self, state: &mut ProverState<H>) {
         match self {
             Value::Bool(b) => state.add_bytes(&to_bytes!(b).unwrap()).unwrap(),
             Value::VecBool(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
@@ -1518,6 +1712,32 @@ impl<C: ArkConfig> Value<C> {
             },
             (Value::Poly(a), Value::VecScalar(b)) => {
                 *other = Value::VecScalar(b.par_iter().map(|i| a.evaluate(i)).collect());
+            },
+            (Value::Mle(mle), Value::VecIndex(v)) => {
+                let mut vals = vec![];
+                for i in v.iter() {
+                    vals.push(C::FOps::from_usize(*i));
+                }
+                let curr_size = mle.num_vars();
+                if curr_size > vals.len() {
+                    *other = Value::Mle(mle.fix_variables(&vals));
+                }
+                if curr_size == vals.len() {
+                    *other = Value::Scalar(mle.evaluate(&vals));
+                }
+            },
+            (Value::Mle(mle), Value::VecScalar(v)) => {
+                let mut vals = vec![];
+                for i in v.iter() {
+                    vals.push(*i);
+                }
+                let curr_size = mle.num_vars();
+                if curr_size > vals.len() {
+                    *other = Value::Mle(mle.fix_variables(&vals));
+                }
+                if curr_size == vals.len() {
+                    *other = Value::Scalar(mle.evaluate(&vals));
+                } 
             },
             _ => panic!("Cannot eval if not poly or index"),
         }
@@ -1746,6 +1966,7 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(typ), v.len())
             },
             Value::Poly(n) => ATyp::uni(n.degree()),
+            Value::Mle(mle) => ATyp::uni(mle.degree()),
         }
     }
 
@@ -2000,6 +2221,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Poly(a) => a.coeffs.par_iter().all(|a| a.is_zero()),
+            Value::Mle(a) => a.evaluations.par_iter().all(|a| a.is_zero()),
         }
     }
 
@@ -2059,6 +2281,78 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    pub fn value_eval_mle(&self, other: Value<C>) -> Value<C> {
+        match self {
+            Value::Mle(mle) => {
+                match other {
+                    Value::VecScalar(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(*i);
+                        }
+                        Value::Scalar(mle.evaluate(&vals))
+                    }
+                    Value::VecIndex(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(C::FOps::from_usize(*i));
+                        }
+                        Value::Scalar(mle.evaluate(&vals))
+                    }
+                    _ => panic!("Expected vec scalar or vec index, found {}", other),
+                }
+            }
+            _ => panic!("Expected mle, found {}", self),
+        }
+    }
+    
+    pub fn value_fix_var(&self, other: Value<C>) -> Value<C> {
+        match self {
+            Value::Mle(mle) => {
+                match other {
+                    Value::VecScalar(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(*i);
+                        }
+                        Value::Mle(mle.fix_variables(&vals))
+                    },
+                    Value::VecIndex(v) => {
+                        let mut vals = vec![];
+                        for i in v.iter() {
+                            vals.push(C::FOps::from_usize(*i));
+                        }
+                        Value::Mle(mle.fix_variables(&vals))
+                    },
+                    _ => panic!("Expected vec scalar or vec index, found {}", other),
+                }
+            }
+            _ => panic!("Expected mle, found {}", self),
+        }
+    }
+
+    pub fn value_mle(&self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let mut mle = vec![];
+                for i in v.iter() {
+                    mle.push(*i);
+                }
+                let size = log2(mle.len());
+                Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
+            },
+            Value::VecIndex(v) => {
+                let mut mle = vec![];
+                for i in v.iter() {
+                    mle.push(C::FOps::from_usize(*i));
+                }
+                let size = log2(mle.len());
+                Value::Mle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))
+            },
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
+        }
+    }
+
     pub fn value_ifft(&self) -> Self {
         match self {
             Value::VecScalar(v) => {
@@ -2066,7 +2360,12 @@ impl<C: ArkConfig> Value<C> {
                 C::FOps::vec_ifft(&mut v);
                 Value::VecScalar(v)
             },
-            _ => panic!("Expected vec scalar, found {}", self),
+            Value::VecIndex(v) => {
+                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
+                C::FOps::vec_ifft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 
@@ -2077,7 +2376,12 @@ impl<C: ArkConfig> Value<C> {
                 C::FOps::vec_fft(&mut v);
                 Value::VecScalar(v)
             },
-            _ => panic!("Expected vec scalar, found {}", self),
+            Value::VecIndex(v) => {
+                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
+                C::FOps::vec_fft(&mut v);
+                Value::VecScalar(v)
+            },
+            _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 }
@@ -2334,6 +2638,9 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
             },
             Value::Poly(a) => {
                 write!(f, "Poly({:?})", a.coeffs)
+            },
+            Value::Mle(a) => {
+                write!(f, "Mle({:?})", a.evaluations)
             }
         }
     }
@@ -2480,7 +2787,26 @@ impl<C: ArkConfig> Ord for Value<C> {
                         .map(|(a, b)| affine_group_cmp::<C::G2>(a, b))
                         .find(|o| o != &Ordering::Equal)
                         .unwrap_or(Ordering::Equal),
-
+                        (Value::Poly(a), Value::Poly(b)) => a.coeffs.len().cmp(&b.coeffs.len())
+                        .then_with(|| {
+                            for (coeff_a, coeff_b) in a.coeffs.iter().zip(b.coeffs.iter()) {
+                                let ord = coeff_a.into_bigint().cmp(&coeff_b.into_bigint());
+                                if ord != Ordering::Equal {
+                                    return ord;
+                                }
+                            }
+                            Ordering::Equal
+                        }),
+                    (Value::Mle(a), Value::Mle(b)) => a.num_vars().cmp(&b.num_vars())
+                        .then_with(|| {
+                            for (val_a, val_b) in a.iter().zip(b.iter()) {
+                                let ord = val_a.into_bigint().cmp(&val_b.into_bigint());
+                                if ord != Ordering::Equal {
+                                    return ord;
+                                }
+                            }
+                            Ordering::Equal
+                        }),
                     // This case should be unreachable because we've covered all variants
                     // and already established that the discriminants are equal.
                     (_, _) => {
@@ -2575,12 +2901,12 @@ fn test_mul_comm() {
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
-    let c = ((&a).value_fft()).value_ifft();
-    // assert_deq!(&c, &a);
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
+    let c = ((a).value_fft()).value_ifft();
+    assert_deq!(&c, &a);
     
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(15));
-    let c = ((&a).value_ifft()).value_fft();
+    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
+    let c = ((a).value_ifft()).value_fft();
     assert_deq!(&c, &a);
 }
 

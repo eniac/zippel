@@ -34,7 +34,6 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ABase::G2, ABase::G2) => Self::G_ADD,
             (ABase::GT, ABase::GT) => Self::G_ADD,
             (ABase::Fin(_), ABase::Scalar) => {
-                println!("base add");
                 2.0
             }
             (_, _) => unreachable!(),
@@ -172,8 +171,11 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
             },
             Op::Check(box op) => cost += self.cost(op, nthreads).0,
             Op::Poly(box op) => cost += 1.0,
+            Op::Mle(box op) => cost += 1.0,
             Op::Eval(box p, box x) => cost += 1.0,
             Op::Coef(box op) => cost += 1.0,
+            Op::FixVar(box p, box x) => cost += 1.0,
+            Op::EvalMle(box p, box x) => cost += 1.0,
         };
         cost.into()
     }

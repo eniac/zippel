@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::process; // For process::exit
 use criterion::Criterion;
 use std::{fs::{self, File}, io::Write};
+use lang::typ::{Qualifier, Distribution};
+use graph::Dag;
 use graph::{analyses::{completeness, KnowledgeAnalysis}, WritePdf};
-
 use lang::id::Vid;
 use backend::{ArkConfig,  ArkBls12_381, Value, ATyp, ABase};
-use lang::ast::UModule;
+use lang::ast::{UModule, CModule};
 use costs::Benchmarker;
 // use backend::ArkBls12_381
 // use backend::ArkBls12_381;
@@ -19,6 +20,8 @@ use graph::{
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
 use log::{error, warn, debug};
+use spongefish::{ProverState, DefaultHash, DomainSeparator, DuplexSpongeInterface};
+use graph::domain_seperator::ZippelDomainSeparator;
 
 use graph::scheduler::{ThreadAlloc, TDag, Scheduler, AsymptoticCost};
 use graph::scheduler::ilp::GurobiScheduler;
@@ -31,31 +34,10 @@ use rand::Rng;
 use graph::PRef;
 use std::time::Instant;
 use ark_std::UniformRand;
+use lang::ast::Args;
 
-#[derive(Parser, Debug)]
-#[command(author, version,
-    about = "The Zippel language for cryptographic protocols.",
-    long_about = "The Zippel language for cryptographic protocols, compiles into optimized and safe prover and verifier code.")]
-
-#[command(propagate_version = true)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-// Enum defining the available subcommands
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Execute the zippel compiler
-    Eval(CliArgs),
-
-    /// Execute the zippel analysis
-    Analyze(CliArgs),
-
-    /// Execute the benchmark suite
-    Benchmark(BenchmarkArgs),
-}
-
+/// Command line arguments
+/// Command line arguments
 #[derive(Parser, Debug)]
 pub struct CliArgs {
     /// The path to the text file to read
@@ -67,9 +49,18 @@ pub struct CliArgs {
     #[arg(short = 'p', long = "pdf", value_name = "PDF_FILE")]
     pub pdf_path_opt: Option<PathBuf>,
 
-    /// An optional subgraph name
-    #[arg(long = "subgraph", short = 's')]
+    /// An optional subgraph index to print to PDF
+    #[arg(long = "subgraph", short = 's', value_name = "SUBGRAPH_NAME")]
+    /// An optional subgraph index to print to PDF
+    #[arg(long = "subgraph", short = 's', value_name = "SUBGRAPH_NAME")]
     pub subgraph: Option<String>,
+}
+
+/// PDF graph pretty-printing options
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
+pub struct PdfOpts {
+    pub path: PathBuf,
+    pub index: usize,
 }
 
 // Arguments for the 'benchmark' subcommand
@@ -84,409 +75,203 @@ struct BenchmarkArgs {
     iterations: u32,
 }
 
-fn main() {
-    // Parse the command-line arguments using the Args struct
-    let cli = Cli::parse();
-
-    // Initialize logging
-    env_logger::init();
-
-    match cli.command {
-        Commands::Eval(eval_args) => {
-            eval(eval_args);
-        }
-        Commands::Analyze(analyze_args) => {
-            analyze(analyze_args);
-        }
-        Commands::Benchmark(benchmark_args) => {
-            benchmark(benchmark_args);
-        }
-    }
+pub struct ZippelHandler<C:ArkConfig> {
+    pub cli_args: CliArgs,
+    pub sized_module: Option<UModule>,
+    pub concrete_module: Option<CModule>,
+    pub proto_graph: Option<UDag<C>>,
+    pub prover_graph: Option<UDag<C>>,
+    pub verifier_graph: Option<UDag<C>>,
+    pub entry_point: Option<String>,
+    pub public_inputs: Option<Ctx<Vid, Value<C>>>,
+    pub prover_args: Option<Vec<PRef>>,
+    pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
-fn get_protocol_subgraph<'a>(gs: &'a UDags<ArkBls12_381>, args: &'a CliArgs) -> &'a UDag<ArkBls12_381> {
-    if let Some(proto_name) = &args.subgraph {
-        gs.get_proto(&proto_name.clone().into())
-        .expect(&format!("Protocol {} not found in {}", proto_name, args.file_path.display()))
-    } else {
-        gs.protocols().first()
-        .expect(&format!("No protocols found in {}", args.file_path.display()))
+  
+
+impl<C:ArkConfig> ZippelHandler<C> {
+    pub fn new(cli_args: CliArgs) -> Self {
+        env_logger::init();
+        ZippelHandler { 
+            cli_args,
+            sized_module: None, 
+            concrete_module: None, 
+            proto_graph: None, 
+            prover_graph: None, 
+            verifier_graph: None, 
+            entry_point: None, 
+            public_inputs: None, 
+            prover_args: None,
+            analyze_graph: None
+        }
     }
-}
 
-fn get_protocol_subgraph_api<'a, C: ArkConfig>(gs: &'a UDags<C>, args: &'a CliArgs) -> &'a UDag<C> {
-    if let Some(proto_name) = &args.subgraph {
-        gs.get_proto(&proto_name.clone().into())
-        .expect(&format!("Protocol {} not found in {}", proto_name, args.file_path.display()))
-    } else {
-        gs.protocols().first()
-        .expect(&format!("No protocols found in {}", args.file_path.display()))
+    fn get_protocol_subgraph<'a>(&self, gs: &'a UDags<C>) -> &'a UDag<C> {
+        if let Some(main_proto) = &self.cli_args.subgraph {
+            debug!("Getting protocol: {}", main_proto);
+            gs.get_proto(main_proto)
+              .expect(&format!("Protocol {} not found in {}", main_proto, self.cli_args.file_path.display()))
+        } else {
+            gs.protocols().first()
+              .expect(&format!("No protocols found in {}", self.cli_args.file_path.display()))
+        }
     }
-}
 
-/// Analysis entry point, analyze a Zippel protocol for completeness and knowledge leaks
-fn analyze(args: CliArgs) {
-    // Read zippel file
-    let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
-        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
-        process::exit(1);
-    });
-    let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    // Save to pdf if provided
-    if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
-        pdf_path.set_extension("");
-        gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
-            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+    pub fn parse(&mut self) {
+        debug!("Parsing file: {}", self.cli_args.file_path.display());
+        let zfile = fs::read_to_string(&self.cli_args.file_path).unwrap_or_else(|err| {
+            error!("Error reading file {}: \n\t{}", self.cli_args.file_path.display(), err);
+            process::exit(1);
         });
+        // At this point we cannot recover from parse errors, so throw
+        self.sized_module = Some(UModule::from_str(&zfile).unwrap());
     }
 
-    // Get protocol by name, or the first one if not provided
-    let g = get_protocol_subgraph(&gs, &args);
+    /// Will output a PDF if a path is provided, noop otherwise
+    pub fn output_pdf<'a, D: WritePdf>(&self, g: &D, msg: &'a str) {
+        if let Some(pdf_path) = &self.cli_args.pdf_path_opt {
+            let os_str = pdf_path.clone().into_os_string();
+            let mut str_path = os_str.into_string().unwrap();
+            if str_path.ends_with(".pdf") {
+                str_path = str_path.strip_suffix(".pdf").unwrap().to_string();
+            }
+            str_path = str_path + "_" + msg + ".pdf";
+            debug!("Writing {} PDF to {}", msg, str_path);
+            g.write_pdf(str_path.as_str()).unwrap_or_else(|e| {
+                error!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+                process::exit(2);
+            })
+        }
+    }
+    // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
+    pub fn compile(&mut self) {
+        self.parse();
 
-    // Propagate qualifiers in the DAG to all children
-    let g= QualifierPropagation::from_dag(&g);
+        debug!("Concretizing module type variables");
+        self.concrete_module = Some(self.sized_module.as_ref().unwrap().concretize().unwrap());
 
-    // Then propagate distribution tags (uniformity)
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+        debug!("Creating graphs from module");
+        let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
+        self.output_pdf(&gs, "symbolic_protocol_graph");
 
-    // Write to pdf
-    let pdf_path = args.pdf_path_opt.clone().unwrap_or_else(|| {
-        let mut pdf_path = args.file_path.clone();
-        pdf_path.set_extension("");
-        pdf_path
-    });
-    g.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
-        warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
+        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs)); 
 
-    // Completeness analysis first
-    let mut completeness = CompletenessAnalysis::from_input(&g);
-    if completeness.run() {
-        println!("Complete protocol: {}", g.name());
-    } else {
-        println!("Incomplete protocol: {}", g.name());
+        let mut up = UniformityPropagation::new();        
+        let g_analyze = up.from_dag(&g_analyze);
+        self.analyze_graph = Some(g_analyze);
+
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
+
+        debug!("Projecting prover");
+        // Extract protocol subgraph and rename inner nodes
+        let g = self.get_protocol_subgraph(&gs)
+            .clone()
+            .rename_inner_nodes();
+        self.output_pdf(&g, "concrete_protocol_graph");
+
+        debug!("Projecting prover");
+        let (prover, _) = g.clone().get_prover();
+        self.prover_graph = Some(prover.clone());
+        self.output_pdf(&prover, "prover_graph");
+
+        debug!("Projecting verifier");
+        let verifier = g.clone().get_verifier().unwrap();
+        self.verifier_graph = Some(verifier.clone());
+        self.output_pdf(&verifier, "verifier_graph");
+
+        debug!("Combining prover and verifier");
+        let combined = verifier.combine_dag(&prover);
+        self.output_pdf(&combined, "combined_graph");
     }
 
-    // Create an object computing the Groebner basis
-    let mut kz = KnowledgeAnalysis::from_input(&g);
-
-    // Symbolically eliminate uniform random variables to find leaks
-    let leaks= kz.run();
-}
-
-macro_rules! start_timer {
-    ($msg:expr) => {{
-        println!("{}", $msg);
-        Instant::now()
-    }};
-}
-
-pub fn test() {
-    println!("test2");
-}
-
-pub fn compile<C: ArkConfig>(args: CliArgs) -> UDags<C>{
-    println!("Compiling file: {}", args.file_path.display());
-    let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
-        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
-        process::exit(1);
-    });
-
-    println!("Parsing Zippel program:\n{}", zfile);
-    let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<C>::from_module(m));
-    gs
-}
-
-pub fn get_combined_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
-    let args = CliArgs { file_path: file_path, pdf_path_opt: pdf_path_opt, subgraph: subgraph };
-    let g_temp = get_protocol_subgraph_api(&graph, &args);
-    let g = g_temp.clone().map_transcript_nodes();
-    g
-}
-
-pub fn get_verifier_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
-    let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
-    let verifier = g.get_verifier().unwrap();
-    verifier
-}
-
-pub fn get_prover_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) -> UDag<C> {
-    let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
-    let (prover, _) = g.get_prover();
-    prover
-}
-
-pub fn schedule_graph<C: ArkConfig>(graph: UDag<C>, cost_model: AsymptoticCost<C>, limit: f64) -> TDag<C> {
-    let scheduler = LocalScheduler::new_with_system(&graph, &cost_model, limit);
-    let tdag = scheduler.schedule(graph);
-    tdag
-}
-
-pub fn run_prover<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
-    let mutex_graph = MutexGraph::new(graph);
-    let arc_graph = Arc::new(mutex_graph);
-    let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
-    result
-}
-
-pub fn run_verifier<C: ArkConfig>(graph: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
-    let mutex_graph = MutexGraph::new(graph);
-    let arc_graph = Arc::new(mutex_graph);
-    let result = MutexGraph::run_graph(arc_graph, Arc::new(inputs));
-    result
-}
-
-pub fn get_graph<C: ArkConfig>(graph: &UDags<C>, file_path: PathBuf, pdf_path_opt: Option<PathBuf>, subgraph: Option<String>) {
-    println!("Getting graph");
-    let g = get_combined_graph(graph, file_path, pdf_path_opt, subgraph);
-    g.write_pdf("new_prover_verifier").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-    println!("Printed it");
-}
-/// Runtime entry point, evaluate a Zippel program or protocol
-fn eval(args: CliArgs) {
-    println!("{:?}", args);
-    let zfile = fs::read_to_string(&args.file_path).unwrap_or_else(|err| {
-        error!("Error reading file {}: \n\t{}", args.file_path.display(), err);
-        process::exit(1);
-    });
-
-    println!("Parsing Zippel program:\n{}", zfile);
-    let m = UModule::from_str(&zfile).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-
-    // Save to pdf if provided
-    if let Some(mut pdf_path) = args.pdf_path_opt.clone() {
-        pdf_path.set_extension("");
-        gs.write_pdf(&pdf_path.into_os_string().to_str().unwrap()).unwrap_or_else(|e| {
-            println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-        });
+    //Schedule prover with default scheduler
+    pub fn default_schedule_prover(&self) -> TDag<C> {
+        let scheduler = LocalScheduler::new_with_system(self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
+        let scheduler = LocalScheduler::new_with_system(self.prover_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
+        scheduler.schedule(self.prover_graph.as_ref().unwrap().clone())
     }
 
-    let g_temp = get_protocol_subgraph(&gs, &args);
-    let g = g_temp.clone().map_transcript_nodes();
-    g.write_pdf("test_prover_verifier").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
-    // g.print_edges();
-    let verifier = g.get_verifier().unwrap();
-    let (prover, _) = g.get_prover();
-    // verifier.print_edges();
+    //Run prover, takes inputs and returns proof
+    pub fn run_prover(&mut self, prover_scheduled: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
+        let prover = self.prover_graph.as_ref().unwrap();
+        
+        // save public inputs as public_inputs
+        let prover_args = prover.args();
+        let public_args: Vec<Vid> = prover_args.clone().iter().filter(|arg| arg.is_public()).map(|arg| arg.var().unwrap()).collect();
+        let public_inputs = inputs.clone().into_iter().filter(|(vid, _)| public_args.contains(&vid)).collect::<Ctx<Vid, Value<C>>>();
+        
+        self.prover_args = Some(prover_args);
+        self.public_inputs = Some(public_inputs);
 
-    let combined = verifier.combine_dag(&prover);
+        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &prover.clone());
+        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &prover.clone());
+        let mut prover_state = ProverState::new(&prover_seperator.0, rand::rngs::OsRng);
+        let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(prover_scheduled)), Arc::new(inputs.clone()), &mut prover_state);
+        result
+    }
 
-    combined.write_pdf("prover_verifier").unwrap_or_else(|e| {
-        warn!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
-    });
+    //Schedule verifier with default scheduler
+    pub fn default_schedule_verifier(&self) -> TDag<C> {
+        let scheduler = LocalScheduler::new_with_system(&self.verifier_graph.as_ref().unwrap(), &AsymptoticCost::new(), 30.0);
+        scheduler.schedule(self.verifier_graph.as_ref().unwrap().clone())
+    }
 
-    println!("Graph produced");
 
-    let prover_args = prover.args();
-    let verifier_args = verifier.args();
+    //Run verifier, takes proof and returns result
+    pub fn run_verifier(&mut self, verifier_scheduled: TDag<C>, proof: Vec<Value<C>>) -> Vec<Value<C>> {
+        // convert proof to inputs
+        let verifier = self.verifier_graph.as_ref().unwrap();
+        let prover_args = self.prover_args.as_ref().unwrap();
 
-    let cost_model = AsymptoticCost::new();
-    let limit: f64 = 30.0;
-
-    let prover_scheduler = LocalScheduler::new_with_system(&prover, &cost_model, limit);
-    let prover_tdag = prover_scheduler.schedule(prover);
-    let prover_mutex_graph = MutexGraph::new(prover_tdag);
-    let prover_arc_graph = Arc::new(prover_mutex_graph);
-    let verifier_scheduler = LocalScheduler::new_with_system(&verifier, &cost_model, limit);
-    let verifier_tdag = verifier_scheduler.schedule(verifier);
-    let verifier_mutex_graph = MutexGraph::new(verifier_tdag);
-    let verifier_arc_graph = Arc::new(verifier_mutex_graph);
-
-    println!("Graphs created");
-
-    let n_val_const = 1024;
-    let m_val_const = 128;
-    let mut rng = test_rng();
-
-    // proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const: 4>(
-    //     // --- Public Inputs ---
-    //     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
-    //     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
-    //     public P_initial_commitment: G,   // Corresponds to 'P' in the paper
-    //     public ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
-    //     public u_aux_base: G,             // Corresponds to 'u' in the paper
-
-    //     // --- Private Inputs ---
-    //     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
-    //     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
-    // ) where
-    //         (P_initial_commitment == ((g_vec . a_vec_witness)
-    //         + (h_vec . b_vec_witness)
-    //         + u_aux_base * ip_val_claimed)) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
-    // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-
-    // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-
-    // // let u_aux_base: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    // let a_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    // let b_vec_witness: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    // // let g_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
-    // // let h_vec: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::scalar(), n_val_const));
-    // let ip_val_claimed: Value<ArkBls12_381> = a_vec_witness.clone().dot(b_vec_witness.clone());
-    // let p_initial_commitment: Value<ArkBls12_381> = g_vec.clone().dot(a_vec_witness.clone()) +
-    // h_vec.clone().dot(b_vec_witness.clone());
-
-    // // + u_aux_base.clone() * ip_val_claimed.clone();
-    // // let p_initial_commitment = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-
-    // let sum_vec: Value<ArkBls12_381> = 
-    //     Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-
-    // // TODO: extract inputs from command line
-    // let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-    //     (Vid("g_vec".to_string()), g_vec),
-    //     (Vid("h_vec".to_string()), h_vec),
-    //     (Vid("P_initial_commitment".to_string()), p_initial_commitment),
-    //     (Vid("ip_val_claimed".to_string()), ip_val_claimed),
-    //     (Vid("u_aux_base".to_string()), u_aux_base),
-    //     (Vid("a_vec_witness".to_string()), a_vec_witness),
-    //     (Vid("b_vec_witness".to_string()), b_vec_witness),
-    //     (Vid("sum_vec".to_string()), sum_vec),
-    //     (Vid("val".to_string()),
-    //         Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const))),
-    // ]);
+       // convert proof to inputs 
+       let verifier_args = verifier.args();
+       debug!("Verifier args: {:?}", verifier_args);
+       debug!("Verifier args: {:?}", verifier_args);
+       let pg_additional_args = verifier_args.iter()
+            .filter(|arg| !prover_args.contains(arg))
+            .zip(proof.iter())
+            .map(|(arg, val)| match &arg.reference {
+                Ref::Node(node) => panic!("Node reference not supported"),
+                Ref::Var(v, _) => (v.clone(), val.clone()),
+            })
+            .collect::<Ctx<Vid, Value<C>>>();
+        let inputs = self.public_inputs.as_ref().unwrap().clone();
+        let mut inputs = inputs.clone();
+        inputs.append(&pg_additional_args);
+       
+        
+        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &verifier.clone());
+        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.cli_args.file_path.display().to_string(), &verifier.clone());
+        let mut verifier_state = ProverState::new(&verifier_seperator.0, rand::rngs::OsRng);
+        let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
+        result
+    }
     
-    // (private p: Uni<F, N>, public z: F, public y: F, public s: G2, public ss: [G1; N],
-    // public g: G1, public h: G2)
-    // where p(z) == y && ss[0] == g && [(pair(ss[i], h) == pair(ss[i-1], s)) for i in 1..N]
+   pub fn analyze_completeness(&self) {
+        let g_analyze = self.analyze_graph.as_ref().unwrap();
+        let mut completeness = CompletenessAnalysis::from_input(g_analyze);
+        if completeness.run() {
+            println!("Complete protocol: {}", g_analyze.name());
+        } else {
+            println!("Incomplete protocol: {}", g_analyze.name());
+        }
+    }
 
-
-
-        let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-        let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
-        let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-        // let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-        let s_temp: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
-        
-
-        let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(16));
-
-        let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-        let ss: Value<ArkBls12_381> = Value::Vec((0..16).map(|i| {
-            // println!("i: {}", i);
-            // println!("test: {}", s.clone() ^ Value::Index(i));
-            // s.clone() ^ Value::Index(i)
-            g.clone() * (tau.clone() ^ Value::Index(i))
-        }).collect());
-
-        println!("ss: {}", ss);
-        let s = s_temp.clone() * tau.clone();
-
-        let z_val: Value<ArkBls12_381> = Value::Vec((0..16).map(|i| {
-            z.clone() ^ Value::Index(i)
-        }).collect());
-        
-        let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
-        
-        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-                (Vid("p".to_string()), p),
-                (Vid("g".to_string()), g),
-                (Vid("h".to_string()), h),
-                (Vid("z".to_string()), z),
-                (Vid("y".to_string()), y),
-                (Vid("s".to_string()), s),
-                (Vid("ss".to_string()), ss),
-            ]);
-
-
-    let prover_start = start_timer!("Running the prover");
-    let prover_result =
-        MutexGraph::run_graph(prover_arc_graph, Arc::new(inputs.clone()));
-    let duration_prover = prover_start.elapsed();
-    println!("Time taken for prover: {:?} for size {} with limit {}", duration_prover, n_val_const, limit);
-    println!("");
-    println!("");
-    println!("");
-    println!("");
-
-    let pg_additional_args = verifier_args.iter()
-        .filter(|arg| !prover_args.contains(arg))
-        .zip(prover_result.iter())
-        .map(|(arg, val)| match &arg.reference {
-            Ref::Node(node) => panic!("Node reference not supported"),
-            Ref::Var(v, _) => (v.clone(), val.clone()),
-        })
-        .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    inputs.append(&pg_additional_args);
-
-    let start = start_timer!("Running the verifier");
-    let verifier_result = MutexGraph::run_graph(verifier_arc_graph, Arc::new(inputs));
-    println!("Verifier result: {:?}", verifier_result);
-    let duration = start.elapsed();
-    println!("Time taken: {:?} for size {} with limit {}", duration, n_val_const, limit);
+    pub fn analyze_knowledge(&self) {
+        let g_analyze = self.analyze_graph.as_ref().unwrap();
+        let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
+        let leaks = knowledge.run();
+        println!("Leaks: {:?}", leaks);
+    }
 }
-
-
-// KZG starting point
-    // // (private p: Uni<F, 10>, private z: F, public y: F, private s: F, private ss: [F; N],
-    // //     public g: G1, public h: G2)
-    // //     where p(z) == y && [(ss[i] == s^i) for i in 0..N] {
-    //     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-    //     let h: Value<ArkBls12_381> = Value::G2(<ArkBls12_381 as ArkConfig>::G2::rand(&mut rng));
-    //     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    //     let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    //     let s: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-
-    //     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(10));
-
-    //     let ss: Value<ArkBls12_381> = Value::Vec((0..11).map(|i| {
-    //         s.clone() ^ Value::Index(i)
-    //     }).collect());
-
-    //     inputs.insert(Vid("p".to_string()), p);
-    //     inputs.insert(Vid("g".to_string()), g);
-    //     inputs.insert(Vid("h".to_string()), h);
-    //     inputs.insert(Vid("z".to_string()), z);
-    //     inputs.insert(Vid("y".to_string()), y);
-    //     inputs.insert(Vid("s".to_string()), s);
-    //     inputs.insert(Vid("ss".to_string()), ss);
-
-
-//     let n_val_const = 4;
-//     let mut rng = test_rng();
-
-
-//     let g_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
-//     let h_vec: Value<ArkBls12_381> = Value::zero(&ATyp::vec(&ATyp::g1(), n_val_const));
-
-//     let p_initial_commitment: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
-//     let ip_val_claimed: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-//     let u_aux_base: Value<ArkBls12_381> = Value::zero(&ATyp::g1());
-
-//     let a_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-//     let b_vec_witness = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-
-//     inputs.insert(Vid("g_vec".to_string()), g_vec);
-//     inputs.insert(Vid("h_vec".to_string()), h_vec);
-//     inputs.insert(Vid("P_initial_commitment".to_string()), p_initial_commitment);
-//     inputs.insert(Vid("ip_val_claimed".to_string()), ip_val_claimed);
-//     inputs.insert(Vid("u_aux_base".to_string()), u_aux_base);
-//     inputs.insert(Vid("a_vec_witness".to_string()), a_vec_witness);
-//     inputs.insert(Vid("b_vec_witness".to_string()), b_vec_witness);
-
-// Schnorr working
-// Accept
-//     let g: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-//  // let h: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)); un comment to break
-//     let x: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-//     let h = g.clone() * x.clone(); // comment to break
-
-//     inputs.insert(Vid("x".to_string()), x);
-//     inputs.insert(Vid("g".to_string()), g);
-//     inputs.insert(Vid("h".to_string()), h);
 
 fn benchmark(args: BenchmarkArgs) {
-    // // You can call your benchmark function directly from anywhere
+    // // You can call your benchmark function directly from anywhere 
     let criterion = Criterion::default().with_output_color(true);
     let benchmarker = Benchmarker::with_criterion(criterion);
     // benchmarker.run_benches();

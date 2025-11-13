@@ -28,6 +28,7 @@ zeroize = "1.8.1"
 thiserror = "2.0.11"
 share = { path = "../share" }
 lang = { path = "../lang" }
+serde = "1.0.219"
 
 [dev-dependencies]
 ark-std = "0.5.0"

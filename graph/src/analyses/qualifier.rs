@@ -20,8 +20,19 @@ impl QualifierPropagation {
                 self.quals.get(&r.node()).map(|v| v.clone()),
             GOp::Ram(box a, _) => self.from_op(a),
             GOp::Poly(box a) => self.from_op(a),
+            GOp::Mle(box a) => self.from_op(a),
             GOp::Coef(box a) => self.from_op(a),
             GOp::Eval(box p, box x) => {
+                let qual_p = self.from_op(p)?;
+                let qual_x = self.from_op(x)?;
+                Some(qual_p.join(&qual_x))
+            },
+            GOp::FixVar(box p, box x) => {
+                let qual_p = self.from_op(p)?;
+                let qual_x = self.from_op(x)?;
+                Some(qual_p.join(&qual_x))
+            },
+            GOp::EvalMle(box p, box x) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))

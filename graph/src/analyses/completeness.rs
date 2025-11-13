@@ -35,7 +35,6 @@ impl<C: ArkConfig> CompletenessAnalysis<C> {
     }
 
     pub fn run(&mut self) -> bool {
-
         // Compute the Groebner bases
         self.prover.run();
         self.verifier.run();

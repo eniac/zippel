@@ -121,6 +121,10 @@ impl<K, V> Ctx<K, V> {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
+    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y> where FF: Fn(&K, &V) -> Option<Y> {
+        self.0.iter().find_map(|(k, v)| f(k, v))
+    }
+
     pub fn first(&self) -> Option<(&K, &V)> {
         self.0.iter().next()
     }
@@ -150,14 +154,14 @@ impl<K, V> Ctx<K, V> {
     pub fn insert_with<E, FF>(&mut self, k: K, v: V, f: &FF) -> Result<(), E>
     where
         K: Ord + Clone,
-        V: Clone,
+        V: Clone + Eq,
         FF: Fn(&K,&V,&V) -> Result<K, E>
     {
         match self.0.get(&k) {
             Some(v1) => {
                 let k = f(&k, &v, &v1)?;
                 self.insert_with(k, v, f)
-            }
+            },
             None => {
                 self.0.insert(k, v);
                 Ok(())

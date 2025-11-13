@@ -223,7 +223,6 @@ fn groebner_ex3() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     assert!(kz.run());    
-
 }
 
 #[test]
