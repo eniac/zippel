@@ -55,12 +55,6 @@ pub enum TypeError {
     #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n\t{0}, {1} |- mle {2}")]
     Mle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("FixVarError: Arguments to [fixVar] must be a multilinear extension and a vector of scalars:\n\t{0}, {1} |- fixVar {2} {3}")]
-    FixVar(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
-
-    #[error("EvalMleError: Arguments to [evalMle] must be a multilinear extension and a vector of scalars:\n\t{0}, {1} |- evalMle {2} {3}")]
-    EvalMle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
-
     #[error("MleError: Must apply MLE to a scalar or vector of scalars:\n\t{0}, {1} |- {2} ( {3} : {4} )")]
     MleApp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
@@ -158,12 +152,6 @@ impl<'a> TypeError {
     }
     pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
-    }
-    pub fn fixVar(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
-        TypeError::FixVar(kctx.clone(), vctx.clone(), p.clone(), x.clone())
-    }
-    pub fn evalMle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
-        TypeError::EvalMle(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn mle_app(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, t: &CTyps) -> Self {
         TypeError::MleApp(kctx.clone(), vctx.clone(), id.clone(), e.clone(), t.clone())
@@ -319,36 +307,6 @@ impl Typeable for CExp {
                     _ => Err(TypeError::mle(kctx, &vctx, self))
                 }
             },
-
-            CExp::FixVar(box p, box x) => {
-                let p_typ = p.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let x_typ = x.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (p_typ, x_typ) {
-                    (CTyp::Mle(i,n), CTyp::Vec(b, _)) => {
-                        let i = b.to_scalar(kctx).ok_or(TypeError::fixVar(kctx, &vctx, p, x))?;
-                        Ok(CTyp::Mle(i, n))
-                    }
-                    _ => Err(TypeError::fixVar(kctx, &vctx, p, x))
-                }
-            }
-
-            CExp::EvalMle(box p, box x) => {
-                let p_typ = p.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let x_typ = x.infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (p_typ, x_typ) {
-                    (CTyp::Mle(i, n), CTyp::Vec(b, _)) => {
-                        let i = b.to_scalar(kctx).ok_or(TypeError::evalMle(kctx, &vctx, p, x))?;
-                        Ok(*b)
-                    }
-                    _ => Err(TypeError::evalMle(kctx, &vctx, p, x))
-                }
-            }
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
             CExp::Vec(v) => {

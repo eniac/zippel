@@ -57,12 +57,6 @@ pub enum Op<C: ArkConfig, R> {
 
     /// Multilinear extension
     Mle(Box<Op<C, R>>),
-    
-    /// Fix variables of a multilinear
-    FixVar(Box<Op<C, R>>, Box<Op<C, R>>),
-
-    /// Evaluate a multilinear expression at a point
-    EvalMle(Box<Op<C, R>>, Box<Op<C, R>>),
 
     /// Coefficients of a polynomial
     Coef(Box<Op<C, R>>),
@@ -125,8 +119,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Eval(_, _) => 22,
             Op::Coef(_) => 23,
             Op::Mle(_) => 24,
-            Op::FixVar(_, _) => 25,
-            Op::EvalMle(_, _) => 26,
         }
     }
 
@@ -162,8 +154,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Eval(box p, box x) => x.typ(),
             Op::Coef(box op) => op.typ(),
             Op::Mle(box op) => op.typ(),
-            Op::FixVar(box p, box x) => p.typ(),
-            Op::EvalMle(box p, box x) => x.typ(),
         }
     }
 
@@ -482,14 +472,6 @@ impl<C: ArkConfig, R> Op<C, R> {
     pub fn mle(op: Self) -> Op<C, R> {
         Op::Mle(Box::new(op))
     }
-
-    pub fn fix_var(p: Self, x: Self) -> Op<C, R> {
-        Op::FixVar(Box::new(p), Box::new(x))
-    }
-
-    pub fn eval_mle(p: Self, x: Self) -> Op<C, R> {
-        Op::EvalMle(Box::new(p), Box::new(x))
-    }
     
     pub fn ifft(op: Self) -> Op<C, R> {
         match op {
@@ -575,8 +557,6 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Ref(n, _) => vec![n.clone()],
             Op::Bin(_, box a, box b, _)
             | Op::Eval(box a, box b)
-            | Op::FixVar(box a, box b )
-            | Op::EvalMle(box a, box b)
             | Op::Pair(box a, box b, _)
             | Op::Ram(box a, box b) =>
                 a.references().into_iter()
@@ -628,8 +608,6 @@ impl<C: ArkConfig> GOp<C> {
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
             Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
-            Op::FixVar(box a, box b) => Op::FixVar(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
-            Op::EvalMle(box a, box b) => Op::EvalMle(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
             Op::Poly(box op) => Op::Poly(Box::new(op.map_node_indices(f))),
             Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
             Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
@@ -660,8 +638,6 @@ impl<C: ArkConfig> GOp<C> {
             Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
             Op::Eval(box p, box x) => Op::Eval(Box::new(p.map_refs(f)), Box::new(x.map_refs(f))),
             Op::Mle(box op) => Op::Mle(Box::new(op.map_refs(f))),
-            Op::FixVar(box p, box x) => Op::FixVar(Box::new(p.map_refs(f)), Box::new(x.map_refs(f))),
-            Op::EvalMle(box p, box x) => Op::EvalMle(Box::new(p.map_refs(f)), Box::new(x.map_refs(f)))
         }
     }
 
@@ -917,20 +893,6 @@ where
             Op::Mle(box v) => allocator.concat([
                 allocator.text("(mle "),
                 v.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::FixVar(box p, box x) => allocator.concat([
-                allocator.text("(fixVar "),
-                p.pretty(allocator),
-                allocator.text(", "),
-                x.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::EvalMle(box p, box x) => allocator.concat([
-                allocator.text("(evalMle "),
-                p.pretty(allocator),
-                allocator.text(", "),
-                x.pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Pair(box a, box b, _) => allocator.concat([

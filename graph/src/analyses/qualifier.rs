@@ -27,16 +27,6 @@ impl QualifierPropagation {
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            GOp::FixVar(box p, box x) => {
-                let qual_p = self.from_op(p)?;
-                let qual_x = self.from_op(x)?;
-                Some(qual_p.join(&qual_x))
-            },
-            GOp::EvalMle(box p, box x) => {
-                let qual_p = self.from_op(p)?;
-                let qual_x = self.from_op(x)?;
-                Some(qual_p.join(&qual_x))
-            },
             GOp::Coef(box a) => self.from_op(a),
             GOp::Ifft(box a) => self.from_op(a),
             GOp::Fft(box a) => self.from_op(a),

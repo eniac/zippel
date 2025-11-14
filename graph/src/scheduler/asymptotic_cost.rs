@@ -174,8 +174,6 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
             Op::Mle(box op) => cost += 1.0,
             Op::Eval(box p, box x) => cost += 1.0,
             Op::Coef(box op) => cost += 1.0,
-            Op::FixVar(box p, box x) => cost += 1.0,
-            Op::EvalMle(box p, box x) => cost += 1.0,
         };
         cost.into()
     }
