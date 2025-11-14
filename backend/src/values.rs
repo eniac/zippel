@@ -2281,55 +2281,8 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    pub fn value_eval_mle(&self, other: Value<C>) -> Value<C> {
-        match self {
-            Value::Mle(mle) => {
-                match other {
-                    Value::VecScalar(v) => {
-                        let mut vals = vec![];
-                        for i in v.iter() {
-                            vals.push(*i);
-                        }
-                        Value::Scalar(mle.evaluate(&vals))
-                    }
-                    Value::VecIndex(v) => {
-                        let mut vals = vec![];
-                        for i in v.iter() {
-                            vals.push(C::FOps::from_usize(*i));
-                        }
-                        Value::Scalar(mle.evaluate(&vals))
-                    }
-                    _ => panic!("Expected vec scalar or vec index, found {}", other),
-                }
-            }
-            _ => panic!("Expected mle, found {}", self),
-        }
-    }
+
     
-    pub fn value_fix_var(&self, other: Value<C>) -> Value<C> {
-        match self {
-            Value::Mle(mle) => {
-                match other {
-                    Value::VecScalar(v) => {
-                        let mut vals = vec![];
-                        for i in v.iter() {
-                            vals.push(*i);
-                        }
-                        Value::Mle(mle.fix_variables(&vals))
-                    },
-                    Value::VecIndex(v) => {
-                        let mut vals = vec![];
-                        for i in v.iter() {
-                            vals.push(C::FOps::from_usize(*i));
-                        }
-                        Value::Mle(mle.fix_variables(&vals))
-                    },
-                    _ => panic!("Expected vec scalar or vec index, found {}", other),
-                }
-            }
-            _ => panic!("Expected mle, found {}", self),
-        }
-    }
 
     pub fn value_mle(&self) -> Self {
         match self {

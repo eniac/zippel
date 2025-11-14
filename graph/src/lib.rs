@@ -852,24 +852,6 @@ impl<C: ArkConfig> UDag<C> {
                 Ok(eval_op)
             },
 
-            CExp::FixVar(box p, box x) => {
-                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
-
-                let fix_var_op = GOp::fix_var(vp, vx);
-                
-                Ok(fix_var_op)
-            },
-
-            CExp::EvalMle(box p, box x) => {
-                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
-
-                let eval_mle_op = GOp::eval_mle(vp, vx);
-                
-                Ok(eval_mle_op)
-            },
-
             CExp::Poly(box v) => {
                 let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
 
