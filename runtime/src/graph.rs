@@ -1,6 +1,3 @@
-#![feature(associated_type_defaults)]
-#![feature(trait_alias)]
-#![feature(box_patterns)]
 use petgraph::graph::NodeIndex;
 use spongefish::{ProverState, DuplexSpongeInterface, BytesToUnitSerialize};
 use std::sync::{Arc, Mutex};
@@ -16,14 +13,14 @@ use share::Ctx;
 
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
-    return_value: Mutex<Option<Value<C>>>, 
+    return_value: Mutex<Option<Value<C>>>,
     finished_requirements: Mutex<Vec<NodeIndex>>
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
     pub fn new(thread_num: usize) -> Self {
         RuntimeInformation {
-            thread_num, return_value: Mutex::new(None), finished_requirements: Mutex::new(Vec::new()) 
+            thread_num, return_value: Mutex::new(None), finished_requirements: Mutex::new(Vec::new())
         }
     }
 }
@@ -49,12 +46,12 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
         }
     }
-    
+
     pub fn get_value(&self, r: graph::Ref, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         let node = r.node();
 
         match &self.mutex_graph[node] {
-            Node::Op(_, annotation) 
+            Node::Op(_, annotation)
             | Node::Transcr(_, annotation) => {
                 let return_val = annotation.return_value.lock().unwrap();
                 match &*return_val {
@@ -76,8 +73,8 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Value(val) => {
                 return val.clone();
             },
-            Op::Ref(r, _ATyp) => {
-               return self.get_value(r.clone(), inputs); 
+            Op::Ref(r, _atyp) => {
+               return self.get_value(r.clone(), inputs);
             },
             Op::Vec(vec) => {
                 let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
@@ -87,7 +84,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let inputs_index_val_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(v, inputs_v_clone);
-                let index_val_value: Value<C> = self.handle_op(index_val, inputs_index_val_clone); 
+                let index_val_value: Value<C> = self.handle_op(index_val, inputs_index_val_clone);
                 return v_val.ram(index_val_value);
             }
             Op::Check(box a) => {
@@ -132,12 +129,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                     BinOp::And => {
                         return a_val & b_val;
                     }
-               } 
+               }
             },
             Op::Random(typ, _) => {
                 let mut rng = ThreadRng::default();
                 return Value::random(&mut rng, typ);
- 
+
             },
             Op::Challenge(typ, _) => {
                 let mut rng = ThreadRng::default();
@@ -160,7 +157,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                let b_val: Value<C> = self.handle_op(b, inputs_b_clone); 
+                let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
                 return a_val.pair(b_val);
             },
             Op::Poly(box a) => {
@@ -189,19 +186,19 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
 
         let node = &self.mutex_graph[node_curr];
-    
+
         match node {
             Node::Op(operation, annotation) => {
                 let return_val = self.handle_op(operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
-                *return_value_lock = Some(return_val);  
+                *return_value_lock = Some(return_val);
             },
             Node::Transcr(operation, annotation)  => {
                 let return_val = self.handle_op(operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
-                *return_value_lock = Some(return_val);  
+                *return_value_lock = Some(return_val);
             },
-            Node:: Inp(_, _) => { 
+            Node:: Inp(_, _) => {
             },
             Node::Rel(_, _) => {
             }
@@ -257,7 +254,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                 GOp::Challenge(_c_typ, _) => {
                                     let return_val = Value::<C>::challenge(prover_state);
                                     let mut return_value_lock = annotation.return_value.lock().unwrap();
-                                    *return_value_lock = Some(return_val); 
+                                    *return_value_lock = Some(return_val);
                                     challenge_node = true;
                                 }
                                 _ => {}
@@ -272,7 +269,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             input_node = true;
                         },
                         Node::Rel(_, _) => {}
-                    } 
+                    }
 
                     if !challenge_node && !input_node {
 
@@ -316,7 +313,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             prover_state.add_bytes(&serialized_return_val).unwrap();
                         },
                         Node::Inp(_, _) | Node::Rel(_, _) => {
-                            
+
                         }
                     }
 
@@ -348,16 +345,16 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
                     for dependent in fix_finished_requirements {
                         let node = &g.mutex_graph[dependent];
-                
+
                         match node {
                             Node::Op(_, annotation) | Node::Transcr(_, annotation)  => {
                                 let mut finished_req = annotation.finished_requirements.lock().unwrap();
                                 finished_req.push(node_index);
                             },
                             Node:: Inp(_, _) | Node::Rel(_, _) => {
-                
+
                             }
-                        } 
+                        }
                     }
                 }
             }
@@ -388,7 +385,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                     panic!("Not possible");
                                 }
                             }
-                            
+
                         }
                     },
                     Node::Inp(_, _) | Node::Rel(_, _) => {

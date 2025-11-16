@@ -70,7 +70,7 @@ impl UniformityPropagation {
             GOp::Poly(box a) => self.from_op(a),
             GOp::Coef(box op) => self.from_op(op),
             GOp::Eval(box p, box x) => {
-                let dist_p = self.from_op(p)?;
+                let _dist_p = self.from_op(p)?;
                 let dist_x = self.from_op(x)?;
                 if self.is_independent(p, x) {
                     Some(dist_x.mul(&dist_x.inv()))

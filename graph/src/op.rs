@@ -151,7 +151,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Fft(box op) => op.typ(),
             Op::Check(box op) => op.typ(),
             Op::Poly(box op) => op.typ(),
-            Op::Eval(box p, box x) => x.typ(),
+            Op::Eval(box _p, box x) => x.typ(),
             Op::Coef(box op) => op.typ(),
             Op::Mle(box op) => op.typ(),
         }

@@ -20,7 +20,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
 impl<C: ArkConfig> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let spec = dag.get_relation().unwrap();
-        let (prover, node_map) = dag.get_prover();
+        let (prover, _node_map) = dag.get_prover();
 
         // To show completeness, we need to show
         // R_pre \cup R_prover \subseteq R_impl
