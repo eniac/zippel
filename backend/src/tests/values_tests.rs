@@ -92,6 +92,132 @@ fn coef_eval_test() {
     assert_deq!(&c, &a);
 }
 
+// Equivalence relation tests for value_equ
+#[test]
+fn test_value_eq_reflexivity() {
+    // For all values x, x == x (reflexivity)
+    let mut rng = test_rng();
+    
+    // Scalar
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::scalar());
+    assert_deq!(&x, &x);
+    
+    // Group1
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    assert_deq!(&x, &x);
+    
+    // Group2
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
+    assert_deq!(&x, &x);
+    
+    // GT
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::gt());
+    assert_deq!(&x, &x);
+    
+    // Vec<Scalar>
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(10));
+    assert_deq!(&x, &x);
+    
+    // Vec<Index>
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
+    assert_deq!(&x, &x);
+}
+
+#[test]
+fn test_value_eq_symmetry() {
+    // For all values x, y: if x == y then y == x (symmetry)
+    let mut rng = test_rng();
+    
+    // Scalar
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::scalar());
+    let y = x.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &x);
+    
+    // Group1
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    let y = x.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &x);
+    
+    // Group2
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
+    let y = x.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &x);
+    
+    // GT
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::gt());
+    let y = x.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &x);
+}
+
+#[test]
+fn test_value_eq_transitivity() {
+    // For all values x, y, z: if x == y and y == z then x == z (transitivity)
+    let mut rng = test_rng();
+    
+    // Scalar
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::scalar());
+    let y = x.clone();
+    let z = y.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &z);
+    assert_deq!(&x, &z);
+    
+    // Group1
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    let y = x.clone();
+    let z = y.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &z);
+    assert_deq!(&x, &z);
+    
+    // Group2
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
+    let y = x.clone();
+    let z = y.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &z);
+    assert_deq!(&x, &z);
+    
+    // GT
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::gt());
+    let y = x.clone();
+    let z = y.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &z);
+    assert_deq!(&x, &z);
+    
+    // Vec<Scalar>
+    let x = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(5));
+    let y = x.clone();
+    let z = y.clone();
+    assert_deq!(&x, &y);
+    assert_deq!(&y, &z);
+    assert_deq!(&x, &z);
+}
+
+#[test]
+fn test_value_eq_normalization() {
+    // Test that cloned values are always equal (tests internal normalization)
+    let mut rng = test_rng();
+    
+    // Test with random points - clones should be equal
+    let g1_random = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    let g1_clone = g1_random.clone();
+    assert_deq!(&g1_random, &g1_clone);
+    
+    let g2_random = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
+    let g2_clone = g2_random.clone();
+    assert_deq!(&g2_random, &g2_clone);
+    
+    let gt_random = Value::<TestConfig>::random(&mut rng, &ATyp::gt());
+    let gt_clone = gt_random.clone();
+    assert_deq!(&gt_random, &gt_clone);
+}
+
 #[test]
 fn pairing_test() {
     let mut rng = test_rng();
