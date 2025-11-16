@@ -271,7 +271,7 @@ impl Scheduler for GurobiScheduler {
 }
 
 #[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use share::{Ctx, unwrap};
+#[cfg(test)] use share::unwrap;
 #[cfg(test)] use crate::UDags;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::scheduler::AsymptoticCost;

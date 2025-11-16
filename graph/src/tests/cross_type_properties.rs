@@ -10,7 +10,7 @@ mod scalar_g1_properties {
     use crate::{Op};
     use backend::{ATyp, Value};
     use lang::id::Vid;
-    use ark_std::UniformRand;
+    
 
     type C = TestConfig;
 

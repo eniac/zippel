@@ -1259,8 +1259,6 @@ impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::analyses::QualifierPropagation;
-#[cfg(test)] use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
 #[test]
 fn graph_sum() {
     let ex = r#"

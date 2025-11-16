@@ -5,9 +5,9 @@
 
 #[cfg(test)]
 mod op_construction_tests {
-    use crate::{Op, GOp};
+    use crate::Op;
     use crate::tests::test_helpers::*;
-    use backend::{ATyp, Value, ArkConfig};
+    use backend::{ATyp, Value};
     use lang::typ::CRange;
     
     type C = TestConfig;
@@ -175,8 +175,6 @@ mod op_construction_tests {
     }
     
     #[test]
-    
-    #[test]
     fn test_equ_both_values() {
         let v1 = Op::<C, ()>::value(&scalar::<C>(42));
         let v2 = Op::<C, ()>::value(&scalar::<C>(42));
@@ -337,8 +335,6 @@ mod op_construction_tests {
     }
     
     #[test]
-    
-    #[test]
     fn test_index_construction() {
         let index_op = Op::<C, ()>::index(42);
         match index_op {
@@ -346,10 +342,6 @@ mod op_construction_tests {
             _ => panic!("Expected Index value"),
         }
     }
-    
-    #[test]
-    
-    #[test]
     
     #[test]
     fn test_pow_construction() {

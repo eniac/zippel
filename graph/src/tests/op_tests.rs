@@ -7,7 +7,7 @@
 mod op_construction {
     use crate::tests::test_helpers::*;
     use crate::Op;
-    use backend::{ATyp, ABase, Value};
+    use backend::{ATyp, Value};
     use lang::ast::BinOp;
 
     type C = TestConfig;
@@ -445,7 +445,7 @@ mod op_construction {
 mod op_integration {
     use crate::tests::test_helpers::*;
     use crate::Op;
-    use backend::{ATyp, ABase, Value};
+    use backend::{ATyp, Value};
 
     type C = TestConfig;
 

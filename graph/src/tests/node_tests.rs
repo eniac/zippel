@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod node_tests {
-    use crate::{Node, GOp, Op, Ref};
+    use crate::{Node, Op, Ref};
     use backend::{ArkBls12_381 as C, ATyp};
     use crate::tests::test_helpers::*;
     use lang::id::Vid;
@@ -51,7 +51,7 @@ mod node_tests {
     #[test]
     fn test_node_is_verifier_check_true() {
         let op = Op::<C, Ref>::check(Op::value(&scalar::<C>(1)));
-        let node = Node::<C, Nothing>::Rel(Vid::from("check"), vec![]);
+        let _node = Node::<C, Nothing>::Rel(Vid::from("check"), vec![]);
         // Note: is_verifier_check requires Op node with Check op
         let check_node = Node::Op(op, Nothing);
         assert!(check_node.is_verifier_check());
@@ -85,8 +85,6 @@ mod node_tests {
             _ => panic!("Should extract Op successfully"),
         }
     }
-    
-    #[test]
     
     #[test]
     fn test_node_op_extraction_none() {
