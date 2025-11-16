@@ -41,7 +41,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let sum_vec: Value<ArkBls12_381> = 
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
 
-    let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
         (Vid("P_initial_commitment".to_string()), p_initial_commitment),

@@ -39,7 +39,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
     let h: Value<ArkBls12_381> = Value::G2(h_input.clone());
     
-    let y: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let s_temp: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
     
 
@@ -53,10 +52,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     // let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau = Value::<ArkBls12_381>::Scalar(tau_input.clone());
 
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|i| {
-        // println!("i: {}", i);
-        // println!("test: {}", s.clone() ^ Value::Index(i));
-        // s.clone() ^ Value::Index(i)
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| {
         g_input.clone()
     }).collect());
 
@@ -65,7 +61,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     }).collect());
 
     let ss = ss_g.clone() * ss_index.clone();
-    let s = s_temp.clone() * tau.clone();
+    let _s = s_temp.clone() * tau.clone();
 
     let z_val: Value<ArkBls12_381> = Value::Vec((0..n_size).map(|i| {
         z.clone() ^ Value::Index(i)
@@ -75,7 +71,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     // let y =  Value::<ArBls12_381>::random(&mut rng, &ATyp::scalar());
     let h_val: Value<ArkBls12_381> = Value::G2(h_input.clone() * tau_input.clone());
 
-    let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
             (Vid("p".to_string()), p),
             (Vid("g".to_string()), g),
             (Vid("h".to_string()), h),
