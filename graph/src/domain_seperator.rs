@@ -5,10 +5,8 @@ use spongefish::{
 };
 use crate::Dag;
 
-#[cfg(test)] use ark_ec::CurveGroup;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use petgraph::graph::Node;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use crate::UDags;
 #[cfg(test)] use spongefish::DefaultHash;

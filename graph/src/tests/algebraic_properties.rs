@@ -11,11 +11,11 @@
 #[cfg(test)]
 mod scalar_field_properties {
     use crate::tests::test_helpers::*;
-    use crate::{Op, GOp};
-    use backend::{ATyp, ABase};
-    use lang::ast::BinOp;
-    use lang::id::Vid;
-    use share::Ctx;
+    use crate::Op;
+    use backend::ATyp;
+    
+    
+    
 
     type C = TestConfig;
 
@@ -754,7 +754,7 @@ mod scalar_field_properties {
 mod vector_properties {
     use super::super::test_helpers::*;
     use crate::Op;
-    use backend::{ATyp, ABase, Value};
+    use backend::{ATyp, Value};
 
     type C = TestConfig;
 
@@ -985,7 +985,7 @@ mod vector_properties {
 mod complex_properties {
     use super::super::test_helpers::*;
     use crate::Op;
-    use backend::{ATyp, ABase};
+    use backend::ATyp;
 
     type C = TestConfig;
 

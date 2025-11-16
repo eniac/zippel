@@ -3,8 +3,8 @@
 /// This module provides utilities for creating and executing graphs
 /// to test algebraic properties and semantic correctness.
 
-use crate::{Dag, UDag, Node, Op, GOp, Ref, PRef};
-use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ABase, ArkScalarOps};
+use crate::{UDag, Node, Op, GOp, Ref, PRef};
+use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
 use lang::id::Vid;
 use lang::typ::{Nothing, Qualifier, Distribution};
 use petgraph::graph::NodeIndex;
@@ -61,21 +61,6 @@ impl<C: ArkConfig> GraphBuilder<C> {
     /// Build and return the DAG
     pub fn build(self) -> UDag<C> {
         self.dag
-    }
-
-    /// Get reference to the input node
-    pub fn input_node(&self) -> NodeIndex {
-        self.input_node
-    }
-
-    /// Create a reference to a value
-    pub fn value(&mut self, v: Value<C>) -> GOp<C> {
-        Op::Value(v)
-    }
-
-    /// Create a reference operation
-    pub fn ref_op(&self, r: Ref, typ: ATyp) -> GOp<C> {
-        Op::Ref(r, typ)
     }
 }
 
@@ -190,14 +175,6 @@ pub fn one_scalar<C: ArkConfig>() -> Value<C> {
     Value::Scalar(C::FOps::one())
 }
 
-/// Create a vector of scalars
-pub fn scalar_vec<C: ArkConfig>(values: Vec<u64>) -> Value<C> {
-    let scalars: Vec<C::F> = values.into_iter()
-        .map(|n| C::FOps::from_usize(n as usize))
-        .collect();
-    Value::VecScalar(scalars)
-}
-
 /// Create test inputs context
 pub fn test_inputs<C: ArkConfig>() -> Ctx<Vid, Value<C>> {
     Ctx::new()
@@ -245,8 +222,8 @@ mod tests {
     #[test]
     fn test_graph_builder_basic() {
         let mut builder = GraphBuilder::<TestConfig>::new();
-        let a_ref = builder.add_input("a", ATyp::scalar());
-        let b_ref = builder.add_input("b", ATyp::scalar());
+        let _a_ref = builder.add_input("a", ATyp::scalar());
+        let _b_ref = builder.add_input("b", ATyp::scalar());
         
         let dag = builder.build();
         assert_eq!(dag.node_count(), 1); // Only input node
