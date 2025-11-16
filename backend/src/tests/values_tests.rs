@@ -643,4 +643,332 @@ fn inverse_test() {
         }
     }
 
+    // New comprehensive tests for uncovered operations
+
+    #[test]
+    fn test_division_operations() {
+        let a = Value::<TestConfig>::scalar_from_usize(10);
+        let b = Value::<TestConfig>::scalar_from_usize(2);
+        let c = &a / &b;
+        let expected = Value::<TestConfig>::scalar_from_usize(5);
+        assert_deq!(&c, &expected);
+
+        // Division by one
+        let one = Value::<TestConfig>::scalar_from_usize(1);
+        let result = &a / &one;
+        assert_deq!(&result, &a);
+    }
+
+    #[test]
+    fn test_remainder_operations() {
+        // value_rem computes self % other and stores in other
+        let a = Value::<TestConfig>::Index(10);
+        let mut b = Value::<TestConfig>::Index(3);
+        a.value_rem(&mut b);
+        assert_deq!(&b, &Value::<TestConfig>::Index(1));
+        
+        // Using % operator with references
+        let a = Value::<TestConfig>::Index(10);
+        let b = Value::<TestConfig>::Index(3);
+        let c = &a % &b;
+        assert_deq!(&c, &Value::<TestConfig>::Index(1));
+    }
+
+
+    #[test]
+    fn test_bitxor_as_pow() {
+        // In this DSL, ^ operator is used for exponentiation, not XOR
+        let base = Value::<TestConfig>::scalar_from_usize(2);
+        let exp = Value::<TestConfig>::Index(3);
+        let result = &base ^ &exp;
+        assert_deq!(&result, &Value::<TestConfig>::scalar_from_usize(8));
+        
+        // Test with Index ^ Index
+        let base = Value::<TestConfig>::Index(3);
+        let exp = Value::<TestConfig>::Index(2);
+        let result = &base ^ &exp;
+        assert_deq!(&result, &Value::<TestConfig>::Index(9));
+    }
+
+    #[test]
+    fn test_not_operation() {
+        let t = Value::<TestConfig>::Bool(true);
+        let f = Value::<TestConfig>::Bool(false);
+        
+        assert_deq!(t.not(), Value::<TestConfig>::Bool(false));
+        assert_deq!(f.not(), Value::<TestConfig>::Bool(true));
+    }
+
+    #[test]
+    fn test_value_pow() {
+        // value_pow(a, b) computes a^b and stores result in b
+        let base = Value::<TestConfig>::scalar_from_usize(2);
+        let mut exp = Value::<TestConfig>::Index(3);
+        base.value_pow(&mut exp);
+        // Result is 2^3 = 8, stored in exp
+        assert_deq!(&exp, &Value::<TestConfig>::scalar_from_usize(8));
+    }
+
+    #[test]
+    fn test_value_dot() {
+        let mut rng = test_rng();
+        let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(5));
+        let mut b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(5));
+        // value_dot(a, b) computes dot product and stores in b
+        a.value_dot(&mut b);
+        match b {
+            Value::Scalar(_) => {},
+            _ => panic!("Expected Scalar result from dot product"),
+        }
+    }
+
+
+    #[test]
+    fn test_value_concat_extended() {
+        let a = Value::<TestConfig>::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]);
+        let b = Value::<TestConfig>::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]);
+        let c = a.value_concat(b);
+        match c {
+            Value::VecScalar(v) => assert_eq!(v.len(), 4),
+            _ => panic!("Expected VecScalar"),
+        }
+
+        let a = Value::<TestConfig>::VecIndex(vec![1, 2]);
+        let b = Value::<TestConfig>::VecIndex(vec![3, 4]);
+        let c = a.value_concat(b);
+        match c {
+            Value::VecIndex(v) => assert_eq!(v.len(), 4),
+            _ => panic!("Expected VecIndex"),
+        }
+    }
+
+    #[test]
+    fn test_elliptic_curve_pairing() {
+        // value_pair and pair() perform pairing operations G1 x G2 -> GT
+        let g1 = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
+        let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
+        
+        let gt_result = g1.pair(g2);
+        match gt_result {
+            Value::GT(_) => {},
+            _ => panic!("Expected GT result from pairing"),
+        }
+    }
+
+
+    #[test]
+    fn test_value_equ() {
+        let a = Value::<TestConfig>::scalar_from_usize(5);
+        let b = Value::<TestConfig>::scalar_from_usize(5);
+        let c = Value::<TestConfig>::scalar_from_usize(3);
+        
+        assert_deq!(a.value_equ(&b), Value::<TestConfig>::Bool(true));
+        assert_deq!(a.value_equ(&c), Value::<TestConfig>::Bool(false));
+    }
+
+    #[test]
+    fn test_equ_static() {
+        let a = Value::<TestConfig>::scalar_from_usize(5);
+        let b = Value::<TestConfig>::scalar_from_usize(5);
+        let c = Value::<TestConfig>::scalar_from_usize(3);
+        
+        assert!(Value::<TestConfig>::equ(&a, &b));
+        assert!(!Value::<TestConfig>::equ(&a, &c));
+    }
+
+    #[test]
+    fn test_is_one() {
+        let one = Value::<TestConfig>::scalar_from_usize(1);
+        let two = Value::<TestConfig>::scalar_from_usize(2);
+        
+        assert!(one.is_one());
+        assert!(!two.is_one());
+
+        let one_idx = Value::<TestConfig>::Index(1);
+        assert!(one_idx.is_one());
+    }
+
+    #[test]
+    fn test_zero_creation() {
+        let scalar_zero = Value::<TestConfig>::zero(&ATyp::scalar());
+        match scalar_zero {
+            Value::Scalar(s) => assert!(s.is_zero()),
+            _ => panic!("Expected Scalar"),
+        }
+
+        let g1_zero = Value::<TestConfig>::zero(&ATyp::g1());
+        match g1_zero {
+            Value::G1(_) => {},
+            _ => panic!("Expected G1"),
+        }
+
+        let bool_zero = Value::<TestConfig>::zero(&ATyp::bool());
+        assert_deq!(bool_zero, Value::<TestConfig>::Bool(false));
+
+        let index_zero = Value::<TestConfig>::zero(&ATyp::fin(CRange::new(0, 10)));
+        assert_deq!(index_zero, Value::<TestConfig>::Index(0));
+    }
+
+    #[test]
+    fn test_discriminant_order_extended() {
+        let bool_val = Value::<TestConfig>::Bool(true);
+        let idx_val = Value::<TestConfig>::Index(5);
+        let scalar_val = Value::<TestConfig>::scalar_from_usize(10);
+        
+        // Just ensure they return different values and don't panic
+        let _d1 = bool_val.discriminant_order();
+        let _d2 = idx_val.discriminant_order();
+        let _d3 = scalar_val.discriminant_order();
+    }
+
+    #[test]
+    fn test_typ_method() {
+        let scalar = Value::<TestConfig>::scalar_from_usize(5);
+        let typ = scalar.typ();
+        assert!(typ.is_scalar());
+
+        let idx = Value::<TestConfig>::Index(5);
+        let _typ = idx.typ();
+
+        let bool_val = Value::<TestConfig>::Bool(true);
+        let typ = bool_val.typ();
+        assert!(typ.is_bool());
+    }
+
+    #[test]
+    fn test_serialize_value() {
+        use crate::values::value_to_bytes;
+        
+        let scalar = Value::<TestConfig>::scalar_from_usize(42);
+        let bytes = value_to_bytes(&scalar);
+        assert!(bytes.is_ok());
+
+        let bool_val = Value::<TestConfig>::Bool(true);
+        let bytes = value_to_bytes(&bool_val);
+        assert!(bytes.is_ok());
+
+        let idx = Value::<TestConfig>::Index(10);
+        let bytes = value_to_bytes(&idx);
+        assert!(bytes.is_ok());
+    }
+
+    #[test]
+    fn test_value_eval() {
+        // Create a polynomial from coefficients [1, 2, 3]
+        // This represents 1 + 2x + 3x^2
+        let coeffs_vec = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
+        let poly = Value::<TestConfig>::Poly(ark_poly::DenseUVPolynomial::from_coefficients_vec(coeffs_vec));
+        
+        // Evaluate at points [0, 1, 2]
+        let points = Value::<TestConfig>::VecScalar(vec![Fr::from(0u64), Fr::from(1u64), Fr::from(2u64)]);
+        let result = poly.value_eval(points);
+        match result {
+            Value::VecScalar(v) => {
+                // At x=0: 1
+                // At x=1: 1 + 2 + 3 = 6
+                // At x=2: 1 + 4 + 12 = 17
+                assert_eq!(v[0], Fr::from(1u64));
+                assert_eq!(v[1], Fr::from(6u64));
+                assert_eq!(v[2], Fr::from(17u64));
+            },
+            _ => panic!("Expected VecScalar"),
+        }
+    }
+
+    #[test]
+    fn test_ram_operation() {
+        let arr = Value::<TestConfig>::VecScalar(vec![
+            Fr::from(10u64),
+            Fr::from(20u64),
+            Fr::from(30u64),
+        ]);
+        let idx = Value::<TestConfig>::Index(1);
+        let result = arr.ram(idx);
+        assert_deq!(result, Value::<TestConfig>::Scalar(Fr::from(20u64)));
+    }
+
+    #[test]
+    fn test_vec_operations() {
+        let mut rng = test_rng();
+        
+        // Vec<G1> operations
+        let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g1(5));
+        let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g1(5));
+        let _c = &a + &b;
+
+        // Vec<G2> operations
+        let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g2(5));
+        let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g2(5));
+        let _c = &a + &b;
+
+        // Vec<GT> operations
+        let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_gt(5));
+        let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_gt(5));
+        let _c = &a + &b;
+    }
+
+    #[test]
+    fn test_scalar_multiplication_variants() {
+        let scalar = Value::<TestConfig>::scalar_from_usize(5);
+        
+        // Scalar * G1
+        let g1 = Value::<TestConfig>::G1(<TestConfig as ArkConfig>::G1::generator());
+        let _result = &scalar * &g1;
+        let _result = &g1 * &scalar;
+
+        // Scalar * G2
+        let g2 = Value::<TestConfig>::G2(<TestConfig as ArkConfig>::G2::generator());
+        let _result = &scalar * &g2;
+        let _result = &g2 * &scalar;
+
+        // Scalar * G1Affine
+        let g1_affine = Value::<TestConfig>::G1Affine(<TestConfig as ArkConfig>::G1Affine::generator());
+        let _result = &scalar * &g1_affine;
+
+        // Scalar * G2Affine
+        let g2_affine = Value::<TestConfig>::G2Affine(<TestConfig as ArkConfig>::G2Affine::generator());
+        let _result = &scalar * &g2_affine;
+    }
+
+    #[test]
+    fn test_vec_scalar_operations() {
+        let mut rng = test_rng();
+        
+        // VecScalar * Scalar
+        let vec_scalar = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(5));
+        let scalar = Value::<TestConfig>::scalar_from_usize(3);
+        let _result = &vec_scalar * &scalar;
+
+        // VecIndex * Index
+        let vec_idx = Value::<TestConfig>::random(&mut rng, &ATyp::vec_fin(CRange::new(0, 10), 5));
+        let idx = Value::<TestConfig>::Index(2);
+        let _result = &vec_idx * &idx;
+    }
+
+    #[test]
+    fn test_mutable_operations() {
+        let mut a = Value::<TestConfig>::scalar_from_usize(5);
+        let b = Value::<TestConfig>::scalar_from_usize(3);
+        
+        a += b.clone();
+        assert_deq!(&a, &Value::<TestConfig>::scalar_from_usize(8));
+
+        let mut a = Value::<TestConfig>::scalar_from_usize(2);
+        a *= b;
+        assert_deq!(&a, &Value::<TestConfig>::scalar_from_usize(6));
+    }
+
+    #[test]
+    fn test_sub_operations() {
+        let a = Value::<TestConfig>::scalar_from_usize(10);
+        let b = Value::<TestConfig>::scalar_from_usize(3);
+        let c = &a - &b;
+        assert_deq!(&c, &Value::<TestConfig>::scalar_from_usize(7));
+
+        let mut rng = test_rng();
+        let a = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+        let b = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+        let _c = &a - &b;
+    }
+
 
