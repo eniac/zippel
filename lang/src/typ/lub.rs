@@ -2,7 +2,7 @@ use crate::ast::BinOp;
 use crate::typ::{Kind, Nothing, CTyp, TypeVar};
 use crate::typ::range::{Range, RangeError};
 use crate::id::Tid;
-use share::{Ctx, log2};
+use share::Ctx;
 
 use std::fmt;
 use thiserror::Error;
@@ -505,7 +505,7 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 },
             // Uni<A> + Vec<B> = Uni<C> where C = A = B
-            (CTyp::Uni(a, n), CTyp::Vec(box b, m)) =>
+            (CTyp::Uni(_a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
                     let tb = b.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
@@ -514,7 +514,7 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 },
             // Vec<A> + Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Uni(b, m)) =>
+            (CTyp::Vec(box a, n), CTyp::Uni(_b, m)) =>
                 if n == m {
                     let ta = a.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
@@ -578,7 +578,7 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 },
             // Uni<A> - Vec<B> = Uni<C> where C = A = B
-            (CTyp::Uni(a, n), CTyp::Vec(box b, m)) =>
+            (CTyp::Uni(_a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
                     let tb = b.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
@@ -587,7 +587,7 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 },
             // Vec<A> - Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Uni(b, m)) =>
+            (CTyp::Vec(box a, n), CTyp::Uni(_b, m)) =>
                 if n == m {
                     let ta = a.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;

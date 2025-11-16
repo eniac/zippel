@@ -3,7 +3,6 @@ use share::{Pretty, DocAllocator, Set, DocBuilder, BoxAllocator};
 use std::fmt;
 
 use crate::typ::range::Range;
-use crate::typ::size::Size;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;

@@ -8,8 +8,7 @@ use lang::typ::{Nothing, CRange};
 use crate::types::Lub;
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::codecs::arkworks_algebra::GroupDomainSeparator;
-use spongefish::{BytesToUnitSerialize, DomainSeparator, ProverState, DuplexSpongeInterface};
+use spongefish::{BytesToUnitSerialize, ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
@@ -203,8 +202,8 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
-            ATyp::Uni(n) => Value::Poly(DensePolynomial::<C::F>::zero()),
-            ATyp::Mle(n) => Value::Mle(DenseMultilinearExtension::<C::F>::zero()),
+            ATyp::Uni(_n) => Value::Poly(DensePolynomial::<C::F>::zero()),
+            ATyp::Mle(_n) => Value::Mle(DenseMultilinearExtension::<C::F>::zero()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -2234,7 +2233,7 @@ impl<C: ArkConfig> Value<C> {
         match typ {
             ATyp::Base(ABase::Scalar) => { vec_value.into_vec_scalar_mut(); vec_value },
             ATyp::Base(ABase::Bool) => { vec_value.into_vec_bool_mut(); vec_value },
-            ATyp::Base(ABase::Fin(r)) => {
+            ATyp::Base(ABase::Fin(_r)) => {
                 match vec_value {
                     Value::Vec(v) => Value::VecIndex(v.into_iter().map(|i| i.into_index()).collect()),
                     Value::VecIndex(_) => vec_value,

@@ -74,7 +74,7 @@ impl<T, N> Arg<T, N> {
 }
 
 impl<T, N> Args<T, N> {
-    pub fn iter(&self) -> std::slice::Iter<Arg<T, N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Arg<T, N>> {
         self.0.iter()
     }
     pub fn len(&self) -> usize {

@@ -1,7 +1,7 @@
 use core::hash::Hasher;
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::{BytesToUnitSerialize, ProverState, UnitToBytes, DuplexSpongeInterface};
+use spongefish::{ProverState, UnitToBytes, DuplexSpongeInterface};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;

@@ -168,7 +168,7 @@ impl<T, N> Typs<T, N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> std::slice::Iter<Typ<T, N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Typ<T, N>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {

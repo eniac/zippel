@@ -1,23 +1,18 @@
 #![feature(associated_type_defaults)]
 #![feature(trait_alias)]
 #![feature(box_patterns)]
-use petgraph::graph::{self as petgraph_graph, EdgeIndex, NodeIndex};
-use spongefish::{ProverState, DomainSeparator, DuplexSpongeInterface, DefaultHash, BytesToUnitSerialize};
-use petgraph::graph::Graph;
+use petgraph::graph::NodeIndex;
+use spongefish::{ProverState, DuplexSpongeInterface, BytesToUnitSerialize};
 use std::sync::{Arc, Mutex};
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::{domain_seperator, Dag, Dep, Node, Op, GOp};
+use graph::{domain_seperator, Dag, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
 use lang::ast::BinOp;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use lang::id::Vid;
 use graph::Ref;
-use rand::Rng;
 use share::Ctx;
-use std::time::Duration;
-use std::thread;
-use domain_seperator::ZippelDomainSeparator;
 
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
@@ -81,7 +76,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Value(val) => {
                 return val.clone();
             },
-            Op::Ref(r, ATyp) => {
+            Op::Ref(r, _ATyp) => {
                return self.get_value(r.clone(), inputs); 
             },
             Op::Vec(vec) => {
@@ -101,7 +96,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
                 return a_val;
             }
-            Op::Bin(op, box a, box b, typ) => {
+            Op::Bin(op, box a, box b, _typ) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
@@ -259,7 +254,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                     match node {
                         Node::Op(op, annotation) | Node::Transcr(op, annotation) => {
                             match op {
-                                GOp::Challenge(c_typ, _) => {
+                                GOp::Challenge(_c_typ, _) => {
                                     let return_val = Value::<C>::challenge(prover_state);
                                     let mut return_value_lock = annotation.return_value.lock().unwrap();
                                     *return_value_lock = Some(return_val); 
@@ -268,7 +263,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                 _ => {}
                             }
                         },
-                        Node::Inp(c, prefs) => {
+                        Node::Inp(_c, prefs) => {
                             for pref in prefs.clone() {
                                 if pref.qualifier.is_public() {
                                     prover_state.add_bytes(&value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap()).unwrap();
@@ -331,7 +326,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         let incoming_nodes: Vec<_> = g.mutex_graph.neighbors_directed(dependent, petgraph::Direction::Incoming).collect();
                         let mut ready: bool = true;
                         for income_node in &incoming_nodes {
-                            let mut finished_requirements_lock = match &g.mutex_graph[dependent] {
+                            let finished_requirements_lock = match &g.mutex_graph[dependent] {
                                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                                     annotation.finished_requirements.lock().unwrap()
                                 },

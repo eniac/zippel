@@ -1,5 +1,5 @@
 #![allow(refining_impl_trait)]
-use share::{Ctx, Set, log2};
+use share::{Ctx, Set};
 use crate::id::{Tid, Vid};
 use crate::ast::{BinOp, CExp, CExps, CBody};
 use crate::typ::unify::UnifyError;
@@ -266,11 +266,11 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (p_typ, x_typ) {
-                    (CTyp::Uni(i, n), CTyp::Vec(b, _)) => {
-                        let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
+                    (CTyp::Uni(_i, n), CTyp::Vec(b, _)) => {
+                        let _i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         Ok(CTyp::Vec(b, n))
                     }
-                    (CTyp::Mle(i, n), CTyp::Vec(b, len_vec)) => {
+                    (CTyp::Mle(_i, n), CTyp::Vec(b, len_vec)) => {
                         let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         if len_vec == n {
                            return Ok(*b); 
@@ -288,7 +288,7 @@ impl Typeable for CExp {
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
             CExp::Mle(box v) => {
                 // Infer the type of its argument
-                let typ = v.infer(kctx, fctx, vctx)
+                let _typ = v.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // It must be a vector of fields, or a vector of Fin
@@ -586,13 +586,13 @@ impl Typeable for CExp {
                         } else {
                             Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
                         },
-                    (CTyp::Uni(tbase, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
+                    (CTyp::Uni(tbase, n), CTyp::Vec(box CTyp::Fin(r), _m)) =>
                         if r.end <= n {
                             Ok(CTyp::Uni(tbase, r.len()))
                         } else {
                             Err(TypeError::ram(kctx, vctx, &a, ta, &b, tb))
                         },
-                    (CTyp::Mle(tbase, n), CTyp::Vec(box CTyp::Fin(r), m)) =>
+                    (CTyp::Mle(tbase, n), CTyp::Vec(box CTyp::Fin(r), _m)) =>
                         if r.end <= 1<<n {
                             Ok(CTyp::Mle(tbase, r.len().ilog2() as usize))
                         } else {

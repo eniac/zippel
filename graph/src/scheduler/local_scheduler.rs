@@ -1,10 +1,7 @@
 use crate::{Dag, UDag, Ref, Node};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};
 use backend::ArkConfig;
-use grb::parameter::IntParam::PSDCuts;
-use rand::Rng;
 use std::collections::HashMap;
-use std::os::unix::thread;
 use petgraph::graph::NodeIndex;
 pub struct LocalScheduler {
     cost_map: HashMap<NodeIndex, usize>,
