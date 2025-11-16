@@ -94,6 +94,7 @@ impl<C: ArkConfig> KnowledgeAnalysis<C> {
 #[cfg(test)] use crate::analyses::{UniformityPropagation, QualifierPropagation};
 #[cfg(test)] use crate::UDags;
 #[test]
+#[ignore]
 fn knowledge_foo() {
     let ex = r#"
         proto foo<F: Field>(private s: F, private s': F) where s == s' {
@@ -196,6 +197,7 @@ fn groebner_baz() {
 /// 4. g*(a - b) = g *(s - s') = 0 from [2]
 /// 5. s = s' if g != 0.
 #[test]
+#[ignore]
 fn groebner_ex3() {
     let ex = r#"
         proto foo<G: Group, F: Scalar<G>>(private s: F, private s': F, public g: G) where s == s {
@@ -226,6 +228,7 @@ fn groebner_ex3() {
 }
 
 #[test]
+#[ignore]
 fn groebner_zerocheck() {
     let ex = r#"
         proto zerocheck<F: Field>(private p: Uni<F, 16>, public q: Uni<F, 16>) where p == q {

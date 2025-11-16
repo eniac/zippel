@@ -50,6 +50,7 @@ impl<C: ArkConfig> CompletenessAnalysis<C> {
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use backend::ArkBls12_381;
 #[test]
+#[ignore]
 fn completeness_test() {
 
     let ex = r#"

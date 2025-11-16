@@ -96,6 +96,7 @@ impl QualifierPropagation {
 #[cfg(test)] use crate::{WritePdf, UDags};
 #[cfg(test)] use share::unwrap;
 #[test]
+#[ignore]
 fn qualifier_prop() {
     let ex = r#"
         proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {

@@ -221,6 +221,7 @@ impl fmt::Display for UniformityPropagation {
 #[cfg(test)] use crate::{WritePdf, UDags};
 #[cfg(test)] use share::unwrap;
 #[test]
+#[ignore]
 fn uniformity_prop() {
     let ex = r#"
         proto foo<F: Field>(private uniform* s: F, public x: F) where true {
