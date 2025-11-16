@@ -1,8 +1,6 @@
 use zippel::*;
 use std::path::PathBuf;
-use backend::{ArkBls12_381, Value, ATyp};
-use lang::id::Vid;
-use share::Ctx;
+use backend::ArkBls12_381;
 
 fn main() {
     let args = ZippelArgs::new(PathBuf::from("schnorr.zippel"));
