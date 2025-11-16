@@ -8,6 +8,9 @@ pub mod scheduler;
 pub mod pref;
 pub mod domain_seperator;
 
+#[cfg(test)]
+mod tests;
+
 use log::debug;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
@@ -155,7 +158,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
     }
 
-    fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
+    pub(crate) fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
         source.references().into_iter().for_each(|refer| {
             match refer {
                 Ref::Node(n) =>  // Add edge from [n] to [sink]
@@ -184,7 +187,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Add a node to the graph (no deduplication)
-    fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
+    pub fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
         self.0.add_node(node)
     }
 
@@ -215,6 +218,12 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn node_indices(&self) -> NodeIndices {
         self.0.node_indices()
+    }
+
+    /// Get reference to internal graph (for testing)
+    #[cfg(test)]
+    pub(crate) fn inner_graph(&self) -> &Graph<Node<C, A>, Dep> {
+        &self.0
     }
 
     pub fn max_node(&self) -> NodeIndex {
@@ -1234,6 +1243,12 @@ impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
     type Output = Node<C, A>;
     fn index(&self, index: NodeIndex) -> &Self::Output {
         &self.0[index]
+    }
+}
+
+impl<C: ArkConfig, A> std::ops::IndexMut<NodeIndex> for Dag<C, A> {
+    fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
+        &mut self.0[index]
     }
 }
 

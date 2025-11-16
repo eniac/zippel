@@ -1,13 +1,12 @@
-use cli::*;
+use zippel::*;
 use std::path::PathBuf;
 use backend::{ArkBls12_381, Value, ATyp};
 use lang::id::Vid;
 use share::Ctx;
 
 fn main() {
-    let path = PathBuf::from("schnorr.zippel");
-    let args = CliArgs { file_path: path, pdf_path_opt: None, subgraph: None };
-    let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let args = ZippelArgs::new(PathBuf::from("schnorr.zippel"));
+    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
 
     // let inputs = prover_create_inputs();

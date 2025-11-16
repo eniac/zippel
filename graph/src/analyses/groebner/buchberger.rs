@@ -100,13 +100,12 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let found_divisor = reducers.par_iter().find_any(|g| {
+            let found_divisor = reducers.par_iter().find_any(|g|
                 if let Some((g_lc, g_lt)) = g.leading_term() {
                     p_lt.is_divided(&g_lt)
                 } else {
                     false
-                }
-            });
+                });
 
             if let Some(g) = found_divisor {
                 let (g_lc, g_lt) = g.leading_term().unwrap();
@@ -131,13 +130,13 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             .unwrap_or(1)
             .saturating_sub(1)
             .max(2);
-        
+
         let mut selected = Vec::new();
         for _ in 0..num_threads {
             if let Some((i, j)) = pairs.pop_front() {
                 if i < self.len() && j < self.len() {
                     selected.push((i, j));
-                } 
+                }
             } else {
                 break;
             }
@@ -145,7 +144,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         selected
     }
 
-    /* 
+    /*
     fn pairs_select_single(&self, pairs: &mut VecDeque<(usize, usize)>) -> Vec<(usize, usize)> {
         if let Some((i, j)) = pairs.pop_front() {
             if i < self.len() && j < self.len() {
@@ -192,7 +191,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             // Add pairs to seen set
             seen.extend(ps.iter().map(|(i, j)| (*i, *j)));
 
-            let reduced_ps: Vec<(SparsePolynomial<F, T>, VecDeque<(usize, usize)>)> = ps
+            let reduced_ps: Vec<SparsePolynomial<F, T>> = ps
               .par_iter()
               .filter_map(|&(i, j)| {
 
@@ -218,29 +217,28 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
                 // Reduce the S-polynomial with respect to the current basis G
                 let s_reduced = g.reduce(s_poly);
 
-                // If the reduced S-polynomial is not zero, add it to the basis
+                // If the reduced S-polynomial is not zero, return it
                 if !s_reduced.is_zero() {
                     debug!("  S(G[{}], G[{}]) reduces to non-zero polynomial.", i, j);
-                    let k = g.len() - 1; // Index of the newly added polynomial
-
-                    // Add new critical pairs involving the new polynomial h (index k)
-                    // with all existing polynomials in G (indices 0 to k-1)
-                    let mut new_pairs = VecDeque::new();
-                    for l in 0..k {
-                        if !Self::skip_pair(l, k, &g, &seen) {
-                            new_pairs.push_back((l, k));
-                        }
-                    }
-                    return Some((s_reduced, new_pairs));
+                    return Some(s_reduced);
                 } else {
                     debug!("  S(G[{}], G[{}]) reduces to 0", i, j);
                     return None;
                 }
             }).collect();
 
-            for (s_reduced, new_pairs) in reduced_ps {
+            // Add new polynomials and generate pairs
+            for s_reduced in reduced_ps {
+                let k = g.len(); // Index of the polynomial we're about to add
                 g.push(s_reduced);
-                pairs.extend(new_pairs);
+
+                // Add new critical pairs involving the new polynomial h (index k)
+                // with all existing polynomials in G (indices 0 to k-1)
+                for l in 0..k {
+                    if !Self::skip_pair(l, k, &g, &seen) {
+                        pairs.push_back((l, k));
+                    }
+                }
             }
         }
 

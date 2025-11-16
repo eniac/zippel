@@ -1,4 +1,4 @@
-use cli::*;
+use zippel::*;
 use std::path::PathBuf;
 use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
 use lang::id::Vid;
@@ -8,14 +8,10 @@ use ark_ff::fields::Field;
 
 fn main() {
     println!("Starting KZG example");
-    let path = PathBuf::from("kzg_test.zippel");
-    let args = CliArgs { 
-        file_path: path, 
-        pdf_path_opt: Some(PathBuf::from("kzg_test.pdf")),
-        subgraph: None 
-    };
+    let args = ZippelArgs::new(PathBuf::from("kzg_test.zippel"))
+        .with_pdf(PathBuf::from("kzg_test.pdf"));
     
-    let mut handler: cli::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
     println!("Compiled and wrote PDF");
     let inputs = prover_create_inputs();

@@ -37,18 +37,18 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
 
 /// Base kinds
 kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | positive }
-    field_ty          = { "Field" }
-    group_ty          = { "Group" }
-    pairing_ty        = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
-    scalar_ty         = { "Scalar" ~ "<" ~ ids ~ ">" }
-    range_ty          = { range }
+    field_ty   = { "Field" }
+    group_ty   = { "Group" }
+    pairing_ty = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
+    scalar_ty  = { "Scalar" ~ "<" ~ ids ~ ">" }
+    range_ty   = { range }
 
 typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
     base_ty = { id }                                     // Base type variable
-    uni_ty = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Univariate polynomial
-    mle_ty = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Multilinear expression
-    fin_ty = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }  // Index type
-    vec_ty = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }         // Vector type
+    uni_ty  = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Univariate polynomial
+    mle_ty  = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Multilinear expression
+    fin_ty  = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }  // Index type
+    vec_ty  = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }         // Vector type
     bool_ty = { "Bool" }                                 // Boolean type
 
 /// Arithmetic expression language of Zippel
