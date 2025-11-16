@@ -1241,9 +1241,8 @@ fn parser_eval() {
 }
 
 #[test]
-#[ignore]
 fn parser_coef() {
-    let ex = "coef(poly(1,2,3))";
+    let ex = "coef(poly([1,2,3]))";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
