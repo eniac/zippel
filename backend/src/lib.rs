@@ -24,3 +24,6 @@ pub use config::{
     ArkField17,
     ArkField65537
 };
+
+#[cfg(test)]
+mod tests;

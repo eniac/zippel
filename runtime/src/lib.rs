@@ -5,4 +5,7 @@ pub mod graph;
 
 pub use graph::MutexGraph;
 
+#[cfg(test)]
+mod tests;
+
 
