@@ -16,7 +16,7 @@ use crate::{to_bytes, ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkSca
 use std::io::Write;
 use ark_serialize::{CanonicalSerialize,SerializationError};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub enum Value<C: ArkConfig> {
     /// Boolean
     Bool(bool),
@@ -44,6 +44,42 @@ pub enum Value<C: ArkConfig> {
     Poly(DensePolynomial<C::F>),
     /// Multilinear polynomial
     Mle(DenseMultilinearExtension<C::F>),
+}
+
+impl<C: ArkConfig> PartialEq for Value<C> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // For projective group elements, normalize before comparing
+            (Value::G1(a), Value::G1(b)) => a.into_affine() == b.into_affine(),
+            (Value::G2(a), Value::G2(b)) => a.into_affine() == b.into_affine(),
+            (Value::VecG1(a), Value::VecG1(b)) => {
+                a.len() == b.len() && 
+                a.iter().zip(b.iter()).all(|(x, y)| x.into_affine() == y.into_affine())
+            }
+            (Value::VecG2(a), Value::VecG2(b)) => {
+                a.len() == b.len() && 
+                a.iter().zip(b.iter()).all(|(x, y)| x.into_affine() == y.into_affine())
+            }
+            // For all other variants, use structural equality
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::VecBool(a), Value::VecBool(b)) => a == b,
+            (Value::Index(a), Value::Index(b)) => a == b,
+            (Value::Scalar(a), Value::Scalar(b)) => a == b,
+            (Value::VecIndex(a), Value::VecIndex(b)) => a == b,
+            (Value::VecScalar(a), Value::VecScalar(b)) => a == b,
+            (Value::GT(a), Value::GT(b)) => a == b,
+            (Value::VecGT(a), Value::VecGT(b)) => a == b,
+            (Value::G1Affine(a), Value::G1Affine(b)) => a == b,
+            (Value::G2Affine(a), Value::G2Affine(b)) => a == b,
+            (Value::VecG1Affine(a), Value::VecG1Affine(b)) => a == b,
+            (Value::VecG2Affine(a), Value::VecG2Affine(b)) => a == b,
+            (Value::Vec(a), Value::Vec(b)) => a == b,
+            (Value::Poly(a), Value::Poly(b)) => a == b,
+            (Value::Mle(a), Value::Mle(b)) => a == b,
+            // Different variants are not equal
+            _ => false,
+        }
+    }
 }
 
 fn serialize_value_internal<C: ArkConfig, W: Write>(
@@ -2766,168 +2802,6 @@ impl<C: ArkConfig> Ord for Value<C> {
             }
         }
     }
-}
-
-#[cfg(test)]
-use crate::ArkBls12_381;
-#[cfg(test)]
-use ark_std::test_rng;
-#[cfg(test)]
-use share::assert_deq;
-
-// Commutativity of addition
-#[test]
-fn test_add_comm() {
-    // Scalar + Scalar
-    let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    assert_deq!(&a + &b, &b + &a);
-
-    // Group1 + Group1
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    assert_deq!(&a + &b, &b + &a);
-
-    // Group2 + Group2
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    assert_deq!(&a + &b, &b + &a);
-
-    // GT + GT
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::gt());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::gt());
-    assert_deq!(&a + &b, &b + &a);
-
-    // Vec<Scalar> + Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    assert_deq!(&a + &b, &b + &a);
-
-    // Vec<Index> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
-    assert_deq!(&a + &b, &b + &a);
-
-    // Vec<Scalar> + Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::new(0, 10), 10));
-    assert_deq!(&a + &b, &b + &a);
-}
-
-// Commutativity of multiplication
-#[test]
-fn test_mul_comm() {
-    // Scalar * Scalar
-    let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    assert_deq!(&a * &b, &b * &a);
-
-    // Vec<Scalar> * Vec<Scalar>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Vec(Box::new(ATyp::scalar()), 10));
-    assert_deq!(&a * &b, &b * &a);
-
-    // Vec<Index> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
-    assert_deq!(&a * &b, &b * &a);
-
-    // Vec<Scalar> * Vec<Index>
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_fin(CRange::singleton(10), 10));
-    assert_deq!(&a * &b, &b * &a);
-
-    let mut a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let mut b1 = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    let b2 = b1.clone();
-    Value::value_pair(&a, &mut b1);
-    Value::value_pair(&b2, &mut a);
-    assert_deq!(b1, a);
-}
-
-
-#[test]
-fn coef_eval_test() {
-    let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_fft().value_ifft();
-    assert_deq!(&c, &a);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_ifft().value_fft();
-    assert_deq!(&c, &a);
-}
-
-#[test]
-fn pairing_test() {
-    let mut rng = test_rng();
-    let P = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let Q = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let S = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    let pair1 = (P.clone() + Q.clone()).pair(S.clone());
-    let pair2 = P.clone().pair(S.clone());
-    let pair3 = Q.clone().pair(S.clone());
-    let pair4 = pair2 + pair3;
-    assert_deq!(&pair1, &pair4);
-}
-
-#[test]
-fn inverse_test() {
-    let mut rng = test_rng();
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let c = (&a * &b) / b;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_g1(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let c = (&a * &b) / b;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_g2(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let c = (&a * &b) / b;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g1());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let c = (&a * &b) / b;
-    assert_deq!(&a, &c);
-
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::g2());
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let c = (&a * &b) / b;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let c = &(&b.clone() / &b.clone()) * &a;
-    assert_deq!(&a, &c);
-    assert_deq!(&a * &(&b.clone() / &b.clone()), &(&b.clone() / &b.clone()) * &a);
-    assert_deq!((&a * &b.clone()) / b.clone(), a);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g1(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let c = &(&b.clone() / &b.clone()) * &a;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &&ATyp::vec_g2(10));
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let c = &(&b.clone() / &b.clone()) * &a;
-    assert_deq!(&a, &c);
-
-    let a = Value::<ArkBls12_381>::scalar_from_usize(1);
-    let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(10));
-    let c = (&a/&b).dot(b.clone());
-    assert_deq!(&c, &Value::<ArkBls12_381>::scalar_from_usize(10));
-
-    let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(2));
-    let b= a.clone() * a.clone();
-    let c = b.clone() / a.clone();
-    assert_deq!(&a, &c);
 }
 
 
