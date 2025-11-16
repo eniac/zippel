@@ -436,7 +436,6 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected multilinear polynomial or scalar, found {}", other)
             }
-            Value::Mle(_) => panic!("Cannot subtract MLE {} - {}", self, other),
         }
     }
 

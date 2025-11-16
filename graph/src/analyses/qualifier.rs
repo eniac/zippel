@@ -27,7 +27,6 @@ impl QualifierPropagation {
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            GOp::Coef(box a) => self.from_op(a),
             GOp::Ifft(box a) => self.from_op(a),
             GOp::Fft(box a) => self.from_op(a),
             GOp::Bin(_, box a, box b, _) 
