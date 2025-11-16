@@ -95,12 +95,12 @@ fn coef_eval_test() {
 #[test]
 fn pairing_test() {
     let mut rng = test_rng();
-    let P = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
-    let Q = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
-    let S = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
-    let pair1 = (P.clone() + Q.clone()).pair(S.clone());
-    let pair2 = P.clone().pair(S.clone());
-    let pair3 = Q.clone().pair(S.clone());
+    let p = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    let q = Value::<TestConfig>::random(&mut rng, &ATyp::g1());
+    let s = Value::<TestConfig>::random(&mut rng, &ATyp::g2());
+    let pair1 = (p.clone() + q.clone()).pair(s.clone());
+    let pair2 = p.clone().pair(s.clone());
+    let pair3 = q.clone().pair(s.clone());
     let pair4 = pair2 + pair3;
     assert_deq!(&pair1, &pair4);
 }
@@ -542,7 +542,10 @@ fn inverse_test() {
         
         let left = g.clone() * (a.clone() + b.clone());
         let right = (g.clone() * a) + (g * b);
-        assert_deq!(left, right);
+        
+        // Subtract to check if difference is zero (mathematical equality)
+        let diff = left.clone() - right.clone();
+        assert!(diff.is_zero(), "G1 scalar distributivity failed: left - right = {:?}", diff);
     }
 
     #[test]
