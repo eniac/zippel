@@ -147,7 +147,7 @@ impl<'a> TypeError {
     pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::Eval(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
-    pub fn evalMleTooManyArguments(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+    pub fn eval_mle_too_many_arguments(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::EvalMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
@@ -278,7 +278,7 @@ impl Typeable for CExp {
                         if len_vec < n {
                             return Ok(CTyp::Mle(i, n - len_vec));
                         }
-                        return Err(TypeError::evalMleTooManyArguments(kctx, &vctx, p, x));
+                        return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
                         
                     },
                     _ => Err(TypeError::eval(kctx, &vctx, p, x))
