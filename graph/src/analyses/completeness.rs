@@ -1,10 +1,8 @@
 use backend::ArkConfig;
 use log::debug;
-use crate::{DQDag, Ref, PRef, WritePdf};
-use crate::analyses::groebner::{GrevLexTerm, GroebnerBasis, GroebnerBuilder};
-use share::Ctx;
-use petgraph::graph::NodeIndex;
-use lang::id::Vid;
+use crate::DQDag;
+use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
+#[cfg(test)] use crate::WritePdf;
 
 
 /// Perform a completeness analysis using Groebner bases.
