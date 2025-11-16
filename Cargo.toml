@@ -1,6 +1,6 @@
 [workspace]
-members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "examples"]
-default-members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "examples"]
+members = [ "lang", "runtime", "share" , "graph", "backend", "examples"]
+default-members = [ "lang", "runtime", "share" , "graph", "backend", "examples"]
 resolver = "2"
 
 [package]
