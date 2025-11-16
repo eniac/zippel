@@ -15,10 +15,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const INT_MUL: f64 = 2.0;
     const SCALAR_ADD: f64 = C::F::MODULUS_BIT_SIZE as f64;
     const SCALAR_MUL: f64 = Self::SCALAR_ADD * 2.0;
-    const SCALAR_INV: f64 = Self::SCALAR_ADD * 8.0;
     const G_SCALAR_MUL: f64 = C::F::MODULUS_BIT_SIZE.pow(2) as f64;
     const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
-    const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
     const G_PAIR: f64 = 32.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
 

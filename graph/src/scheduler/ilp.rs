@@ -10,12 +10,7 @@ use grb::parameter::DoubleParam;
 
 #[derive(Debug)]
 struct LpSolution {
-    pub start_times: Vec<f64>,
-    pub finish_times: Vec<f64>,
-    pub durations: Vec<f64>,
-    pub cores: Vec<Vec<bool>>,
     pub maping: Vec<Vec<bool>>,
-    pub max_finish_time: f64
 }
 
 /// Use Gurobi ILP solver to schedule num_tasks in num_threads
@@ -222,31 +217,6 @@ impl GurobiScheduler {
         model.optimize().unwrap();
         assert_eq!(model.status().unwrap(), Status::Optimal);
 
-        let cores_lpunit: Vec<Vec<f64>> = cores_mat_var
-            .iter()
-            .map(|v| model.get_obj_attr_batch(attr::X, v.clone()).unwrap())
-            .collect();
-        let mut cores_binary: Vec<Vec<bool>> = Vec::new();
-        for core_vec in cores_lpunit {
-            let mut core_vec_binary: Vec<bool> = Vec::new();
-            for core in core_vec {
-                core_vec_binary.push(core != 0 as f64);
-            }
-            cores_binary.push(core_vec_binary);
-        }
-
-        let cores_lpunit: Vec<Vec<f64>> = cores_mat_var
-            .iter()
-            .map(|v| model.get_obj_attr_batch(attr::X, v.clone()).unwrap())
-            .collect();
-        let mut cores_binary: Vec<Vec<bool>> = Vec::new();
-        for core_vec in cores_lpunit {
-            let mut core_vec_binary: Vec<bool> = Vec::new();
-            for core in core_vec {
-                core_vec_binary.push(core != 0 as f64);
-            }
-            cores_binary.push(core_vec_binary);
-        }
 
         let map_lpunit: Vec<Vec<f64>> = map_mat_var
             .iter()
@@ -264,12 +234,7 @@ impl GurobiScheduler {
         }
 
         LpSolution {
-            start_times: model.get_obj_attr_batch(attr::X, start_vec_var).unwrap(),
-            finish_times: model.get_obj_attr_batch(attr::X, finish_vec_var).unwrap(),
-            durations: model.get_obj_attr_batch(attr::X, duration_vec_var).unwrap(),
-            cores: cores_binary,
             maping: map_binary,
-            max_finish_time: model.get_obj_attr(attr::X, &max_finish_var).unwrap(),
         }
         // dbg!(model.get_obj_attr(attr::X, &max_finish_var));
         // dbg!(model.get_obj_attr_batch(attr::X, start_vec_var));
