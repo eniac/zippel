@@ -1,9 +1,9 @@
 use lang::typ::range::CRange;
 use lang::ast::BinOp;
 use lang::typ::lub::Lub;
-use lang::typ::{self, Nothing};
+use lang::typ::Nothing;
 use lang::id::Vid;
-use backend::{Value, ABase, ATyp, ArkConfig, ArkGroupOps, ArkScalarOps, ArkPairingOps};
+use backend::{Value, ABase, ATyp, ArkConfig, ArkScalarOps};
 
 use petgraph::graph::NodeIndex;
 use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};

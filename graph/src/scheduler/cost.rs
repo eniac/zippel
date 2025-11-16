@@ -2,7 +2,7 @@ use backend::ArkConfig;
 use crate::Op;
 use std::fmt;
 
-use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Pretty, DocAllocator, DocBuilder};
 
 /// Measures the cost of a zippel operation
 #[derive(Clone, Copy, Debug, PartialEq)]
