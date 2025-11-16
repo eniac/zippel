@@ -1,4 +1,3 @@
-use core::hash::Hasher;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::{ProverState, UnitToBytes, DuplexSpongeInterface};
