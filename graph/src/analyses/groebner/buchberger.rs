@@ -5,10 +5,11 @@ use std::ops::Index;
 
 use crate::analyses::groebner::{Monomial, SparsePolynomial};
 use crate::PRef;
-use share::{Ctx, Set};
-use ark_ff::AdditiveGroup;
-use log::{debug, warn};
+use share::Set;
+use log::debug;
 use rayon::prelude::*;
+
+#[cfg(test)] use ark_ff::AdditiveGroup;
 
 /// A struct representing a Gröbner basis.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -15,14 +15,13 @@ use log::debug;
 pub use op::{Ref, Op, GOp};
 pub use node::Node;
 pub use dep::{DepType, Dep};
-use petgraph::Directed;
 pub use pref::PRef;
 pub use analyses::StaticAnalysis;
 
 use backend::{ArkConfig, Value, ATyp};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
-use lang::id::{Fresh, Tid, Vid};
+use lang::id::{Tid, Vid};
 use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
 use lang::typ::range::CRange;
 use lang::typ::infer::{Typeable, TypeError};
@@ -30,10 +29,8 @@ use lang::typ::infer::{Typeable, TypeError};
 use thiserror::Error;
 use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbors}, visit::EdgeRef, Direction, Graph};
 use std::process::Command;
-use std::fmt;
 use std::ops::Index;
 use std::path::PathBuf;
-use std::cmp;
 use std::collections::{HashMap, HashSet};
 
 /// Represents graphs in the Zippel language
@@ -249,7 +246,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         ))
     }
 
-    pub fn neighbors_directed(&self, node_index: NodeIndex, direction: Direction) -> Neighbors<Dep, u32> {
+    pub fn neighbors_directed(&self, node_index: NodeIndex, direction: Direction) -> Neighbors<'_, Dep, u32> {
         self.0.neighbors_directed(node_index, direction)
     }
 
@@ -1263,6 +1260,7 @@ impl<C: ArkConfig, A> Index<usize> for Dags<C, A> {
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::analyses::QualifierPropagation;
+#[cfg(test)] use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
 #[test]
 fn graph_sum() {
     let ex = r#"

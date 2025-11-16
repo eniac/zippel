@@ -1,14 +1,8 @@
-use ark_ec::{
-    pairing::{Pairing, PairingOutput},
-};
 use ark_serialize::CanonicalSerialize;
 use backend::{ABase, ATyp, ArkConfig};
 use spongefish::{
-    ByteDomainSeparator, DefaultHash, DomainSeparator, DuplexSpongeInterface,
-    codecs::arkworks_algebra::{FieldDomainSeparator, GroupDomainSeparator},
+    ByteDomainSeparator, DomainSeparator, DuplexSpongeInterface,
 };
-use std::collections::{HashMap, HashSet};
-use petgraph::graph::{NodeIndex};
 use crate::Dag;
 
 #[cfg(test)] use ark_ec::CurveGroup;
@@ -17,6 +11,7 @@ use crate::Dag;
 #[cfg(test)] use petgraph::graph::Node;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use crate::UDags;
+#[cfg(test)] use spongefish::DefaultHash;
 
 /// Extend the domain separator with the Schnorr protocol.
 pub struct ZippelDomainSeparator<H: DuplexSpongeInterface> (

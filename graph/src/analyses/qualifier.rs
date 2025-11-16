@@ -4,7 +4,7 @@ use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use share::Ctx;
 use lang::typ::Qualifier;
-use crate::{Dag, UDag, Node, Ref, QDag, GOp};
+use crate::{Dag, UDag, Node, QDag, GOp};
 
 pub struct QualifierPropagation {
     pub quals: Ctx<NodeIndex, Qualifier>,
