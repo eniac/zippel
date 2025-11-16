@@ -1,0 +1,654 @@
+[2m2025-11-16T07:10:25.734614Z[0m [32m INFO[0m [2mcargo_tarpaulin::config[0m[2m:[0m Creating config
+[2m2025-11-16T07:10:25.833699Z[0m [32m INFO[0m [2mcargo_tarpaulin[0m[2m:[0m Running Tarpaulin
+[2m2025-11-16T07:10:25.833709Z[0m [32m INFO[0m [2mcargo_tarpaulin[0m[2m:[0m Building project
+[2m2025-11-16T07:10:25.833802Z[0m [32m INFO[0m [2mcargo_tarpaulin::cargo[0m[2m:[0m Cleaning project
+   Compiling proc-macro2 v1.0.95
+   Compiling unicode-ident v1.0.18
+   Compiling autocfg v1.5.0
+   Compiling libc v0.2.174
+   Compiling cfg-if v1.0.1
+   Compiling zerocopy v0.8.26
+   Compiling version_check v0.9.5
+   Compiling either v1.15.0
+   Compiling typenum v1.18.0
+   Compiling once_cell v1.21.3
+   Compiling memchr v2.7.5
+   Compiling arrayvec v0.7.6
+   Compiling allocator-api2 v0.2.21
+   Compiling thiserror v2.0.12
+   Compiling crossbeam-utils v0.8.21
+   Compiling parking_lot_core v0.9.11
+   Compiling ucd-trie v0.1.7
+   Compiling paste v1.0.15
+   Compiling scopeguard v1.2.0
+   Compiling smallvec v1.15.1
+   Compiling log v0.4.27
+   Compiling anyhow v1.0.98
+   Compiling arrayvec v0.5.2
+   Compiling serde v1.0.219
+   Compiling rayon-core v1.12.1
+   Compiling itertools v0.14.0
+   Compiling typed-arena v2.0.2
+   Compiling unicode-width v0.1.14
+   Compiling itertools v0.13.0
+   Compiling thiserror v1.0.69
+   Compiling syn v1.0.109
+   Compiling hashbrown v0.15.4
+   Compiling itertools v0.10.5
+   Compiling itoa v1.0.15
+   Compiling hashbrown v0.14.5
+   Compiling pretty v0.12.4
+   Compiling ryu v1.0.20
+   Compiling generic-array v0.14.7
+   Compiling ahash v0.8.12
+   Compiling rustix v1.0.7
+   Compiling num-traits v0.2.19
+   Compiling lock_api v0.4.13
+   Compiling getrandom v0.3.3
+   Compiling void v1.0.2
+   Compiling quote v1.0.40
+   Compiling crossbeam-epoch v0.9.18
+   Compiling serde_json v1.0.140
+   Compiling syn v2.0.104
+   Compiling getrandom v0.2.16
+   Compiling grb-sys2 v12.1.2
+   Compiling csv-core v0.1.12
+   Compiling itertools v0.12.1
+   Compiling rand_core v0.6.4
+   Compiling crossbeam-deque v0.8.6
+   Compiling dashmap v6.1.0
+   Compiling lazy_static v1.5.0
+   Compiling bitflags v2.9.1
+   Compiling linux-raw-sys v0.9.4
+   Compiling bumpalo v3.19.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.6
+   Compiling num-integer v0.1.46
+   Compiling digest v0.10.7
+   Compiling keccak v0.1.5
+   Compiling fastrand v2.3.0
+   Compiling hex v0.4.3
+   Compiling num-complex v0.4.6
+   Compiling num-bigint v0.4.6
+   Compiling fnv v1.0.7
+   Compiling xml-rs v0.8.26
+   Compiling equivalent v1.0.2
+   Compiling indexmap v2.10.0
+   Compiling fixedbitset v0.5.7
+   Compiling aho-corasick v1.1.3
+   Compiling regex-syntax v0.8.5
+   Compiling num-iter v0.1.45
+   Compiling rayon v1.10.0
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v0.2.7
+   Compiling num_cpus v1.17.0
+   Compiling anstyle v1.0.11
+   Compiling colorchoice v1.0.4
+   Compiling is_terminal_polyfill v1.70.1
+   Compiling anstyle-query v1.1.3
+   Compiling jiff v0.2.15
+   Compiling futures-sink v0.3.31
+   Compiling futures-core v0.3.31
+   Compiling petgraph v0.7.1
+   Compiling slab v0.4.10
+   Compiling futures-io v0.3.31
+   Compiling pin-project-lite v0.2.16
+   Compiling anstream v0.6.19
+   Compiling futures-channel v0.3.31
+   Compiling futures-task v0.3.31
+   Compiling pin-utils v0.1.0
+   Compiling sdd v3.0.8
+   Compiling parking_lot v0.12.4
+   Compiling futures-util v0.3.31
+   Compiling scc v2.3.4
+   Compiling ppv-lite86 v0.2.21
+   Compiling regex-automata v0.4.9
+   Compiling tempfile v3.20.0
+   Compiling num-rational v0.4.2
+   Compiling rand_chacha v0.3.1
+   Compiling lp-solvers v1.0.1
+   Compiling num v0.4.3
+   Compiling rand v0.8.5
+   Compiling good_lp v1.14.0
+   Compiling ark-std v0.5.0
+   Compiling futures-executor v0.3.31
+   Compiling futures v0.3.31
+   Compiling enum-ordinalize-derive v4.3.1
+   Compiling zeroize_derive v1.4.2
+   Compiling ark-serialize-derive v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ff-macros v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ff-asm v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling thiserror-impl v2.0.12
+   Compiling derive_arbitrary v1.4.1
+   Compiling ark-serialize-derive v0.5.0
+   Compiling ark-ff-asm v0.5.0
+   Compiling serde_derive v1.0.219
+   Compiling ark-ff-macros v0.5.0
+   Compiling thiserror-impl v1.0.69
+   Compiling pest-ast v0.3.5
+   Compiling serial_test_derive v3.2.0
+   Compiling ark-serialize v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-serialize v0.5.0
+   Compiling regex v1.11.1
+   Compiling cstr-enum-derive v0.1.0
+   Compiling zeroize v1.8.1
+   Compiling enum-ordinalize v4.3.0
+   Compiling grb-macro v0.1.0
+   Compiling educe v0.6.0
+   Compiling serial_test v3.2.0
+   Compiling arbitrary v1.4.1
+   Compiling env_filter v0.1.3
+   Compiling cstr-enum v1.0.0
+   Compiling env_logger v0.11.8
+   Compiling pest v2.8.1
+   Compiling arbtest v0.3.2
+   Compiling share v0.1.0 (/home/lef/git/zippel-ws/share)
+   Compiling pest_meta v2.8.1
+   Compiling from-pest v0.3.3
+   Compiling ark-ff v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ff v0.5.0
+   Compiling pest_generator v2.8.1
+   Compiling pest_derive v2.8.1
+   Compiling lang v0.1.0 (/home/lef/git/zippel-ws/lang)
+   Compiling csv v1.3.1
+   Compiling grb v3.0.1
+   Compiling ark-poly v0.5.0
+   Compiling ark-poly v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ec v0.5.0
+   Compiling ark-ec v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling spongefish v0.2.0 (https://github.com/arkworks-rs/spongefish.git#1bff09dc)
+   Compiling ark-curve25519 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-pallas v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-bls12-377 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-bn254 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-mnt4-753 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-mnt4-298 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-secp256k1 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-bls12-381 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ed25519 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-vesta v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling ark-ed-on-cp6-782 v0.5.0 (https://github.com/arkworks-rs/algebra.git#0c6e28f5)
+   Compiling backend v0.1.0 (/home/lef/git/zippel-ws/backend)
+   Compiling graph v0.1.0 (/home/lef/git/zippel-ws/graph)
+   Compiling runtime v0.1.0 (/home/lef/git/zippel-ws/runtime)
+   Compiling zippel v0.1.0 (/home/lef/git/zippel-ws)
+   Compiling examples v0.1.0 (/home/lef/git/zippel-ws/examples)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 31.17s
+[2m2025-11-16T07:10:57.568735Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:10:57.568753Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/share-ab7fa0dfb8fc7dc2
+
+running 5 tests
+test traversal::test_traversal_option ... ok
+test traversal::test_traversal_bad ... ok
+test traversal::test_traversal_good ... ok
+test context::set_modify ... ok
+test context::set_extract_if ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:10:57.859420Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:10:57.859433Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/lang-a59130967dd10042
+
+running 76 tests
+test ast::exp::parser_challenge ... ok
+test ast::exp::parser_lit ... ok
+test ast::exp::parser_ifft ... ok
+test ast::exp::parser_log ... ok
+test ast::exp::parser_eval ... ok
+test ast::exp::parser_app ... ok
+test ast::exp::parser_poly ... ok
+test ast::exp::parser_let ... ok
+test ast::exp::parser_coef ... ok
+test ast::exp::parser_fft ... ok
+test ast::exp::parser_var ... ok
+test ast::exp::parser_call_two ... ok
+test ast::exp::parser_concat ... ok
+test ast::exp::parser_random ... ok
+test ast::arg::arg_traversal ... ok
+test ast::exp::parser_seq ... ok
+test id::id_parser ... ok
+test ast::exp::parser_minus ... ok
+test ast::exp::parser_pair ... ok
+test ast::exp::parser_verify ... ok
+test ast::exp::parser_map ... ok
+test ast::exp::parser_for ... ok
+test id::test_only_alpha ... ok
+test id::test_empty_string ... ok
+test id::test_complex_pattern ... ok
+test id::test_alpha_numeric_alpha ... ok
+test ast::exp::parser_reduce ... ok
+test ast::exp::parser_range ... ok
+test id::test_alpha_ending_with_numeric ... ok
+test id::test_special_characters_with_trailing_number ... ok
+test id::test_simple_alphanumeric ... ok
+test id::test_only_numeric ... ok
+test ast::exp::parser_assert ... ok
+test ast::arg::arg_parser ... ok
+test id::vid_fresh ... ok
+test id::tid_fresh ... ok
+test ast::decl::fn_parser2 ... ok
+test ast::decl::fn_parser1 ... ok
+test ast::exp::parser_bin ... ok
+test ast::decl::proto_parser ... ok
+test ast::decl::proto_easy ... ok
+test ast::decl::decls_parser ... ok
+test typ::infer::tests::test_literal_inference ... ok
+test typ::infer::tests::test_empty_vector_error ... ok
+test typ::infer::tests::test_ram ... ok
+test typ::infer::tests::test_binary_concat_inference ... ok
+test typ::infer::tests::test_binary_dot_inference ... ok
+test typ::infer::tests::test_vector_inference ... ok
+test typ::qualifier::qualifier_parser ... ok
+test typ::infer::tests::test_binary_sub_inference ... ok
+test typ::range::range_traversal ... ok
+test typ::infer::tests::test_binary_equ_inference ... ok
+test typ::infer::tests::test_poly ... ok
+test typ::infer::tests::test_ifft ... ok
+test typ::range::range_parser ... ok
+test typ::infer::tests::test_binary_add_inference ... ok
+test typ::infer::tests::test_coef ... ok
+test typ::subst::size_substs_from_typevars ... ok
+test typ::size::size_parser ... ok
+test typ::infer::tests::test_binary_pow_inference ... ok
+test typ::infer::tests::test_fft ... ok
+test typ::infer::tests::test_binary_mul_inference ... ok
+test typ::typ_parser ... ok
+test typ::infer::tests::test_binary_rem_inference ... ok
+test typ::subst::alias_substs_equ_clos ... ok
+test typ::infer::tests::test_binary_div_inference ... ok
+test typ::lub::lub_tid ... ok
+test typ::lub::lub_range ... ok
+test ast::module::from_decl_underflow ... ok
+test typ::typevar::typevars_parser ... ok
+test typ::lub::lub_typ ... ok
+test typ::unify::unify_typ ... ok
+test ast::module::from_decl_subst2 ... ok
+test ast::module::from_decl_subst1 ... ok
+test ast::module::from_decl_duplicate ... ok
+test typ::infer::tests::test_app ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+[2m2025-11-16T07:10:59.416436Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:10:59.416457Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/examples-f765ded783043f7b
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:10:59.616805Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:10:59.616818Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/zippel-2a83db54406fb44e
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:10:59.895408Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:10:59.895421Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/runtime-07aa940f6c5c0ecb
+
+running 1 test
+test tests::runtime_tests::test_runtime_information_creation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:11:01.134409Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:01.134423Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/backend-823b857a8b55b987
+
+running 75 tests
+test tests::values_tests::test_equ_scalars_not_equal ... ok
+test tests::values_tests::test_equ_scalars_equal ... ok
+test tests::values_tests::test_equ_static ... ok
+test tests::values_tests::test_discriminant_order ... ok
+test tests::values_tests::test_discriminant_order_extended ... ok
+test tests::values_tests::test_into_index ... ok
+test tests::values_tests::test_add_assign ... ok
+test tests::values_tests::test_add_scalars ... ok
+test tests::values_tests::test_into_scalar ... ok
+test tests::values_tests::test_is_one_false ... ok
+test tests::values_tests::test_is_one_true ... ok
+test tests::values_tests::test_g1_associativity_addition ... ok
+test tests::values_tests::test_g1_additive_identity ... ok
+test tests::values_tests::test_is_vec_false ... ok
+test tests::values_tests::test_is_vec_true ... ok
+test tests::values_tests::test_is_one ... ok
+test tests::values_tests::test_division_operations ... ok
+test tests::values_tests::test_div_scalars ... ok
+test tests::values_tests::test_is_zero_false ... ok
+test tests::values_tests::test_is_zero_true ... ok
+test tests::values_tests::test_mul_assign ... ok
+test tests::values_tests::test_mul_scalars ... ok
+test tests::values_tests::test_mutable_operations ... ok
+test tests::values_tests::test_index_commutativity ... ok
+test tests::values_tests::test_add_vectors ... ok
+test tests::values_tests::test_bool_operations ... ok
+test tests::values_tests::test_scalar_additive_identity ... ok
+test tests::values_tests::test_not_bool ... ok
+test tests::values_tests::test_ram_operation ... ok
+test tests::values_tests::test_not_operation ... ok
+test tests::values_tests::test_scalar_associativity_addition ... ok
+test tests::values_tests::test_scalar_associativity_multiplication ... ok
+test tests::values_tests::test_scalar_distributivity ... ok
+test tests::values_tests::test_scalar_from_usize ... ok
+test tests::values_tests::test_scalar_multiplicative_identity ... ok
+test tests::values_tests::test_mle_operations ... ok
+test tests::values_tests::test_remainder_operations ... ok
+test tests::values_tests::test_sub_scalars ... ok
+test tests::values_tests::test_scalar_additive_inverse ... ok
+test tests::values_tests::test_typ_index ... ok
+test tests::values_tests::test_typ_g1 ... ok
+test tests::values_tests::test_typ_g2 ... ok
+test tests::values_tests::test_poly_operations ... ok
+test tests::values_tests::test_typ_bool ... ok
+test tests::values_tests::test_typ_scalar ... ok
+test tests::values_tests::test_elliptic_curve_pairing ... ok
+test tests::values_tests::test_g2_additive_identity ... ok
+test tests::values_tests::test_value_equ_returns_bool ... ok
+test tests::values_tests::test_value_equ ... ok
+test tests::values_tests::test_typ_method ... ok
+test tests::values_tests::test_value_pow ... ok
+test tests::values_tests::test_value_concat ... ok
+test tests::values_tests::test_vec_scalar_associativity_addition ... ok
+test tests::values_tests::test_vec_scalar_distributivity ... ok
+test tests::values_tests::test_sub_operations ... ok
+test tests::values_tests::test_zero_g1 ... ok
+test tests::values_tests::test_bitxor_as_pow ... ok
+test tests::values_tests::test_zero_scalar ... ok
+test tests::values_tests::test_zero_vec ... ok
+test tests::values_tests::test_serialize_value ... ok
+test tests::values_tests::coef_eval_test ... ok
+test tests::values_tests::test_zero_creation ... ok
+test tests::values_tests::test_value_concat_extended ... ok
+test tests::values_tests::test_g2_associativity_addition ... ok
+test tests::values_tests::test_value_dot ... ok
+test tests::values_tests::test_value_eval ... ok
+test tests::values_tests::test_value_vec_construction ... ok
+test tests::values_tests::test_vec_scalar_operations ... ok
+test tests::values_tests::test_g1_scalar_distributivity ... ok
+test tests::values_tests::pairing_test ... ok
+test tests::values_tests::test_scalar_multiplication_variants ... ok
+test tests::values_tests::test_add_comm ... ok
+test tests::values_tests::test_mul_comm ... ok
+test tests::values_tests::test_vec_operations ... ok
+test tests::values_tests::inverse_test ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+
+[2m2025-11-16T07:11:06.993835Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:06.993851Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/schnorr-d4be2f281623a411
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:11:11.168319Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:11.168345Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/mle-956378ab73e69cd5
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:11:15.464215Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:15.464237Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/ipa-1f4d2986ecb07d23
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:11:20.003054Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:20.003076Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/graph-590b15f36b3015de
+
+running 135 tests
+test analyses::completeness::completeness_test ... ignored
+test analyses::knowledge::knowledge_foo ... ignored
+test analyses::qualifier::qualifier_prop ... ignored
+test analyses::uniform::uniformity_prop ... ignored
+test scheduler::ilp::gurobi_e2e ... ignored, Gurobi license for CI bot does not work due to HostID
+test analyses::groebner::buchberger::test_grevlex_ordering ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_addition_zero_commutativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_addition_identity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_addition_commutativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_addition_associativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_multiplication_associativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_left_distributivity ... ok
+test tests::algebraic_properties::complex_properties::test_nested_distributivity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_multiplication_commutativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_multiplication_one_commutativity ... ok
+test tests::algebraic_properties::complex_properties::test_mixed_operations_consistency ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_right_distributivity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_subtraction_self_zero ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_subtraction_identity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_division_identity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_zero_multiplication_commutativity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_zero_division_zero ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_multiplication_zero_absorbing ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_multiplication_identity ... ok
+test tests::algebraic_properties::scalar_field_properties::test_scalar_division_self_one ... ok
+test analyses::groebner::buchberger::test_term_ops ... ok
+test tests::cross_type_properties::scalar_g1_properties::test_scalar_mul_g1_distributive_scalars ... ok
+test tests::cross_type_properties::scalar_g1_properties::test_scalar_mul_g1_associativity ... ok
+test tests::cross_type_properties::scalar_g1_properties::test_scalar_mul_g1_distributive_points ... ok
+test tests::node_tests::node_tests::test_node_into_op_success ... ok
+test tests::node_tests::node_tests::test_node_drop_annotation ... ok
+test tests::node_tests::node_tests::test_node_is_input_true ... ok
+test tests::node_tests::node_tests::test_node_is_input_false ... ok
+test tests::node_tests::node_tests::test_node_add_annotation ... ok
+test tests::node_tests::node_tests::test_node_is_relation_false ... ok
+test tests::node_tests::node_tests::test_node_is_relation_true ... ok
+test tests::node_tests::node_tests::test_node_is_op_true ... ok
+test tests::node_tests::node_tests::test_node_is_op_false_inp ... ok
+test tests::node_tests::node_tests::test_node_is_transcript_false_default ... ok
+test tests::node_tests::node_tests::test_node_is_verifier_check_true ... ok
+test tests::node_tests::node_tests::test_node_name_with_vid ... ok
+test tests::node_tests::node_tests::test_node_op_extraction_none ... ok
+test tests::node_tests::node_tests::test_node_name_without_vid ... ok
+test tests::node_tests::node_tests::test_node_op_extraction_none ... ok
+test tests::node_tests::node_tests::test_node_references_op ... ok
+test tests::node_tests::node_tests::test_node_references_inp ... ok
+test tests::algebraic_properties::vector_properties::test_vector_addition_identity ... ok
+test tests::algebraic_properties::vector_properties::test_vector_addition_commutativity ... ok
+test tests::node_tests::node_tests::test_node_set_and_query_transcript ... ok
+test tests::op_tests::op_construction::test_op_add_simplification_zero_left ... ok
+test tests::op_tests::op_construction::test_op_add_simplification_zero_right ... ok
+test tests::op_tests::op_construction::test_op_add_values ... ok
+test tests::op_tests::op_construction::test_op_concat_vectors ... ok
+test tests::algebraic_properties::vector_properties::test_vector_scalar_multiplication_distributivity ... ok
+test tests::op_tests::op_construction::test_op_div_by_zero - should panic ... ok
+test tests::op_tests::op_construction::test_op_div_simplification_zero_numerator ... ok
+test tests::node_tests::node_tests::test_node_map_node_indices ... ok
+test tests::op_tests::op_construction::test_op_div_simplification_one_denominator ... ok
+test tests::op_tests::op_construction::test_op_mul_simplification_zero_left ... ok
+test tests::op_tests::op_construction::test_op_mul_simplification_zero_right ... ok
+test tests::op_tests::op_construction::test_op_mul_simplification_one_left ... ok
+test tests::op_tests::op_construction::test_op_div_values ... ok
+test tests::op_tests::op_construction::test_op_ram_construction ... ok
+test tests::op_tests::op_construction::test_op_value_one ... ok
+test tests::op_tests::op_construction::test_op_value_scalar ... ok
+test tests::op_tests::op_construction::test_op_value_zero ... ok
+test tests::op_tests::op_construction::test_op_vec_construction ... ok
+test tests::op_tests::op_construction::test_op_sub_simplification_zero ... ok
+test tests::op_tests::op_integration::test_chained_operations ... ok
+test tests::op_tests::op_construction::test_op_sub_values ... ok
+test tests::op_tests::op_integration::test_shared_subexpression ... ok
+test tests::op_tests::op_integration::test_multiple_outputs ... ok
+test tests::op_tests::op_integration::test_vector_element_operations ... ok
+test tests::algebraic_properties::vector_properties::test_vector_addition_associativity ... ok
+test tests::op_tests::op_integration::test_zero_simplifications_in_complex_expr ... ok
+test tests::op_tests::op_construction::test_op_mul_simplification_one_right ... ok
+test tests::op_tests::op_construction::test_op_mul_values ... ok
+test tests::op_unit_tests::op_construction_tests::test_bfalse ... ok
+test tests::op_unit_tests::op_construction_tests::test_btrue ... ok
+test tests::op_tests::op_construction::test_op_vec_add ... ok
+test tests::op_unit_tests::op_construction_tests::test_challenge_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_and_false_shortcircuit_right ... ok
+test tests::op_unit_tests::op_construction_tests::test_and_false_shortcircuit_left ... ok
+test tests::op_unit_tests::op_construction_tests::test_challenge_nz_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_check_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_coef_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_dot_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_eval_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_fft_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_ifft_construction ... ok
+test tests::op_tests::op_construction::test_op_vec_scalar_mul ... ok
+test tests::op_unit_tests::op_construction_tests::test_fft_ifft_cancellation ... ok
+test tests::op_unit_tests::op_construction_tests::test_equ_different_values ... ok
+test tests::op_unit_tests::op_construction_tests::test_equ_both_values ... ok
+test tests::op_unit_tests::op_construction_tests::test_equ_both_values ... ok
+test tests::op_unit_tests::op_construction_tests::test_ifft_fft_cancellation ... ok
+test tests::op_unit_tests::op_construction_tests::test_index_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_index_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_mle_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_poly_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_random_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_pow_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_pow_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_pow_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_vec_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_random_nz_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_and_both_values ... ok
+test tests::op_unit_tests::ref_tests::test_ref_from_str ... ok
+test tests::op_unit_tests::ref_tests::test_ref_from_node_index ... ok
+test tests::op_unit_tests::ref_tests::test_ref_from_vid ... ok
+test tests::op_unit_tests::ref_tests::test_ref_node_extraction ... ok
+test tests::op_unit_tests::op_construction_tests::test_zero_scalar ... ok
+test tests::op_unit_tests::op_construction_tests::test_zero_g1 ... ok
+test tests::op_unit_tests::ref_tests::test_ref_var_extraction_none ... ok
+test tests::op_unit_tests::ref_tests::test_ref_var_extraction_some ... ok
+test tests::op_unit_tests::ref_tests::test_ref_is_var_true ... ok
+test tests::op_unit_tests::ref_tests::test_ref_is_var_false ... ok
+test tests::test_helpers::tests::test_scalar_creation ... ok
+test tests::test_helpers::tests::test_execute_simple_addition ... ok
+test tests::test_helpers::tests::test_graph_builder_basic ... ok
+test analyses::groebner::buchberger::test_s_polynomial ... ok
+test tests::op_unit_tests::op_construction_tests::test_range_construction ... ok
+test tests::op_unit_tests::op_construction_tests::test_pad_zeroes_no_padding_needed ... ok
+test analyses::groebner::buchberger::test_linear ... ok
+test analyses::groebner::buchberger::test_maple ... ok
+test graph_reduce ... ok
+test graph_foo ... ok
+test domain_seperator::test_domain_separator ... ok
+test graph_poly ... ok
+test analyses::trans_clos::trans_clos_many ... ok
+test analyses::trans_clos::trans_clos_simple ... ok
+test graph_sum ... ok
+test analyses::knowledge::groebner_ex3 ... ok
+test analyses::knowledge::groebner_baz ... ok
+test analyses::knowledge::groebner_bar ... ok
+
+test result: ok. 130 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+[2m2025-11-16T07:11:25.761677Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling::linux[0m[2m:[0m Launching test
+[2m2025-11-16T07:11:25.761693Z[0m [32m INFO[0m [2mcargo_tarpaulin::process_handling[0m[2m:[0m running /home/lef/git/zippel-ws/target/debug/deps/kzg-5f04ca2e310f8de1
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[2m2025-11-16T07:11:30.631473Z[0m [32m INFO[0m [2mcargo_tarpaulin::report[0m[2m:[0m Coverage Results:
+|| Uncovered Lines:
+|| backend/src/config.rs: 100-101, 105-106, 112-115, 119-121, 126-128, 132-135, 139-143, 154-159, 163-168, 170, 193-195, 218-219, 257, 259, 262-263, 274-275, 283-284, 287-289, 292-293, 309-310, 313, 315, 318-319, 329-332, 337-341, 343, 389-390, 394-395, 399-400, 404-405, 409-410, 415-416, 420-421, 425-426, 430-431
+|| backend/src/nothing/nocurve.rs: 28-29, 34-35, 39-40, 45-46, 49-50, 55-56, 61-62, 72, 74-75, 80-81, 86-87, 91-92, 96-97, 101-102, 108-109, 115-116, 121-122, 127-128, 133-134, 139-140, 146-147, 153-154, 160-161, 167-168, 174-175, 181-182, 188-189, 194-195, 200-201, 207-208, 214-215, 220-221, 227-228, 233-234, 240-241, 246-247, 253-254, 259-260, 266-267, 272-273, 279-280, 285-286, 292-293, 299-300, 306-307, 312-313, 318-319, 324-325, 330-331, 338-339, 345-346, 351-352, 357-358, 364-365, 371-372, 378-379, 385-386, 391-392, 397-398, 403-404, 408-409, 413-414, 419-420, 422-423, 428-429, 434-435, 440-441, 446-447, 459-460, 462-463, 467-468, 485-486, 504-505, 507-508, 510-511, 513-514, 516-517, 519-520, 522-523, 525-526, 537-538, 543-544
+|| backend/src/nothing/nofield.rs: 30-31, 36-37, 41-42, 47-48, 51-52, 57-58, 63-64, 74, 76-77, 82-83, 88-89, 93-94, 98-99, 103-104, 110-111, 117-118, 123-124, 129-130, 135-136, 141-142, 148-149, 155-156, 162-163, 169-170, 176-177, 183-184, 190-191, 196-197, 202-203, 209-210, 216-217, 222-223, 229-230, 235-236, 242-243, 248-249, 255-256, 261-262, 268-269, 274-275, 281-282, 287-288, 294-295, 301-302, 308-309, 314-315, 320-321, 326-327, 332-333, 340-341, 347-348, 353-354, 359-360, 366-367, 373-374, 380-381, 387-388, 393-394, 398-399, 404-405, 409-410, 415-416, 421-422, 428-429, 435-436, 441-442, 447-448, 452-453, 457-458, 463-464, 466, 472-473, 478-479, 484-485, 490-491, 496-497, 502-503, 514-515, 517, 520, 525, 527-528, 530-531, 533-534, 536-537, 539-540, 542-543, 545-546, 548-549, 551-552, 573-574, 577-578
+|| backend/src/nothing/nopairing.rs: 31, 37
+|| backend/src/types.rs: 55-56, 73-74, 79, 88-89, 92-93, 96-97, 100-101, 112-116, 125, 139-140, 142, 149, 158, 169-175, 177, 181-191, 195-205, 209-219, 223-226, 230-241, 245-251, 255-266, 270-276, 280-283, 287-288, 301-304, 306-307, 311-316, 318-321, 324-325, 329-338, 340-341, 344-354, 356, 358-360, 362, 366-367, 369-372, 374-377, 379, 383-393, 395, 397-399, 401, 405-410, 412-414, 416-417, 419, 421-423, 425, 429-434, 436-438, 441-442, 444, 446-448, 450, 454-463, 465-466, 470-475, 477, 479-481, 483, 487-496, 498, 500-501, 503, 515-516, 526, 537-538, 541-542
+|| backend/src/values.rs: 65, 71-78, 80, 93-96, 98, 107, 109-110, 112, 114, 116-117, 119, 121-122, 124-125, 127-128, 130, 132-133, 135, 137, 139-140, 142, 144, 146-147, 149, 151-152, 154-155, 157, 159-160, 162, 164, 166-167, 169, 171, 173-174, 176, 178-179, 181-182, 206-207, 209, 212-213, 215-223, 240-245, 248-251, 253-256, 258, 260, 268, 272-277, 279, 282, 284-285, 287-289, 291-292, 296, 305-306, 308, 310-312, 314-317, 319, 322, 326, 330, 333, 337, 341, 343, 345-347, 349-350, 363, 365-366, 373-374, 377-381, 383-385, 387, 390, 392-393, 395, 397-398, 400, 404, 406-407, 409-410, 412-414, 416-418, 420-421, 423-425, 427-429, 431, 433-435, 437-439, 441-443, 445-447, 449-451, 453-457, 459-460, 462, 464-466, 468-471, 473, 482, 484-494, 496-497, 499-500, 502-505, 508-511, 514-517, 520-523, 526-529, 532-535, 538, 546-547, 549-551, 553-554, 556, 558-562, 564, 567-568, 575-576, 579-581, 583-585, 587-589, 592, 595-596, 599-600, 603-604, 607-608, 611-612, 615-618, 620-622, 626-627, 630-633, 636, 640, 644, 648-650, 657, 660-661, 664-665, 668-669, 672-675, 677-679, 684, 689-691, 694, 697-698, 702, 707-709, 712, 715-716, 718-720, 722-725, 728-730, 733, 736-737, 740-741, 748-752, 754-756, 759-764, 768-773, 777-782, 786, 791, 796, 798-799, 801, 803-804, 806, 808-809, 811, 813-816, 818-819, 824, 835, 837, 839, 841, 846, 851, 856, 861, 863-864, 866, 868-870, 874, 887, 889-894, 897, 899-901, 905, 918, 920-925, 928, 930-932, 935-936, 939-940, 942, 944-951, 953, 957, 959-964, 967, 969-971, 973, 975-976, 984-985, 987, 989-990, 993, 995, 998-999, 1002-1003, 1006-1007, 1011, 1013, 1021, 1024-1025, 1029, 1039-1042, 1044, 1047, 1049, 1053, 1063-1066, 1068, 1071, 1073, 1077, 1079-1080, 1083-1086, 1089-1092, 1094, 1097, 1099, 1101, 1103-1104, 1107-1111, 1113-1115, 1118, 1120-1121, 1123, 1125-1126, 1128, 1130-1131, 1133, 1137-1142, 1144-1147, 1150, 1158, 1160-1161, 1163, 1167, 1181, 1183-1186, 1188-1190, 1193, 1195-1196, 1198, 1202, 1216, 1218-1221, 1223-1225, 1228, 1230-1231, 1233, 1236-1237, 1240-1241, 1243, 1245-1254, 1256, 1260, 1262-1265, 1267-1269, 1272, 1274-1275, 1277, 1279, 1281-1286, 1288-1290, 1292, 1295-1300, 1302, 1310-1311, 1314, 1316-1319, 1321-1322, 1325-1326, 1328, 1342-1343, 1357-1360, 1363-1366, 1370-1373, 1375, 1382-1384, 1386, 1388, 1390-1392, 1394, 1396, 1398-1399, 1401, 1403, 1405-1407, 1409-1411, 1413-1414, 1416-1418, 1420-1423, 1425-1427, 1429-1431, 1433-1436, 1438-1440, 1442-1445, 1447-1448, 1450-1451, 1453, 1455, 1460, 1477, 1479-1481, 1517-1522, 1524, 1532-1537, 1539, 1547-1548, 1555-1556, 1558, 1560-1561, 1569-1571, 1573-1576, 1578-1579, 1581, 1583-1585, 1587-1593, 1595-1596, 1598-1599, 1601-1602, 1604-1605, 1607-1610, 1612-1615, 1617, 1619-1621, 1623-1625, 1627-1629, 1631-1633, 1635-1637, 1639-1641, 1643-1645, 1647-1650, 1652-1653, 1655, 1663-1664, 1667-1678, 1680-1683, 1685-1690, 1695-1696, 1698-1700, 1703-1704, 1706-1707, 1709-1710, 1712-1713, 1715-1716, 1718-1720, 1722-1724, 1726-1728, 1730-1731, 1733-1734, 1736, 1743-1744, 1749-1752, 1754-1756, 1758-1759, 1762-1765, 1767-1769, 1771-1772, 1775, 1786-1789, 1791-1794, 1796-1799, 1801-1804, 1806-1809, 1811-1814, 1823-1824, 1826-1830, 1832-1837, 1840-1844, 1846, 1848-1851, 1853-1856, 1858-1861, 1863-1866, 1868-1871, 1873-1876, 1878-1881, 1883-1886, 1888-1892, 1894-1897, 1899-1902, 1904-1907, 1909-1912, 1914-1917, 1919-1923, 1925-1929, 1931-1934, 1936-1939, 1942, 1949-1950, 1964, 1966, 1973, 1978-1990, 1992-1996, 1999, 2001-2002, 2011-2012, 2017-2020, 2027-2029, 2031, 2043, 2055, 2062, 2066-2070, 2072-2073, 2077-2081, 2083-2084, 2099, 2104-2109, 2111-2113, 2115-2117, 2119-2121, 2123-2125, 2127-2129, 2131-2133, 2135, 2142-2144, 2146, 2152-2154, 2156, 2162, 2165-2170, 2172, 2175-2180, 2182, 2185-2188, 2191-2194, 2200, 2203-2206, 2212, 2218, 2225-2232, 2240-2241, 2243-2257, 2269-2274, 2277-2280, 2284-2289, 2291, 2293, 2306-2309, 2311, 2313, 2330-2333, 2335-2336, 2338, 2349-2352, 2354, 2365-2368, 2370, 2430-2433, 2440-2443, 2529-2532, 2539-2542, 2549-2553, 2555, 2559-2567, 2569, 2571-2575, 2577, 2579-2583, 2585, 2587-2591, 2593, 2595-2599, 2601, 2603-2607, 2609, 2618-2621, 2623, 2625-2626, 2628-2629, 2638-2643, 2649-2651, 2654-2657, 2659, 2668-2669, 2672-2674, 2676-2678, 2681, 2683-2686, 2688-2690, 2692-2693, 2695-2696, 2698, 2700-2703, 2705-2707, 2721-2723, 2726-2729, 2731, 2740, 2742-2743, 2745-2746, 2749, 2751-2755, 2757-2760, 2762-2764, 2766-2770, 2772-2781, 2784, 2786-2791, 2794
+|| graph/src/analyses/completeness.rs: 19-21, 25-27, 29-30, 35, 37-40, 42
+|| graph/src/analyses/groebner/buchberger.rs: 33-34, 50-53, 56-57, 60-61, 76-77, 84-85, 108, 142, 169, 195, 201, 266, 272, 332, 388-390, 392
+|| graph/src/analyses/groebner/mod.rs: 48-50, 73, 78-81, 91-95, 97, 109-120, 122-124, 126-128, 141-147, 150-156, 162-164, 170, 174-178, 180-183, 185-188, 190-194, 197, 214-216, 218-221, 232-235, 237-238, 240-242, 244-247, 258-259, 261-266, 282-287, 289-294, 296-305, 310-311, 316-319
+|| graph/src/analyses/groebner/monomial.rs: 27-28, 30-31, 58-59, 64-65, 83-88, 94, 152, 158-159, 199-200, 216-217, 227-228, 233-234, 289-290, 297-298, 337-338, 357-358, 360-361, 363-364, 367-368, 378-379, 389-390, 395-396
+|| graph/src/analyses/groebner/sparsepoly.rs: 41-44, 46, 125-128, 130, 135-138, 142, 149, 155-156, 160, 164-167, 169-170, 206-207, 210-211, 218-219, 222-223, 226-230, 232-235, 243-245, 247, 249-252, 254, 256, 265, 268, 292, 335-337, 340-341, 343, 345-346, 348, 353, 362-365, 369-370, 373-375, 377-380, 383, 386-387, 400, 403, 415-416, 419-420, 428, 446
+|| graph/src/analyses/knowledge.rs: 11-12, 21-24, 34-35, 37, 41-42, 44, 54, 96
+|| graph/src/analyses/qualifier.rs: 17, 21-28, 30-33, 35-36, 38-42, 44, 46-47, 58, 62-64, 66, 68, 70
+|| graph/src/analyses/trans_clos.rs: 22-24, 54-55, 59-63, 65, 73, 92-94, 96-98, 117, 119, 134-135, 141, 170-171, 174-175
+|| graph/src/analyses/uniform.rs: 36-42, 44-54, 67-73, 75, 78-82, 88, 91-92, 96, 101-104, 113-117, 119, 122-129, 131, 135-136, 155, 172, 181, 202-205, 207-209, 211
+|| graph/src/dep.rs: 18-19, 30-31, 34-35, 37-38, 40-41, 43-46, 49-51
+|| graph/src/domain_seperator.rs: 39-40, 56, 58, 71-72, 81, 84-85, 87-88, 93-94, 97-100, 103-104
+|| graph/src/lib.rs: 79-80, 82-83, 85-86, 88-89, 100-104, 113-114, 127-128, 135-138, 143-146, 176, 191-192, 223, 226-227, 230-232, 249-250, 253-255, 293-294, 296, 298, 301-302, 304-306, 309-311, 313, 317, 319, 324-327, 329-330, 332, 337-340, 342, 346-349, 351-352, 354-356, 358-361, 364-365, 370-373, 375-376, 378, 381, 384-391, 393, 395, 399-404, 406, 412-413, 416-417, 420-423, 425-431, 433, 437, 440-441, 443-444, 448-449, 451-454, 456, 470-471, 474, 476-478, 484-487, 489-491, 494-495, 497, 500, 507, 517-518, 521-528, 530, 569, 582, 603-604, 644-645, 650-651, 656-657, 678-679, 684-685, 695-696, 699-700, 704-707, 709, 713-714, 717-718, 734, 775-776, 784-785, 801, 806, 812, 846-847, 852-854, 856, 858, 861-862, 864, 866, 868-871, 876-877, 879, 881, 883-886, 892, 894, 896, 899, 901-904, 908, 910, 912, 915, 917-920, 933-934, 936, 938, 940-943, 949-951, 953-954, 956-959, 962, 975-977, 999, 1001, 1004, 1007, 1010, 1012, 1014-1017, 1019-1020, 1022, 1029-1031, 1051-1053, 1066-1068, 1096, 1099, 1101, 1104-1105, 1109-1110, 1114-1115, 1119-1122, 1126, 1128, 1140, 1160, 1181-1183, 1197, 1212-1213, 1215, 1217-1221, 1230-1232
+|| graph/src/node.rs: 31-32, 37-38, 52-54, 61, 81, 89, 93-97, 101-105, 121-123, 130-132, 137-140, 152-153, 155-156, 158-159, 161-162, 164-165, 195-196, 223, 228, 237-242
+|| graph/src/op.rs: 96-121, 130, 132-138, 150-151, 153-156, 163, 165-166, 169, 171, 201-204, 206, 221-225, 227, 231-233, 236, 248-254, 266-267, 269-270, 282-288, 292-297, 300-301, 303-304, 319, 322-325, 332-337, 352-359, 361-362, 366-371, 378-382, 384, 388-389, 391, 393-400, 402-403, 407-412, 415, 421, 423-430, 432, 434-437, 454-457, 501, 517, 519, 559-561, 569-574, 576-577, 591-592, 595-596, 602-617, 621-640, 667-672, 694-695, 703, 726-727, 732-733, 738-739, 744-745, 750-751, 756-757, 762-763, 770-772, 779-781, 788-790, 797-799, 806-808, 815-817, 824-825, 845-851, 854-860, 871-874, 876-879, 881-884, 886-891, 893-896, 898-903, 905-908, 915, 935-936, 943-944, 955-956, 961-962
+|| graph/src/pref.rs: 23, 26-27, 52-53, 64, 74-76, 78, 88, 90, 96, 107, 122-123
+|| graph/src/scheduler/asymptotic_cost.rs: 23-24, 27-35, 41-49, 51-52, 58-66, 71-82, 86-94, 98-99, 101-106, 110-111, 114-118, 123-129, 135-148, 152-155, 157-168, 170-174, 176
+|| graph/src/scheduler/cost.rs: 17-18, 21-22, 27-28, 33
+|| graph/src/scheduler/ilp.rs: 26-27, 32-34, 36, 39, 41-49, 53, 56-59, 61, 65-66, 69-71, 73, 76-77, 81-83, 85-90, 94-98, 102-103, 106-107, 110-111, 114, 116, 119-120, 125, 128-129, 134, 137-143, 148, 151-156, 161, 164-165, 170-176, 178, 182-184, 190-192, 198-200, 204, 207-208, 216-218, 221, 223, 225, 227-231, 233, 248-250, 253, 256-260, 265-267
+|| graph/src/scheduler/local_scheduler.rs: 11-13, 15, 18-25, 28-38, 40, 42-43, 53, 55-57
+|| graph/src/scheduler/mod.rs: 20, 24-25, 33-34
+|| lang/src/ast/arg.rs: 53-54, 56-57, 59-60, 65-66, 68-69, 71-72, 91-92, 97-98, 117-119, 135-136, 186-187, 197-200, 218-219, 229-232, 246, 268, 282, 290
+|| lang/src/ast/decl.rs: 60-61, 65-66, 70, 74-77, 83-86, 164-166, 170-173, 187-188, 202-203, 212-213, 221-222, 250-252, 306-307, 319-326, 330-331, 340-343, 354-357, 361-362, 371-374, 389, 402-403, 407, 416, 419, 423, 436-437, 441, 450, 453, 457, 472, 476, 479
+|| lang/src/ast/exp.rs: 277, 279-287, 292, 296-297, 303-304, 314-315, 334-336, 346, 369-372, 374, 382-383, 395-396, 405-411, 414-415, 418-421, 424-426, 444-445, 447-448, 451-452, 465-466, 486-487, 502-503, 520-521, 526-527, 589-590, 604-609, 611-613, 615-620, 626, 628-630, 636-645, 660, 662, 665-666, 668, 672-673, 688-692, 694-697, 699-702, 704-709, 711-714, 716-719, 726-731, 755-759, 770-773, 790-794, 804-807, 817-818, 833-834, 873-874, 881-882, 889-890, 907-908, 919-920, 937-940, 948-951, 980, 982-991, 1009, 1014-1018, 1020, 1026, 1032, 1040, 1048, 1055, 1062, 1069, 1076, 1084, 1088, 1094, 1102, 1111, 1125, 1129, 1144, 1151
+|| lang/src/ast/module.rs: 42-43, 59, 65-68, 102-103, 128-129, 140
+|| lang/src/ast/sig.rs: 112-113, 118-121
+|| lang/src/id.rs: 32-33, 50-51, 56-57, 65, 78-85, 119-120, 137-138, 143-144, 172, 190
+|| lang/src/parser/error.rs: 44-45, 50-51
+|| lang/src/typ/ark.rs: 22-29, 33-34, 39-42
+|| lang/src/typ/distribution.rs: 22-23, 29, 34, 38-40, 42, 44-45, 52, 54-55, 61-64, 86-87, 91-92, 97-100, 114, 123
+|| lang/src/typ/infer.rs: 111-112, 117-118, 120-121, 126-127, 144-145, 147-148, 150-151, 153-154, 156-157, 159-160, 162-163, 168-169, 174-175, 177-178, 183-184, 186-187, 192-193, 195-196, 198-199, 212, 226, 239, 255, 258, 262-266, 268-271, 273-276, 278-279, 281, 284, 289, 291-292, 295-296, 298-302, 304-305, 307, 338-342, 344-345, 447-451, 454-457, 459, 473, 475-476, 478-479, 481, 484, 487-488, 490, 492, 507-509, 539, 542-544, 546-547, 549, 569, 575, 577-579, 581, 583-585, 587, 589-591, 593, 595-597, 599, 601, 621, 630, 642, 650, 652, 655-656, 658-659, 661, 665, 681, 703, 715-717, 726, 728-729, 731-733, 737, 739-740, 742, 745-746
+|| lang/src/typ/kind.rs: 43, 62, 86-89, 91, 93-94, 99-100, 105-106, 108, 124, 134-139, 144, 151-152
+|| lang/src/typ/lub.rs: 37-38, 58-59, 67-68, 70-71, 73-74, 95, 97-104, 115-117, 119-121, 138-140, 142-144, 152-154, 156-158, 166-168, 170-172, 181-183, 185-187, 191, 197, 199-206, 208, 211, 213-220, 223-224, 227, 230-232, 235, 237-244, 246-247, 249, 252, 254-261, 263, 265-266, 285, 363, 365, 407-412, 416-420, 422-424, 428-430, 432-433, 435, 438-442, 444, 452, 465-467, 508-512, 514, 517-521, 523, 526-530, 532, 536-539, 542-547, 549-550, 552, 561-563, 565-567, 569-571, 581-585, 587, 590-594, 596, 599-603, 605, 609-612, 615-620, 622-623, 625, 634, 636-639, 666-668, 670-674, 676, 680-684, 686, 690-694, 696, 699, 709-712, 714, 717-720, 733-735, 757-759, 762-766, 768, 772-776, 778, 782-783, 792-794, 800-803, 805, 808-810, 812, 818-820, 829, 872, 890, 893-894, 896, 899, 901, 903-905, 917, 933
+|| lang/src/typ/mod.rs: 71-72, 74-75, 84-85, 96-97, 114-116, 126-127, 143, 146, 155-158, 160, 177-178, 184-192, 202, 224-225, 231-232, 237-238, 284-285, 297-298, 301-302, 309, 315-318, 332, 334, 340, 346, 349
+|| lang/src/typ/nothing.rs: 17-18, 20-21, 26-29
+|| lang/src/typ/qualifier.rs: 22-23, 26-27, 37-38, 65-66, 73
+|| lang/src/typ/range.rs: 46-47, 52, 72, 93, 100-105, 108, 112-113, 138, 140, 143, 147-148, 150, 154-155, 157, 164-165, 169, 182-183, 186, 189, 227-228, 313-317, 320-321, 324, 337-341, 344-345, 348, 359-360, 365-366, 371-372, 377-378, 383-384, 389-390, 399, 432, 439, 445
+|| lang/src/typ/size.rs: 48-49, 52-53, 56-57, 68-78, 88-91, 113, 121-124, 126-129, 150-151, 156-157, 162-163, 168-169, 182-183, 194-195, 200-201, 206-207, 220-221, 232-233, 238-239, 244-245, 264-265, 270-271, 276-277, 282-283, 297-298, 303-304, 309-310, 315-316, 321-322, 347-357, 361-362, 368-371, 400, 409
+|| lang/src/typ/subst.rs: 28-29, 37-38, 43-44, 116, 126-127, 130-131
+|| lang/src/typ/typevar.rs: 25-26, 29-30, 33-34, 37-38, 89, 98, 112, 133, 149, 169-170, 193-194, 199-200, 202
+|| lang/src/typ/unify.rs: 104-107, 110-113
+|| runtime/src/graph.rs: 34, 36, 42-45, 50-51, 53-59, 62-65, 71-74, 76-77, 79-81, 83-88, 90-92, 94, 96-103, 105-106, 108-109, 111-112, 114-115, 117-118, 120-121, 123-124, 126-127, 129-130, 134-136, 139-140, 142, 144-149, 151-154, 156-161, 163-166, 168-171, 173-176, 178-181, 186, 188, 190-194, 196-199, 201, 203, 209, 212-214, 216-218, 222-223, 225-226, 228-230, 232-234, 236-237, 241-243, 248-258, 260, 263-266, 269, 271, 274, 276-279, 283-285, 289-290, 292-294, 296-299, 301, 304-308, 310-313, 315, 320-328, 330, 332-334, 338-340, 343, 346-347, 349-352, 354, 361-368, 371-372, 375-381, 384-385, 391, 395-396, 398
+|| share/src/context.rs: 39-40, 53, 59-60, 91, 98-99, 105-106, 132-133, 141, 163, 165, 172-173, 194, 202, 217-218, 224-225, 241-243, 245, 254-257, 260-261, 266-267, 298-304, 308-309, 346-347, 355-358, 375-376, 396-397, 410-411, 418-419, 426, 447, 492-493, 498-499
+|| share/src/lib.rs: 13-15, 17-19, 21
+|| share/src/pretty.rs: 11-12, 15-16, 21-22, 25-26, 31-32, 35-36, 45-46, 51-52, 55-56, 67-69, 72-73
+|| share/src/traversal.rs: 18-19, 25-26, 83-85, 87, 100, 108-109, 122, 128-129
+|| src/lib.rs: 42, 57, 74-75, 90-94, 96-97, 103-104, 114-116, 118-122, 127-128, 130-131, 133-135, 137, 139-141, 147, 149, 151, 154, 156-159, 161-164, 166-168, 174, 178-179, 182-184, 186-187, 196-198, 202-204, 206-213, 216-218, 221, 223, 226-230, 232, 236, 239-240
+|| Tested/Total Lines:
+|| backend/src/config.rs: 72/160 +6.88%
+|| backend/src/nothing/nocurve.rs: 0/163 +0.00%
+|| backend/src/nothing/nofield.rs: 0/179 +0.00%
+|| backend/src/nothing/nopairing.rs: 0/2 +0.00%
+|| backend/src/types.rs: 74/336 +1.79%
+|| backend/src/values.rs: 454/1773 +5.30%
+|| graph/src/analyses/completeness.rs: 0/14 +0.00%
+|| graph/src/analyses/groebner/buchberger.rs: 144/170 +0.00%
+|| graph/src/analyses/groebner/mod.rs: 65/190 +0.00%
+|| graph/src/analyses/groebner/monomial.rs: 130/176 +0.00%
+|| graph/src/analyses/groebner/sparsepoly.rs: 111/200 +0.00%
+|| graph/src/analyses/knowledge.rs: 31/45 +0.00%
+|| graph/src/analyses/qualifier.rs: 23/53 -1.89%
+|| graph/src/analyses/trans_clos.rs: 59/86 -1.16%
+|| graph/src/analyses/uniform.rs: 64/131 -0.76%
+|| graph/src/dep.rs: 14/31 +0.00%
+|| graph/src/domain_seperator.rs: 40/59 +0.00%
+|| graph/src/lib.rs: 302/614 +0.00%
+|| graph/src/node.rs: 86/136 +0.00%
+|| graph/src/op.rs: 224/535 +0.00%
+|| graph/src/pref.rs: 40/56 +0.00%
+|| graph/src/scheduler/asymptotic_cost.rs: 0/110 +0.00%
+|| graph/src/scheduler/cost.rs: 0/7 +0.00%
+|| graph/src/scheduler/ilp.rs: 0/119 +0.00%
+|| graph/src/scheduler/local_scheduler.rs: 0/30 +0.00%
+|| graph/src/scheduler/mod.rs: 0/5 +0.00%
+|| lang/src/ast/arg.rs: 63/100 +0.00%
+|| lang/src/ast/decl.rs: 122/195 +0.00%
+|| lang/src/ast/exp.rs: 309/517 +0.00%
+|| lang/src/ast/module.rs: 37/49 +0.00%
+|| lang/src/ast/sig.rs: 35/41 +0.00%
+|| lang/src/id.rs: 46/69 +0.00%
+|| lang/src/parser/error.rs: 0/4 +0.00%
+|| lang/src/typ/ark.rs: 0/14 +0.00%
+|| lang/src/typ/distribution.rs: 22/49 +0.00%
+|| lang/src/typ/infer.rs: 207/365 +0.00%
+|| lang/src/typ/kind.rs: 54/78 +0.00%
+|| lang/src/typ/lub.rs: 278/565 +0.18%
+|| lang/src/typ/mod.rs: 95/149 +0.00%
+|| lang/src/typ/nothing.rs: 0/8 +0.00%
+|| lang/src/typ/qualifier.rs: 23/32 +0.00%
+|| lang/src/typ/range.rs: 87/151 +1.99%
+|| lang/src/typ/size.rs: 74/165 +0.00%
+|| lang/src/typ/subst.rs: 44/55 +0.00%
+|| lang/src/typ/typevar.rs: 62/82 +0.00%
+|| lang/src/typ/unify.rs: 48/56 +0.00%
+|| runtime/src/graph.rs: 2/232 +0.00%
+|| share/src/context.rs: 119/183 +0.00%
+|| share/src/lib.rs: 0/7 +0.00%
+|| share/src/pretty.rs: 2/25 +0.00%
+|| share/src/traversal.rs: 15/29 +0.00%
+|| src/lib.rs: 23/106 +0.00%
+|| 
+42.50% coverage, 3700/8706 lines covered, +1.29% change in coverage
