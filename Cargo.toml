@@ -1,4 +1,22 @@
 [workspace]
 
-members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "cli", "examples"]
+members = [ "lang", "runtime", "costs", "share" , "graph", "backend", "examples"]
 resolver = "2"
+
+[package]
+name = "zippel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+backend = { path = "./backend" }
+share = { path = "./share" }
+lang = { path = "./lang" }
+graph = { path = "./graph" }
+runtime = { path = "./runtime" }
+env_logger = "0.11.8"
+log = "0.4.27"
+ark-std = "0.5.0"
+rand = { version = "0.8", features = ["std"] }
+spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", features = ["arkworks-algebra"] }
+

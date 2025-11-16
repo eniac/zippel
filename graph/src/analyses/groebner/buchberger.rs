@@ -100,13 +100,12 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let found_divisor = reducers.iter().find(|g| {
+            let found_divisor = reducers.par_iter().find_any(|g|
                 if let Some((g_lc, g_lt)) = g.leading_term() {
                     p_lt.is_divided(&g_lt)
                 } else {
                     false
-                }
-            });
+                });
 
             if let Some(g) = found_divisor {
                 let (g_lc, g_lt) = g.leading_term().unwrap();
@@ -131,13 +130,13 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             .unwrap_or(1)
             .saturating_sub(1)
             .max(2);
-        
+
         let mut selected = Vec::new();
         for _ in 0..num_threads {
             if let Some((i, j)) = pairs.pop_front() {
                 if i < self.len() && j < self.len() {
                     selected.push((i, j));
-                } 
+                }
             } else {
                 break;
             }
@@ -145,7 +144,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         selected
     }
 
-    /* 
+    /*
     fn pairs_select_single(&self, pairs: &mut VecDeque<(usize, usize)>) -> Vec<(usize, usize)> {
         if let Some((i, j)) = pairs.pop_front() {
             if i < self.len() && j < self.len() {
@@ -232,7 +231,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             for s_reduced in reduced_ps {
                 let k = g.len(); // Index of the polynomial we're about to add
                 g.push(s_reduced);
-                
+
                 // Add new critical pairs involving the new polynomial h (index k)
                 // with all existing polynomials in G (indices 0 to k-1)
                 for l in 0..k {
@@ -260,7 +259,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
             // Buchberger's second criterion: skip pairs (l, k) if there exists an [i] such that LCM(LT(l), LT(k)) is a multiple of LT(i)
             // and (l, i) and (i, k) have been seen before
-            return (0..g.len()).any(|i| {
+            return (0..g.len()).into_par_iter().any(|i| {
                 if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m) {
                     if ml.lcm(&mk).is_divided(&lt_i) && seen.contains(&(l, i)) && seen.contains(&(i, k)) {
                         return true;
