@@ -2,3 +2,14 @@
 SYMBOLICA_HIDE_BANNER = "1"
 GUROBI_LIBNAME = "gurobi120"
 
+[alias]
+# Make 'cargo test' default to testing the entire workspace
+# This ensures all member crate tests run without needing --workspace flag
+test-all = "test --workspace"
+
+# Shorthand for running tests with output
+test-verbose = "test --workspace -- --nocapture"
+
+# Run tests with coverage
+test-coverage = "tarpaulin --workspace --out Html --output-dir coverage"
+

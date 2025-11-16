@@ -1265,7 +1265,6 @@ impl<C: ArkConfig> Value<C> {
                 }
                 _ => panic!("Expected scalar, found {}", other),
             },
-            _ => panic!("Not implemented"),
         }
     }
 
