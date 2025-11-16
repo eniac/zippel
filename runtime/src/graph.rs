@@ -2,7 +2,7 @@ use petgraph::graph::NodeIndex;
 use spongefish::{ProverState, DuplexSpongeInterface, BytesToUnitSerialize};
 use std::sync::{Arc, Mutex};
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::{domain_seperator, Dag, Node, Op, GOp};
+use graph::{Dag, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
 use lang::ast::BinOp;
