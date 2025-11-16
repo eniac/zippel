@@ -438,7 +438,7 @@ impl<N> RangeTraversal<N> for Exps<N> {
 }
 
 impl<N> Exps<N> {
-    pub fn iter(&self) -> std::slice::Iter<Exp<N>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Exp<N>> {
         self.0.iter()
     }
     pub fn is_empty(&self) -> bool {

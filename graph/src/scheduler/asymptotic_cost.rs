@@ -15,10 +15,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     const INT_MUL: f64 = 2.0;
     const SCALAR_ADD: f64 = C::F::MODULUS_BIT_SIZE as f64;
     const SCALAR_MUL: f64 = Self::SCALAR_ADD * 2.0;
-    const SCALAR_INV: f64 = Self::SCALAR_ADD * 8.0;
     const G_SCALAR_MUL: f64 = C::F::MODULUS_BIT_SIZE.pow(2) as f64;
     const G_ADD: f64 = 64.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
-    const G_AFFINE_ADD: f64 = 16.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
     const G_PAIR: f64 = 32.0 * (<<C::G1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as f64);
 
 
@@ -47,7 +45,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
                 (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64),
             (ATyp::Uni(lt), ATyp::Uni(rt)) =>
                 (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64),
-            (ATyp::Uni(lt), _) => {
+            (ATyp::Uni(_lt), _) => {
                 1.0
             },
             (_, _) => {
@@ -170,10 +168,10 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
                     (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
             },
             Op::Check(box op) => cost += self.cost(op, nthreads).0,
-            Op::Poly(box op) => cost += 1.0,
-            Op::Mle(box op) => cost += 1.0,
-            Op::Eval(box p, box x) => cost += 1.0,
-            Op::Coef(box op) => cost += 1.0,
+            Op::Poly(box _op) => cost += 1.0,
+            Op::Mle(box _op) => cost += 1.0,
+            Op::Eval(box _p, box _x) => cost += 1.0,
+            Op::Coef(box _op) => cost += 1.0,
         };
         cost.into()
     }

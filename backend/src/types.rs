@@ -134,7 +134,7 @@ impl ATyp {
                 match k {
                     Kind::Field => Some(ATyp::scalar()),
                     Kind::Group => {
-                        if let Some((x, y)) = kctx.find_map(|t, k| k.get_pairing_of(b)) {
+                        if let Some((x, _y)) = kctx.find_map(|_t, k| k.get_pairing_of(b)) {
                             // If this is a pairing assign the right pairing types
                             if &x == b {
                                 Some(ATyp::g1())
@@ -220,7 +220,7 @@ impl Lub for ABase {
         }
     }
 
-    fn lub_pair(a: &Self, b: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
+    fn lub_pair(a: &Self, b: &Self, _ctx: &Self::Context) -> Result<Self, LubError> {
         match (a, b) {
             (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
             (a, b) => Err(LubError::pair(&a, &b))

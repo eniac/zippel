@@ -26,7 +26,7 @@ impl TypeVars {
         self.0.retain(|tvar| &tvar.id != id);
     }
 
-    pub fn iter(&self) -> std::slice::Iter<TypeVar> {
+    pub fn iter(&self) -> std::slice::Iter<'_, TypeVar> {
         self.0.iter()
     }
 

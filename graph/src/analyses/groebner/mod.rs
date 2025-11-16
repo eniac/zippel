@@ -7,10 +7,9 @@ pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
 use crate::{GOp, Op, Ref};
-use lang::typ::{Distribution, Qualifier, Range};
 use lang::ast::BinOp;
 use crate::DQDag;
-use crate::{analyses::TransClos, StaticAnalysis};
+use crate::analyses::TransClos;
 use crate::pref::PRef;
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};

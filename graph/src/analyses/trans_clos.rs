@@ -2,7 +2,9 @@ use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis};
 use petgraph::graph::NodeIndex;
 use std::fmt;
 use lang::typ::{Distribution, Qualifier};
-use backend::{ArkConfig, ATyp};
+use backend::ArkConfig;
+
+#[cfg(test)] use backend::ATyp;
 
 /// Transitive closure on a DAG
 #[derive(Clone)]

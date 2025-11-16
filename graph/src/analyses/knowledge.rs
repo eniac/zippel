@@ -1,10 +1,7 @@
 use backend::ArkConfig;
-use log::{warn, debug};
-use crate::{DQDag, Ref, PRef};
-use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBasis, GroebnerBuilder};
-use share::Ctx;
-use petgraph::graph::NodeIndex;
-use lang::id::Vid;
+use log::warn;
+use crate::{DQDag, PRef};
+use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder};
 
 
 /// Perform a knowledge analysis using Groebner bases.

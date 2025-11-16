@@ -130,7 +130,6 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Transcr(op, ann) => Node::Transcr(op.map_node_indices(f), ann.clone()),
             Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
             Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
-            _ => self.clone(),
         }
     }
 

@@ -1,5 +1,5 @@
 use crate::ast::{Sig, Body, CSig};
-use crate::ast::decl::{UDecls, UDecl, CDecl, DeclError};
+use crate::ast::decl::{UDecls, UDecl, DeclError};
 
 use std::fmt;
 use thiserror::Error;
@@ -8,7 +8,6 @@ use from_pest::{ConversionError, FromPest};
 use pest::Parser;
 
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
-use share::traversal::ToTraversal1;
 use crate::typ::Size;
 use crate::parser::*;
 

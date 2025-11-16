@@ -1,4 +1,3 @@
-#![feature(btree_extract_if)]
 mod context;
 mod pretty;
 pub mod traversal;

@@ -1,17 +1,14 @@
-use crate::{GOp, Op, Ref, Node, Dag, QDag, DQDag};
+use crate::{GOp, Ref, Node, Dag, QDag, DQDag};
 use petgraph::{
     graph::NodeIndex,
     visit::EdgeRef,
     Direction,
 };
 use std::fmt;
-use std::path::Ancestors;
 use share::{Set, Ctx};
-use lang::typ::{Qualifier, Distribution};
+use lang::typ::Distribution;
 use lang::ast::BinOp;
-use crate::PRef;
-use crate::analyses::TransClos;
-use backend::{ATyp, ArkConfig};
+use backend::ArkConfig;
 
 /// Which nodes are uniform random distributions
 /// Sometimes this is allowed under constraints, for example:
@@ -70,7 +67,7 @@ impl UniformityPropagation {
             GOp::Poly(box a) => self.from_op(a),
             GOp::Coef(box op) => self.from_op(op),
             GOp::Eval(box p, box x) => {
-                let dist_p = self.from_op(p)?;
+                let _dist_p = self.from_op(p)?;
                 let dist_x = self.from_op(x)?;
                 if self.is_independent(p, x) {
                     Some(dist_x.mul(&dist_x.inv()))

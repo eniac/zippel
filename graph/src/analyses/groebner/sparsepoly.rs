@@ -1,13 +1,13 @@
 use ark_ff::Field;
-use backend::{Value, ArkConfig};
-use crate::{GOp, PRef};
-use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm, Monomial};
-use core::cmp::Ordering;
-use core::ops::{Add, Neg, Sub, Mul, Div, AddAssign, MulAssign, SubAssign};
+use crate::PRef;
+use crate::analyses::groebner::monomial::Monomial;
+use core::ops::{Add, Neg, Sub, Mul, AddAssign, MulAssign, SubAssign};
 use std::iter::Sum;
 use share::{Ctx, Set, Pretty, DocAllocator, DocBuilder};
 use std::fmt::Debug;
 use std::fmt;
+
+#[cfg(test)] use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
 
 /// A sparse polynomial is a polynomial represented as a map from terms to their coefficients.
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.

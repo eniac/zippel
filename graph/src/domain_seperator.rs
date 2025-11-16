@@ -1,19 +1,17 @@
-use ark_ec::{
-    CurveGroup,
-    pairing::{Pairing, PairingOutput},
-};
 use ark_serialize::CanonicalSerialize;
-use backend::{ABase, ATyp, ArkBls12_381, ArkConfig};
-use lang::ast::UModule;
-use petgraph::graph::Node;
-use share::unwrap;
+use backend::{ABase, ATyp, ArkConfig};
 use spongefish::{
-    ByteDomainSeparator, DefaultHash, DomainSeparator, DuplexSpongeInterface,
-    codecs::arkworks_algebra::{FieldDomainSeparator, GroupDomainSeparator},
+    ByteDomainSeparator, DomainSeparator, DuplexSpongeInterface,
 };
-use std::collections::{HashMap, HashSet};
-use petgraph::graph::{NodeIndex};
-use crate::{Dag, UDags, domain_seperator};
+use crate::Dag;
+
+#[cfg(test)] use ark_ec::CurveGroup;
+#[cfg(test)] use backend::ArkBls12_381;
+#[cfg(test)] use lang::ast::UModule;
+#[cfg(test)] use petgraph::graph::Node;
+#[cfg(test)] use share::unwrap;
+#[cfg(test)] use crate::UDags;
+#[cfg(test)] use spongefish::DefaultHash;
 
 /// Extend the domain separator with the Schnorr protocol.
 pub struct ZippelDomainSeparator<H: DuplexSpongeInterface> (
@@ -30,9 +28,8 @@ where
 
     pub fn from_input_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>) -> Self {
         
-        let mut size: usize = 0;
         match &node {
-            crate::Node::Inp(c, prefs) => {
+            crate::Node::Inp(_c, prefs) => {
                 for pref in prefs.clone() {
                     if pref.qualifier.is_public() {
                         self = Self::from_atyp::<C>(self,pref.typ);
@@ -49,7 +46,7 @@ where
     pub fn from_challenge_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
         match &node {
             crate::Node::Transcr(c, _) => match c {
-                crate::Op::Challenge(typ, _) => {
+                crate::Op::Challenge(_typ, _) => {
                     self = Self(self.0.squeeze(
                         C::F::default().compressed_size(),
                         &format!("chall{}", label),
@@ -65,7 +62,7 @@ where
         self
     }
 
-    pub fn from_transcript_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
+    pub fn from_transcript_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, _label: usize) -> Self {
         match &node {
             crate::Node::Transcr(c, _) => {
                 let typ: ATyp = c.typ();
