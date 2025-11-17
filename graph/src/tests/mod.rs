@@ -5,3 +5,4 @@ pub mod algebraic_properties;
 pub mod cross_type_properties;
 pub mod op_unit_tests;
 pub mod node_tests;
+pub mod polynomial_laws;
