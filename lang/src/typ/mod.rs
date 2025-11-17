@@ -170,7 +170,7 @@ impl CTyp {
             _ => None
         }
     }
-    
+
     /// Helper to check if this is a multilinear extension and extract (base_type, num_vars)
     pub fn as_mle(&self) -> Option<(&Tid, usize)> {
         match self {
@@ -352,6 +352,16 @@ impl<'pest> FromPest<'pest> for UTyp {
                 let size = Size::from_pest(&mut inner)?;
                 Ok(Typ::Poly(id, size, Size::one()))
             }
+            Rule::poly_ty => {
+                let mut inner = pair.into_inner();
+                let id = Tid::from_pest(&mut inner)?;
+                // Each size_ty is a complete subtree, get its inner pairs
+                let m_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                let m = Size::from_pest(&mut m_pair.into_inner())?;
+                let n_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                let n = Size::from_pest(&mut n_pair.into_inner())?;
+                Ok(Typ::Poly(id, m, n))
+            }
             Rule::fin_ty =>
                 Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
             Rule::bool_ty => Ok(Typ::Bool),
@@ -373,11 +383,14 @@ fn typ_parser() {
     let mut pairs = ZippelParser::parse(Rule::typ, "A").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::varstr("A"));
 
-    pairs = ZippelParser::parse(Rule::typ, "Uni<X, 2^N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::one(), Size::from(2) ^ Size::from("N")));
+    pairs = ZippelParser::parse(Rule::typ, "Uni<X, N>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::from(1), Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::from(2), Size::one()));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::from(2), Size::from(1)));
+
+    pairs = ZippelParser::parse(Rule::typ, "Poly<X, 1, 2>").unwrap();
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::from(1), Size::from(2)));
 
     pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::vec(&Typ::varstr("A"), Size::from("N")));
