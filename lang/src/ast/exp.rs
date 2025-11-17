@@ -249,7 +249,14 @@ pub enum Exp<N> {
     ///     verify(a == a);
     ///     ...
     ///     ```
-    Verify(Box<Exp<N>>)
+    Verify(Box<Exp<N>>),
+
+    ///     Polynomial function definition
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let p = fun x, y => x^2 + 2*x*y + 3*y^2;
+    ///     ```
+    Fun(Vec<Vid>, Box<Exp<N>>)
 }
 
 /// Free variables
@@ -314,7 +321,9 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Assert(box x) =>
                 Ok(Exp::Assert(Box::new(x.traverse1(f)?))),
             Exp::Verify(box x) =>
-                Ok(Exp::Verify(Box::new(x.traverse1(f)?)))
+                Ok(Exp::Verify(Box::new(x.traverse1(f)?))),
+            Exp::Fun(vars, box body) =>
+                Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?)))
         }
     }
 }
@@ -353,6 +362,7 @@ impl TidSubst for CExp {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
             },
+            Exp::Fun(_, box body) => body.tid_subst(from, to),
             Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
             | Exp::Challenge(_, _) | Exp::Random(_, _) => {}
         }
@@ -387,6 +397,12 @@ impl FreeVars for CExp {
             | Exp::Map(box a, _, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
+            Exp::Fun(vars, box body) => {
+                let bound_vars: Set<Vid> = vars.iter().cloned().collect();
+                body.freevars().into_iter()
+                    .filter(|v| !bound_vars.iter().any(|bv| bv == v))
+                    .collect()
+            }
         }
     }
 }
@@ -426,6 +442,7 @@ impl<N> RangeTraversal<N> for Exp<N> {
             Exp::Assert(box x) => Ok(Exp::assert(x.range_traverse(f)?)),
             Exp::Verify(box x) => Ok(Exp::verify(x.range_traverse(f)?)),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
+            Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             other => Ok(other)
         }
     }
@@ -598,6 +615,9 @@ impl<N> Exp<N> {
     pub fn app(id: Vid, args: Exps<N>) -> Self {
         Exp::App(id, args)
     }
+    pub fn fun(vars: Vec<Vid>, body: Self) -> Self {
+        Exp::Fun(vars, Box::new(body))
+    }
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
@@ -618,6 +638,7 @@ impl<N> Exp<N> {
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
             Exp::Fft(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
+            Exp::Fun(_, box body) => body.is_pure(),
         }
     }
 }
@@ -810,7 +831,16 @@ where
                 allocator.text("verify("),
                 (*c).pretty(allocator),
                 allocator.text(")"),
-            ])
+            ]),
+            Exp::Fun(vars, body) => {
+                let vars_str = vars.iter().map(|v| v.0.as_str()).collect::<Vec<_>>().join(", ");
+                allocator.concat([
+                    allocator.text("fun "),
+                    allocator.text(vars_str),
+                    allocator.text(" => "),
+                    (*body).pretty(allocator),
+                ])
+            }
         }
     }
 
@@ -1005,6 +1035,22 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::bool_exp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
                 Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
+                Rule::fun_exp => {
+                    let mut inner = pair.into_inner();
+                    let mut vars = Vec::new();
+                    // Parse variable names until we hit the expression
+                    loop {
+                        let next = inner.next().ok_or(ConversionError::NoMatch)?;
+                        if next.as_rule() == Rule::exp {
+                            // This is the body expression
+                            let body = Exp::from_pest(&mut Pairs::single(next))?;
+                            return Ok(Exp::fun(vars, body));
+                        } else {
+                            // This should be an id
+                            vars.push(Vid(next.as_str().to_string()));
+                        }
+                    }
+                },
                 Rule::fft_exp => Ok(Exp::fft(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::ifft_exp => Ok(Exp::ifft(Exp::from_pest(&mut pair.into_inner())?)),
@@ -1485,4 +1531,42 @@ fn parser_app() {
             Exp::app(Vid::from("q"), Exps(vec![Exp::varstr("a")]))
         ))
     );
+}
+
+#[test]
+fn parser_fun_univariate() {
+    // Test: fun x => x^2 + 2*x + 3
+    let ex = "fun x => x^2 + 2*x + 3";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let expected = Exp::fun(
+        vec![Vid::from("x")],
+        (Exp::varstr("x") ^ Exp::from(2)) + (Exp::from(2) * Exp::varstr("x")) + Exp::from(3)
+    );
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
+}
+
+#[test]
+fn parser_fun_multivariate() {
+    // Test: fun x, y, z => 3*x + 4*y + 5*x*z
+    let ex = "fun x, y, z => 3*x + 4*y + 5*x*z";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let expected = Exp::fun(
+        vec![Vid::from("x"), Vid::from("y"), Vid::from("z")],
+        Exp::from(3) * Exp::varstr("x") + 
+        Exp::from(4) * Exp::varstr("y") + 
+        Exp::from(5) * Exp::varstr("x") * Exp::varstr("z")
+    );
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
+}
+
+#[test]
+fn parser_fun_simple() {
+    // Test: fun x => x
+    let ex = "fun x => x";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let expected = Exp::fun(
+        vec![Vid::from("x")],
+        Exp::varstr("x")
+    );
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
 }

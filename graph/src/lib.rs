@@ -1078,8 +1078,8 @@ impl<C: ArkConfig> UDag<C> {
 
                 // Is it a polynomial, MLE, or a function?
                 match vctx.get(&fid) {
-                    Some(CTyp::Uni(tbase, n)) => {
-                        // It is a polynomial
+                    Some(CTyp::Poly(tbase, 1, n)) => {
+                        // It is a univariate polynomial
                         let k = kctx.get(&tbase).unwrap();
 
                         // Only field elements can be evaluated and only 1 argument can be given
@@ -1096,8 +1096,8 @@ impl<C: ArkConfig> UDag<C> {
                             CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
                         self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
                     },
-                    Some(CTyp::Mle(tbase, n)) => {
-                        // It is an MLE
+                    Some(CTyp::Poly(tbase, n, 1)) => {
+                        // It is a multilinear extension
                         let k = kctx.get(&tbase).unwrap();
 
                         // Only field elements can be evaluated and only 1 argument can be given
@@ -1232,6 +1232,11 @@ impl<C: ArkConfig> UDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?))
             },
+            CExp::Fun(_, _) => {
+                // Fun expressions should be desugared before graph generation
+                // For now, return an error
+                Err(GraphError::from(TypeError::exp(kctx, vctx, &exp)))
+            }
         }
     }
 }

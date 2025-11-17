@@ -154,8 +154,9 @@ impl ATyp {
             },
             CTyp::Vec(box t, n) =>
                 Some(ATyp::Vec(Box::new(ATyp::from_ctyp(&t, kctx)?), *n)),
-            CTyp::Uni(_, n) => Some(ATyp::uni(*n)),
-            CTyp::Mle(_, n) => Some(ATyp::vec_scalar(1 << n)),
+            CTyp::Poly(_, 1, n) => Some(ATyp::uni(*n)),  // Uni<N>
+            CTyp::Poly(_, m, 1) => Some(ATyp::vec_scalar(1 << m)),  // Mle<M>
+            CTyp::Poly(_, _m, _n) => None,  // General poly not supported
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
         }

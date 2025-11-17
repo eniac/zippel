@@ -34,10 +34,10 @@ use std::fmt;
 /// The types of expressions, [N] is the size parameter
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub enum Typ<T, N> {
-    /// Univariate polynomial of degree [Size] and base type [Tid]
-    Uni(T, N),
-    /// Multilinear polynomial of arity [Size] and base type [Tid]
-    Mle(T, N),
+    /// Polynomial with M variables and degree N over base type T
+    /// Poly(F, 1, N) represents univariate polynomials of degree N
+    /// Poly(F, M, 1) represents multilinear polynomials of M variables
+    Poly(T, N, N),
     /// Vector of size [N] and base type [Typ]
     Vec(Box<Typ<T, N>>, N),
     /// Tid type [Tid]
@@ -67,12 +67,11 @@ pub type CTyps = Typs<Tid, usize>;
 impl<N> TidSubst for GTyp<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
-            Typ::Uni(b, _)
-            | Typ::Mle(b, _)
+            Typ::Poly(b, _, _)
             | Typ::Base(b) if b == from => *b = to.clone(),
             Typ::Vec(b, _) => b.tid_subst(from, to),
             Typ::Fin(_) | Typ::Bool | Typ::Base(_)
-            | Typ::Uni(_, _) | Typ::Mle(_, _) => {}
+            | Typ::Poly(_, _, _) => {}
         }
     }
 }
@@ -126,11 +125,11 @@ impl<N> GTyp<N> {
     pub fn var(b: &Tid) -> Self {
         Typ::Base(b.clone())
     }
-    pub fn uni(b: &Tid, n: N) -> Self {
-        Typ::Uni(b.clone(), n)
+    pub fn uni(b: &Tid, n: N) -> Self where N: From<usize> {
+        Typ::Poly(b.clone(), N::from(1), n)
     }
-    pub fn mle(b: &Tid, n: N) -> Self {
-        Typ::Mle(b.clone(), n)
+    pub fn mle(b: &Tid, m: N) -> Self where N: From<usize> {
+        Typ::Poly(b.clone(), m, N::from(1))
     }
 
     pub fn to_scalar(&self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
@@ -161,7 +160,24 @@ impl<N> GTyp<N> {
         }
     }
 
+}
 
+impl CTyp {
+    /// Helper to check if this is a univariate polynomial and extract (base_type, degree)
+    pub fn as_uni(&self) -> Option<(&Tid, usize)> {
+        match self {
+            Typ::Poly(tid, 1, n) => Some((tid, *n)),
+            _ => None
+        }
+    }
+    
+    /// Helper to check if this is a multilinear extension and extract (base_type, num_vars)
+    pub fn as_mle(&self) -> Option<(&Tid, usize)> {
+        match self {
+            Typ::Poly(tid, m, 1) => Some((tid, *m)),
+            _ => None
+        }
+    }
 }
 
 impl<T, N> Typs<T, N> {
@@ -183,8 +199,7 @@ impl<T, N> ToTraversal1<T> for Typ<T, N> {
     type Output<Z> = Typ<Z, N>;
     fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
-            Typ::Uni(b, n) => Ok(Typ::Uni(f(b)?, n)),
-            Typ::Mle(b, n) => Ok(Typ::Mle(f(b)?, n)),
+            Typ::Poly(b, m, n) => Ok(Typ::Poly(f(b)?, m, n)),
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
             Typ::Vec(box b, n) =>
                 Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
@@ -198,8 +213,7 @@ impl<T, N> ToTraversal2<N> for Typ<T, N> {
     type Output<Z> = Typ<T, Z>;
     fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
-            Typ::Uni(b, n) => Ok(Typ::Uni(b, f(n)?)),
-            Typ::Mle(b, n) => Ok(Typ::Mle(b, f(n)?)),
+            Typ::Poly(b, m, n) => Ok(Typ::Poly(b, f(m)?, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
             Typ::Vec(box b, n) =>
                 Ok(Typ::Vec(Box::new(b.traverse2(f)?), f(n)?)),
@@ -244,22 +258,17 @@ impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
 where
     D: DocAllocator<'a, A>,
     T: Pretty<'a, D, A>,
-    N: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A> + Clone,
     D::Doc: Clone,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Typ::Uni(b, n) => allocator.concat([
-                allocator.text("Uni<"),
+            Typ::Poly(b, m, n) => allocator.concat([
+                allocator.text("Poly<"),
                 b.pretty(allocator),
                 allocator.text(", "),
-                n.pretty(allocator),
-                allocator.text(">")
-            ]),
-            Typ::Mle(b, n) => allocator.concat([
-                allocator.text("Mle<"),
-                b.pretty(allocator),
+                m.pretty(allocator),
                 allocator.text(", "),
                 n.pretty(allocator),
                 allocator.text(">")
@@ -290,7 +299,7 @@ impl<'a, D, A, T, N> Pretty<'a, D, A> for Typs<T, N>
 where
     D: DocAllocator<'a, A>,
     T: Pretty<'a, D, A>,
-    N: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A> + Clone,
     D::Doc: Clone,
     A: 'a + Clone,
 {
@@ -335,13 +344,13 @@ impl<'pest> FromPest<'pest> for UTyp {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Uni(id, size))
+                Ok(Typ::Poly(id, Size::one(), size))
             }
             Rule::mle_ty => {
                 let mut inner = pair.into_inner();
                 let id = Tid::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
-                Ok(Typ::Mle(id, size))
+                Ok(Typ::Poly(id, size, Size::one()))
             }
             Rule::fin_ty =>
                 Ok(Typ::fin(Range::from_pest(&mut pair.into_inner())?)),
@@ -365,10 +374,10 @@ fn typ_parser() {
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::varstr("A"));
 
     pairs = ZippelParser::parse(Rule::typ, "Uni<X, 2^N>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Uni(Tid::from("X"), Size::from(2) ^ Size::from("N")));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::one(), Size::from(2) ^ Size::from("N")));
 
     pairs = ZippelParser::parse(Rule::typ, "Mle<X, 2>").unwrap();
-    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Mle(Tid::from("X"), Size::from(2)));
+    assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::Poly(Tid::from("X"), Size::from(2), Size::one()));
 
     pairs = ZippelParser::parse(Rule::typ, "[A; N]").unwrap();
     assert_eq!(Typ::from_pest(&mut pairs).unwrap(), GTyp::vec(&Typ::varstr("A"), Size::from("N")));

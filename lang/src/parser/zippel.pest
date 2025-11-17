@@ -43,19 +43,21 @@ kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | positive }
     scalar_ty  = { "Scalar" ~ "<" ~ ids ~ ">" }
     range_ty   = { range }
 
-typ = _{ uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
-    base_ty = { id }                                     // Base type variable
-    uni_ty  = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Univariate polynomial
-    mle_ty  = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }  // Multilinear expression
-    fin_ty  = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }  // Index type
-    vec_ty  = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }         // Vector type
-    bool_ty = { "Bool" }                                 // Boolean type
+typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
+    base_ty = { id }                                              // Base type variable
+    poly_ty = { "Poly" ~ "<" ~ id ~ "," ~ size_ty ~ "," ~ size_ty ~ ">" }  // Polynomial type (M vars, degree N)
+    uni_ty  = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }          // Univariate polynomial
+    mle_ty  = { "Mle" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }          // Multilinear expression
+    fin_ty  = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }          // Index type
+    vec_ty  = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                 // Vector type
+    bool_ty = { "Bool" }                                          // Boolean type
 
 /// Arithmetic expression language of Zippel
 exp       = { exp_term ~ (bin_op ~ exp_term)* }
 exp_term  = _{
          range_exp
          | "(" ~ exp ~ ")"
+         | fun_exp
          | ifft_exp
          | mle_exp
          | fft_exp
@@ -79,7 +81,8 @@ exp_term  = _{
          | positive
          | id
     }
-    ifft_exp      = { "ifft" ~ "(" ~ exp ~ ")"  }                     // Coefficient form (IFFT) univariate polynomial
+    fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                  // Polynomial function definition
+    ifft_exp      = { "ifft" ~ "(" ~ exp ~ ")"  }                 // Coefficient form (IFFT) univariate polynomial
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
