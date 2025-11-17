@@ -1,7 +1,7 @@
 use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{
     DenseUVPolynomial, Polynomial,
-    univariate::{DensePolynomial, SparsePolynomial},
+    univariate::{DensePolynomial, SparsePolynomial, DenseOrSparsePolynomial},
     DenseMultilinearExtension, MultilinearExtension,
     evaluations::multivariate::multilinear::SparseMultilinearExtension,
 };
@@ -18,7 +18,7 @@ pub enum PolyError {
     #[error("Cannot multiply univariate and multilinear polynomials - incompatible types")]
     IncompatibleMultiplication,
     
-    #[error("Polynomial division not fully implemented - only constant division supported")]
+    #[error("Polynomial division not implemented for multilinear extension polynomials")]
     DivisionNotImplemented,
     
     #[error("Division by zero")]
@@ -27,7 +27,7 @@ pub enum PolyError {
     #[error("Can only divide scalar by constant polynomial")]
     ScalarDivByNonConstant,
     
-    #[error("Polynomial modulo not implemented - only constant modulo supported")]
+    #[error("Polynomial modulo not implemented for multilinear extension polynomials")]
     ModuloNotImplemented,
     
     #[error("Cannot convert non-constant polynomial to scalar (degree: {degree})")]
@@ -442,18 +442,17 @@ impl<F: Field> PolyVariant<F> {
         F: PrimeField,
     {
         match (self, other) {
-            // Univariate / Univariate
+            // Univariate / Univariate - use ark_poly's divide_with_q_and_r
             (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) => {
                 if p2.is_zero() {
                     return Err(PolyError::DivisionByZero);
                 }
-                // For now, just convert to scalar division if degree 0
-                if p1.degree() == 0 && p2.degree() == 0 {
-                    let result = p1.coeffs[0] / p2.coeffs[0];
-                    Ok(Self::from_scalar(result))
-                } else {
-                    Err(PolyError::DivisionNotImplemented)
-                }
+                // Use ark_poly's polynomial division via DenseOrSparsePolynomial
+                let dividend = DenseOrSparsePolynomial::from(p1.clone());
+                let divisor = DenseOrSparsePolynomial::from(p2.clone());
+                let (quotient, _remainder) = dividend.divide_with_q_and_r(&divisor)
+                    .ok_or(PolyError::DivisionByZero)?;
+                Ok(PolyVariant::DenseUni(quotient))
             }
 
             // MLE division not supported
@@ -464,7 +463,7 @@ impl<F: Field> PolyVariant<F> {
                 Err(PolyError::DivisionNotImplemented)
             }
 
-            // Sparse univariate - convert to dense
+            // Sparse univariate - convert to dense first
             _ => {
                 self.to_dense().poly_div(&other.to_dense())
             }
@@ -513,18 +512,17 @@ impl<F: Field> PolyVariant<F> {
         F: PrimeField,
     {
         match (self, other) {
-            // Univariate % Univariate
+            // Univariate % Univariate - use ark_poly's divide_with_q_and_r
             (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) => {
                 if p2.is_zero() {
                     return Err(PolyError::DivisionByZero);
                 }
-                // For constant polynomials
-                if p1.degree() == 0 && p2.degree() == 0 {
-                    // Scalar modulo - always returns 0 for field elements
-                    Ok(Self::from_scalar(F::zero()))
-                } else {
-                    Err(PolyError::ModuloNotImplemented)
-                }
+                // Use ark_poly's polynomial division to get the remainder
+                let dividend = DenseOrSparsePolynomial::from(p1.clone());
+                let divisor = DenseOrSparsePolynomial::from(p2.clone());
+                let (_quotient, remainder) = dividend.divide_with_q_and_r(&divisor)
+                    .ok_or(PolyError::DivisionByZero)?;
+                Ok(PolyVariant::DenseUni(remainder))
             }
 
             // MLE modulo not supported
@@ -535,7 +533,7 @@ impl<F: Field> PolyVariant<F> {
                 Err(PolyError::ModuloNotImplemented)
             }
 
-            // Sparse - convert to dense
+            // Sparse - convert to dense first
             _ => {
                 self.to_dense().poly_rem(&other.to_dense())
             }
