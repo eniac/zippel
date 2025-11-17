@@ -721,38 +721,28 @@ impl Typeable for CExp {
                     .map(|(tid, _)| tid.clone())
                     .ok_or(TypeError::exp(kctx, vctx, self))?;
                 
-                if vars.len() == 1 {
-                    // Univariate polynomial - type the variable as Poly(F, 1, 1) (degree-1 polynomial)
-                    // Then type inference will compute the actual degree through lub operations
-                    for var in vars {
-                        new_vctx.insert(var, &CTyp::Poly(field_tid.clone(), 1, 1));
-                    }
-                    
-                    // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
-                    
-                    // Extract the degree from the inferred type
-                    match body_type {
-                        CTyp::Poly(tid, 1, degree) => Ok(CTyp::Poly(tid, 1, degree)),
-                        CTyp::Base(tid) => Ok(CTyp::Poly(tid, 1, 0)), // Constant polynomial
-                        _ => Err(TypeError::exp(kctx, vctx, self))
-                    }
-                } else {
-                    // Multilinear polynomial - type variables as scalars and validate structure
-                    for var in vars {
-                        new_vctx.insert(var, &CTyp::Base(field_tid.clone()));
-                    }
-                    
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
-                    
-                    match body_type {
-                        CTyp::Base(tid) if kctx.get(&tid).map(|k| k.is_scalar()).unwrap_or(false) => {
-                            // For multilinear, we just return Mle with the number of variables
-                            // Backend validation will catch if it's not actually multilinear
+                // Type all variables as scalars (Base type)
+                for var in vars {
+                    new_vctx.insert(var, &CTyp::Base(field_tid.clone()));
+                }
+                
+                // Infer the type of the body - should typecheck as Scalar
+                let body_type = body.infer(kctx, fctx, &new_vctx)?;
+                
+                // Verify that the body typechecks as a scalar
+                match body_type {
+                    CTyp::Base(tid) if kctx.get(&tid).map(|k| k.is_scalar()).unwrap_or(false) => {
+                        // Return appropriate polynomial type based on number of variables
+                        if vars.len() == 1 {
+                            // Univariate polynomial
+                            // Degree will be determined at graph construction stage
+                            Ok(CTyp::Poly(tid, 1, 1))
+                        } else {
+                            // Multilinear polynomial
                             Ok(CTyp::mle(&tid, vars.len()))
                         }
-                        _ => Err(TypeError::exp(kctx, vctx, self))
                     }
+                    _ => Err(TypeError::exp(kctx, vctx, self))
                 }
             }
         }
