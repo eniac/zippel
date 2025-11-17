@@ -253,17 +253,30 @@ impl<T, N> RangeTraversal<N> for Typs<T, N> {
     }
 }
 
-/// Pretty-printer for zippel types.
-impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
+/// Pretty-printer for zippel types with Size.
+impl<'a, D, A, T> Pretty<'a, D, A> for Typ<T, Size>
 where
     D: DocAllocator<'a, A>,
     T: Pretty<'a, D, A>,
-    N: Pretty<'a, D, A> + Clone,
     D::Doc: Clone,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
+            Typ::Poly(b, m, n) if m == Size::Lit(1) => allocator.concat([
+                allocator.text("Uni<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                n.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Poly(b, m, n) if n == Size::Lit(1) => allocator.concat([
+                allocator.text("Mle<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                m.pretty(allocator),
+                allocator.text(">")
+            ]),
             Typ::Poly(b, m, n) => allocator.concat([
                 allocator.text("Poly<"),
                 b.pretty(allocator),
@@ -291,6 +304,104 @@ where
     }
 
     fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+/// Pretty-printer for zippel types with usize.
+impl<'a, D, A, T> Pretty<'a, D, A> for Typ<T, usize>
+where
+    D: DocAllocator<'a, A>,
+    T: Pretty<'a, D, A>,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        match self {
+            Typ::Poly(b, m, n) if m == 1 => allocator.concat([
+                allocator.text("Uni<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                n.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Poly(b, m, n) if n == 1 => allocator.concat([
+                allocator.text("Mle<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                m.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Poly(b, m, n) => allocator.concat([
+                allocator.text("Poly<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                m.pretty(allocator),
+                allocator.text(", "),
+                n.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Base(base) => base.pretty(allocator),
+            Typ::Vec(box t, n) => allocator.concat([
+                allocator.text("["),
+                t.pretty(allocator),
+                allocator.text("; "),
+                n.pretty(allocator),
+                allocator.text("]")
+            ]),
+            Typ::Fin(r) => allocator.concat([
+                allocator.text("Fin<"),
+                r.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Bool => allocator.text("Bool")
+        }
+    }
+
+    fn is_nil(&self) -> bool {
+        false
+    }
+}
+
+/// Pretty-printer for zippel types (generic fallback).
+/// This is used for types other than Size and usize.
+impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
+where
+    D: DocAllocator<'a, A>,
+    T: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A> + Clone,
+    D::Doc: Clone,
+    A: 'a + Clone,
+{
+    default fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        match self {
+            Typ::Poly(b, m, n) => allocator.concat([
+                allocator.text("Poly<"),
+                b.pretty(allocator),
+                allocator.text(", "),
+                m.pretty(allocator),
+                allocator.text(", "),
+                n.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Base(base) => base.pretty(allocator),
+            Typ::Vec(box t, n) => allocator.concat([
+                allocator.text("["),
+                t.pretty(allocator),
+                allocator.text("; "),
+                n.pretty(allocator),
+                allocator.text("]")
+            ]),
+            Typ::Fin(r) => allocator.concat([
+                allocator.text("Fin<"),
+                r.pretty(allocator),
+                allocator.text(">")
+            ]),
+            Typ::Bool => allocator.text("Bool")
+        }
+    }
+
+    default fn is_nil(&self) -> bool {
         false
     }
 }
