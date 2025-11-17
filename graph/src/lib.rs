@@ -7,6 +7,7 @@ pub mod analyses;
 pub mod scheduler;
 pub mod pref;
 pub mod domain_seperator;
+pub mod eval;
 
 #[cfg(test)]
 mod tests;
