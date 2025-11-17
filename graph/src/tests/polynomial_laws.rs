@@ -8,7 +8,6 @@ use ark_poly::{
 use std::collections::HashMap;
 use crate::eval::eval_op;
 
-type TestOp = GOp<ArkBn254>;
 type TestValue = Value<ArkBn254>;
 type Fr = <ArkBn254 as backend::ArkConfig>::F;
 
@@ -27,25 +26,25 @@ fn make_uni_poly(coeffs: Vec<u64>) -> TestValue {
 fn test_addition_commutative() {
     let p1 = make_uni_poly(vec![1, 2, 3]); // 1 + 2x + 3x^2
     let p2 = make_uni_poly(vec![4, 5]);    // 4 + 5x
-    
+
     let op1 = Op::Bin(
         lang::ast::BinOp::Add,
         Box::new(Op::Value(p1.clone())),
         Box::new(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
-    
+
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
         Box::new(Op::Value(p2.clone())),
         Box::new(Op::Value(p1.clone())),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Addition should be commutative");
 }
 
@@ -54,7 +53,7 @@ fn test_addition_associative() {
     let p1 = make_uni_poly(vec![1, 2]);
     let p2 = make_uni_poly(vec![3, 4]);
     let p3 = make_uni_poly(vec![5, 6]);
-    
+
     // (p1 + p2) + p3
     let inner1 = Op::Bin(
         lang::ast::BinOp::Add,
@@ -68,7 +67,7 @@ fn test_addition_associative() {
         Box::new(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
-    
+
     // p1 + (p2 + p3)
     let inner2 = Op::Bin(
         lang::ast::BinOp::Add,
@@ -82,11 +81,11 @@ fn test_addition_associative() {
         Box::new(inner2),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Addition should be associative");
 }
 
@@ -94,17 +93,17 @@ fn test_addition_associative() {
 fn test_addition_identity() {
     let p = make_uni_poly(vec![1, 2, 3]);
     let zero = make_scalar(0);
-    
+
     let op = Op::Bin(
         lang::ast::BinOp::Add,
         Box::new(Op::Value(p.clone())),
         Box::new(Op::Value(zero)),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result = eval_op(&op, &env).unwrap();
-    
+
     assert_eq!(result, p, "Adding zero should be identity");
 }
 
@@ -112,25 +111,25 @@ fn test_addition_identity() {
 fn test_multiplication_commutative() {
     let p1 = make_uni_poly(vec![1, 2]); // 1 + 2x
     let p2 = make_uni_poly(vec![3, 4]); // 3 + 4x
-    
+
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
         Box::new(Op::Value(p1.clone())),
         Box::new(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
-    
+
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
         Box::new(Op::Value(p2.clone())),
         Box::new(Op::Value(p1.clone())),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Multiplication should be commutative");
 }
 
@@ -139,7 +138,7 @@ fn test_multiplication_associative() {
     let p1 = make_uni_poly(vec![1, 1]); // 1 + x
     let p2 = make_uni_poly(vec![2, 1]); // 2 + x
     let p3 = make_uni_poly(vec![3, 1]); // 3 + x
-    
+
     // (p1 * p2) * p3
     let inner1 = Op::Bin(
         lang::ast::BinOp::Mul,
@@ -153,7 +152,7 @@ fn test_multiplication_associative() {
         Box::new(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
-    
+
     // p1 * (p2 * p3)
     let inner2 = Op::Bin(
         lang::ast::BinOp::Mul,
@@ -167,11 +166,11 @@ fn test_multiplication_associative() {
         Box::new(inner2),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Multiplication should be associative");
 }
 
@@ -179,17 +178,17 @@ fn test_multiplication_associative() {
 fn test_multiplication_identity() {
     let p = make_uni_poly(vec![1, 2, 3]);
     let one = make_scalar(1);
-    
+
     let op = Op::Bin(
         lang::ast::BinOp::Mul,
         Box::new(Op::Value(p.clone())),
         Box::new(Op::Value(one)),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result = eval_op(&op, &env).unwrap();
-    
+
     assert_eq!(result, p, "Multiplying by one should be identity");
 }
 
@@ -198,7 +197,7 @@ fn test_distributivity() {
     let p1 = make_uni_poly(vec![1, 2]); // 1 + 2x
     let p2 = make_uni_poly(vec![3, 4]); // 3 + 4x
     let p3 = make_uni_poly(vec![5, 6]); // 5 + 6x
-    
+
     // p1 * (p2 + p3)
     let inner_add = Op::Bin(
         lang::ast::BinOp::Add,
@@ -212,7 +211,7 @@ fn test_distributivity() {
         Box::new(inner_add),
         ATyp::Uni(10)
     );
-    
+
     // (p1 * p2) + (p1 * p3)
     let mul1 = Op::Bin(
         lang::ast::BinOp::Mul,
@@ -232,11 +231,11 @@ fn test_distributivity() {
         Box::new(mul2),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Multiplication should distribute over addition");
 }
 
@@ -245,7 +244,7 @@ fn test_scalar_multiplication_compatibility() {
     let p = make_uni_poly(vec![2, 3]); // 2 + 3x
     let s1 = make_scalar(4);
     let s2 = make_scalar(5);
-    
+
     // (s1 * s2) * p
     let scalar_mul = Op::Bin(
         lang::ast::BinOp::Mul,
@@ -259,7 +258,7 @@ fn test_scalar_multiplication_compatibility() {
         Box::new(Op::Value(p.clone())),
         ATyp::Uni(10)
     );
-    
+
     // s1 * (s2 * p)
     let inner_mul = Op::Bin(
         lang::ast::BinOp::Mul,
@@ -273,11 +272,11 @@ fn test_scalar_multiplication_compatibility() {
         Box::new(inner_mul),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result1 = eval_op(&op1, &env).unwrap();
     let result2 = eval_op(&op2, &env).unwrap();
-    
+
     assert_eq!(result1, result2, "Scalar multiplication should be compatible");
 }
 
@@ -285,7 +284,7 @@ fn test_scalar_multiplication_compatibility() {
 fn test_subtraction_as_addition_of_negation() {
     let p1 = make_uni_poly(vec![5, 6]);
     let p2 = make_uni_poly(vec![2, 3]);
-    
+
     // p1 - p2
     let sub_op = Op::Bin(
         lang::ast::BinOp::Sub,
@@ -293,7 +292,7 @@ fn test_subtraction_as_addition_of_negation() {
         Box::new(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
-    
+
     // p1 + (-1 * p2) = p1 + (neg p2)
     // In field arithmetic, -p2 is just negation
     let neg_p2 = Op::Bin(
@@ -308,10 +307,10 @@ fn test_subtraction_as_addition_of_negation() {
         Box::new(neg_p2),
         ATyp::Uni(10)
     );
-    
+
     let env = HashMap::new();
     let result_sub = eval_op(&sub_op, &env).unwrap();
     let result_add = eval_op(&add_op, &env).unwrap();
-    
+
     assert_eq!(result_sub, result_add, "Subtraction should equal addition of negation");
 }
