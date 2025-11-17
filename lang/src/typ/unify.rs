@@ -85,13 +85,13 @@ impl Unify for CTyp {
             (CTyp::Fin(a), CTyp::Fin(b)) =>
                 Ok(CTyp::Fin(Range::lub_equ(a, b, &Nothing).map_err(UnifyError::Lub)?)),
             // Uni<A> == Uni<B>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Tid::unify(a, b, ctx, subs)
-                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n.max(m))),
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+                Ok(CTyp::Poly(Tid::unify(a, b, ctx, subs)
+                    .map_err(|e| UnifyError::typ(&x, &y, e))?, 1, *n.max(m))),
             // Mle<A> == Mle<B>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Tid::unify(a, b, ctx, subs)
-                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n.max(m))),
+            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+                Ok(CTyp::Poly(Tid::unify(a, b, ctx, subs)
+                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n.max(m), 1)),
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -101,16 +101,16 @@ impl Unify for CTyp {
                     Err(UnifyError::typ_mismatch(&x, &y))
                 },
             // Finite fields can act like 0 degree polynomals
-            (CTyp::Uni(a, n), b) | (b, CTyp::Uni(a, n)) => {
+            (CTyp::Poly(a, 1, n), b) | (b, CTyp::Poly(a, 1, n)) => {
                 let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
-                Ok(CTyp::Uni(Tid::unify(a, &t, ctx, subs)
-                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n))
+                Ok(CTyp::Poly(Tid::unify(a, &t, ctx, subs)
+                    .map_err(|e| UnifyError::typ(&x, &y, e))?, 1, *n))
             },
             // Finite fields can act like 0 variable MLEs
-            (CTyp::Mle(a, n), b) | (b, CTyp::Mle(a, n)) => {
+            (CTyp::Poly(a, n, 1), b) | (b, CTyp::Poly(a, n, 1)) => {
                 let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;
-                Ok(CTyp::Mle(Tid::unify(a, &t, ctx, subs)
-                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n))
+                Ok(CTyp::Poly(Tid::unify(a, &t, ctx, subs)
+                    .map_err(|e| UnifyError::typ(&x, &y, e))?, *n, 1))
             },
             // Indices can act like finite fields
             (a, b) => {

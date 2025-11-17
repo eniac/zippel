@@ -1,4 +1,4 @@
-use crate::{Value, ATyp, ArkConfig, ABase};
+use crate::{Value, ATyp, ArkConfig, ABase, PolyVariant};
 use crate::config::ArkBls12_381;
 use ark_bls12_381::Fr;
 use ark_ff::Zero;
@@ -764,8 +764,11 @@ fn inverse_test() {
         
         let mle = a.value_mle();
         match mle {
-            Value::Mle(m) => assert_eq!(m.num_vars, 3),
-            _ => panic!("Expected Mle"),
+            Value::Poly(p) => {
+                assert!(p.is_multilinear());
+                assert_eq!(p.num_vars(), Some(3));
+            }
+            _ => panic!("Expected Poly(MLE)"),
         }
     }
 
@@ -983,7 +986,10 @@ fn inverse_test() {
         // Create a polynomial from coefficients [1, 2, 3]
         // This represents 1 + 2x + 3x^2
         let coeffs_vec = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-        let poly = Value::<TestConfig>::Poly(ark_poly::DenseUVPolynomial::from_coefficients_vec(coeffs_vec));
+        let poly_variant = PolyVariant::DenseUni(
+            ark_poly::DenseUVPolynomial::from_coefficients_vec(coeffs_vec)
+        );
+        let poly = Value::<TestConfig>::Poly(poly_variant);
         
         // Evaluate at points [0, 1, 2]
         let points = Value::<TestConfig>::VecScalar(vec![Fr::from(0u64), Fr::from(1u64), Fr::from(2u64)]);

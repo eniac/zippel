@@ -10,7 +10,7 @@ use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use std::fmt;
 use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign, BitAndAssign, Add, Sub, Mul, Div, Rem, BitXor, BitAnd};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug, Hash)]
 pub enum Ref {
     /// Reference to a node in the graph
     Node(NodeIndex),

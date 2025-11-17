@@ -458,13 +458,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_equ(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?)),
             // Uni<A> == Uni<B>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Tid::lub_equ(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+                Ok(CTyp::Poly(Tid::lub_equ(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, 1, *n.max(m))),
             // Mle<A> == Mle<B>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Tid::lub_equ(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+                Ok(CTyp::Poly(Tid::lub_equ(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, *n.max(m), 1)),
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
                 Ok(CTyp::vec(&CTyp::lub_equ(a, b, ctx)
@@ -489,13 +489,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_add(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?)),
             // Uni<A> + Uni<B> = Uni<max(A, B)>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Tid::lub_add(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+                Ok(CTyp::Poly(Tid::lub_add(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?, 1, *n.max(m))),
             // Mle<A> + Mle<B> = Mle<max(A, B)>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Tid::lub_add(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+                Ok(CTyp::Poly(Tid::lub_add(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?, *n.max(m), 1)),
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -505,7 +505,7 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 },
             // Uni<A> + Vec<B> = Uni<C> where C = A = B
-            (CTyp::Uni(_a, n), CTyp::Vec(box b, m)) =>
+            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) =>
                 if n == m {
                     let tb = b.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
@@ -514,7 +514,7 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 },
             // Vec<A> + Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Uni(_b, m)) =>
+            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) =>
                 if n == m {
                     let ta = a.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
@@ -533,21 +533,21 @@ impl Lub for CTyp {
                 }
             },
             // Finite fields can act like univariate polynomials
-            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+            (CTyp::Base(a), CTyp::Poly(b, 1, n)) | (CTyp::Poly(b, 1, n), CTyp::Base(a)) => {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::Uni(t, *n))
+                Ok(CTyp::Poly(t, 1, *n))
             }
             // Indices can act like univariate polynomials
-            (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
+            (CTyp::Fin(_), CTyp::Poly(b, 1, n)) | (CTyp::Poly(b, 1, n), CTyp::Fin(_)) =>
                 Ok(CTyp::uni(b, *n)),
-            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
+            (CTyp::Poly(a, n, 1), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Poly(a, n, 1)) => {
                 let t = Tid::lub_add(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::Mle(t, *n))
+                Ok(CTyp::Poly(t, *n, 1))
             },
-            (CTyp::Mle(a, n), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Mle(a, n)) => {
-                Ok(CTyp::Mle(a.clone(), *n))
+            (CTyp::Poly(a, n, 1), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, 1)) => {
+                Ok(CTyp::Poly(a.clone(), *n, 1))
             }
             (_, _) => Err(LubError::add(&x, &y)),
         }
@@ -562,13 +562,13 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_sub(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?)),
             // Uni<A> - Uni<B> = Uni<max(A, B)>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
-                Ok(CTyp::Uni(Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+                Ok(CTyp::Poly(Tid::lub_sub(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?, 1, *n.max(m))),
             // Mle<A> - Mle<B> = Mle<max(A, B)>
-            (CTyp::Mle(a, n), CTyp::Mle(b, m)) =>
-                Ok(CTyp::Mle(Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?, *n.max(m))),
+            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+                Ok(CTyp::Poly(Tid::lub_sub(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?, *n.max(m), 1)),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -578,7 +578,7 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 },
             // Uni<A> - Vec<B> = Uni<C> where C = A = B
-            (CTyp::Uni(_a, n), CTyp::Vec(box b, m)) =>
+            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) =>
                 if n == m {
                     let tb = b.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
@@ -587,7 +587,7 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 },
             // Vec<A> - Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Uni(_b, m)) =>
+            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) =>
                 if n == m {
                     let ta = a.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
@@ -606,21 +606,21 @@ impl Lub for CTyp {
                 }
             },
             // Finite fields can act like univariate polynomials
-            (CTyp::Base(a), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Base(a)) => {
+            (CTyp::Base(a), CTyp::Poly(b, 1, n)) | (CTyp::Poly(b, 1, n), CTyp::Base(a)) => {
                 let t = Tid::lub_sub(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                Ok(CTyp::Uni(t, *n))
+                Ok(CTyp::Poly(t, 1, *n))
             }
             // Indices can act like univariate polynomials
-            (CTyp::Fin(_), CTyp::Uni(b, n)) | (CTyp::Uni(b, n), CTyp::Fin(_)) =>
+            (CTyp::Fin(_), CTyp::Poly(b, 1, n)) | (CTyp::Poly(b, 1, n), CTyp::Fin(_)) =>
                 Ok(CTyp::uni(b, *n)),
-            (CTyp::Mle(a, n), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Mle(a, n)) => {
+            (CTyp::Poly(a, n, 1), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Poly(a, n, 1)) => {
                 let t = Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                Ok(CTyp::Mle(t, *n))
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
+                Ok(CTyp::Poly(t, *n, 1))
             },
-            (CTyp::Mle(a, n), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Mle(a, n)) => {
-                Ok(CTyp::Mle(a.clone(), *n))
+            (CTyp::Poly(a, n, 1), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, 1)) => {
+                Ok(CTyp::Poly(a.clone(), *n, 1))
             }    
             (_, _) => Err(LubError::sub(&x, &y))
         }
@@ -639,14 +639,14 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?))
             },
             // Uni<A> * Uni<B> = Uni<A + B>
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) =>
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
             {
                 println!("Uni<A> * Uni<B> = Uni<A + B>");
                 println!("A: {:?}, B: {:?}", a, b);
                 println!("n: {:?}, m: {:?}", n, m);
                 println!("n + m - 1: {:?}", n + m - 1);
-                Ok(CTyp::Uni(Tid::lub_mul(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, *n + *m - 1))
+                Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 1, *n + *m - 1))
             },
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
@@ -667,21 +667,21 @@ impl Lub for CTyp {
                 Ok(CTyp::vec(&CTyp::lub_mul(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, *n)),
             // Uni<A> * c = Uni<A> if c is a finite field
-            (a, CTyp::Uni(b, n)) | (CTyp::Uni(b, n), a) => {
+            (a, CTyp::Poly(b, 1, n)) | (CTyp::Poly(b, 1, n), a) => {
                 let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Uni(c, *n))
+                    Ok(CTyp::Poly(c, 1, *n))
                 } else {
                     Err(LubError::mul(&x, &y))
                 }
             }
             // Mle<A> * c = Mle<A> if c is a finite field
-            (a, CTyp::Mle(b, n)) | (CTyp::Mle(b, n), a) => {
+            (a, CTyp::Poly(b, n, 1)) | (CTyp::Poly(b, n, 1), a) => {
                 let t = CTyp::lub_mul(a, &CTyp::base(b), ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Mle(c, *n))
+                    Ok(CTyp::Poly(c, *n, 1))
                 } else {
                     Err(LubError::mul(&x, &y))
                 }
@@ -734,14 +734,14 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_div(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?)),
             // Uni<A> / Uni<B> = Uni<A - B> if A > B
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) if n >= m =>
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) if n >= m =>
             {
                 println!("Uni<A> / Uni<B> = Uni<A - B> if A > B");
                 println!("A: {:?}, B: {:?}", a, b);
                 println!("n: {:?}, m: {:?}", n, m);
                 println!("n - m + 1: {:?}", n - m + 1);
-                Ok(CTyp::Uni(Tid::lub_div(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, n - m + 1))
+                Ok(CTyp::Poly(Tid::lub_div(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, 1, n - m + 1))
             },
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
@@ -759,21 +759,21 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, *n)),
 
             // Uni<A> / c = Uni<A> if c is a finite field
-            (CTyp::Uni(b, n), a) => {
+            (CTyp::Poly(b, 1, n), a) => {
                 let t = CTyp::lub_div(&CTyp::base(b), a, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Uni(c, *n))
+                    Ok(CTyp::Poly(c, 1, *n))
                 } else {
                     Err(LubError::div(&x, &y))
                 }
             }
             // Mle<A> / c = Mle<A> if c is a finite field
-            (CTyp::Mle(b, n), a) => {
+            (CTyp::Poly(b, n, 1), a) => {
                 let t = CTyp::lub_div(&CTyp::base(b), a, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Mle(c, *n))
+                    Ok(CTyp::Poly(c, *n, 1))
                 } else {
                     Err(LubError::div(&x, &y))
                 }
@@ -793,9 +793,9 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_rem(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?)),
             // Uni<A> % Uni<B> = Uni<C> where deg(C) = deg(B) - 1
-            (CTyp::Uni(a, n), CTyp::Uni(b, m)) if n >= m =>
-                Ok(CTyp::Uni(Tid::lub_equ(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?, m.saturating_sub(1))),
+            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) if n >= m =>
+                Ok(CTyp::Poly(Tid::lub_equ(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?, 1, m.saturating_sub(1))),
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
                 if n == m {
@@ -843,7 +843,7 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?, *n)),
 
             // Uni<B> ^ Fin<i..j> = Uni<B*j>
-            (CTyp::Uni(a, n), CTyp::Fin(r)) =>
+            (CTyp::Poly(a, 1, n), CTyp::Fin(r)) =>
                 Ok(CTyp::uni(a, n * (r.end.saturating_sub(1)))),
 
             (_, _) => Err(LubError::pow(&x, &y))
@@ -862,8 +862,8 @@ impl Lub for CTyp {
                     Err(LubError::dot(&x, &y))
                 },
             // Vec<A> . Uni<A> = A
-            (CTyp::Vec(box a, n), CTyp::Uni(b, m))
-            | (CTyp::Uni(b, m), CTyp::Vec(box a, n)) =>
+            (CTyp::Vec(box a, n), CTyp::Poly(b, 1, m))
+            | (CTyp::Poly(b, 1, m), CTyp::Vec(box a, n)) =>
                 if n == m {
                     // Type [a] and [b] should be multiplied
                     Ok(CTyp::lub_mul(&a, &CTyp::base(b), ctx)
@@ -887,8 +887,8 @@ impl Lub for CTyp {
                 Ok(CTyp::vec(&t, x + y))
             },
             // Uni<A, n> ++ Vec<B, m> = Uni<C, n + m> if A = B = C
-            (CTyp::Uni(a, n), CTyp::Vec(box b, m))
-            | (CTyp::Vec(box b, m), CTyp::Uni(a, n)) => {
+            (CTyp::Poly(a, 1, n), CTyp::Vec(box b, m))
+            | (CTyp::Vec(box b, m), CTyp::Poly(a, 1, n)) => {
                 // Type [a] and [b] should be the same ([t])
                 CTyp::lub_equ(&CTyp::base(&a), &b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
@@ -896,8 +896,8 @@ impl Lub for CTyp {
                 Ok(CTyp::uni(&a, n + m))
             },
             // MLE<A, n> ++ Vec<B, m> = MLE<C, n> if n = m and A = B = C
-            (CTyp::Mle(a, n), CTyp::Vec(box b, m))
-            | (CTyp::Vec(box b, m), CTyp::Mle(a, n)) 
+            (CTyp::Poly(a, n, 1), CTyp::Vec(box b, m))
+            | (CTyp::Vec(box b, m), CTyp::Poly(a, n, 1)) 
             if n == m => {
                 // Type [a] and [b] should be the same ([t])
                 CTyp::lub_equ(&CTyp::base(a), &b, kctx)
