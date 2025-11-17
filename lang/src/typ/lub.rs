@@ -616,7 +616,7 @@ impl Lub for CTyp {
                 Ok(CTyp::uni(b, *n)),
             (CTyp::Poly(a, n, 1), CTyp::Base(b)) | (CTyp::Base(b), CTyp::Poly(a, n, 1)) => {
                 let t = Tid::lub_sub(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
+                    .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
                 Ok(CTyp::Poly(t, *n, 1))
             },
             (CTyp::Poly(a, n, 1), CTyp:: Fin(_)) | (CTyp::Fin(_), CTyp::Poly(a, n, 1)) => {
