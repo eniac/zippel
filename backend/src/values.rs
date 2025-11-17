@@ -55,11 +55,11 @@ impl<C: ArkConfig> PartialEq for Value<C> {
             (Value::G1(a), Value::G1(b)) => a.into_affine() == b.into_affine(),
             (Value::G2(a), Value::G2(b)) => a.into_affine() == b.into_affine(),
             (Value::VecG1(a), Value::VecG1(b)) => {
-                a.len() == b.len() && 
+                a.len() == b.len() &&
                 a.iter().zip(b.iter()).all(|(x, y)| x.into_affine() == y.into_affine())
             }
             (Value::VecG2(a), Value::VecG2(b)) => {
-                a.len() == b.len() && 
+                a.len() == b.len() &&
                 a.iter().zip(b.iter()).all(|(x, y)| x.into_affine() == y.into_affine())
             }
             // For all other variants, use structural equality
@@ -1679,13 +1679,13 @@ impl<C: ArkConfig> Value<C> {
         match (&self, &other) {
             (Value::Poly(poly), Value::VecIndex(b)) => {
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
-                
+
                 let result_poly = if poly.is_univariate() {
                     poly.evaluate_vec(&points)
                 } else {
                     poly.evaluate_or_fix_mle(&points).expect("MLE evaluation failed")
                 };
-                
+
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
                     Value::Scalar(scalar)
@@ -1701,7 +1701,7 @@ impl<C: ArkConfig> Value<C> {
                 } else {
                     poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
                 };
-                
+
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
                     Value::Scalar(scalar)
@@ -2713,8 +2713,6 @@ impl<C: ArkConfig> Ord for Value<C> {
     }
 }
 
-
-
 #[cfg(test)]
 mod value_tests {
     use super::*;
@@ -2911,7 +2909,7 @@ mod value_tests {
         let g = random_g1();
         let a = random_scalar();
         let b = random_scalar();
-        
+
         // (a + b) * G = a * G + b * G
         let lhs = (a.clone() + b.clone()) * g.clone();
         let rhs = (a * g.clone()) + (b * g);
@@ -2923,7 +2921,7 @@ mod value_tests {
         let g1 = random_g1();
         let g2 = random_g1();
         let a = random_scalar();
-        
+
         // a * (G1 + G2) = a * G1 + a * G2
         let lhs = a.clone() * (g1.clone() + g2.clone());
         let rhs = (a.clone() * g1) + (a * g2);
@@ -2935,7 +2933,7 @@ mod value_tests {
         let g = random_g2();
         let a = random_scalar();
         let b = random_scalar();
-        
+
         // (a + b) * G = a * G + b * G
         let lhs = (a.clone() + b.clone()) * g.clone();
         let rhs = (a * g.clone()) + (b * g);
@@ -2947,18 +2945,12 @@ mod value_tests {
         let g1 = random_g2();
         let g2 = random_g2();
         let a = random_scalar();
-        
+
         // a * (G1 + G2) = a * G1 + a * G2
         let lhs = a.clone() * (g1.clone() + g2.clone());
         let rhs = (a.clone() * g1) + (a * g2);
         assert_eq!(lhs, rhs);
     }
-
-    // ========== Mixed Operations ==========
-
-    #[test]
-
-    #[test]
 
     // ========== Boolean Operations ==========
 
