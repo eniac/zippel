@@ -1,5 +1,5 @@
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
-use crate::{GOp, Op};
+use crate::Op;
 use backend::{ArkBn254, Value, PolyVariant, ATyp};
 use ark_poly::{
     univariate::DensePolynomial,

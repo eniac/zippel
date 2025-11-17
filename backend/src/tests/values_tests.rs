@@ -758,7 +758,6 @@ fn inverse_test() {
     }
 
     #[test]
-    #[ignore] // TODO: Fix after Typ refactoring
     fn test_mle_operations() {
         let mut rng = test_rng();
         let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
@@ -983,7 +982,6 @@ fn inverse_test() {
     }
 
     #[test]
-    #[ignore] // TODO: Fix after PolyVariant refactoring
     fn test_value_eval() {
         // Create a polynomial from coefficients [1, 2, 3]
         // This represents 1 + 2x + 3x^2

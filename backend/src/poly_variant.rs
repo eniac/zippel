@@ -14,37 +14,37 @@ use thiserror::Error;
 pub enum PolyError {
     #[error("Cannot multiply two multilinear polynomials - result would not be multilinear")]
     MleMultiplication,
-    
+
     #[error("Cannot multiply univariate and multilinear polynomials - incompatible types")]
     IncompatibleMultiplication,
-    
+
     #[error("Polynomial division not implemented for multilinear extension polynomials")]
-    DivisionNotImplemented,
-    
+    DivisionNotApplicable,
+
     #[error("Division by zero")]
     DivisionByZero,
-    
+
     #[error("Can only divide scalar by constant polynomial")]
     ScalarDivByNonConstant,
-    
-    #[error("Polynomial modulo not implemented for multilinear extension polynomials")]
-    ModuloNotImplemented,
-    
+
+    #[error("Polynomial modulo not applicable for multilinear extension polynomials")]
+    ModuloNotApplicable,
+
     #[error("Cannot convert non-constant polynomial to scalar (degree: {degree})")]
     NotConstantPolynomial { degree: usize },
-    
+
     #[error("Cannot perform operation on MLEs with different number of variables: {v1} vs {v2}")]
     MleVariableMismatch { v1: usize, v2: usize },
-    
+
     #[error("Evaluation point dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
-    
+
     #[error("Can only evaluate MLE polynomials with evaluate_mle")]
     NotMlePolynomial,
-    
+
     #[error("Operation only works for MLE polynomials")]
     RequiresMle,
-    
+
     #[error("Index out of bounds: {index} >= {size}")]
     IndexOutOfBounds { index: usize, size: usize },
 }
@@ -132,7 +132,7 @@ impl<F: Field> PolyVariant<F> {
     pub fn from_scalar(scalar: F) -> Self {
         PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![scalar]))
     }
-    
+
     /// Convert to scalar if this is a constant polynomial
     pub fn to_scalar(&self) -> Option<F> {
         match self {
@@ -167,7 +167,7 @@ impl<F: Field> PolyVariant<F> {
             }
         }
     }
-    
+
     /// Convert to vector if this is an MLE
     pub fn to_vec(&self) -> Option<Vec<F>> {
         match self {
@@ -182,7 +182,7 @@ impl<F: Field> PolyVariant<F> {
             _ => None
         }
     }
-    
+
     /// Get coefficients if this is a univariate polynomial
     pub fn to_coeffs(&self) -> Option<Vec<F>> {
         match self {
@@ -195,12 +195,12 @@ impl<F: Field> PolyVariant<F> {
             _ => None
         }
     }
-    
+
     /// Create univariate polynomial from coefficients
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
         PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs))
     }
-    
+
     /// Check if polynomial is zero
     pub fn is_zero(&self) -> bool {
         match self {
@@ -437,7 +437,7 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Divide two polynomials
-    pub fn poly_div(&self, other: &Self) -> Result<Self, PolyError> 
+    pub fn poly_div(&self, other: &Self) -> Result<Self, PolyError>
     where
         F: PrimeField,
     {
@@ -460,7 +460,7 @@ impl<F: Field> PolyVariant<F> {
             (PolyVariant::SparseMle(_), _) |
             (_, PolyVariant::DenseMle(_)) |
             (_, PolyVariant::SparseMle(_)) => {
-                Err(PolyError::DivisionNotImplemented)
+                Err(PolyError::DivisionNotApplicable)
             }
 
             // Sparse univariate - convert to dense first
@@ -507,7 +507,7 @@ impl<F: Field> PolyVariant<F> {
     }
 
     /// Polynomial remainder (modulo)
-    pub fn poly_rem(&self, other: &Self) -> Result<Self, PolyError> 
+    pub fn poly_rem(&self, other: &Self) -> Result<Self, PolyError>
     where
         F: PrimeField,
     {
@@ -530,7 +530,7 @@ impl<F: Field> PolyVariant<F> {
             (PolyVariant::SparseMle(_), _) |
             (_, PolyVariant::DenseMle(_)) |
             (_, PolyVariant::SparseMle(_)) => {
-                Err(PolyError::ModuloNotImplemented)
+                Err(PolyError::ModuloNotApplicable)
             }
 
             // Sparse - convert to dense first
@@ -583,7 +583,7 @@ impl<F: Field> PolyVariant<F> {
             _ => Err(PolyError::NotMlePolynomial)
         }
     }
-    
+
     /// Evaluate univariate polynomial at multiple points
     /// Returns a univariate polynomial representing the vector of results
     pub fn evaluate_vec(&self, points: &[F]) -> Self {
@@ -607,7 +607,7 @@ impl<F: Field> PolyVariant<F> {
             _ => panic!("evaluate_vec only works for univariate polynomials")
         }
     }
-    
+
     /// Evaluate or partially fix MLE variables
     /// Always returns a polynomial (possibly constant after full evaluation)
     pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError> {
@@ -687,7 +687,7 @@ impl<F: PrimeField> PartialOrd for PolyVariant<F> {
 impl<F: PrimeField> Ord for PolyVariant<F> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        
+
         match (self, other) {
             // Both univariate
             (PolyVariant::DenseUni(_), PolyVariant::DenseUni(_)) |
@@ -697,7 +697,7 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                 // Convert both to dense for comparison
                 let self_dense = self.to_dense();
                 let other_dense = other.to_dense();
-                
+
                 if let (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) = (self_dense, other_dense) {
                     p1.coeffs.len().cmp(&p2.coeffs.len()).then_with(|| {
                         for (c1, c2) in p1.coeffs.iter().zip(p2.coeffs.iter()) {
@@ -712,7 +712,7 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                     unreachable!()
                 }
             }
-            
+
             // Both MLE
             (PolyVariant::DenseMle(_), PolyVariant::DenseMle(_)) |
             (PolyVariant::SparseMle(_), PolyVariant::SparseMle(_)) |
@@ -721,7 +721,7 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                 // Convert both to dense for comparison
                 let self_dense = self.to_dense();
                 let other_dense = other.to_dense();
-                
+
                 if let (PolyVariant::DenseMle(m1), PolyVariant::DenseMle(m2)) = (self_dense, other_dense) {
                     m1.num_vars().cmp(&m2.num_vars()).then_with(|| {
                         for (v1, v2) in m1.evaluations.iter().zip(m2.evaluations.iter()) {
@@ -736,13 +736,13 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                     unreachable!()
                 }
             }
-            
+
             // Uni < Mle
             (PolyVariant::DenseUni(_), PolyVariant::DenseMle(_)) |
             (PolyVariant::DenseUni(_), PolyVariant::SparseMle(_)) |
             (PolyVariant::SparseUni(_), PolyVariant::DenseMle(_)) |
             (PolyVariant::SparseUni(_), PolyVariant::SparseMle(_)) => Ordering::Less,
-            
+
             // Mle > Uni
             _ => Ordering::Greater
         }
