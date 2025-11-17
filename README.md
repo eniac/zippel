@@ -1,6 +1,6 @@
 # Zippel Compiler
 
-![Tests](https://github.com/elefthei/zippel/actions/workflows/rust.yml/badge.svg)
+![Tests](https://circleci.com/gh/elefthei/zippel.svg?style=svg)
 
 Zippel is a compiler that translates code written in the Zippel language for cryptographic protocols,
 into optimized and safe prover and verifier code. This is a prototype and should not be used
