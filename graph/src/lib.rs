@@ -18,13 +18,14 @@ pub use dep::{DepType, Dep};
 pub use pref::PRef;
 pub use analyses::StaticAnalysis;
 
-use backend::{ArkConfig, Value, ATyp};
+use backend::{ArkConfig, Value, ATyp, PolyVariant};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Tid, Vid};
 use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
 use lang::typ::range::CRange;
 use lang::typ::infer::{Typeable, TypeError};
+use ark_poly::{univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial};
 
 use thiserror::Error;
 use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbors}, visit::EdgeRef, Direction, Graph};
@@ -67,7 +68,9 @@ pub enum GraphError {
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
-    Type(#[from] TypeError)
+    Type(#[from] TypeError),
+    #[error("Fun expression contains non-polynomial operations: {0}")]
+    NonPolynomialFun(String),
 }
 
 /// A trait for writing a graph to a PDF file
@@ -826,6 +829,65 @@ impl<C: ArkConfig> UDag<C> {
         }
     }
 
+    /// Convert a Fun expression body to a PolyVariant
+    /// Only polynomial operations (Add, Sub, Mul with scalars, Var, Lit) are allowed
+    fn exp_to_poly_variant(
+        exp: &CExp,
+        vars: &[Vid],
+        var_map: &HashMap<Vid, usize>
+    ) -> Result<PolyVariant<C::F>, GraphError> {
+        use ark_ff::{Zero, One};
+        
+        match exp {
+            CExp::Lit(n) => {
+                // Scalar constant
+                let scalar = C::F::from(*n as u64);
+                Ok(PolyVariant::from_scalar(scalar))
+            },
+            CExp::Var(vid) => {
+                // Check if this is a bound variable
+                if let Some(&var_idx) = var_map.get(vid) {
+                    // Create a polynomial with variable
+                    if vars.len() == 1 {
+                        // Univariate: create polynomial [0, 1] representing x
+                        let poly = DensePolynomial::from_coefficients_vec(vec![C::F::zero(), C::F::one()]);
+                        Ok(PolyVariant::DenseUni(poly))
+                    } else {
+                        // Multilinear: create a basis polynomial
+                        let num_vars = vars.len();
+                        let mut evals = vec![C::F::zero(); 1 << num_vars];
+                        // Set evaluation at the point corresponding to this variable
+                        for i in 0..(1 << num_vars) {
+                            if (i >> var_idx) & 1 == 1 {
+                                evals[i] = C::F::one();
+                            }
+                        }
+                        let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, evals);
+                        Ok(PolyVariant::DenseMle(mle))
+                    }
+                } else {
+                    Err(GraphError::NonPolynomialFun(format!("Unbound variable {} in Fun expression", vid)))
+                }
+            },
+            CExp::Bin(BinOp::Add, box a, box b) => {
+                let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
+                let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
+                pa.poly_add(&pb).map_err(|e| GraphError::NonPolynomialFun(format!("Add failed: {}", e)))
+            },
+            CExp::Bin(BinOp::Sub, box a, box b) => {
+                let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
+                let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
+                pa.poly_sub(&pb).map_err(|e| GraphError::NonPolynomialFun(format!("Sub failed: {}", e)))
+            },
+            CExp::Bin(BinOp::Mul, box a, box b) => {
+                let pa = Self::exp_to_poly_variant(a, vars, var_map)?;
+                let pb = Self::exp_to_poly_variant(b, vars, var_map)?;
+                pa.poly_mul(&pb).map_err(|e| GraphError::NonPolynomialFun(format!("Mul failed: {}", e)))
+            },
+            _ => Err(GraphError::NonPolynomialFun(format!("Unsupported operation in Fun expression: {:?}", exp)))
+        }
+    }
+
     /// Add an expression [exp] to the graph
     fn add_exp(&mut self,
         exp: CExp,
@@ -1232,10 +1294,19 @@ impl<C: ArkConfig> UDag<C> {
                         TypeError::ark(kctx, vctx, &exp, &typ))
                 })?))
             },
-            CExp::Fun(_, _) => {
-                // Fun expressions should be desugared before graph generation
-                // For now, return an error
-                Err(GraphError::from(TypeError::exp(kctx, vctx, &exp)))
+            CExp::Fun(fun_vars, box body) => {
+                // Convert the Fun expression body to a PolyVariant
+                let var_map: HashMap<Vid, usize> = fun_vars.iter()
+                    .enumerate()
+                    .map(|(i, v)| (v.clone(), i))
+                    .collect();
+                
+                let poly = Self::exp_to_poly_variant(&body, &fun_vars, &var_map)?;
+                
+                // Create a Value::Poly from the PolyVariant
+                let poly_value = Value::Poly(poly);
+                
+                Ok(GOp::Value(poly_value))
             }
         }
     }
