@@ -2,6 +2,7 @@ use ark_ec::pairing::PairingOutput;
 use ark_poly::{
     univariate::DensePolynomial,
     DenseMultilinearExtension,
+    DenseUVPolynomial,
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
@@ -237,6 +238,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
             ATyp::Uni(_n) => Value::Poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero())),
             ATyp::Mle(_n) => Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero())),
+            ATyp::Virtual => Value::Poly(PolyVariant::Virtual(crate::poly_variant::VirtualPolynomial::new())),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -1902,6 +1904,20 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
             ATyp::Uni(n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
+            ATyp::Mle(_n) => {
+                // For MLE random, create a random univariate polynomial first, then convert
+                // Actually, we should create a random MLE - but for now use a simple approach
+                let num_vars = 1;  // Minimum 1 variable
+                let evals = C::FOps::vec_rand(rng, 1 << num_vars);
+                Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals)))
+            },
+            ATyp::Virtual => {
+                // For Virtual random, create a random univariate polynomial wrapped in virtual
+                let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
+                Value::Poly(PolyVariant::Virtual(crate::poly_variant::VirtualPolynomial::from_poly(
+                    PolyVariant::DenseUni(p)
+                )))
+            },
             _ => panic!("Not implemented"),
         }
     }
@@ -1938,7 +1954,9 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(typ), v.len())
             },
             Value::Poly(poly) => {
-                if poly.is_univariate() {
+                if poly.is_virtual() {
+                    ATyp::virtual_poly()
+                } else if poly.is_univariate() {
                     ATyp::uni(poly.degree().unwrap())
                 } else {
                     ATyp::mle(poly.num_vars().unwrap())

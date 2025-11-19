@@ -1,0 +1,16 @@
+proto virtual_test<F: Field>(
+    // --- Public Inputs ---
+    public x: F
+) where (x == x) {
+    // Create two polynomials
+    let p1 = poly([1, 2, 3]);
+    let p2 = poly([4, 5]);
+    
+    // Multiply them - should result in a virtual polynomial
+    let p3 = p1 * p2;
+    
+    // Verify the result
+    let expected = poly([4, 13, 22, 15]);  // (1 + 2x + 3x^2) * (4 + 5x) = 4 + 13x + 22x^2 + 15x^3
+    verify(p3 == expected);
+}
+

@@ -10,6 +10,17 @@ use std::io::Write;
 use std::fmt;
 use thiserror::Error;
 
+/// Virtual Polynomial - represents a polynomial as a sum of terms, where each term
+/// is a coefficient multiplied by a product of base polynomials.
+/// This is useful for sum-check protocols and allows flexible representation
+/// of polynomial products without explicitly computing the full expansion.
+#[derive(Debug, Clone)]
+pub struct VirtualPolynomial<F: Field> {
+    /// List of terms, where each term is (coefficient, vector of polynomials to multiply)
+    /// The term evaluates to: coefficient * poly[0] * poly[1] * ... * poly[n-1]
+    pub terms: Vec<(F, Vec<PolyVariant<F>>)>,
+}
+
 #[derive(Error, Debug, Clone)]
 pub enum PolyError {
     #[error("Cannot multiply two multilinear polynomials - result would not be multilinear")]
@@ -60,26 +71,129 @@ pub enum PolyVariant<F: Field> {
     DenseMle(DenseMultilinearExtension<F>),
     /// Sparse multilinear extension
     SparseMle(SparseMultilinearExtension<F>),
+    /// Virtual polynomial - sum of terms (coefficient * product of polynomials)
+    Virtual(VirtualPolynomial<F>),
+}
+
+impl<F: Field> VirtualPolynomial<F> {
+    /// Create a new empty virtual polynomial
+    pub fn new() -> Self {
+        VirtualPolynomial { terms: Vec::new() }
+    }
+
+    /// Create a virtual polynomial from a single polynomial (coefficient 1)
+    pub fn from_poly(poly: PolyVariant<F>) -> Self {
+        VirtualPolynomial {
+            terms: vec![(F::one(), vec![poly])],
+        }
+    }
+
+    /// Create a virtual polynomial from a scalar (constant term)
+    pub fn from_scalar(scalar: F) -> Self {
+        if scalar.is_zero() {
+            VirtualPolynomial::new()
+        } else {
+            VirtualPolynomial {
+                terms: vec![(scalar, vec![])],
+            }
+        }
+    }
+
+    /// Multiply two virtual polynomials
+    pub fn mul_virtual(&self, other: &Self) -> Self {
+        let mut result = VirtualPolynomial::new();
+        for (coeff1, polys1) in &self.terms {
+            for (coeff2, polys2) in &other.terms {
+                let new_coeff = *coeff1 * *coeff2;
+                let mut new_polys = polys1.clone();
+                new_polys.extend(polys2.clone());
+                result.terms.push((new_coeff, new_polys));
+            }
+        }
+        result.simplify();
+        result
+    }
+
+    /// Add two virtual polynomials
+    pub fn add_virtual(&self, other: &Self) -> Self {
+        let mut result = self.clone();
+        result.terms.extend(other.terms.clone());
+        result.simplify();
+        result
+    }
+
+    /// Multiply by a scalar
+    pub fn mul_scalar(&self, scalar: F) -> Self {
+        if scalar.is_zero() {
+            return VirtualPolynomial::new();
+        }
+        let mut result = self.clone();
+        for (coeff, _) in &mut result.terms {
+            *coeff *= scalar;
+        }
+        result
+    }
+
+    /// Evaluate the virtual polynomial at a point (for univariate)
+    pub fn evaluate(&self, point: &F) -> F {
+        self.terms.iter()
+            .map(|(coeff, polys)| {
+                let prod = polys.iter()
+                    .map(|p| p.evaluate(point))
+                    .fold(F::one(), |acc, val| acc * val);
+                *coeff * prod
+            })
+            .sum()
+    }
+
+    /// Evaluate the virtual polynomial at an MLE point
+    pub fn evaluate_mle(&self, point: &[F]) -> Result<F, PolyError> {
+        let mut result = F::zero();
+        for (coeff, polys) in &self.terms {
+            let mut prod = *coeff;
+            for p in polys {
+                prod = prod * p.evaluate_mle(point)?;
+            }
+            result += prod;
+        }
+        Ok(result)
+    }
+
+    /// Check if the virtual polynomial is zero
+    pub fn is_zero(&self) -> bool {
+        self.terms.is_empty() || self.terms.iter().all(|(coeff, _)| coeff.is_zero())
+    }
+
+    /// Simplify by removing zero terms
+    pub fn simplify(&mut self) {
+        self.terms.retain(|(coeff, _)| !coeff.is_zero());
+    }
+}
+
+impl<F: Field> Default for VirtualPolynomial<F> {
+    fn default() -> Self {
+        VirtualPolynomial::new()
+    }
 }
 
 impl<F: Field> PolyVariant<F> {
     // ========== Query Methods ==========
 
-    /// Get the degree of a univariate polynomial (returns None for multilinear)
+    /// Get the degree of a univariate polynomial (returns None for multilinear or virtual)
     pub fn degree(&self) -> Option<usize> {
         match self {
             PolyVariant::DenseUni(p) => Some(p.degree()),
             PolyVariant::SparseUni(p) => Some(p.degree()),
-            PolyVariant::DenseMle(_) | PolyVariant::SparseMle(_) => None,
+            PolyVariant::DenseMle(_) | PolyVariant::SparseMle(_) | PolyVariant::Virtual(_) => None,
         }
     }
 
-    /// Get the number of variables for a multilinear polynomial (returns None for univariate)
+    /// Get the number of variables for a multilinear polynomial (returns None for univariate or virtual)
     pub fn num_vars(&self) -> Option<usize> {
         match self {
             PolyVariant::DenseMle(mle) => Some(mle.num_vars()),
             PolyVariant::SparseMle(mle) => Some(mle.num_vars),
-            PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => None,
+            PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) | PolyVariant::Virtual(_) => None,
         }
     }
 
@@ -93,9 +207,15 @@ impl<F: Field> PolyVariant<F> {
         matches!(self, PolyVariant::DenseMle(_) | PolyVariant::SparseMle(_))
     }
 
+    /// Check if this is a virtual polynomial
+    pub fn is_virtual(&self) -> bool {
+        matches!(self, PolyVariant::Virtual(_))
+    }
+
     // ========== Conversion Methods ==========
 
     /// Convert to dense representation if sparse
+    /// Virtual polynomials cannot be converted to dense without evaluation
     pub fn to_dense(&self) -> Self {
         match self {
             PolyVariant::SparseUni(p) => PolyVariant::DenseUni(p.clone().into()),
@@ -111,6 +231,10 @@ impl<F: Field> PolyVariant<F> {
                     .collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars, evals))
             }
+            PolyVariant::Virtual(_) => {
+                // Virtual polynomials stay virtual - cannot convert without evaluation
+                self.clone()
+            }
             dense => dense.clone(),
         }
     }
@@ -123,6 +247,14 @@ impl<F: Field> PolyVariant<F> {
                 // Convert to dense to access coefficients
                 let dense: DensePolynomial<F> = p.clone().into();
                 dense.coeffs.first().cloned()
+            }
+            PolyVariant::Virtual(vp) => {
+                // If all terms have empty polynomial lists, it's a constant
+                if vp.terms.iter().all(|(_, polys)| polys.is_empty()) {
+                    Some(vp.terms.iter().map(|(coeff, _)| *coeff).sum())
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -161,6 +293,14 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseMle(mle) => {
                 if mle.num_vars == 0 {
                     Some(mle.evaluations.get(&0).copied().unwrap_or_else(F::zero))
+                } else {
+                    None
+                }
+            }
+            PolyVariant::Virtual(vp) => {
+                // If all terms have empty polynomial lists, it's a constant
+                if vp.terms.iter().all(|(_, polys)| polys.is_empty()) {
+                    Some(vp.terms.iter().map(|(coeff, _)| *coeff).sum())
                 } else {
                     None
                 }
@@ -224,6 +364,7 @@ impl<F: Field> PolyVariant<F> {
                     false
                 }
             }
+            PolyVariant::Virtual(vp) => vp.is_zero(),
         }
     }
 
@@ -272,6 +413,21 @@ impl<F: Field> PolyVariant<F> {
                 Ok(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(m1.num_vars, evals)))
             }
 
+            // Virtual + Virtual
+            (PolyVariant::Virtual(v1), PolyVariant::Virtual(v2)) => {
+                Ok(PolyVariant::Virtual(v1.add_virtual(&v2)))
+            }
+
+            // Virtual + Other or Other + Virtual
+            (PolyVariant::Virtual(v1), other) => {
+                let v2 = other.to_virtual();
+                Ok(PolyVariant::Virtual(v1.add_virtual(&v2)))
+            }
+            (other, PolyVariant::Virtual(v2)) => {
+                let v1 = other.to_virtual();
+                Ok(PolyVariant::Virtual(v1.add_virtual(&v2)))
+            }
+
             // Mixed types - convert to dense and retry
             _ => {
                 self.to_dense().poly_add(&other.to_dense())
@@ -288,6 +444,15 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::DenseMle(mle) => {
                 let added_evals = mle.iter().map(|&eval| eval + scalar).collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), added_evals))
+            }
+            PolyVariant::Virtual(vp) => {
+                // Add constant term
+                let mut result = vp.clone();
+                if !scalar.is_zero() {
+                    result.terms.push((scalar, vec![]));
+                }
+                result.simplify();
+                PolyVariant::Virtual(result)
             }
             _ => {
                 // Convert to dense first
@@ -319,6 +484,24 @@ impl<F: Field> PolyVariant<F> {
                     });
                 }
                 Ok(PolyVariant::DenseMle(m1 - m2))
+            }
+
+            // Virtual - Virtual
+            (PolyVariant::Virtual(v1), PolyVariant::Virtual(v2)) => {
+                let neg_v2 = v2.mul_scalar(-F::one());
+                Ok(PolyVariant::Virtual(v1.add_virtual(&neg_v2)))
+            }
+
+            // Virtual - Other or Other - Virtual
+            (PolyVariant::Virtual(v1), other) => {
+                let v2 = other.to_virtual();
+                let neg_v2 = v2.mul_scalar(-F::one());
+                Ok(PolyVariant::Virtual(v1.add_virtual(&neg_v2)))
+            }
+            (other, PolyVariant::Virtual(v2)) => {
+                let v1 = other.to_virtual();
+                let neg_v2 = v2.mul_scalar(-F::one());
+                Ok(PolyVariant::Virtual(v1.add_virtual(&neg_v2)))
             }
 
             // Mixed types - convert to dense and retry
@@ -383,40 +566,25 @@ impl<F: Field> PolyVariant<F> {
                 let neg_evals = dense_evals.iter().map(|&eval| -eval).collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars, neg_evals))
             }
+            PolyVariant::Virtual(vp) => {
+                PolyVariant::Virtual(vp.mul_scalar(-F::one()))
+            }
         }
     }
 
-    /// Multiply two polynomials
+    /// Multiply two polynomials - always returns a VirtualPolynomial for any multiplication
     pub fn poly_mul(&self, other: &Self) -> Result<Self, PolyError> {
-        match (self, other) {
-            // Univariate * Univariate - always convert to dense and use arkworks naive_mul
-            (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) => {
-                Ok(PolyVariant::DenseUni(p1.naive_mul(p2)))
-            }
-            (PolyVariant::SparseUni(p1), PolyVariant::SparseUni(p2)) => {
-                let dense1: DensePolynomial<F> = p1.clone().into();
-                let dense2: DensePolynomial<F> = p2.clone().into();
-                Ok(PolyVariant::DenseUni(dense1.naive_mul(&dense2)))
-            }
-            (PolyVariant::DenseUni(p1), PolyVariant::SparseUni(p2)) => {
-                let dense2: DensePolynomial<F> = p2.clone().into();
-                Ok(PolyVariant::DenseUni(p1.naive_mul(&dense2)))
-            }
-            (PolyVariant::SparseUni(p1), PolyVariant::DenseUni(p2)) => {
-                let dense1: DensePolynomial<F> = p1.clone().into();
-                Ok(PolyVariant::DenseUni(dense1.naive_mul(p2)))
-            }
+        // Convert both polynomials to virtual representation and multiply
+        let v1 = self.to_virtual();
+        let v2 = other.to_virtual();
+        Ok(PolyVariant::Virtual(v1.mul_virtual(&v2)))
+    }
 
-            // MLE * MLE - not supported (would increase degree)
-            (PolyVariant::DenseMle(_), PolyVariant::DenseMle(_)) |
-            (PolyVariant::SparseMle(_), PolyVariant::SparseMle(_)) |
-            (PolyVariant::DenseMle(_), PolyVariant::SparseMle(_)) |
-            (PolyVariant::SparseMle(_), PolyVariant::DenseMle(_)) => {
-                Err(PolyError::MleMultiplication)
-            }
-
-            // Univariate * MLE or MLE * Univariate - not supported
-            _ => Err(PolyError::IncompatibleMultiplication)
+    /// Convert to virtual polynomial representation
+    pub fn to_virtual(&self) -> VirtualPolynomial<F> {
+        match self {
+            PolyVariant::Virtual(vp) => vp.clone(),
+            _ => VirtualPolynomial::from_poly(self.clone()),
         }
     }
 
@@ -429,6 +597,9 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::DenseMle(mle) => {
                 let mul_evals = mle.iter().map(|&eval| eval * scalar).collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), mul_evals))
+            }
+            PolyVariant::Virtual(vp) => {
+                PolyVariant::Virtual(vp.mul_scalar(scalar))
             }
             _ => {
                 self.to_dense().poly_mul_scalar(scalar)
@@ -485,6 +656,10 @@ impl<F: Field> PolyVariant<F> {
                 let inv_scalar = scalar.inverse().ok_or(PolyError::DivisionByZero)?;
                 let div_evals = mle.iter().map(|&eval| eval * inv_scalar).collect();
                 Ok(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), div_evals)))
+            }
+            PolyVariant::Virtual(vp) => {
+                let inv_scalar = scalar.inverse().ok_or(PolyError::DivisionByZero)?;
+                Ok(PolyVariant::Virtual(vp.mul_scalar(inv_scalar)))
             }
             _ => {
                 self.to_dense().poly_div_scalar(scalar)
@@ -545,6 +720,7 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseUni(p) => p.evaluate(point),
             PolyVariant::SparseUni(p) => p.evaluate(point),
+            PolyVariant::Virtual(vp) => vp.evaluate(point),
             PolyVariant::DenseMle(_) | PolyVariant::SparseMle(_) => {
                 panic!("Cannot evaluate MLE at single point - use evaluate_mle with boolean hypercube point")
             }
@@ -580,6 +756,9 @@ impl<F: Field> PolyVariant<F> {
                     });
                 Ok(mle.evaluations.get(&idx).cloned().unwrap_or_else(F::zero))
             }
+            PolyVariant::Virtual(vp) => {
+                vp.evaluate_mle(point)
+            }
             _ => Err(PolyError::NotMlePolynomial)
         }
     }
@@ -598,6 +777,14 @@ impl<F: Field> PolyVariant<F> {
             }
             PolyVariant::SparseUni(p) => {
                 let vals: Vec<F> = points.iter().map(|pt| p.evaluate(pt)).collect();
+                // Return as MLE with log2(n) variables
+                let num_vars = (vals.len() as f64).log2().ceil() as usize;
+                let mut padded = vals.clone();
+                padded.resize(1 << num_vars, F::zero());
+                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, padded))
+            }
+            PolyVariant::Virtual(vp) => {
+                let vals: Vec<F> = points.iter().map(|pt| vp.evaluate(pt)).collect();
                 // Return as MLE with log2(n) variables
                 let num_vars = (vals.len() as f64).log2().ceil() as usize;
                 let mut padded = vals.clone();
@@ -633,6 +820,11 @@ impl<F: Field> PolyVariant<F> {
                 let dense = self.to_dense();
                 dense.evaluate_or_fix_mle(points)
             }
+            PolyVariant::Virtual(vp) => {
+                // For virtual polynomials, evaluate fully
+                let val = vp.evaluate_mle(points)?;
+                Ok(Self::from_scalar(val))
+            }
             _ => Err(PolyError::RequiresMle)
         }
     }
@@ -658,6 +850,11 @@ impl<F: Field> PolyVariant<F> {
                 3u8.serialize_compressed(&mut writer)?;
                 mle.serialize_compressed(&mut writer)
             }
+            PolyVariant::Virtual(_vp) => {
+                // Virtual polynomials cannot be serialized easily - would need full expansion
+                // For now, return an error or convert to dense first
+                Err(SerializationError::InvalidData)
+            }
         }
     }
 }
@@ -670,6 +867,14 @@ impl<F: Field> PartialEq for PolyVariant<F> {
             (PolyVariant::DenseMle(a), PolyVariant::DenseMle(b)) => a == b,
             (PolyVariant::SparseMle(a), PolyVariant::SparseMle(b)) => {
                 a.num_vars == b.num_vars && a.evaluations == b.evaluations
+            },
+            (PolyVariant::Virtual(a), PolyVariant::Virtual(b)) => {
+                // Compare terms directly
+                a.terms.len() == b.terms.len() &&
+                a.terms.iter().zip(b.terms.iter()).all(|((c1, p1), (c2, p2))| {
+                    c1 == c2 && p1.len() == p2.len() &&
+                    p1.iter().zip(p2.iter()).all(|(a, b)| a == b)
+                })
             },
             _ => false,
         }
@@ -737,11 +942,43 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                 }
             }
 
-            // Uni < Mle
+            // Both Virtual
+            (PolyVariant::Virtual(v1), PolyVariant::Virtual(v2)) => {
+                v1.terms.len().cmp(&v2.terms.len()).then_with(|| {
+                    // Compare term by term
+                    for ((c1, p1), (c2, p2)) in v1.terms.iter().zip(v2.terms.iter()) {
+                        let coeff_ord = c1.into_bigint().cmp(&c2.into_bigint());
+                        if coeff_ord != Ordering::Equal {
+                            return coeff_ord;
+                        }
+                        let poly_ord = p1.len().cmp(&p2.len());
+                        if poly_ord != Ordering::Equal {
+                            return poly_ord;
+                        }
+                    }
+                    Ordering::Equal
+                })
+            }
+
+            // Uni < Mle < Virtual
             (PolyVariant::DenseUni(_), PolyVariant::DenseMle(_)) |
             (PolyVariant::DenseUni(_), PolyVariant::SparseMle(_)) |
             (PolyVariant::SparseUni(_), PolyVariant::DenseMle(_)) |
             (PolyVariant::SparseUni(_), PolyVariant::SparseMle(_)) => Ordering::Less,
+
+            // Uni < Virtual
+            (PolyVariant::DenseUni(_), PolyVariant::Virtual(_)) |
+            (PolyVariant::SparseUni(_), PolyVariant::Virtual(_)) => Ordering::Less,
+
+            // Mle < Virtual
+            (PolyVariant::DenseMle(_), PolyVariant::Virtual(_)) |
+            (PolyVariant::SparseMle(_), PolyVariant::Virtual(_)) => Ordering::Less,
+
+            // Virtual > Uni, Mle
+            (PolyVariant::Virtual(_), PolyVariant::DenseUni(_)) |
+            (PolyVariant::Virtual(_), PolyVariant::SparseUni(_)) |
+            (PolyVariant::Virtual(_), PolyVariant::DenseMle(_)) |
+            (PolyVariant::Virtual(_), PolyVariant::SparseMle(_)) => Ordering::Greater,
 
             // Mle > Uni
             _ => Ordering::Greater
@@ -760,6 +997,7 @@ impl<F: Field> fmt::Display for PolyVariant<F> {
             }
             PolyVariant::DenseMle(mle) => write!(f, "Mle({:?})", mle.evaluations),
             PolyVariant::SparseMle(mle) => write!(f, "SparseMle({:?})", mle.evaluations),
+            PolyVariant::Virtual(vp) => write!(f, "Virtual({} terms)", vp.terms.len()),
         }
     }
 }

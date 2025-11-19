@@ -183,6 +183,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let public_args: Vec<Vid> = prover_args.clone().iter().filter(|arg| arg.is_public()).map(|arg| arg.var().unwrap()).collect();
         let public_inputs = inputs.clone().into_iter().filter(|(vid, _)| public_args.contains(&vid)).collect::<Ctx<Vid, Value<C>>>();
         
+        
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
 

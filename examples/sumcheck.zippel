@@ -1,0 +1,71 @@
+// Recursive helpers ---------------------------------------------------------
+
+fn lerp_vec<F: Field>(
+    public r: F,
+    public left: [F; 1],
+    public right: [F; 1]
+) -> [F; 1] {
+    [((1 - r) * left[0]) + (r * right[0])]
+}
+
+fn lerp_vec<F: Field, V: 1..10>(
+    public r: F,
+    public left: [F; 2^V],
+    public right: [F; 2^V]
+) -> [F; 2^V] {
+    lerp_vec(r, left[0..2^(V-1)], right[0..2^(V-1)]) ++ lerp_vec(r, left[2^(V-1)..2^V], right[2^(V-1)..2^V])
+}
+
+fn sum_vec<F: Field>(
+    public vals: [F; 1]
+) -> F {
+    vals[0]
+}
+
+fn sum_vec<F: Field, V: 1..10>(
+    public vals: [F; 2^V]
+) -> F {
+    sum_vec(vals[0..2^(V-1)]) + sum_vec(vals[2^(V-1)..2^V])
+}
+
+fn sumcheck_round<F: Field>(
+    public claimed_sum: F,
+    public g_eval: [F; 1]
+) -> Bool {
+    claimed_sum == g_eval[0]
+}
+
+fn sumcheck_round<F: Field, V: 1..10>(
+    public claimed_sum: F,
+    public g_evals: [F; 2^V]
+) -> Bool {
+    let left_sum = sum_vec(g_evals[0..2^(V-1)]);
+    let right_sum = sum_vec(g_evals[2^(V-1)..2^V]);
+    verify(claimed_sum == left_sum + right_sum);
+
+    r <- challenge<F>;
+
+    let next_sum =
+          ((1 - r) * sum_vec(g_evals[0..2^(V-1)]))
+        + (r * sum_vec(g_evals[2^(V-1)..2^V]));
+    let next_evals = lerp_vec(r, g_evals[0..2^(V-1)], g_evals[2^(V-1)..2^V]);
+    sumcheck_round(next_sum, next_evals)
+}
+
+// Sum-check protocol that works for any number of variables (power-of-two length).
+// To target a specific problem size, instantiate this proto with the desired
+// NUM_VARS_CONST value (e.g. change 2 -> 3 for 3 variables / 8 points). The
+// recursive helpers above work for any NUM_VARS_CONST in [1, 10].
+proto sumcheck<F: Field, NUM_VARS_CONST: 2>(
+    public claimed_sum: F,
+    public g_evals: [F; 2^NUM_VARS_CONST]
+) where (claimed_sum == claimed_sum) {
+    // Demonstrate creation of a virtual polynomial (not used further, but proves support).
+    let _virtual_product = mle(g_evals) * mle(g_evals);
+
+    // Initial equality check to keep the transcript aligned.
+    verify(claimed_sum == sum_vec(g_evals));
+
+    // Run the recursive verifier.
+    verify(sumcheck_round(claimed_sum, g_evals));
+}

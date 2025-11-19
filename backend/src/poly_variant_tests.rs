@@ -22,10 +22,33 @@ mod tests {
                 assert_eq!(p1, p2, "{}", msg);
             }
             (PolyVariant::DenseMle(m1), PolyVariant::DenseMle(m2)) => {
-                assert_eq!(m1.num_vars, m2.num_vars, "{}: num_vars mismatch", msg);
+                assert_eq!(m1.num_vars(), m2.num_vars(), "{}: num_vars mismatch", msg);
                 assert_eq!(m1.to_evaluations(), m2.to_evaluations(), "{}", msg);
             }
-            _ => panic!("{}: incompatible polynomial types", msg),
+            // For Virtual polynomials or mixed types, evaluate at several points
+            (PolyVariant::Virtual(_), _) | (_, PolyVariant::Virtual(_)) => {
+                // Evaluate at several random points to verify equality
+                use ark_std::test_rng;
+                let mut rng = test_rng();
+                for _ in 0..10 {
+                    let point = F::rand(&mut rng);
+                    let eval_a = a.evaluate(&point);
+                    let eval_b = b.evaluate(&point);
+                    assert_eq!(eval_a, eval_b, "{}: evaluation mismatch at point {:?}", msg, point);
+                }
+            }
+            // Mixed types - try evaluation-based comparison
+            _ => {
+                // Try to evaluate at several points
+                use ark_std::test_rng;
+                let mut rng = test_rng();
+                for _ in 0..10 {
+                    let point = F::rand(&mut rng);
+                    let eval_a = a.evaluate(&point);
+                    let eval_b = b.evaluate(&point);
+                    assert_eq!(eval_a, eval_b, "{}: evaluation mismatch at point {:?}", msg, point);
+                }
+            }
         }
     }
 
@@ -282,14 +305,15 @@ mod tests {
     }
 
     #[test]
-    fn test_dense_mle_multiplication_not_allowed() {
+    fn test_dense_mle_multiplication_returns_virtual() {
         let a = create_dense_mle_simple();
         let b = create_dense_mle_simple();
 
         let result = a.poly_mul(&b);
 
-        assert!(result.is_err(), "DenseMle: multiplication should fail");
-        assert!(matches!(result.unwrap_err(), PolyError::MleMultiplication));
+        // Multiplication should succeed and return a Virtual polynomial
+        assert!(result.is_ok(), "DenseMle: multiplication should succeed and return Virtual");
+        assert!(result.unwrap().is_virtual(), "DenseMle: multiplication should return Virtual");
     }
 
     // ========== Ring Axiom Tests: Sparse MLE ==========

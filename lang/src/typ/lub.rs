@@ -638,15 +638,33 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_mul(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?))
             },
-            // Uni<A> * Uni<B> = Uni<A + B>
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+            // Uni<A> * Uni<B> = Virtual (product of polynomials)
+            (CTyp::Poly(a, 1, _n), CTyp::Poly(b, 1, _m)) =>
             {
-                println!("Uni<A> * Uni<B> = Uni<A + B>");
-                println!("A: {:?}, B: {:?}", a, b);
-                println!("n: {:?}, m: {:?}", n, m);
-                println!("n + m - 1: {:?}", n + m - 1);
+                // Return Poly with M != 1 and N != 1 to indicate Virtual
                 Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 1, *n + *m - 1))
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
+            },
+            // Mle<A> * Mle<B> = Virtual (product of polynomials)
+            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+            {
+                // Return Poly with M != 1 and N != 1 to indicate Virtual
+                Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
+            },
+            // Uni<A> * Mle<B> or Mle<A> * Uni<B> = Virtual
+            (CTyp::Poly(a, 1, _n), CTyp::Poly(b, m, 1)) | (CTyp::Poly(a, m, 1), CTyp::Poly(b, 1, _n)) =>
+            {
+                // Return Poly with M != 1 and N != 1 to indicate Virtual
+                Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
+            },
+            // Any polynomial * general polynomial -> Virtual
+            (CTyp::Poly(a, _ma, _na), CTyp::Poly(b, _mb, _nb)) if (*_ma != 1 || *_na != 1) || (*_mb != 1 || *_nb != 1) =>
+            {
+                // Already a general polynomial or virtual -> Virtual
+                Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
             },
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
