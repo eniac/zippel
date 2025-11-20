@@ -1,12 +1,14 @@
 use zippel::*;
 use std::path::PathBuf;
 use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
+use backend::poly_variant::PolyVariant;
+use ark_poly::DenseMultilinearExtension;
 use lang::id::Vid;
 use share::Ctx;
 use ark_ff::Zero;
 
 // Keep this in sync with `NUM_VARS_CONST` in `examples/sumcheck.zippel`.
-const NUM_VARS: usize = 2;
+const NUM_VARS: usize = 1;
 
 fn main() {
     println!("Starting sum-check example");
@@ -42,9 +44,21 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let claimed_sum = g_evals.iter()
         .fold(<ArkBls12_381 as ArkConfig>::F::zero(), |acc, val| acc + val);
 
+    let half = eval_count / 2;
+    let zero = <ArkBls12_381 as ArkConfig>::F::zero();
+    let g1_0 = g_evals[0..half].iter().copied()
+        .fold(zero, |acc, val| acc + val);
+    let g1_1 = g_evals[half..].iter().copied()
+        .fold(zero, |acc, val| acc + val);
+    let round_claims = vec![g1_0, g1_1];
+
+    let g_poly = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, g_evals.clone());
+    let g_poly_value = Value::Poly(PolyVariant::DenseMle(g_poly));
+
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
-        (Vid("g_evals".to_string()), Value::VecScalar(g_evals.clone())),
+        (Vid("g_poly".to_string()), g_poly_value),
+        (Vid("round_claims".to_string()), Value::VecScalar(round_claims)),
     ])
 }
 
