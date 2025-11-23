@@ -646,14 +646,14 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
             },
             // Mle<A> * Mle<B> = Virtual (product of polynomials)
-            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) =>
+            (CTyp::Poly(a, _n, 1), CTyp::Poly(b, _m, 1)) =>
             {
                 // Return Poly with M != 1 and N != 1 to indicate Virtual
                 Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 2, 2))
             },
             // Uni<A> * Mle<B> or Mle<A> * Uni<B> = Virtual
-            (CTyp::Poly(a, 1, _n), CTyp::Poly(b, m, 1)) | (CTyp::Poly(a, m, 1), CTyp::Poly(b, 1, _n)) =>
+            (CTyp::Poly(a, 1, _n), CTyp::Poly(b, _m, 1)) | (CTyp::Poly(a, _m, 1), CTyp::Poly(b, 1, _n)) =>
             {
                 // Return Poly with M != 1 and N != 1 to indicate Virtual
                 Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)

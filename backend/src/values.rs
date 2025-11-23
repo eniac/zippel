@@ -11,6 +11,7 @@ use ark_std::log2;
 use lang::typ::{Nothing, CRange};
 use crate::types::Lub;
 use crate::poly_variant::PolyVariant;
+use crate::virtual_polynomial::VirtualPolynomial;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::{BytesToUnitSerialize, ProverState, DuplexSpongeInterface};
@@ -45,8 +46,8 @@ pub enum Value<C: ArkConfig> {
     VecG2Affine(Vec<C::G2Affine>),
     /// Vectors of vectors etc
     Vec(Vec<Value<C>>),
-    /// Polynomial (univariate or multilinear, dense or sparse)
-    Poly(PolyVariant<C::F>),
+    /// Virtual Polynomial (sum-of-products of univariate or multilinear, dense or sparse)
+    Poly(VirtualPolynomial<C::F>),
 }
 
 impl<C: ArkConfig> PartialEq for Value<C> {
@@ -180,6 +181,10 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
         Value::Poly(poly) => {
             poly.serialize_compressed(writer)
         }
+        Value::VirtualPoly(_vp) => {
+            // VirtualPolynomial serialization not implemented
+            Err(SerializationError::InvalidData)
+        }
     }
 }
 
@@ -202,6 +207,7 @@ impl<C: ArkConfig> Value<C> {
     /// Higher values correspond to constructors defined earlier.
     pub fn discriminant_order(&self) -> u8 {
         match self {
+            Value::VirtualPoly(_) => 19,
             Value::Poly(_) => 18,
             Value::Bool(_) => 17,
             Value::VecBool(_) => 16,
@@ -238,7 +244,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
             ATyp::Uni(_n) => Value::Poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero())),
             ATyp::Mle(_n) => Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero())),
-            ATyp::Virtual => Value::Poly(PolyVariant::Virtual(crate::poly_variant::VirtualPolynomial::new())),
+            ATyp::Virtual => Value::VirtualPoly(VirtualPolynomial::new()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -345,6 +351,7 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_add(b)),
+            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -433,6 +440,7 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -569,6 +577,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(C::FOps::from_usize(*a)));
                 },
+                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::Scalar(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
@@ -621,6 +630,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(a.clone()));
                 },
+                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::G1(a) => match &other {
                 // Group1 * scalar multiplication
@@ -758,6 +768,7 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(_) => {
                     panic!("Cannot multiply Vec<Index> and Poly");
                 }
+                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> * Index
@@ -914,6 +925,7 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_mul(b)),
+            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -1242,6 +1254,7 @@ impl<C: ArkConfig> Value<C> {
                     _ => panic!("Expected poly, found {}", other),
                 }
             },
+            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -1914,11 +1927,10 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Virtual => {
                 // For Virtual random, create a random univariate polynomial wrapped in virtual
                 let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
-                Value::Poly(PolyVariant::Virtual(crate::poly_variant::VirtualPolynomial::from_poly(
+                Value::VirtualPoly(VirtualPolynomial::from_poly(
                     PolyVariant::DenseUni(p)
-                )))
+                ))
             },
-            _ => panic!("Not implemented"),
         }
     }
 
@@ -1954,14 +1966,13 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(typ), v.len())
             },
             Value::Poly(poly) => {
-                if poly.is_virtual() {
-                    ATyp::virtual_poly()
-                } else if poly.is_univariate() {
+                if poly.is_univariate() {
                     ATyp::uni(poly.degree().unwrap())
                 } else {
                     ATyp::mle(poly.num_vars().unwrap())
                 }
             },
+            Value::VirtualPoly(_) => ATyp::virtual_poly(),
         }
     }
 
@@ -2216,6 +2227,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
+            Value::VirtualPoly(vp) => vp.is_zero(),
         }
     }
 
@@ -2574,6 +2586,7 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 write!(f, "]")
             },
             Value::Poly(poly) => write!(f, "{}", poly),
+            Value::VirtualPoly(vp) => write!(f, "Virtual({} terms)", vp.terms.len()),
         }
     }
 }
