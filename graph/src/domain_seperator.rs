@@ -29,7 +29,7 @@ where
         match &node {
             crate::Node::Inp(_c, prefs) => {
                 for pref in prefs.clone() {
-                    if pref.qualifier.is_public() {
+                    if pref.qualifier.is_public() && !pref.from_transcript {
                         self = Self::from_atyp::<C>(self,pref.typ);
                     }
                 }
@@ -45,6 +45,8 @@ where
         match &node {
             crate::Node::Transcr(c, _) => match c {
                 crate::Op::Challenge(_typ, _) => {
+                    // println!("Challenge node: {}", label);
+                    // println!("Size {}", C::F::default().compressed_size());
                     self = Self(self.0.squeeze(
                         C::F::default().compressed_size(),
                         &format!("chall{}", label),
@@ -77,15 +79,23 @@ where
         match typ {
             ATyp::Base(base) => match base {
                 ABase::G1 => {
+                    // println!("Adding G1");
+                    // println!("Size {}", C::G1::default().compressed_size());
                     self = Self(self.0.add_bytes(C::G1::default().compressed_size(), "G1"));
                 }
                 ABase::G2 => {
+                    // println!("Adding G2");
+                    // println!("Size {}", C::G2::default().compressed_size());
                     self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "G2"));
                 }
                 ABase::GT => {
+                    // println!("Adding GT");
+                    // println!("Size {}", C::G2::default().compressed_size());
                     self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "GT"));
                 }
                 ABase::Scalar => {
+                    // println!("Adding Scalar");
+                    // println!("Size {}", C::F::default().compressed_size());
                     self = Self(self.0.add_bytes(C::F::default().compressed_size(), "F"));
                 }
                 _ => {
@@ -112,10 +122,10 @@ where
 
         let transcript_nodes = dag.transcript_nodes();
            
-        for transcript_node_index in transcript_nodes {
-            self = self.from_challenge_node(&dag.0[transcript_node_index], transcript_node_index.index());
+        for (position, transcript_node_index) in transcript_nodes.iter().enumerate() {
+            self = self.from_challenge_node(&dag.0[*transcript_node_index], position);
             self = self
-            .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
+            .from_transcript_node(&dag.0[*transcript_node_index], position);
         }       
 
         

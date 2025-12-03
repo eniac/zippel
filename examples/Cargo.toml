@@ -19,6 +19,10 @@ path = "src/ipa/main.rs"
 name = "schnorr"
 path = "src/schnorr/main.rs"
 
+[[bin]]
+name = "cp"
+path = "src/cp/main.rs"
+
 [dependencies]
 zippel = { path = ".." }
 ark-std = "0.5.0"

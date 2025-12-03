@@ -14,13 +14,14 @@ use share::Ctx;
 pub struct RuntimeInformation<C: ArkConfig> {
     thread_num: usize,
     return_value: Mutex<Option<Value<C>>>,
-    finished_requirements: Mutex<Vec<NodeIndex>>
+    finished_requirements: Mutex<Vec<NodeIndex>>,
+    is_challenge: Mutex<bool>,
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
     pub fn new(thread_num: usize) -> Self {
         RuntimeInformation {
-            thread_num, return_value: Mutex::new(None), finished_requirements: Mutex::new(Vec::new())
+            thread_num, return_value: Mutex::new(None), finished_requirements: Mutex::new(Vec::new()), is_challenge: Mutex::new(false)
         }
     }
 }
@@ -256,13 +257,15 @@ impl<C: ArkConfig> MutexGraph<C> {
                                     let mut return_value_lock = annotation.return_value.lock().unwrap();
                                     *return_value_lock = Some(return_val);
                                     challenge_node = true;
+                                    let mut is_challenge_lock = annotation.is_challenge.lock().unwrap();
+                                    *is_challenge_lock = true;
                                 }
                                 _ => {}
                             }
                         },
                         Node::Inp(_c, prefs) => {
                             for pref in prefs.clone() {
-                                if pref.qualifier.is_public() {
+                                if pref.qualifier.is_public() && !pref.from_transcript {
                                     prover_state.add_bytes(&value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap()).unwrap();
                                 }
                             }
@@ -377,7 +380,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             match transcript_node {
                                 Node::Transcr(_, annotation) => {
                                     let return_val = annotation.return_value.lock().unwrap();
-                                    if return_val.is_some() {
+                                    if return_val.is_some() && !*annotation.is_challenge.lock().unwrap() {
                                         final_return.push(return_val.clone().unwrap());
                                     }
                                 }

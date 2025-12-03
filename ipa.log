@@ -1,0 +1,11 @@
+warning: unused variable: `r`
+   --> lang/src/typ/infer.rs:647:39
+    |
+647 | ...                   CTyp::Fin(r) if *n > 0 => 
+    |                                 ^ help: if this is intentional, prefix it with an underscore: `_r`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `lang` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running `target/debug/ipa`

@@ -1,0 +1,21 @@
+proto chaum_pedersen<G: Group, F: Scalar<G>>(
+    // Private witness known only to the prover:
+    private beta: F,          // The secret discrete logarithm
+
+    // Public inputs known to prover and verifier:
+    public g: G,          // First generator
+    public u: G,          // Second generator
+    public v: G,          // First public key: y1 = g1^x
+    public w: G           // Second public key: y2 = g2^x
+)
+
+where v == g*beta && w == u*beta {
+
+    let beta_r = random<F>;
+    v_r <- g*beta_r;
+    w_r <- u*beta_r;
+
+    c <- challenge<F>;
+    beta_z <- beta_r + beta*c;
+    verify(g*beta_z == v_r + v*c && u*beta_z == w_r + w*c);
+}
