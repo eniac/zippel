@@ -1,5 +1,5 @@
 use ark_serialize::CanonicalSerialize;
-use backend::{ABase, ATyp, ArkConfig};
+use backend::{ABase, ATyp, ArkConfig, ArkPairingOps};
 use spongefish::{
     ByteDomainSeparator, DomainSeparator, DuplexSpongeInterface,
 };
@@ -20,17 +20,19 @@ impl<H> ZippelDomainSeparator<H>
 where
     H: DuplexSpongeInterface
 {
-    pub fn new_zippel_domain_seperator<C: ArkConfig, A>(domsep: &str, dag: &Dag<C, A>) -> Self {
-        Self(DomainSeparator::<H>::new(domsep)).from_dag(dag)
+    pub fn new<C: ArkConfig, A>(domsep: &str, dag: &Dag<C, A>) -> Self {
+        let mut ds = Self(DomainSeparator::<H>::new(domsep));
+        ds.init_from_dag(dag);
+        ds
     }
 
-    pub fn from_input_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>) -> Self {
+    fn from_input_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>) -> Self {
         
         match &node {
             crate::Node::Inp(_c, prefs) => {
-                for pref in prefs.clone() {
+                for pref in prefs.iter() {
                     if pref.qualifier.is_public() && !pref.from_transcript {
-                        self = Self::from_atyp::<C>(self,pref.typ);
+                        self.init_absorb_type::<C>(&pref.typ);
                     }
                 }
             }
@@ -38,98 +40,48 @@ where
                 panic!("Not an input node")
             }
         }
-        self
-    }
-
-    pub fn from_challenge_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
-        match &node {
-            crate::Node::Transcr(c, _) => match c {
-                crate::Op::Challenge(_typ, _) => {
-                    // println!("Challenge node: {}", label);
-                    // println!("Size {}", C::F::default().compressed_size());
-                    self = Self(self.0.squeeze(
-                        C::F::default().compressed_size(),
-                        &format!("chall{}", label),
-                    ));
-
-                },
-                _ => {}
-            },
-            _ => {
-
-            }
+            self
         }
-        self
+
+    fn init_absorb_bytes(&mut self, byte_len: usize, label: &str) {
+        self.0 = self.0.add_bytes(byte_len, label);
     }
 
-    pub fn from_transcript_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, _label: usize) -> Self {
-        match &node {
-            crate::Node::Transcr(c, _) => {
-                let typ: ATyp = c.typ();
-                self = Self::from_atyp::<C>(self,typ);
-            },
-            _ => {
-                panic!("Not a transcript node")
-            }
-        }
-        self
-    }
-
-    pub fn from_atyp<C: ArkConfig>(mut self, typ: ATyp) -> Self {
+    fn init_absorb_type<C: ArkConfig>(&mut self, typ: &ATyp) {
         match typ {
-            ATyp::Base(base) => match base {
-                ABase::G1 => {
-                    // println!("Adding G1");
-                    // println!("Size {}", C::G1::default().compressed_size());
-                    self = Self(self.0.add_bytes(C::G1::default().compressed_size(), "G1"));
-                }
-                ABase::G2 => {
-                    // println!("Adding G2");
-                    // println!("Size {}", C::G2::default().compressed_size());
-                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "G2"));
-                }
-                ABase::GT => {
-                    // println!("Adding GT");
-                    // println!("Size {}", C::G2::default().compressed_size());
-                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "GT"));
-                }
-                ABase::Scalar => {
-                    // println!("Adding Scalar");
-                    // println!("Size {}", C::F::default().compressed_size());
-                    self = Self(self.0.add_bytes(C::F::default().compressed_size(), "F"));
-                }
-                _ => {
-                    panic!("Cannot add this base element to transcript");
-                }
-            },
-            ATyp::Vec(another_typ, size) => {
-                for _ in 0..size {
-                    self =
-                    Self::from_atyp::<C>(self, *another_typ.clone());
-                }
-            }
-            _ => {
-                panic!("Cannot add this type to transcript");
-            }
+            ATyp::Base(ABase::G1) => self.init_absorb_bytes(C::G1::default().compressed_size(), "G1"),
+            ATyp::Base(ABase::G2) => self.init_absorb_bytes(C::G2::default().compressed_size(), "G2"),
+            ATyp::Base(ABase::GT) => self.init_absorb_bytes(C::POps::zero().compressed_size(), "GT"),
+            ATyp::Base(ABase::Scalar) => self.init_absorb_bytes(C::F::default().compressed_size(), "F"),
+            ATyp::Base(ABase::Bool) => self.init_absorb_bytes(1, "Bool"),
+            ATyp::Vec(inner_typ, size) => (0..*size).for_each(|_| self.init_absorb_type::<C>(inner_typ)),
+            ATyp::Uni(ndegree) => panic!("TODO: Need ATyp to tell me Dense/Sparse and Uni/Multivariate so I can serialize properly"),
+            ATyp::Mle(ndegree) => panic!("TODO: Need ATyp to tell me Dense/Sparse and Uni/Multivariate so I can serialize properly"),
         }
-        self
     }
 
-    pub fn from_dag<C: ArkConfig, A>(mut self, dag: &Dag<C, A>) -> Self {
+    fn init_squeeze_bytes(&mut self, size: usize, label: &str) {
+        self.0 = self.0.squeeze(size, label);
+    }
+
+    fn init_from_dag<C: ArkConfig, A>(&mut self, dag: &Dag<C, A>) {
         let input_node_index = dag.input_node();
         let node = &dag.0[input_node_index];
-        self = self.from_input_node(&node);
+        self.from_input_node(&node);
 
         let transcript_nodes = dag.transcript_nodes();
            
         for (position, transcript_node_index) in transcript_nodes.iter().enumerate() {
-            self = self.from_challenge_node(&dag.0[*transcript_node_index], position);
-            self = self
-            .from_transcript_node(&dag.0[*transcript_node_index], position);
+            if dag[*transcript_node_index].is_challenge() {
+                self.init_squeeze_bytes(
+                    C::F::default().compressed_size(),
+                    &format!("chall{}", position),
+                );
+            } else {
+                let atyp = dag[*transcript_node_index].typ().unwrap();
+                self.init_absorb_type::<C>(&atyp);
+            }
         }       
-
-        
-        Self(self.0.clone())
     }
 }
 
@@ -146,7 +98,7 @@ fn test_domain_separator() {
 "#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let domain_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(
+    let domain_seperator = ZippelDomainSeparator::<DefaultHash>::new(
         "test_domain_separator",
         &gs[0],
     );

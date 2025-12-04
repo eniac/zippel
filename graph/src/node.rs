@@ -75,6 +75,15 @@ impl<C: ArkConfig, N> Node<C, N> {
     pub fn is_transcript(&self) -> bool {
         matches!(self, Node::Transcr(_, _))
     }
+
+    pub fn is_challenge(&self) -> bool {
+        matches!(self, Node::Transcr(GOp::Challenge(_, _), _))
+    }
+
+    pub fn is_proof(&self) -> bool {
+        self.is_transcript() && !self.is_challenge()
+    }
+ 
     pub fn set_transcript(&mut self) where N: Clone {
         match &self {
             Node::Op(op, ann) => *self = Node::Transcr(op.clone(), ann.clone()),
@@ -138,6 +147,14 @@ impl<C: ArkConfig, N> Node<C, N> {
             Node::Op(op, ann) => Node::Op(op.map_refs(f), ann.clone()),
             Node::Transcr(op, ann) => Node::Transcr(op.map_refs(f), ann.clone()),
             _ => self.clone(),
+        }
+    }
+    
+    pub fn typ(&self) -> Option<ATyp> {
+        match self {
+            Node::Op(op, _) => Some(op.typ()),
+            Node::Transcr(op, _) => Some(op.typ()),
+            _ => None,
         }
     }
 }

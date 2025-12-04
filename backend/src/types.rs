@@ -21,6 +21,7 @@ pub enum ATyp {
     Base(ABase),
     /// Vector
     Vec(Box<ATyp>, usize),
+    /// TODO: Sync with lang::typ::Poly
     /// Univariate polynomial in coefficient form
     Uni(usize),
     /// Multilinear extension

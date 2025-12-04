@@ -17,7 +17,6 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
-// use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig:
@@ -29,6 +28,7 @@ pub trait ArkConfig:
     type G1Affine: AffineRepr<ScalarField = Self::F, Group = Self::G1>;
     type G2Affine: AffineRepr<ScalarField = Self::F, Group = Self::G2>;
     type P: Pairing<ScalarField = Self::F, G1 = Self::G1, G2 = Self::G2>;
+    type GT = PairingOutput<Self::P>;
 
     /// Operations on arkwork types
     type FOps: ArkScalarOps<Self::F>;
