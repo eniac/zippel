@@ -1,17 +1,20 @@
 #![feature(box_patterns)]
 #![feature(step_trait)]
 
-use std::sync::Once;
+use lazy_static::lazy_static;
 
-static INIT_PARSER: Once = Once::new();
+lazy_static! {
+    /// Initialize pest parser settings for better error messages.
+    /// This enables more comprehensive error messages from the parser.
+    static ref INIT_PARSER: () = {
+        pest::set_error_detail(true);
+    };
+}
 
 /// Initialize pest parser settings for better error messages.
-/// This enables more comprehensive error messages from the parser.
-/// Uses Once to ensure thread-safe, one-time initialization.
+/// This ensures the lazy_static initialization is triggered.
 pub fn init_parser() {
-    INIT_PARSER.call_once(|| {
-        pest::set_error_detail(true);
-    });
+    lazy_static::initialize(&INIT_PARSER);
 }
 
 pub mod id;
