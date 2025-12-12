@@ -19,7 +19,7 @@ pub use dep::{DepType, Dep};
 pub use pref::PRef;
 pub use analyses::StaticAnalysis;
 
-use backend::{ArkConfig, Value, ATyp, PolyVariant};
+use backend::{ArkConfig, Value, ATyp, PolyVariant, VirtualPolynomial};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Tid, Vid};
@@ -1304,8 +1304,8 @@ impl<C: ArkConfig> UDag<C> {
                 
                 let poly = Self::exp_to_poly_variant(&body, &fun_vars, &var_map)?;
                 
-                // Create a Value::Poly from the PolyVariant
-                let poly_value = Value::Poly(poly);
+                // Create a Value::Poly from the PolyVariant wrapped in VirtualPolynomial
+                let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
                 
                 Ok(GOp::Value(poly_value))
             }

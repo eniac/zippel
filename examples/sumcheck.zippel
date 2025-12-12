@@ -1,0 +1,50 @@
+// Base case: final round (one variable remaining)
+fn sumcheck_round<F: Field>(
+    public claimed_sum: F,
+    public current_poly: Mle<F, 1>,
+    public round_claims: [F; 2]
+) -> Bool {
+    verify(claimed_sum == round_claims[0] + round_claims[1]);
+
+    r <- challenge<F>;
+
+    let zero = claimed_sum - claimed_sum;
+    let one = zero + 1;
+    let coeff_left = one - r;
+    let g_line = (coeff_left * round_claims[0]) + (r * round_claims[1]);
+
+    let r_point = [r];
+    eval_vec <- eval(current_poly, r_point);
+    let oracle_eval = eval_vec[0];
+
+    g_line == oracle_eval
+}
+
+// Recursive case: V ≥ 2
+fn sumcheck_round<F: Field, V: 2..10>(
+    public claimed_sum: F,
+    public current_poly: Mle<F, V>,
+    public round_claims: [F; 2*V]
+) -> Bool {
+    verify(claimed_sum == round_claims[0] + round_claims[1]);
+
+    r <- challenge<F>;
+    let zero = claimed_sum - claimed_sum;
+    let one = zero + 1;
+    let coeff_left = one - r;
+    let next_claim = (coeff_left * round_claims[0]) + (r * round_claims[1]);
+
+    let r_point = [r];
+    let next_poly = current_poly(r_point);
+
+    sumcheck_round(next_claim, next_poly, round_claims[2..2*V])
+}
+
+// Entry point: claimed sum, multilinear polynomial, and prover messages.
+proto sumcheck<F: Field, NUM_VARS_CONST: 1..10>(
+    public claimed_sum: F,
+    public g_poly: Mle<F, NUM_VARS_CONST>,
+    public round_claims: [F; 2*NUM_VARS_CONST]
+) where (claimed_sum == claimed_sum) {
+    verify(sumcheck_round(claimed_sum, g_poly, round_claims));
+}

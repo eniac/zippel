@@ -1,6 +1,6 @@
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
 use crate::Op;
-use backend::{ArkBn254, Value, PolyVariant, ATyp};
+use backend::{ArkBn254, Value, PolyVariant, ATyp, VirtualPolynomial};
 use ark_poly::{
     univariate::DensePolynomial,
     DenseUVPolynomial,
@@ -12,14 +12,14 @@ type TestValue = Value<ArkBn254>;
 type Fr = <ArkBn254 as backend::ArkConfig>::F;
 
 fn make_scalar(val: u64) -> TestValue {
-    TestValue::Poly(PolyVariant::from_scalar(Fr::from(val)))
+    TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::from_scalar(Fr::from(val))))
 }
 
 fn make_uni_poly(coeffs: Vec<u64>) -> TestValue {
     let poly = DensePolynomial::from_coefficients_vec(
         coeffs.into_iter().map(Fr::from).collect()
     );
-    TestValue::Poly(PolyVariant::DenseUni(poly))
+    TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(poly)))
 }
 
 #[test]

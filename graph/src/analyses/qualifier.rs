@@ -90,25 +90,179 @@ impl QualifierPropagation {
     }
 }
 
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::{WritePdf, UDags};
-#[cfg(test)] use share::unwrap;
-#[test]
-#[ignore]
-fn qualifier_prop() {
-    let ex = r#"
-        proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {
-            let r = random<F>;
-            a <- r * s[i];
-            b <- r * s';
-            verify(a == b);
-        }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lang::ast::UModule;
+    use backend::ArkBls12_381;
+    use crate::{UDags, Node};
+    use share::unwrap;
+    use lang::typ::Qualifier;
 
-    // Propagate qualifiers
-    let g = QualifierPropagation::from_dag(&gs[0]);
+    #[test]
+    #[ignore]
+    fn qualifier_prop() {
+        let ex = r#"
+            proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {
+                let r = random<F>;
+                a <- r * s[i];
+                b <- r * s';
+                verify(a == b);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    g.write_pdf("qualifier.pdf").unwrap();
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        assert!(g.node_count() > 0);
+    }
+
+    #[test]
+    fn test_qualifier_from_op_value() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let op = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(42u64)));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_from_op_random() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Private));
+    }
+
+    #[test]
+    fn test_qualifier_from_op_challenge() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), false);
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_from_op_check() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Check(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_propagation_public_public_join() {
+        let ex = r#"
+            proto add_public<F: Field>(public x: F, public y: F) where true {
+                z <- x + y;
+                verify(z == x + y);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        
+        let check_node = g.find_check().expect("Check node should exist");
+        if let Node::Op(_, qual) = &g[check_node] {
+            assert_eq!(*qual, Qualifier::Public);
+        }
+    }
+
+    #[test]
+    fn test_qualifier_propagation_private_public_join() {
+        let ex = r#"
+            proto mix_quals<F: Field>(private x: F, public y: F) where true {
+                z <- x + y;
+                verify(z == x + y);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        
+        let check_node = g.find_check().expect("Check node should exist");
+        if let Node::Op(_, qual) = &g[check_node] {
+            assert_eq!(*qual, Qualifier::Public);
+        }
+    }
+
+    #[test]
+    fn test_qualifier_propagation_private_private_join() {
+        let ex = r#"
+            proto private_only<F: Field>(private x: F, private y: F) where true {
+                z <- x * y;
+                verify(z == x * y);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        
+        assert!(g.node_count() > 0);
+    }
+
+    #[test]
+    fn test_qualifier_from_dag_finds_check() {
+        let ex = r#"
+            proto simple<F: Field>(private x: F) where true {
+                verify(x == x);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        
+        let check = g.find_check();
+        assert!(check.is_some());
+    }
+
+    #[test]
+    fn test_qualifier_vec_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let val1 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let val2 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
+        let op = GOp::<ArkBls12_381>::Vec(vec![val1, val2]);
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_poly_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Poly(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_mle_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Mle(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_coef_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Coef(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_fft_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Fft(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
+
+    #[test]
+    fn test_qualifier_ifft_operation() {
+        let qp = QualifierPropagation { quals: Ctx::new() };
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Ifft(Box::new(inner));
+        let qual = qp.from_op(&op);
+        assert_eq!(qual, Some(Qualifier::Public));
+    }
 }

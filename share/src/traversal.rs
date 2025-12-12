@@ -161,3 +161,105 @@ fn test_traversal_option() {
     let v : Option<usize> = None;
     assert_eq!(OptionTraversal::traverse::<()>(v, &mut |a| Ok(a)), Ok(None));
 }
+
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+
+    #[test]
+    fn test_vec2_traversal2_success() {
+        let v = vec![('a', 1), ('b', 2), ('c', 3)];
+        let result: Result<Vec<(char, i32)>, ()> = Vec2Traversal2::traverse(v, &mut |x| Ok(x * 2));
+        assert_eq!(result, Ok(vec![('a', 2), ('b', 4), ('c', 6)]));
+    }
+
+    #[test]
+    fn test_vec2_traversal2_error() {
+        let v = vec![('a', 1), ('b', 2), ('c', 3)];
+        let result = Vec2Traversal2::traverse(v, &mut |x| {
+            if x > 1 {
+                Err("Too large")
+            } else {
+                Ok(x)
+            }
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vec2_traversal2_empty() {
+        let v: Vec<(char, i32)> = vec![];
+        let result: Result<Vec<(char, i32)>, ()> = Vec2Traversal2::traverse(v, &mut |x| Ok(x + 1));
+        assert_eq!(result, Ok(vec![]));
+    }
+
+    #[test]
+    fn test_box_traversal_success() {
+        let b = Box::new(42);
+        let result: Result<Box<i32>, ()> = BoxTraversal::traverse(b, &mut |x| Ok(x * 2));
+        assert_eq!(result, Ok(Box::new(84)));
+    }
+
+    #[test]
+    fn test_box_traversal_error() {
+        let b = Box::new(42);
+        let result: Result<Box<i32>, &str> = BoxTraversal::traverse(b, &mut |_| Err("Error"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_box_traversal1() {
+        let b = Box::new(10);
+        let result: Result<Box<i32>, ()> = b.traverse1(&mut |x| Ok(x + 5));
+        assert_eq!(result, Ok(Box::new(15)));
+    }
+
+    #[test]
+    fn test_vec_map1() {
+        let v = vec![1, 2, 3];
+        let result = v.map1(&mut |x| x * 2);
+        assert_eq!(result, vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn test_vec_map1_empty() {
+        let v: Vec<i32> = vec![];
+        let result = v.map1(&mut |x| x * 2);
+        assert_eq!(result, Vec::<i32>::new());
+    }
+
+    #[test]
+    fn test_option_map1_some() {
+        let o = Some(42);
+        let result = o.map1(&mut |x| x * 2);
+        assert_eq!(result, Some(84));
+    }
+
+    #[test]
+    fn test_option_map1_none() {
+        let o: Option<i32> = None;
+        let result = o.map1(&mut |x| x * 2);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_box_map1() {
+        let b = Box::new(7);
+        let result = b.map1(&mut |x| x + 3);
+        assert_eq!(result, Box::new(10));
+    }
+
+    #[test]
+    fn test_vec_traversal_with_capacity() {
+        let v = vec![1, 2, 3, 4, 5];
+        let result: Result<Vec<i32>, ()> = VecTraversal::traverse(v, &mut |x| Ok(x * 3));
+        assert_eq!(result, Ok(vec![3, 6, 9, 12, 15]));
+    }
+
+    #[test]
+    fn test_option_traversal_some() {
+        let o = Some(100);
+        let result: Result<Option<i32>, ()> = OptionTraversal::traverse(o, &mut |x| Ok(x / 10));
+        assert_eq!(result, Ok(Some(10)));
+    }
+}

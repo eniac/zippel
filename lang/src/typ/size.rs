@@ -454,3 +454,335 @@ fn size_parser() {
     pairs = ZippelParser::parse(Rule::size_ty, "2^(N-1) / N").unwrap();
     assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N"));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test Size constructors
+    #[test]
+    fn test_size_var() {
+        let size = Size::var(Tid::from("N"));
+        assert_eq!(size, Size::Var(Tid::from("N")));
+    }
+
+    #[test]
+    fn test_size_varstr() {
+        let size = Size::varstr("M");
+        assert_eq!(size, Size::Var(Tid::from("M")));
+    }
+
+    #[test]
+    fn test_size_max() {
+        let size = Size::max(Size::Lit(5), Size::Lit(10));
+        assert!(matches!(size, Size::Max(_, _)));
+    }
+
+    #[test]
+    fn test_size_min() {
+        let size = Size::min(Size::Lit(5), Size::Lit(10));
+        assert!(matches!(size, Size::Min(_, _)));
+    }
+
+    #[test]
+    fn test_size_neg() {
+        let size = Size::Lit(5).neg();
+        assert_eq!(size, Size::Sub(Box::new(Size::Lit(0)), Box::new(Size::Lit(5))));
+    }
+
+    #[test]
+    fn test_size_zero() {
+        let size = Size::zero();
+        assert_eq!(size, Size::Lit(0));
+    }
+
+    #[test]
+    fn test_size_one() {
+        let size = Size::one();
+        assert_eq!(size, Size::Lit(1));
+    }
+
+    // Test free_vars
+    #[test]
+    fn test_free_vars_var() {
+        let size = Size::varstr("N");
+        let vars = size.free_vars();
+        assert_eq!(vars.len(), 1);
+        assert!(vars.contains(&Tid::from("N")));
+    }
+
+    #[test]
+    fn test_free_vars_lit() {
+        let size = Size::Lit(42);
+        let vars = size.free_vars();
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn test_free_vars_add() {
+        let size = Size::varstr("N") + Size::varstr("M");
+        let vars = size.free_vars();
+        assert_eq!(vars.len(), 2);
+        assert!(vars.contains(&Tid::from("N")));
+        assert!(vars.contains(&Tid::from("M")));
+    }
+
+    #[test]
+    fn test_free_vars_complex() {
+        let size = (Size::varstr("N") * Size::Lit(2)) + (Size::varstr("M") / Size::varstr("K"));
+        let vars = size.free_vars();
+        assert_eq!(vars.len(), 3);
+        assert!(vars.contains(&Tid::from("N")));
+        assert!(vars.contains(&Tid::from("M")));
+        assert!(vars.contains(&Tid::from("K")));
+    }
+
+    // Test eval
+    #[test]
+    fn test_eval_lit() {
+        let size = Size::Lit(42);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_eval_var() {
+        let size = Size::varstr("N");
+        let mut ctx = Ctx::new();
+        ctx.insert(&Tid::from("N"), &10);
+        assert_eq!(size.eval(&ctx).unwrap(), 10);
+    }
+
+    #[test]
+    fn test_eval_var_not_found() {
+        let size = Size::varstr("N");
+        let ctx = Ctx::new();
+        let result = size.eval(&ctx);
+        assert!(matches!(result, Err(EvalError::VariableNotFound(_))));
+    }
+
+    #[test]
+    fn test_eval_add() {
+        let size = Size::Lit(5) + Size::Lit(10);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 15);
+    }
+
+    #[test]
+    fn test_eval_sub() {
+        let size = Size::Lit(10) - Size::Lit(3);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 7);
+    }
+
+    #[test]
+    fn test_eval_sub_underflow() {
+        let size = Size::Lit(3) - Size::Lit(10);
+        let ctx = Ctx::new();
+        let result = size.eval(&ctx);
+        assert!(matches!(result, Err(EvalError::UnderflowBySubtraction(_, _))));
+    }
+
+    #[test]
+    fn test_eval_mul() {
+        let size = Size::Lit(5) * Size::Lit(10);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 50);
+    }
+
+    #[test]
+    fn test_eval_div() {
+        let size = Size::Lit(20) / Size::Lit(4);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 5);
+    }
+
+    #[test]
+    fn test_eval_div_zero() {
+        let size = Size::Lit(10) / Size::Lit(0);
+        let ctx = Ctx::new();
+        let result = size.eval(&ctx);
+        assert!(matches!(result, Err(EvalError::DivisionByZero(_, _))));
+    }
+
+    #[test]
+    fn test_eval_pow() {
+        let size = Size::Lit(2) ^ Size::Lit(5);
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 32);
+    }
+
+    #[test]
+    fn test_eval_max() {
+        let size = Size::max(Size::Lit(5), Size::Lit(10));
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 10);
+    }
+
+    #[test]
+    fn test_eval_min() {
+        let size = Size::min(Size::Lit(5), Size::Lit(10));
+        let ctx = Ctx::new();
+        assert_eq!(size.eval(&ctx).unwrap(), 5);
+    }
+
+    #[test]
+    fn test_eval_complex() {
+        let size = (Size::Lit(2) ^ Size::varstr("N")) * Size::Lit(3);
+        let mut ctx = Ctx::new();
+        ctx.insert(&Tid::from("N"), &4);
+        assert_eq!(size.eval(&ctx).unwrap(), 48); // 2^4 * 3 = 16 * 3 = 48
+    }
+
+    // Test operator overloads with various types
+    #[test]
+    fn test_add_u32() {
+        let size = Size::Lit(5) + 10u32;
+        assert_eq!(size, Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+    }
+
+    #[test]
+    fn test_add_ref() {
+        let a = Size::Lit(5);
+        let b = Size::Lit(10);
+        let size = &a + &b;
+        assert_eq!(size, Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+    }
+
+    #[test]
+    fn test_add_tid() {
+        let size = Size::Lit(5) + Tid::from("N");
+        assert!(matches!(size, Size::Add(_, _)));
+    }
+
+    #[test]
+    fn test_sub_u32() {
+        let size = Size::Lit(10) - 5u32;
+        assert_eq!(size, Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5))));
+    }
+
+    #[test]
+    fn test_sub_ref() {
+        let a = Size::Lit(10);
+        let b = Size::Lit(5);
+        let size = &a - &b;
+        assert_eq!(size, Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5))));
+    }
+
+    #[test]
+    fn test_sub_tid() {
+        let size = Size::Lit(10) - Tid::from("N");
+        assert!(matches!(size, Size::Sub(_, _)));
+    }
+
+    #[test]
+    fn test_mul_u32() {
+        let size = Size::Lit(5) * 10u32;
+        assert_eq!(size, Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+    }
+
+    #[test]
+    fn test_mul_ref() {
+        let a = Size::Lit(5);
+        let b = Size::Lit(10);
+        let size = &a * &b;
+        assert_eq!(size, Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+    }
+
+    #[test]
+    fn test_mul_tid() {
+        let size = Size::Lit(5) * Tid::from("N");
+        assert!(matches!(size, Size::Mul(_, _)));
+    }
+
+    #[test]
+    fn test_div_u32() {
+        let size = Size::Lit(20) / 4u32;
+        assert_eq!(size, Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4))));
+    }
+
+    #[test]
+    fn test_div_ref() {
+        let a = Size::Lit(20);
+        let b = Size::Lit(4);
+        let size = &a / &b;
+        assert_eq!(size, Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4))));
+    }
+
+    #[test]
+    fn test_div_tid() {
+        let size = Size::Lit(20) / Tid::from("N");
+        assert!(matches!(size, Size::Div(_, _)));
+    }
+
+    #[test]
+    fn test_pow_u32() {
+        let size = Size::Lit(2) ^ 5u32;
+        assert_eq!(size, Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5))));
+    }
+
+    #[test]
+    fn test_pow_ref() {
+        let a = Size::Lit(2);
+        let b = Size::Lit(5);
+        let size = &a ^ &b;
+        assert_eq!(size, Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5))));
+    }
+
+    #[test]
+    fn test_pow_tid() {
+        let size = Size::Lit(2) ^ Tid::from("N");
+        assert!(matches!(size, Size::Pow(_, _)));
+    }
+
+    // Test From implementations
+    #[test]
+    fn test_from_u32() {
+        let size = Size::from(42u32);
+        assert_eq!(size, Size::Lit(42));
+    }
+
+    #[test]
+    fn test_from_str() {
+        let size = Size::from("N");
+        assert_eq!(size, Size::Var(Tid::from("N")));
+    }
+
+    // Test Display
+    #[test]
+    fn test_display_var() {
+        let size = Size::varstr("N");
+        assert_eq!(size.to_string(), "N");
+    }
+
+    #[test]
+    fn test_display_lit() {
+        let size = Size::Lit(42);
+        assert_eq!(size.to_string(), "42");
+    }
+
+    #[test]
+    fn test_display_add() {
+        let size = Size::Lit(5) + Size::Lit(10);
+        assert_eq!(size.to_string(), "5 + 10");
+    }
+
+    #[test]
+    fn test_display_complex() {
+        let size = Size::max(Size::Lit(5), Size::Lit(10));
+        assert_eq!(size.to_string(), "max(5, 10)");
+    }
+
+    #[test]
+    fn test_display_min() {
+        let size = Size::min(Size::Lit(5), Size::Lit(10));
+        assert_eq!(size.to_string(), "min(5, 10)");
+    }
+
+    // Test is_nil
+    #[test]
+    fn test_is_nil() {
+        let size = Size::Lit(42);
+        assert!(!<Size as Pretty<'_, BoxAllocator, ()>>::is_nil(&size));
+    }
+}
