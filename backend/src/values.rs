@@ -178,10 +178,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         }
-        Value::Poly(poly) => {
-            poly.serialize_compressed(writer)
-        }
-        Value::VirtualPoly(_vp) => {
+        Value::Poly(_poly) => {
             // VirtualPolynomial serialization not implemented
             Err(SerializationError::InvalidData)
         }
@@ -207,8 +204,7 @@ impl<C: ArkConfig> Value<C> {
     /// Higher values correspond to constructors defined earlier.
     pub fn discriminant_order(&self) -> u8 {
         match self {
-            Value::VirtualPoly(_) => 19,
-            Value::Poly(_) => 18,
+            Value::Poly(_) => 19,
             Value::Bool(_) => 17,
             Value::VecBool(_) => 16,
             Value::Index(_) => 15,
@@ -242,9 +238,9 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
-            ATyp::Uni(_n) => Value::Poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero())),
-            ATyp::Mle(_n) => Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero())),
-            ATyp::Virtual => Value::VirtualPoly(VirtualPolynomial::new()),
+            ATyp::Uni(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero()))),
+            ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero()))),
+            ATyp::Virtual => Value::Poly(VirtualPolynomial::new()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -281,7 +277,10 @@ impl<C: ArkConfig> Value<C> {
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
-                Value::Index(b) => C::FOps::add(a, &mut C::FOps::from_usize(*b)),
+                Value::Index(b) => {
+                    *other = Value::Scalar(C::FOps::from_usize(*b));
+                    C::FOps::add(a, other.into_scalar_mut());
+                },
                 Value::Scalar(_) => C::FOps::add(a, other.into_scalar_mut()),
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_add_scalar(*a));
@@ -351,7 +350,6 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_add(b)),
-            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -366,15 +364,18 @@ impl<C: ArkConfig> Value<C> {
                 Value::Index(b) => *other.into_index_mut() = *a - *b,
                 Value::Scalar(_) => C::FOps::sub(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                 Value::Poly(poly) => {
-                    *other = Value::Poly(PolyVariant::scalar_sub_poly(C::FOps::from_usize(*a), poly));
+                    *other = Value::Poly(VirtualPolynomial::scalar_sub_poly(C::FOps::from_usize(*a), poly).expect("scalar_sub_poly failed"));
                 },
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
-                Value::Index(b) => C::FOps::sub(a, &mut C::FOps::from_usize(*b)),
+                Value::Index(b) => {
+                    *other = Value::Scalar(C::FOps::from_usize(*b));
+                    C::FOps::sub(a, other.into_scalar_mut());
+                },
                 Value::Scalar(_) => C::FOps::sub(a, other.into_scalar_mut()),
                 Value::Poly(poly) => {
-                    *other = Value::Poly(PolyVariant::scalar_sub_poly(*a, poly));
+                    *other = Value::Poly(VirtualPolynomial::scalar_sub_poly(*a, poly).expect("scalar_sub_poly failed"));
                 },
                 _ => panic!("Expected scalar, found {}", other),
             },
@@ -440,7 +441,6 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
-            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -577,7 +577,6 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(C::FOps::from_usize(*a)));
                 },
-                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::Scalar(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
@@ -630,7 +629,6 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(a.clone()));
                 },
-                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::G1(a) => match &other {
                 // Group1 * scalar multiplication
@@ -768,7 +766,6 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(_) => {
                     panic!("Cannot multiply Vec<Index> and Poly");
                 }
-                Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
             },
             Value::VecScalar(v) => match &other {
                 // Vec<Scalar> * Index
@@ -925,7 +922,6 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_mul(b)),
-            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -945,8 +941,12 @@ impl<C: ArkConfig> Value<C> {
                 Value::Scalar(_) => C::FOps::div(&C::FOps::from_usize(*a), other.into_scalar_mut()),
                 // Index / Poly
                 Value::Poly(poly) => {
-                    *other = Value::Poly(PolyVariant::scalar_div_poly(C::FOps::from_usize(*a), poly)
-                        .expect("Cannot divide by non-constant polynomial"));
+                    // Can only divide by constant polynomial
+                    let mut poly_scalar = poly.clone().into_scalar()
+                        .expect("Cannot divide by non-constant polynomial");
+                    let numerator = C::FOps::from_usize(*a);
+                    C::FOps::div(&numerator, &mut poly_scalar);
+                    *other = Value::Scalar(poly_scalar);
                 },
                 // Index / Vectors
                 Value::VecIndex(_) => other
@@ -972,8 +972,11 @@ impl<C: ArkConfig> Value<C> {
                 },
                 // Scalar / Poly
                 Value::Poly(poly) => {
-                    *other = Value::Poly(PolyVariant::scalar_div_poly(*a, poly)
-                        .expect("Cannot divide by non-constant polynomial"));
+                    // Can only divide by constant polynomial
+                    let mut poly_scalar = poly.clone().into_scalar()
+                        .expect("Cannot divide by non-constant polynomial");
+                    C::FOps::div(a, &mut poly_scalar);
+                    *other = Value::Scalar(poly_scalar);
                 },
                 // Scalar / Vector
                 Value::VecIndex(_) | Value::VecScalar(_) => other
@@ -1254,7 +1257,6 @@ impl<C: ArkConfig> Value<C> {
                     _ => panic!("Expected poly, found {}", other),
                 }
             },
-            Value::VirtualPoly(_) => panic!("Virtual polynomial arithmetic not yet implemented"),
         }
     }
 
@@ -1922,12 +1924,14 @@ impl<C: ArkConfig> Value<C> {
                 // Actually, we should create a random MLE - but for now use a simple approach
                 let num_vars = 1;  // Minimum 1 variable
                 let evals = C::FOps::vec_rand(rng, 1 << num_vars);
-                Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals)))
+                Value::Poly(VirtualPolynomial::from_poly(
+                    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals))
+                ))
             },
             ATyp::Virtual => {
                 // For Virtual random, create a random univariate polynomial wrapped in virtual
                 let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
-                Value::VirtualPoly(VirtualPolynomial::from_poly(
+                Value::Poly(VirtualPolynomial::from_poly(
                     PolyVariant::DenseUni(p)
                 ))
             },
@@ -1967,12 +1971,11 @@ impl<C: ArkConfig> Value<C> {
             },
             Value::Poly(poly) => {
                 if poly.is_univariate() {
-                    ATyp::uni(poly.degree().unwrap())
+                    ATyp::uni(poly.degree())
                 } else {
                     ATyp::mle(poly.num_vars().unwrap())
                 }
             },
-            Value::VirtualPoly(_) => ATyp::virtual_poly(),
         }
     }
 
@@ -1987,7 +1990,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     #[inline]
-    pub fn into_poly(&self) -> &PolyVariant<C::F> {
+    pub fn into_poly(&self) -> &VirtualPolynomial<C::F> {
         match self {
             Value::Poly(p) => p,
             _ => panic!("Expected poly, found {}", self),
@@ -2227,7 +2230,6 @@ impl<C: ArkConfig> Value<C> {
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
-            Value::VirtualPoly(vp) => vp.is_zero(),
         }
     }
 
@@ -2267,11 +2269,11 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_poly(&self) -> Self {
         match self {
             Value::VecScalar(v) => {
-                Value::Poly(PolyVariant::from_coeffs(v.clone()))
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(v.clone())))
             },
             Value::VecIndex(v) => {
                 let coeffs = v.iter().map(|i| C::FOps::from_usize(*i)).collect();
-                Value::Poly(PolyVariant::from_coeffs(coeffs))
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)))
             },
             _ => panic!("Expected vec scalar, found {}", self),
         }
@@ -2288,7 +2290,7 @@ impl<C: ArkConfig> Value<C> {
                     mle.push(*i);
                 }
                 let size = log2(mle.len());
-                Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle)))
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))))
             },
             Value::VecIndex(v) => {
                 let mut mle = vec![];
@@ -2296,7 +2298,7 @@ impl<C: ArkConfig> Value<C> {
                     mle.push(C::FOps::from_usize(*i));
                 }
                 let size = log2(mle.len());
-                Value::Poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle)))
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle))))
             },
             _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
@@ -2586,7 +2588,6 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 write!(f, "]")
             },
             Value::Poly(poly) => write!(f, "{}", poly),
-            Value::VirtualPoly(vp) => write!(f, "Virtual({} terms)", vp.terms.len()),
         }
     }
 }
@@ -2774,6 +2775,33 @@ mod value_tests {
 
     fn random_g2() -> TestValue {
         TestValue::G2(G2Projective::rand(&mut thread_rng()))
+    }
+
+    // Helper trait to extract inner values
+    trait IntoG1 {
+        fn into_g1(self) -> G1Projective;
+    }
+
+    trait IntoG2 {
+        fn into_g2(self) -> G2Projective;
+    }
+
+    impl IntoG1 for TestValue {
+        fn into_g1(self) -> G1Projective {
+            match self {
+                TestValue::G1(g) => g,
+                _ => panic!("Expected G1"),
+            }
+        }
+    }
+
+    impl IntoG2 for TestValue {
+        fn into_g2(self) -> G2Projective {
+            match self {
+                TestValue::G2(g) => g,
+                _ => panic!("Expected G2"),
+            }
+        }
     }
 
     // ========== Addition Laws ==========
@@ -3034,5 +3062,727 @@ mod value_tests {
         let a = TestValue::VecIndex(vec![1, 2, 3]);
         let b = TestValue::VecIndex(vec![4, 5, 6]);
         assert_eq!(a + b, TestValue::VecIndex(vec![5, 7, 9]));
+    }
+
+    // ========== Field Axioms for Division ==========
+
+    #[test]
+    fn test_scalar_div_mul_identity() {
+        // (a / b) * b = a (when b ≠ 0)
+        let a = scalar(42);
+        let b = scalar(7);
+        let result = (a.clone() / b.clone()) * b;
+        assert_eq!(result, a);
+    }
+
+    #[test]
+    fn test_scalar_multiplicative_inverse() {
+        // a * (1/a) = 1 (when a ≠ 0)
+        let a = scalar(5);
+        let one = scalar(1);
+        let a_inv = one.clone() / a.clone();
+        assert_eq!(a * a_inv, one);
+    }
+
+    #[test]
+    fn test_scalar_div_by_one() {
+        // a / 1 = a
+        let a = scalar(42);
+        let one = scalar(1);
+        assert_eq!(a.clone() / one, a);
+    }
+
+    #[test]
+    fn test_scalar_div_self() {
+        // a / a = 1 (when a ≠ 0)
+        let a = scalar(7);
+        assert_eq!(a.clone() / a, scalar(1));
+    }
+
+    #[test]
+    fn test_vec_scalar_div_consistency() {
+        // Division of vectors should be element-wise
+        let a = vec_scalar(&[10, 20, 30]);
+        let b = vec_scalar(&[2, 4, 5]);
+        let result = a / b;
+        assert_eq!(result, vec_scalar(&[5, 5, 6]));
+    }
+
+    #[test]
+    fn test_index_div() {
+        // Index / Index = Index
+        let a = TestValue::Index(42);
+        let b = TestValue::Index(7);
+        assert_eq!(a / b, TestValue::Index(6));
+    }
+
+    #[test]
+    fn test_index_coerce_div() {
+        // Index should coerce to scalar in division
+        let a = TestValue::Index(10);
+        let b = scalar(2);
+        let result = a / b;
+        assert_eq!(result, scalar(5));
+    }
+
+    #[test]
+    fn test_vec_index_div() {
+        // a / b computes b = b / a (mutates second operand)
+        let a = TestValue::VecIndex(vec![2, 4, 5]);
+        let b = TestValue::VecIndex(vec![10, 20, 30]);
+        assert_eq!(a / b, TestValue::VecIndex(vec![5, 5, 6]));
+    }
+
+    // ========== Group Identity Elements ==========
+
+    #[test]
+    fn test_g1_additive_identity() {
+        use ark_ec::CurveGroup;
+        let a = random_g1();
+        let zero = TestValue::G1(G1Projective::zero());
+        assert_eq!(a.clone() + zero.clone(), a.clone());
+        assert_eq!(zero + a.clone(), a);
+    }
+
+    #[test]
+    fn test_g2_additive_identity() {
+        use ark_ec::CurveGroup;
+        let a = random_g2();
+        let zero = TestValue::G2(G2Projective::zero());
+        assert_eq!(a.clone() + zero.clone(), a.clone());
+        assert_eq!(zero + a.clone(), a);
+    }
+
+    #[test]
+    fn test_gt_additive_identity() {
+        use ark_ec::pairing::Pairing;
+        let a_g1 = random_g1();
+        let a_g2 = random_g2();
+        let mut a = a_g2.clone();
+        a_g1.value_pair(&mut a);
+        
+        let b_g1 = random_g1();
+        let b_g2 = random_g2();
+        let mut b = b_g2.clone();
+        b_g1.value_pair(&mut b);
+        
+        // Test GT identity (zero in multiplicative group)
+        let zero_gt = TestValue::GT(ark_bn254::Bn254::pairing(
+            G1Projective::zero(),
+            G2Projective::zero()
+        ));
+        
+        // GT is multiplicative, so zero_gt acts as zero in addition
+        let result = a.clone() + zero_gt.clone();
+        assert_eq!(result, a);
+    }
+
+    // ========== Group Inverse Properties ==========
+
+    #[test]
+    fn test_g1_additive_inverse() {
+        // a + (-a) = 0
+        let a = random_g1();
+        let result = a.clone() - a;
+        let zero = TestValue::G1(G1Projective::zero());
+        assert_eq!(result, zero);
+    }
+
+    #[test]
+    fn test_g2_additive_inverse() {
+        // a + (-a) = 0
+        let a = random_g2();
+        let result = a.clone() - a;
+        let zero = TestValue::G2(G2Projective::zero());
+        assert_eq!(result, zero);
+    }
+
+    #[test]
+    fn test_scalar_additive_inverse() {
+        // a + (-a) = 0
+        let a = scalar(42);
+        let result = a.clone() - a;
+        assert_eq!(result, scalar(0));
+    }
+
+    #[test]
+    fn test_vec_scalar_additive_inverse() {
+        let a = vec_scalar(&[1, 2, 3, 4]);
+        let result = a.clone() - a;
+        assert_eq!(result, vec_scalar(&[0, 0, 0, 0]));
+    }
+
+    // ========== Subtraction Anti-commutativity ==========
+
+    #[test]
+    fn test_scalar_sub_anticommutativity() {
+        // a - b = -(b - a)
+        let a = scalar(10);
+        let b = scalar(3);
+        let lhs = a.clone() - b.clone();
+        let rhs = scalar(0) - (b - a);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_vec_scalar_sub_anticommutativity() {
+        let a = vec_scalar(&[10, 20, 30]);
+        let b = vec_scalar(&[3, 5, 7]);
+        let lhs = a.clone() - b.clone();
+        let rhs_temp = b - a;
+        let zero = vec_scalar(&[0, 0, 0]);
+        let rhs = zero - rhs_temp;
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g1_sub_anticommutativity() {
+        let a = random_g1();
+        let b = random_g1();
+        let lhs = a.clone() - b.clone();
+        let rhs_temp = b - a;
+        let zero = TestValue::G1(G1Projective::zero());
+        let rhs = zero - rhs_temp;
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g2_sub_anticommutativity() {
+        let a = random_g2();
+        let b = random_g2();
+        let lhs = a.clone() - b.clone();
+        let rhs_temp = b - a;
+        let zero = TestValue::G2(G2Projective::zero());
+        let rhs = zero - rhs_temp;
+        assert_eq!(lhs, rhs);
+    }
+
+    // ========== Subtraction Relation to Addition ==========
+
+    #[test]
+    fn test_scalar_sub_as_neg_add() {
+        // a - b = a + (-b), where -b = 0 - b
+        let a = scalar(10);
+        let b = scalar(3);
+        let lhs = a.clone() - b.clone();
+        let neg_b = scalar(0) - b;
+        let rhs = a + neg_b;
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_vec_scalar_sub_as_neg_add() {
+        let a = vec_scalar(&[10, 20, 30]);
+        let b = vec_scalar(&[3, 5, 7]);
+        let lhs = a.clone() - b.clone();
+        let neg_b = vec_scalar(&[0, 0, 0]) - b;
+        let rhs = a + neg_b;
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g1_sub_as_neg_add() {
+        let a = random_g1();
+        let b = random_g1();
+        let lhs = a.clone() - b.clone();
+        let neg_b = TestValue::G1(G1Projective::zero()) - b;
+        let rhs = a + neg_b;
+        assert_eq!(lhs, rhs);
+    }
+
+    // ========== Index Operations ==========
+
+    #[test]
+    fn test_index_sub() {
+        let a = TestValue::Index(10);
+        let b = TestValue::Index(3);
+        assert_eq!(a - b, TestValue::Index(7));
+    }
+
+    #[test]
+    fn test_index_mul_associativity() {
+        let a = TestValue::Index(2);
+        let b = TestValue::Index(3);
+        let c = TestValue::Index(5);
+        assert_eq!((a.clone() * b.clone()) * c.clone(), a * (b * c));
+    }
+
+    #[test]
+    fn test_index_mul_commutativity() {
+        let a = TestValue::Index(5);
+        let b = TestValue::Index(7);
+        assert_eq!(a.clone() * b.clone(), b * a);
+    }
+
+    #[test]
+    fn test_index_mul_identity() {
+        let a = TestValue::Index(42);
+        let one = TestValue::Index(1);
+        assert_eq!(a.clone() * one.clone(), a.clone());
+        assert_eq!(one * a.clone(), a);
+    }
+
+    #[test]
+    fn test_index_mul_zero() {
+        let a = TestValue::Index(42);
+        let zero = TestValue::Index(0);
+        assert_eq!(a * zero, TestValue::Index(0));
+    }
+
+    #[test]
+    fn test_vec_index_sub() {
+        let a = TestValue::VecIndex(vec![10, 20, 30]);
+        let b = TestValue::VecIndex(vec![3, 5, 7]);
+        assert_eq!(a - b, TestValue::VecIndex(vec![7, 15, 23]));
+    }
+
+    #[test]
+    fn test_vec_index_mul() {
+        let a = TestValue::VecIndex(vec![2, 3, 4]);
+        let b = TestValue::VecIndex(vec![5, 6, 7]);
+        assert_eq!(a * b, TestValue::VecIndex(vec![10, 18, 28]));
+    }
+
+    // ========== Remainder Operations ==========
+
+    #[test]
+    fn test_index_rem() {
+        let a = TestValue::Index(17);
+        let b = TestValue::Index(5);
+        assert_eq!(a % b, TestValue::Index(2));
+    }
+
+    #[test]
+    fn test_vec_index_rem() {
+        let a = TestValue::VecIndex(vec![17, 23, 31]);
+        let b = TestValue::VecIndex(vec![5, 7, 10]);
+        assert_eq!(a % b, TestValue::VecIndex(vec![2, 2, 1]));
+    }
+
+    #[test]
+    fn test_index_rem_by_scalar() {
+        let a = TestValue::VecIndex(vec![17, 23, 31]);
+        let b = TestValue::Index(5);
+        assert_eq!(a % b, TestValue::VecIndex(vec![2, 3, 1]));
+    }
+
+    #[test]
+    fn test_scalar_rem_by_index() {
+        // a % b computes b % a (mutates second operand)
+        let a = TestValue::Index(17);
+        let b = TestValue::VecIndex(vec![5, 7, 10]);
+        assert_eq!(a % b, TestValue::VecIndex(vec![5, 7, 10]));
+    }
+
+    // ========== Mixed Operations: Index Coercion ==========
+
+    #[test]
+    fn test_index_scalar_add() {
+        // Index should coerce to scalar
+        let idx = TestValue::Index(5);
+        let scal = scalar(7);
+        let result = idx + scal;
+        assert_eq!(result, scalar(12));
+    }
+
+    #[test]
+    fn test_scalar_index_add() {
+        // scalar + index: index coerces to scalar
+        let scal = scalar(7);
+        let idx = TestValue::Index(5);
+        let result = scal + idx;
+        assert_eq!(result, scalar(12));
+    }
+
+    #[test]
+    fn test_index_scalar_mul() {
+        let idx = TestValue::Index(5);
+        let scal = scalar(7);
+        let result = idx * scal;
+        assert_eq!(result, scalar(35));
+    }
+
+    #[test]
+    fn test_index_scalar_sub() {
+        let idx = TestValue::Index(10);
+        let scal = scalar(3);
+        let result = idx - scal;
+        assert_eq!(result, scalar(7));
+    }
+
+    #[test]
+    fn test_scalar_index_sub() {
+        // scalar - index: index coerces to scalar
+        let scal = scalar(10);
+        let idx = TestValue::Index(3);
+        let result = scal - idx;
+        assert_eq!(result, scalar(7));
+    }
+
+    // ========== Scalar Multiplication of Groups (Edge Cases) ==========
+
+    #[test]
+    fn test_g1_scalar_mul_zero() {
+        let g = random_g1();
+        let zero = scalar(0);
+        let result = zero * g;
+        assert_eq!(result, TestValue::G1(G1Projective::zero()));
+    }
+
+    #[test]
+    fn test_g2_scalar_mul_zero() {
+        let g = random_g2();
+        let zero = scalar(0);
+        let result = zero * g;
+        assert_eq!(result, TestValue::G2(G2Projective::zero()));
+    }
+
+    #[test]
+    fn test_g1_scalar_mul_one() {
+        let g = random_g1();
+        let one = scalar(1);
+        let result = one * g.clone();
+        assert_eq!(result, g);
+    }
+
+    #[test]
+    fn test_g2_scalar_mul_one() {
+        let g = random_g2();
+        let one = scalar(1);
+        let result = one * g.clone();
+        assert_eq!(result, g);
+    }
+
+    #[test]
+    fn test_g1_scalar_mul_associativity() {
+        // (a * b) * G = a * (b * G)
+        let g = random_g1();
+        let a = scalar(3);
+        let b = scalar(5);
+        let lhs = (a.clone() * b.clone()) * g.clone();
+        let rhs = a * (b * g);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g2_scalar_mul_associativity() {
+        // (a * b) * G = a * (b * G)
+        let g = random_g2();
+        let a = scalar(3);
+        let b = scalar(5);
+        let lhs = (a.clone() * b.clone()) * g.clone();
+        let rhs = a * (b * g);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g1_index_mul() {
+        // Index should coerce to scalar for group multiplication
+        let g = random_g1();
+        let idx = TestValue::Index(5);
+        let scal = scalar(5);
+        assert_eq!(idx * g.clone(), scal * g);
+    }
+
+    #[test]
+    fn test_g2_index_mul() {
+        let g = random_g2();
+        let idx = TestValue::Index(5);
+        let scal = scalar(5);
+        assert_eq!(idx * g.clone(), scal * g);
+    }
+
+    // ========== Vector Operations Edge Cases ==========
+
+    #[test]
+    fn test_vec_scalar_mul_zero() {
+        let v = vec_scalar(&[1, 2, 3, 4]);
+        let zero = scalar(0);
+        let result = v * zero;
+        assert_eq!(result, vec_scalar(&[0, 0, 0, 0]));
+    }
+
+    #[test]
+    fn test_vec_scalar_mul_one() {
+        let v = vec_scalar(&[1, 2, 3, 4]);
+        let one = scalar(1);
+        let result = v.clone() * one;
+        assert_eq!(result, v);
+    }
+
+    #[test]
+    fn test_empty_vec_operations() {
+        // Empty vectors should work correctly
+        let empty_idx: TestValue = TestValue::VecIndex(vec![]);
+        let empty_idx2: TestValue = TestValue::VecIndex(vec![]);
+        assert_eq!(empty_idx.clone() + empty_idx2.clone(), TestValue::VecIndex(vec![]));
+        assert_eq!(empty_idx.clone() - empty_idx2.clone(), TestValue::VecIndex(vec![]));
+        assert_eq!(empty_idx.clone() * empty_idx2.clone(), TestValue::VecIndex(vec![]));
+    }
+
+    #[test]
+    fn test_single_element_vec() {
+        let a = TestValue::VecIndex(vec![5]);
+        let b = TestValue::VecIndex(vec![3]);
+        assert_eq!(a.clone() + b.clone(), TestValue::VecIndex(vec![8]));
+        assert_eq!(a.clone() - b.clone(), TestValue::VecIndex(vec![2]));
+        assert_eq!(a.clone() * b.clone(), TestValue::VecIndex(vec![15]));
+    }
+
+    // ========== Operations with Zero ==========
+
+    #[test]
+    fn test_scalar_add_zero() {
+        let a = scalar(42);
+        let zero = scalar(0);
+        assert_eq!(a.clone() + zero.clone(), a.clone());
+        assert_eq!(zero + a.clone(), a);
+    }
+
+    #[test]
+    fn test_scalar_sub_zero() {
+        let a = scalar(42);
+        let zero = scalar(0);
+        assert_eq!(a.clone() - zero, a);
+    }
+
+    #[test]
+    fn test_zero_sub_scalar() {
+        // 0 - a = -a
+        let a = scalar(42);
+        let zero = scalar(0);
+        let neg_a = zero - a.clone();
+        // Verify: a + (-a) = 0
+        assert_eq!(a + neg_a, scalar(0));
+    }
+
+    #[test]
+    fn test_vec_scalar_add_zero() {
+        let v = vec_scalar(&[1, 2, 3]);
+        let zero = vec_scalar(&[0, 0, 0]);
+        assert_eq!(v.clone() + zero.clone(), v);
+    }
+
+    // ========== G1/G2 Subtraction Tests ==========
+
+    #[test]
+    fn test_g1_sub_self() {
+        let a = random_g1();
+        assert_eq!(a.clone() - a, TestValue::G1(G1Projective::zero()));
+    }
+
+    #[test]
+    fn test_g2_sub_self() {
+        let a = random_g2();
+        assert_eq!(a.clone() - a, TestValue::G2(G2Projective::zero()));
+    }
+
+    #[test]
+    fn test_g1_sub_distributivity() {
+        // a * (G1 - G2) = a * G1 - a * G2
+        let g1 = random_g1();
+        let g2 = random_g1();
+        let a = random_scalar();
+        let lhs = a.clone() * (g1.clone() - g2.clone());
+        let rhs = (a.clone() * g1) - (a * g2);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_g2_sub_distributivity() {
+        let g1 = random_g2();
+        let g2 = random_g2();
+        let a = random_scalar();
+        let lhs = a.clone() * (g1.clone() - g2.clone());
+        let rhs = (a.clone() * g1) - (a * g2);
+        assert_eq!(lhs, rhs);
+    }
+
+    // ========== VecG1/VecG2 Operations ==========
+
+    #[test]
+    fn test_vec_g1_add() {
+        let a = random_g1();
+        let b = random_g1();
+        let va = TestValue::VecG1(vec![a.clone().into_g1(), b.clone().into_g1()]);
+        let c = random_g1();
+        let d = random_g1();
+        let vb = TestValue::VecG1(vec![c.clone().into_g1(), d.clone().into_g1()]);
+        
+        let result = va + vb;
+        let expected = TestValue::VecG1(vec![
+            (a + c).into_g1(),
+            (b + d).into_g1(),
+        ]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vec_g2_add() {
+        let a = random_g2();
+        let b = random_g2();
+        let va = TestValue::VecG2(vec![a.clone().into_g2(), b.clone().into_g2()]);
+        let c = random_g2();
+        let d = random_g2();
+        let vb = TestValue::VecG2(vec![c.clone().into_g2(), d.clone().into_g2()]);
+        
+        let result = va + vb;
+        let expected = TestValue::VecG2(vec![
+            (a + c).into_g2(),
+            (b + d).into_g2(),
+        ]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vec_g1_sub() {
+        let a = random_g1();
+        let b = random_g1();
+        let va = TestValue::VecG1(vec![a.clone().into_g1(), b.clone().into_g1()]);
+        let vb = va.clone();
+        
+        let result = va - vb;
+        let zero = G1Projective::zero();
+        let expected = TestValue::VecG1(vec![zero, zero]);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_vec_g2_sub() {
+        let a = random_g2();
+        let b = random_g2();
+        let va = TestValue::VecG2(vec![a.clone().into_g2(), b.clone().into_g2()]);
+        let vb = va.clone();
+        
+        let result = va - vb;
+        let zero = G2Projective::zero();
+        let expected = TestValue::VecG2(vec![zero, zero]);
+        assert_eq!(result, expected);
+    }
+
+    // ========== Boolean Edge Cases ==========
+
+    #[test]
+    fn test_bool_and_associativity() {
+        let a = TestValue::Bool(true);
+        let b = TestValue::Bool(false);
+        let c = TestValue::Bool(true);
+        assert_eq!((a.clone() & b.clone()) & c.clone(), a & (b & c));
+    }
+
+    #[test]
+    fn test_bool_or_associativity() {
+        let a = TestValue::Bool(true);
+        let b = TestValue::Bool(false);
+        let c = TestValue::Bool(true);
+        assert_eq!((a.clone() | b.clone()) | c.clone(), a | (b | c));
+    }
+
+    #[test]
+    fn test_bool_and_annihilator() {
+        // a & false = false
+        let a = TestValue::Bool(true);
+        let f = TestValue::Bool(false);
+        assert_eq!(a & f, TestValue::Bool(false));
+    }
+
+    #[test]
+    fn test_bool_or_annihilator() {
+        // a | true = true
+        let a = TestValue::Bool(false);
+        let t = TestValue::Bool(true);
+        assert_eq!(a | t, TestValue::Bool(true));
+    }
+
+    #[test]
+    fn test_bool_and_idempotent() {
+        // a & a = a
+        let a = TestValue::Bool(true);
+        assert_eq!(a.clone() & a.clone(), a);
+        let b = TestValue::Bool(false);
+        assert_eq!(b.clone() & b.clone(), b);
+    }
+
+    #[test]
+    fn test_bool_or_idempotent() {
+        // a | a = a
+        let a = TestValue::Bool(true);
+        assert_eq!(a.clone() | a.clone(), a);
+        let b = TestValue::Bool(false);
+        assert_eq!(b.clone() | b.clone(), b);
+    }
+
+    // ========== Additional Distributivity Tests ==========
+
+    #[test]
+    fn test_vec_scalar_distributivity_with_index() {
+        let v = vec_scalar(&[1, 2, 3]);
+        let a = TestValue::Index(2);
+        let b = TestValue::Index(3);
+        // (a + b) * v = a * v + b * v
+        let lhs = (a.clone() + b.clone()) * v.clone();
+        let rhs = (a * v.clone()) + (b * v);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_index_distributivity() {
+        let a = TestValue::Index(2);
+        let b = TestValue::Index(3);
+        let c = TestValue::Index(5);
+        // a * (b + c) = a * b + a * c
+        assert_eq!(a.clone() * (b.clone() + c.clone()), (a.clone() * b) + (a * c));
+    }
+
+    #[test]
+    fn test_vec_index_distributivity() {
+        let a = TestValue::VecIndex(vec![2, 3]);
+        let b = TestValue::VecIndex(vec![4, 5]);
+        let c = TestValue::VecIndex(vec![6, 7]);
+        // a * (b + c) = a * b + a * c
+        assert_eq!(
+            a.clone() * (b.clone() + c.clone()),
+            (a.clone() * b) + (a * c)
+        );
+    }
+
+    // ========== Field Axiom Completeness ==========
+
+    #[test]
+    fn test_field_division_left_identity() {
+        // 1 / a * a = 1 (when a ≠ 0)
+        let a = scalar(7);
+        let one = scalar(1);
+        let result = (one.clone() / a.clone()) * a;
+        assert_eq!(result, one);
+    }
+
+    #[test]
+    fn test_field_division_right_identity() {
+        // a / a = 1 (when a ≠ 0)
+        let a = scalar(13);
+        assert_eq!(a.clone() / a, scalar(1));
+    }
+
+    #[test]
+    fn test_field_division_distributivity() {
+        // (a + b) / c = a / c + b / c
+        let a = scalar(10);
+        let b = scalar(5);
+        let c = scalar(3);
+        let lhs = (a.clone() + b.clone()) / c.clone();
+        let rhs = (a / c.clone()) + (b / c);
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_scalar_div_associativity() {
+        // a / (b / c) = (a * c) / b
+        let a = scalar(24);
+        let b = scalar(6);
+        let c = scalar(2);
+        let lhs = a.clone() / (b.clone() / c.clone());
+        let rhs = (a * c) / b;
+        assert_eq!(lhs, rhs);
     }
 }

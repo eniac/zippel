@@ -51,3 +51,28 @@ impl From<RangeError> for ConversionError<InputError<'_>> {
         ConversionError::Malformed(InputError::MalformedRange(e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_eval_error() {
+        let eval_err = EvalError::DivisionByZero(Size::Lit(1), Size::Lit(0));
+        let conv_err: ConversionError<InputError> = eval_err.into();
+        match conv_err {
+            ConversionError::Malformed(InputError::RangeError(_)) => {}
+            _ => panic!("Expected RangeError conversion"),
+        }
+    }
+
+    #[test]
+    fn test_from_range_error() {
+        let range_err = RangeError::RangeOrder(0, 1, 0);
+        let conv_err: ConversionError<InputError> = range_err.into();
+        match conv_err {
+            ConversionError::Malformed(InputError::MalformedRange(_)) => {}
+            _ => panic!("Expected MalformedRange conversion"),
+        }
+    }
+}

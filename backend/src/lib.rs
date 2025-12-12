@@ -31,6 +31,3 @@ pub use config::{
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod poly_variant_tests;

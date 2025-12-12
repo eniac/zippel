@@ -3,10 +3,11 @@ use ark_poly::{
     DenseUVPolynomial, Polynomial,
     univariate::{DensePolynomial, SparsePolynomial, DenseOrSparsePolynomial},
     DenseMultilinearExtension, MultilinearExtension,
-    multivariate::{SparsePolynomial as MultiSparsePolynomial, SparseTerm as MultiSparseTerm},
-    evaluations::multivariate::multilinear::SparseMultilinearExtension,
+    multivariate::{SparsePolynomial as MultiSparsePolynomial, SparseTerm as MultiSparseTerm, Term},
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
+use lang::ast::BinOp;
+use rayon::prelude::*;
 use std::io::Write;
 use std::fmt;
 use thiserror::Error;
@@ -19,10 +20,10 @@ pub enum PolyError<F: Field> {
     #[error("Unsupported polynomial operation:\n\t{left} {op} {right}")]
     UnsupportedOperation { op: BinOp, left: PolyVariant<F>, right: PolyVariant<F> },
 
-    #[error("Division by zero:\n\t{v1} / {v2}")]
-    DivisionByZero { v1: PolyVariant<F>, v2: PolyVariant<F> },
+    #[error("Division by zero")]
+    DivisionByZero { v: PolyVariant<F> },
 
-    #[error("Can only divide scalar by constant polynomial:\n\t{scalar} / { polynomial }")]
+    #[error("Can only divide scalar by constant polynomial:\n\t{scalar} / {polynomial}")]
     ScalarDivByNonConstant { scalar: F, polynomial: PolyVariant<F> },
 
     #[error("Cannot convert non-constant polynomial {0} to scalar")]
@@ -31,12 +32,30 @@ pub enum PolyError<F: Field> {
     #[error("Cannot perform operation on multivariate polynomial with different number of variables:\n\t{v1} has {n1}, while {v2} has {n2}")]
     VariableMismatch { v1: PolyVariant<F>, n1: usize, v2: PolyVariant<F>, n2: usize },
 
-    #[error("Evaluation point dimension mismatch:\n\t{polynomial} has {expected} variables, but received {actual}")]
+    #[error("Evaluation point dimension mismatch: expected {expected} variables, but received {actual}")]
     DimensionMismatch { polynomial: PolyVariant<F>, expected: usize, actual: usize },
+
+    #[error("MLE variable count mismatch: {v1} vs {v2}")]
+    MleVariableMismatch { v1: usize, v2: usize },
+
+    #[error("MLE multiplication not directly supported: {v1} * {v2}")]
+    MleMultiplication { v1: PolyVariant<F>, v2: PolyVariant<F> },
+
+    #[error("Division not applicable for: {v1} / {v2}")]
+    DivisionNotApplicable { v1: PolyVariant<F>, v2: PolyVariant<F> },
+
+    #[error("Modulo operation not applicable for MLE")]
+    ModuloNotApplicable,
+
+    #[error("Operation requires MLE polynomial")]
+    RequiresMle,
+
+    #[error("Not an MLE polynomial")]
+    NotMlePolynomial,
 }
 
 /// Polynomial types supported by the backend
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub enum PolyVariant<F: Field> {
     /// Dense univariate polynomial
     DenseUni(DensePolynomial<F>),
@@ -48,9 +67,9 @@ pub enum PolyVariant<F: Field> {
     SparseMultivariate(SparseMultivariatePolynomial<F>),
 }
 
-impl Polynomial<F> for PolyVariant<F> {
-    type Point = Vec<F>;
-    fn degree(&self) -> usize {
+impl<F: Field> PolyVariant<F> {
+    /// Get the degree of the polynomial
+    pub fn degree(&self) -> usize {
         match self {
             PolyVariant::DenseUni(p) => p.degree(),
             PolyVariant::SparseUni(p) => p.degree(),
@@ -59,29 +78,27 @@ impl Polynomial<F> for PolyVariant<F> {
         }
     }
 
-    /// Evaluate polynomial at a point
-    fn evaluate(&self, point: &Vec<F>) -> F {
+    /// Evaluate polynomial at a point (convenience method)
+    pub fn evaluate(&self, point: &Vec<F>) -> F {
         match self {
             // A little hackish - univariate polynomials evaluate over a single Field element
-            PolyVariant::DenseUni(p) => p.evaluate(point[0]),
-            PolyVariant::SparseUni(p) => p.evaluate(point[0]),
+            PolyVariant::DenseUni(p) => p.evaluate(&point[0]),
+            PolyVariant::SparseUni(p) => p.evaluate(&point[0]),
             PolyVariant::DenseMle(p) =>
-                if points.len() != p.num_vars() {
-                    panic!("Evaluation point dimension mismatch:\n\t MLE {} expected {}, got {}", p, p.num_vars(), points.len());
+                if point.len() != p.num_vars() {
+                    panic!("Evaluation point dimension mismatch:\n\t MLE expected {}, got {}", p.num_vars(), point.len());
                 } else {
-                    p.evaluate(points)
+                    p.evaluate(point)
                 },
             PolyVariant::SparseMultivariate(p) =>
-                if points.len() != p.num_vars {
-                    panic!("Evaluation point dimension mismatch:\n\t Sparse multivariate {} expected {}, got {}", p, p.num_vars, points.len());
+                if point.len() != p.num_vars {
+                    panic!("Evaluation point dimension mismatch:\n\t Sparse multivariate expected {}, got {}", p.num_vars, point.len());
                 } else {
-                    p.evaluate(points),
+                    p.evaluate(point)
                 }
         }
     }
-}
 
-impl<F: Field> PolyVariant<F> {
     /// Get the number of variables for a multilinear polynomial (returns None for univariate or virtual)
     pub fn num_vars(&self) -> usize {
         match self {
@@ -99,7 +116,7 @@ impl<F: Field> PolyVariant<F> {
     /// Check if this is a multilinear polynomial
     pub fn is_multilinear(&self) -> bool {
         match self {
-            PolyVariant::DenseMle(mle) => true,
+            PolyVariant::DenseMle(_mle) => true,
             PolyVariant::SparseMultivariate(p) => p.degree() == 1,
             PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => false,
         }
@@ -120,8 +137,17 @@ impl<F: Field> PolyVariant<F> {
                 dense.coeffs.first().cloned()
             },
             PolyVariant::DenseMle(mle) if mle.num_vars() == 0 => mle.evaluations.first().cloned(),
-            PolyVariant::SparseMle(mle) if mle.num_vars == 0 => {
-                mle.evaluations.get(&0).cloned()
+            PolyVariant::SparseMultivariate(p) if p.degree() == 0 && p.num_vars == 0 => {
+                // Constant sparse multivariate - should have a single constant term  
+                // Note: terms are stored as (coeff, term)
+                if p.terms.is_empty() {
+                    Some(F::zero())
+                } else if p.terms.len() == 1 {
+                    // Get coefficient from the single term
+                    p.terms.first().map(|(c, _term)| *c)
+                } else {
+                    None
+                }
             },
             _ => None,
         }
@@ -132,7 +158,10 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseMle(mle) => Some(mle.evaluations.clone()),
             PolyVariant::DenseUni(p) => Some(p.coeffs.clone()),
-            PolyVariant::SparseUni(p) => Some(p.to_dense().coeffs),
+            PolyVariant::SparseUni(p) => {
+                let dense: DensePolynomial<F> = p.clone().into();
+                Some(dense.coeffs)
+            },
             PolyVariant::SparseMultivariate(_) => None,
         }
     }
@@ -157,6 +186,107 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseUni(p) => p.is_zero(),
             PolyVariant::DenseMle(mle) => mle.is_zero(),
             PolyVariant::SparseMultivariate(p) => p.is_zero(),
+        }
+    }
+
+    /// Create a polynomial from coefficients (univariate)
+    pub fn from_coeffs(coeffs: Vec<F>) -> Self {
+        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs))
+    }
+
+    /// Create a polynomial from a scalar constant
+    pub fn from_scalar(scalar: F) -> Self {
+        // Return as degree-0 univariate polynomial
+        PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![scalar]))
+    }
+
+    /// Try to convert to scalar (alias for try_to_scalar for compatibility)
+    pub fn to_scalar(&self) -> Option<F> {
+        self.try_to_scalar()
+    }
+
+    /// Convert polynomial into a scalar constant if it is constant, otherwise return None
+    pub fn into_scalar(self) -> Option<F> {
+        match self {
+            PolyVariant::DenseUni(p) if p.degree() == 0 => p.coeffs.first().cloned(),
+            PolyVariant::SparseUni(p) if p.degree() == 0 => {
+                let dense: DensePolynomial<F> = p.into();
+                dense.coeffs.first().cloned()
+            },
+            PolyVariant::DenseMle(mle) if mle.num_vars() == 0 => mle.evaluations.first().cloned(),
+            PolyVariant::SparseMultivariate(p) if p.degree() == 0 && p.num_vars == 0 => {
+                if p.terms.is_empty() {
+                    Some(F::zero())
+                } else if p.terms.len() == 1 {
+                    p.terms.first().map(|(c, _term)| *c)
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// Convert to dense representation
+    pub fn to_dense(&self) -> Self {
+        match self {
+            PolyVariant::DenseUni(_) | PolyVariant::DenseMle(_) => self.clone(),
+            PolyVariant::SparseUni(p) => {
+                let dense: DensePolynomial<F> = p.clone().into();
+                PolyVariant::DenseUni(dense)
+            }
+            PolyVariant::SparseMultivariate(_) => self.clone(), // Already sparse, no dense equivalent
+        }
+    }
+
+    /// Check if this is a virtual polynomial (always false for PolyVariant)
+    pub fn is_virtual(&self) -> bool {
+        false
+    }
+
+    /// Evaluate multivariate polynomial at a point
+    pub fn evaluate_mv(&self, point: &[F]) -> Result<F, PolyError<F>> {
+        match self {
+            PolyVariant::DenseMle(mle) => {
+                if point.len() != mle.num_vars() {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: mle.num_vars(),
+                        actual: point.len()
+                    });
+                }
+                Ok(mle.evaluate(&point.to_vec()))
+            }
+            PolyVariant::SparseMultivariate(p) => {
+                if point.len() != p.num_vars {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: p.num_vars,
+                        actual: point.len()
+                    });
+                }
+                Ok(p.evaluate(&point.to_vec()))
+            }
+            PolyVariant::DenseUni(p) => {
+                if point.len() != 1 {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: 1,
+                        actual: point.len()
+                    });
+                }
+                Ok(p.evaluate(&point[0]))
+            }
+            PolyVariant::SparseUni(p) => {
+                if point.len() != 1 {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: 1,
+                        actual: point.len()
+                    });
+                }
+                Ok(p.evaluate(&point[0]))
+            }
         }
     }
 
@@ -258,7 +388,12 @@ impl<F: Field> PolyVariant<F> {
                 PolyVariant::DenseUni(p + &DensePolynomial::from_coefficients_vec(vec![scalar]))
             },
             PolyVariant::SparseMultivariate(p) => {
-                let p_scalar = SparseMultivariate::from_coefficients_vec(vec![(0, scalar)]);
+                // Add scalar as constant term - terms are (coeff, term)
+                let const_term = MultiSparseTerm::new(vec![]);
+                let p_scalar = SparseMultivariatePolynomial {
+                    num_vars: p.num_vars,
+                    terms: vec![(scalar, const_term)],
+                };
                 PolyVariant::SparseMultivariate(p + &p_scalar)
             },
             PolyVariant::SparseUni(p) => {
@@ -286,14 +421,15 @@ impl<F: Field> PolyVariant<F> {
                 PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(neg_coeffs))
             }
             PolyVariant::DenseMle(mle) => {
-                let neg_evals = mle.par_iter().map(|&eval| -eval).collect();
+                let neg_evals = mle.evaluations.par_iter().map(|&eval| -eval).collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), neg_evals))
             }
-            PolyVariant::SparseMle(mle) => {
-                // Convert to dense, negate
-                let dense_evals: Vec<F> = mle.to_evaluations();
-                let neg_evals = dense_evals.par_iter().map(|&eval| -eval).collect();
-                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars, neg_evals))
+            PolyVariant::SparseMultivariate(p) => {
+                let neg_terms: Vec<_> = p.terms.iter().map(|(coeff, term)| (-*coeff, term.clone())).collect();
+                PolyVariant::SparseMultivariate(SparseMultivariatePolynomial {
+                    num_vars: p.num_vars,
+                    terms: neg_terms,
+                })
             }
         }
     }
@@ -309,24 +445,8 @@ impl<F: Field> PolyVariant<F> {
 
     /// Subtract polynomial from scalar
     pub fn scalar_sub_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
-        match poly {
-            PolyVariant::DenseUni(p) => {
-                let dense = DensePolynomial::from_coefficients_vec(vec![scalar]);
-                Ok(PolyVariant::DenseUni(dense.poly_sub(p)?))
-            },
-            PolyVariant::DenseMle(mle) => {
-                let sub_evals = mle.iter().map(|&eval| scalar - eval).collect();
-                Ok(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), sub_evals)))
-            },
-            PolyVariant::SparseUni(p) => {
-                let sparse = SparsePolynomial::from_coefficients_vec(vec![(scalar)]);
-                Ok(PolyVariant::SparseUni(sparse.poly_sub(p)?))
-            },
-            PolyVariant::SparseMultivariate(p) => {
-                let sparse_scalar = SparseMultivariatePolynomial::from_coefficients_vec(vec![(0, scalar)]);
-                Ok(PolyVariant::SparseMultivariate(sparse_scalar.poly_sub(p)?))
-            }
-        }
+        let scalar_poly = PolyVariant::from_scalar(scalar);
+        scalar_poly.poly_sub(poly)
     }
 
 
@@ -356,13 +476,26 @@ impl<F: Field> PolyVariant<F> {
                 Ok(PolyVariant::DenseUni(dense1.naive_mul(p2)))
             }
 
-            // MLE * _
-            (a@PolyVariant::DenseMle(_), b)
-            | (a@PolyVariant::SparseMle(_), b) =>
+            // MLE * _ - not directly supported, should use VirtualPolynomial
+            (a@PolyVariant::DenseMle(_), b) =>
                 Err(PolyError::MleMultiplication { v1: a.clone(), v2: b.clone() }),
-            (b, a@PolyVariant::DenseMle(_))
-            | (b, a@PolyVariant::SparseMle(_))  =>
+            (b, a@PolyVariant::DenseMle(_)) =>
                 Err(PolyError::MleMultiplication { v1: a.clone(), v2: b.clone() }),
+
+            // Sparse multivariate * Sparse multivariate - not directly supported
+            (PolyVariant::SparseMultivariate(_), PolyVariant::SparseMultivariate(_)) => {
+                Err(PolyError::UnsupportedOperation {
+                    op: BinOp::Mul,
+                    left: self.clone(),
+                    right: other.clone()
+                })
+            }
+
+            _ => Err(PolyError::UnsupportedOperation {
+                op: BinOp::Mul,
+                left: self.clone(),
+                right: other.clone()
+            }),
         }
     }
 
@@ -378,11 +511,12 @@ impl<F: Field> PolyVariant<F> {
                 let mul_evals = mle.iter().map(|&eval| eval * scalar).collect();
                 PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), mul_evals))
             },
-            PolyVariant::SparseMle(mle) => {
-                // Convert to dense, multiply
-                let dense_evals: Vec<F> = mle.to_evaluations();
-                let mul_evals = dense_evals.iter().map(|&eval| eval * scalar).collect();
-                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars, mul_evals))
+            PolyVariant::SparseMultivariate(p) => {
+                let scaled_terms: Vec<_> = p.terms.iter().map(|(c, t)| ((*c) * scalar, t.clone())).collect();
+                PolyVariant::SparseMultivariate(SparseMultivariatePolynomial {
+                    num_vars: p.num_vars,
+                    terms: scaled_terms,
+                })
             }
         }
     }
@@ -408,9 +542,13 @@ impl<F: Field> PolyVariant<F> {
 
             // MLE division not supported
             (a@PolyVariant::DenseMle(_), b) |
-            (a@PolyVariant::SparseMle(_), b) |
-            (a, b@PolyVariant::DenseMle(_)) |
-            (a, b@PolyVariant::SparseMle(_)) => {
+            (a, b@PolyVariant::DenseMle(_)) => {
+                Err(PolyError::DivisionNotApplicable { v1: a.clone(), v2: b.clone() })
+            }
+
+            // Sparse multivariate division not supported
+            (a@PolyVariant::SparseMultivariate(_), b) |
+            (a, b@PolyVariant::SparseMultivariate(_)) => {
                 Err(PolyError::DivisionNotApplicable { v1: a.clone(), v2: b.clone() })
             }
 
@@ -441,11 +579,13 @@ impl<F: Field> PolyVariant<F> {
                 let div_evals = mle.iter().map(|&eval| eval * inv_scalar).collect();
                 Ok(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars(), div_evals)))
             }
-            PolyVariant::SparseMle(mle) => {
+            PolyVariant::SparseMultivariate(p) => {
                 let inv_scalar = scalar.inverse().ok_or(PolyError::DivisionByZero { v: self.clone() })?;
-                let dense_evals: Vec<F> = mle.to_evaluations();
-                let div_evals = dense_evals.iter().map(|&eval| eval * inv_scalar).collect();
-                Ok(PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(mle.num_vars, div_evals)))
+                let scaled_terms: Vec<_> = p.terms.iter().map(|(c, t)| ((*c) * inv_scalar, t.clone())).collect();
+                Ok(PolyVariant::SparseMultivariate(SparseMultivariatePolynomial {
+                    num_vars: p.num_vars,
+                    terms: scaled_terms,
+                }))
             }
         }
     }
@@ -471,9 +611,9 @@ impl<F: Field> PolyVariant<F> {
 
             // MLE modulo not supported
             (PolyVariant::DenseMle(_), _) |
-            (PolyVariant::SparseMle(_), _) |
             (_, PolyVariant::DenseMle(_)) |
-            (_, PolyVariant::SparseMle(_)) => {
+            (PolyVariant::SparseMultivariate(_), _) |
+            (_, PolyVariant::SparseMultivariate(_)) => {
                 Err(PolyError::ModuloNotApplicable)
             }
 
@@ -491,28 +631,12 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::DenseMle(mle) => {
                 if point.len() != mle.num_vars() {
                     return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
                         expected: mle.num_vars(),
                         actual: point.len()
                     });
                 }
                 Ok(mle.evaluate(&point.to_vec()))
-            }
-            PolyVariant::SparseMle(mle) => {
-                if point.len() != mle.num_vars {
-                    return Err(PolyError::DimensionMismatch {
-                        expected: mle.num_vars,
-                        actual: point.len()
-                    });
-                }
-                // Manual evaluation for sparse MLE
-                let idx = point.iter().enumerate()
-                    .fold(0usize, |acc, (i, &val)| {
-                        if !val.is_zero() && !val.is_one() {
-                            panic!("MLE evaluation point must be boolean (0 or 1)");
-                        }
-                        acc | (if val.is_one() { 1 << i } else { 0 })
-                    });
-                Ok(mle.evaluations.get(&idx).cloned().unwrap_or_else(F::zero))
             }
             _ => Err(PolyError::NotMlePolynomial)
         }
@@ -557,15 +681,11 @@ impl<F: Field> PolyVariant<F> {
                     Ok(Self::from_scalar(val))
                 } else {
                     Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
                         expected: mle.num_vars(),
                         actual: points.len()
                     })
                 }
-            }
-            PolyVariant::SparseMle(_) => {
-                // Convert to dense for evaluation
-                let dense = self.to_dense();
-                dense.evaluate_or_fix_mle(points)
             }
             _ => Err(PolyError::RequiresMle)
         }
@@ -588,9 +708,9 @@ impl<F: Field> PolyVariant<F> {
                 2u8.serialize_compressed(&mut writer)?;
                 mle.serialize_compressed(&mut writer)
             }
-            PolyVariant::SparseMle(mle) => {
+            PolyVariant::SparseMultivariate(p) => {
                 3u8.serialize_compressed(&mut writer)?;
-                mle.serialize_compressed(&mut writer)
+                p.serialize_compressed(&mut writer)
             }
         }
     }
@@ -602,8 +722,8 @@ impl<F: Field> PartialEq for PolyVariant<F> {
             (PolyVariant::DenseUni(a), PolyVariant::DenseUni(b)) => a == b,
             (PolyVariant::SparseUni(a), PolyVariant::SparseUni(b)) => a == b,
             (PolyVariant::DenseMle(a), PolyVariant::DenseMle(b)) => a == b,
-            (PolyVariant::SparseMle(a), PolyVariant::SparseMle(b)) => {
-                a.num_vars == b.num_vars && a.evaluations == b.evaluations
+            (PolyVariant::SparseMultivariate(a), PolyVariant::SparseMultivariate(b)) => {
+                a.num_vars == b.num_vars && a == b
             },
             _ => false,
         }
@@ -647,11 +767,8 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                 }
             }
 
-            // Both MLE
-            (PolyVariant::DenseMle(_), PolyVariant::DenseMle(_)) |
-            (PolyVariant::SparseMle(_), PolyVariant::SparseMle(_)) |
-            (PolyVariant::DenseMle(_), PolyVariant::SparseMle(_)) |
-            (PolyVariant::SparseMle(_), PolyVariant::DenseMle(_)) => {
+            // Both MLE or Multivariate
+            (PolyVariant::DenseMle(_), PolyVariant::DenseMle(_)) => {
                 // Convert both to dense for comparison
                 let self_dense = self.to_dense();
                 let other_dense = other.to_dense();
@@ -671,13 +788,15 @@ impl<F: PrimeField> Ord for PolyVariant<F> {
                 }
             }
 
-            // Uni < Mle
+            // Uni < Mle < Sparse Multivariate
             (PolyVariant::DenseUni(_), PolyVariant::DenseMle(_)) |
-            (PolyVariant::DenseUni(_), PolyVariant::SparseMle(_)) |
             (PolyVariant::SparseUni(_), PolyVariant::DenseMle(_)) |
-            (PolyVariant::SparseUni(_), PolyVariant::SparseMle(_)) => Ordering::Less,
+            (PolyVariant::DenseUni(_), PolyVariant::SparseMultivariate(_)) |
+            (PolyVariant::SparseUni(_), PolyVariant::SparseMultivariate(_)) => Ordering::Less,
 
-            // Mle > Uni
+            (PolyVariant::DenseMle(_), PolyVariant::SparseMultivariate(_)) => Ordering::Less,
+
+            // Mle > Uni, Sparse Multivariate > all
             _ => Ordering::Greater
         }
     }
@@ -693,7 +812,7 @@ impl<F: Field> fmt::Display for PolyVariant<F> {
                 write!(f, "SparseUni({:?})", dense.coeffs)
             }
             PolyVariant::DenseMle(mle) => write!(f, "Mle({:?})", mle.evaluations),
-            PolyVariant::SparseMle(mle) => write!(f, "SparseMle({:?})", mle.evaluations),
+            PolyVariant::SparseMultivariate(p) => write!(f, "SparseMultivariate(nvars={}, nterms={})", p.num_vars, p.terms.len()),
         }
     }
 }

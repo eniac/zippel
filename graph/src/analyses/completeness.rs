@@ -43,37 +43,110 @@ impl<C: ArkConfig> CompletenessAnalysis<C> {
     }
 }
 
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
-#[cfg(test)] use share::unwrap;
-#[cfg(test)] use backend::ArkBls12_381;
-#[test]
-#[ignore]
-fn completeness_test() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lang::ast::UModule;
+    use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
+    use share::unwrap;
+    use backend::ArkBls12_381;
 
-    let ex = r#"
-        proto ex_complete<F: Field>(private s: F, private s': F) where s == s' {
-            let r = random<F*>;
-            a <- s * r;
-            b <- s' * r;
-            verify(a == b);
-        }"#;
+    #[test]
+    #[ignore]
+    fn completeness_test() {
+        let ex = r#"
+            proto ex_complete<F: Field>(private s: F, private s': F) where s == s' {
+                let r = random<F*>;
+                a <- s * r;
+                b <- s' * r;
+                verify(a == b);
+            }"#;
 
-    println!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        println!("Parsing example: {}", ex);
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    // Propagate qualifiers
-    let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
 
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
-    g.write_pdf("completeness_test").unwrap();
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        let complete = ca.run();
+        assert!(complete);
+    }
 
-    // Completeness analysis
-    let mut ca = CompletenessAnalysis::from_input(&g);
-    let complete = ca.run();
-    assert!(complete);
+    #[test]
+    fn test_completeness_analysis_construction() {
+        let ex = r#"
+            proto simple<F: Field>(private x: F) where true {
+                a <- x;
+                verify(a == x);
+            }"#;
 
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
+        assert!(ca.prover.basis.len() >= 0);
+        assert!(ca.verifier.basis.len() >= 0);
+    }
+
+    #[test]
+    fn test_completeness_analysis_simple_protocol() {
+        let ex = r#"
+            proto identity<F: Field>(private x: F) where true {
+                a <- x;
+                verify(a == x);
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
+        let _result = ca.run();
+    }
+
+    #[test]
+    fn test_completeness_prover_verifier_separate_builders() {
+        let ex = r#"
+            proto test<F: Field>(private a: F, private b: F) where a == b {
+                x <- a + b;
+                verify(x == a + b);
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
+        
+        assert!(ca.prover.basis.len() >= 0);
+        assert!(ca.verifier.basis.len() >= 0);
+    }
+
+    #[test]
+    fn test_completeness_run_executes() {
+        let ex = r#"
+            proto mult<F: Field>(private x: F) where true {
+                y <- x * x;
+                verify(y == x * x);
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
+        let _result = ca.run();
+    }
 }

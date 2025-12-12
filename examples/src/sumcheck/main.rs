@@ -2,6 +2,7 @@ use zippel::*;
 use std::path::PathBuf;
 use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
 use backend::poly_variant::PolyVariant;
+use backend::VirtualPolynomial;
 use ark_poly::DenseMultilinearExtension;
 use lang::id::Vid;
 use share::Ctx;
@@ -53,7 +54,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let round_claims = vec![g1_0, g1_1];
 
     let g_poly = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, g_evals.clone());
-    let g_poly_value = Value::Poly(PolyVariant::DenseMle(g_poly));
+    let g_poly_value = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(g_poly)));
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
