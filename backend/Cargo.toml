@@ -20,7 +20,7 @@ ark-vesta = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly =  { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5.0"
-spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", features = ["arkworks-algebra"] }
+spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
 rayon = "1.10.0"
 rand = { version = "0.8", features = ["std"] }
 num-bigint = "0.4.6"

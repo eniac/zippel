@@ -1,5 +1,5 @@
 use petgraph::graph::NodeIndex;
-use spongefish::{ProverState, DuplexSpongeInterface, BytesToUnitSerialize};
+use spongefish::{ProverState, DuplexSpongeInterface};
 use std::sync::{Arc, Mutex};
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::{Dag, Node, Op, GOp};
@@ -207,7 +207,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
     }
 
-    pub fn run_graph<H: DuplexSpongeInterface>(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>, prover_state: &mut ProverState<H>) -> Vec<Value<C>> {
+    pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>, prover_state: &mut ProverState<H>) -> Vec<Value<C>> {
         // add in context for the challenge
 
         let mut final_return: Vec<Value<C>> = Vec::new();
@@ -266,7 +266,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Inp(_c, prefs) => {
                             for pref in prefs.clone() {
                                 if pref.qualifier.is_public() && !pref.from_transcript {
-                                    prover_state.add_bytes(&value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap()).unwrap();
+                                    prover_state.public_message(value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap().as_slice());
                                 }
                             }
                             input_node = true;
@@ -313,7 +313,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         Node::Transcr(_, annotation) => {
                             active_threads -= annotation.thread_num;
                             let serialized_return_val = value_to_bytes(&annotation.return_value.lock().unwrap().clone().unwrap()).unwrap();
-                            prover_state.add_bytes(&serialized_return_val).unwrap();
+                            prover_state.public_message(serialized_return_val.as_slice());
                         },
                         Node::Inp(_, _) | Node::Rel(_, _) => {
 

@@ -14,7 +14,6 @@ use graph::{
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
 use log::{error, debug};
-use spongefish::{ProverState, DefaultHash};
 use graph::domain_seperator::ZippelDomainSeparator;
 
 use graph::scheduler::{TDag, Scheduler, AsymptoticCost};
@@ -183,11 +182,14 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let public_args: Vec<Vid> = prover_args.clone().iter().filter(|arg| arg.is_public()).map(|arg| arg.var().unwrap()).collect();
         let public_inputs = inputs.clone().into_iter().filter(|(vid, _)| public_args.contains(&vid)).collect::<Ctx<Vid, Value<C>>>();
         
+        let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
+            &self.args.file_path.display().to_string(), 
+            &prover.clone(),
+        );
+        
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
-
-        let prover_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.args.file_path.display().to_string(), &prover.clone());
-        let mut prover_state = ProverState::new(&prover_seperator.0, rand::rngs::OsRng);
+        let mut prover_state = prover_seperator.std_prover();
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(prover_scheduled)), Arc::new(inputs.clone()), &mut prover_state);
         result
     }
@@ -217,8 +219,15 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let mut inputs = inputs.clone();
         inputs.append(&pg_additional_args);
         
-        let verifier_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(&self.args.file_path.display().to_string(), &verifier.clone());
-        let mut verifier_state = ProverState::new(&verifier_seperator.0, rand::rngs::OsRng);
+        // Verifier uses the same public inputs (instance) as the prover
+        // The instance should only contain the public statement, not the proof
+        let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
+            &self.args.file_path.display().to_string(), 
+            &verifier.clone(),
+        );
+        // For now, use prover state since we don't have narg_string yet
+        // TODO: Fix this to use proper verifier state when narg_string is available
+        let mut verifier_state = verifier_seperator.std_prover();
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
         result
     }

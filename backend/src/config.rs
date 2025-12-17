@@ -1,6 +1,6 @@
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::{ProverState, UnitToBytes, DuplexSpongeInterface};
+use spongefish::{ProverState, DuplexSpongeInterface};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -190,9 +190,10 @@ pub trait ArkScalarOps<F: PrimeField> {
         F::rand(rng)
     }
 
-    fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> F {
-        let challenge_bytes: [u8; 32] = state.challenge_bytes().unwrap();
-        F::from_le_bytes_mod_order(&challenge_bytes)
+    fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> F {
+        let byte_size = (F::MODULUS_BIT_SIZE as usize + 7) / 8;
+        let challenge_bytes: [u8; 32] = state.verifier_message();
+        F::from_le_bytes_mod_order(&challenge_bytes[..byte_size.min(32)])
     }
 
     #[inline]
