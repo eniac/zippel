@@ -16,6 +16,9 @@ fn ipa_recursive<F: Field>(
         let final_a_scalar = a_vec_k_private[0];
         let final_b_scalar = b_vec_k_private[0];
 
+        ga <- g_vec_k[0] * final_a_scalar;
+        hb <- h_vec_k[0] * final_b_scalar;
+
         // For a fully non-interactive system where this fn contributes to a larger transcript:
         // af_val_base_case <- final_a_scalar;
         // bf_val_base_case <- final_b_scalar;
@@ -23,18 +26,19 @@ fn ipa_recursive<F: Field>(
         // it performs the check internally.
 
         // Verifier computes c = a*b (the inner product for this base case)
-        let ip_val_at_base = final_a_scalar * final_b_scalar;
+        ip_val_at_base <- final_a_scalar * final_b_scalar;
+
 
         // Verifier checks if P_commitment_k == g_vec_k[0]*final_a_scalar + h_vec_k[0]*final_b_scalar + u_base_for_ipa*ip_val_at_base
         // (Translated from multiplicative g^a h^b u^c)
-        let expected_P_at_base = g_vec_k[0] * final_a_scalar
-                               + h_vec_k[0] * final_b_scalar
+        let expected_P_at_base = ga + hb
                                + u_base_for_ipa * ip_val_at_base;
+        
 
         P_commitment_k == expected_P_at_base
 }
 
-fn ipa_recursive<F: Field, N_current: 1..7>(
+fn ipa_recursive<F: Field, N_current: 1..2>(
     public g_vec_k: [F; 2^N_current],          // Current g bases for this round
     public h_vec_k: [F; 2^N_current],          // Current h bases for this round
     public u_base_for_ipa: F,                  // The 'u' to use for this IPA instance's L,R, and base check
@@ -67,7 +71,7 @@ fn ipa_recursive<F: Field, N_current: 1..7>(
         R_transcript <- (g_v_lo . a_p_hi) + (h_v_hi . b_p_lo) + (u_base_for_ipa * cR_val);
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
-        x_challenge <- challenge<F>;
+        x_challenge <- challenge<F*>;
 
         // Both Prover and Verifier compute parameters for the next recursive call:
         // g' = g_lo^(x^-1) * g_hi^x  (multiplicative)
@@ -99,7 +103,7 @@ fn ipa_recursive<F: Field, N_current: 1..7>(
 }
 
 
-proto ipa_wrapper<F: Field, N_val_const: 4>(
+proto ipa_wrapper<F: Field, N_val_const: 2>(
     // --- Public Inputs ---
     public g_vec: [F; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
     public h_vec: [F; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
@@ -117,7 +121,7 @@ proto ipa_wrapper<F: Field, N_val_const: 4>(
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
     //    The challenge 'x_chal' is a scalar of type F.
-    x_chal <- challenge<F>;
+    x_chal <- challenge<F*>;
 
     // 2. "Let P' = P * u^(x*c)"
     //    Translating to additive notation: P_prime = P_initial_commitment + u_aux_base * (x_chal * ip_val_claimed)

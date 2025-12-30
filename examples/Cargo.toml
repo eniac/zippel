@@ -16,6 +16,10 @@ name = "ipa"
 path = "src/ipa/main.rs"
 
 [[bin]]
+name = "ipa_field"
+path = "src/ipa_field/main.rs"
+
+[[bin]]
 name = "schnorr"
 path = "src/schnorr/main.rs"
 
