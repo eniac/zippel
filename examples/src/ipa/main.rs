@@ -20,8 +20,8 @@ fn main() {
     println!("Verifier result: {:?}", verifier_result);
 
 
-    handler.analyze_completeness();
-    handler.analyze_knowledge();
+    // handler.analyze_completeness();
+    // handler.analyze_knowledge();
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

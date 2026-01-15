@@ -1,6 +1,6 @@
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::{ProverState, UnitToBytes, DuplexSpongeInterface};
+use spongefish::{ProverState, DuplexSpongeInterface};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -17,7 +17,6 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
-// use crate::to_bytes;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig:
@@ -29,6 +28,7 @@ pub trait ArkConfig:
     type G1Affine: AffineRepr<ScalarField = Self::F, Group = Self::G1>;
     type G2Affine: AffineRepr<ScalarField = Self::F, Group = Self::G2>;
     type P: Pairing<ScalarField = Self::F, G1 = Self::G1, G2 = Self::G2>;
+    type GT = PairingOutput<Self::P>;
 
     /// Operations on arkwork types
     type FOps: ArkScalarOps<Self::F>;
@@ -190,9 +190,10 @@ pub trait ArkScalarOps<F: PrimeField> {
         F::rand(rng)
     }
 
-    fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> F {
-        let challenge_bytes: [u8; 32] = state.challenge_bytes().unwrap();
-        F::from_le_bytes_mod_order(&challenge_bytes)
+    fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> F {
+        let byte_size = (F::MODULUS_BIT_SIZE as usize + 7) / 8;
+        let challenge_bytes: [u8; 32] = state.verifier_message();
+        F::from_le_bytes_mod_order(&challenge_bytes[..byte_size.min(32)])
     }
 
     #[inline]

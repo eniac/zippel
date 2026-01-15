@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![feature(associated_type_defaults)]
 pub mod config;
 pub mod poly_variant;
 pub mod virtual_polynomial;

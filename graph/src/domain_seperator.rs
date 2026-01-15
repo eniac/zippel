@@ -1,125 +1,77 @@
-use ark_serialize::CanonicalSerialize;
-use backend::{ABase, ATyp, ArkConfig};
+use backend::ArkConfig;
 use spongefish::{
-    ByteDomainSeparator, DomainSeparator, DuplexSpongeInterface,
+    domain_separator, session_id_from_str, Encoding,
 };
-use crate::Dag;
+use crate::{Dag, PRef};
+use std::marker::PhantomData;
 
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
 #[cfg(test)] use crate::UDags;
-#[cfg(test)] use spongefish::DefaultHash;
 
-/// Extend the domain separator with the Schnorr protocol.
-pub struct ZippelDomainSeparator<H: DuplexSpongeInterface> (
-    pub DomainSeparator<H>
-);
+/// Wrapper to make Vec<u8> implement Encoding for use as domain separator instance
+struct InstanceBytes(Vec<u8>);
 
-impl<H> ZippelDomainSeparator<H>
-where
-    H: DuplexSpongeInterface
-{
-    pub fn new_zippel_domain_seperator<C: ArkConfig, A>(domsep: &str, dag: &Dag<C, A>) -> Self {
-        Self(DomainSeparator::<H>::new(domsep)).from_dag(dag)
+impl Encoding<[u8]> for InstanceBytes {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.as_slice()
+    }
+}
+
+pub struct ZippelDomainSeparator<C: ArkConfig> {
+    session: String,
+    instance_bytes: Vec<u8>,
+    _phantom: PhantomData<C>,
+}
+
+impl<C: ArkConfig> ZippelDomainSeparator<C> {
+    pub fn new<A>(domsep: &str, _dag: &Dag<C, A>) -> Self {
+        Self { 
+            session: domsep.to_string(),
+            instance_bytes: Vec::new(), 
+            _phantom: PhantomData,
+        }
     }
 
-    pub fn from_input_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>) -> Self {
+    pub fn new_zippel_domain_seperator<A>(
+        session: &str, 
+        dag: &Dag<C, A>,
+    ) -> Self {
+        let mut public_args: Vec<PRef> = dag.args().iter()
+            .filter(|arg| arg.is_public() && !arg.from_transcript)
+            .cloned()
+            .collect();
         
-        match &node {
-            crate::Node::Inp(_c, prefs) => {
-                for pref in prefs.clone() {
-                    if pref.qualifier.is_public() {
-                        self = Self::from_atyp::<C>(self,pref.typ);
-                    }
-                }
-            }
-            _ => {
-                panic!("Not an input node")
-            }
-        }
-        self
-    }
-
-    pub fn from_challenge_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, label: usize) -> Self {
-        match &node {
-            crate::Node::Transcr(c, _) => match c {
-                crate::Op::Challenge(_typ, _) => {
-                    self = Self(self.0.squeeze(
-                        C::F::default().compressed_size(),
-                        &format!("chall{}", label),
-                    ));
-
-                },
-                _ => {}
-            },
-            _ => {
-
-            }
-        }
-        self
-    }
-
-    pub fn from_transcript_node<C: ArkConfig, A>(mut self, node: &crate::Node<C, A>, _label: usize) -> Self {
-        match &node {
-            crate::Node::Transcr(c, _) => {
-                let typ: ATyp = c.typ();
-                self = Self::from_atyp::<C>(self,typ);
-            },
-            _ => {
-                panic!("Not a transcript node")
-            }
-        }
-        self
-    }
-
-    pub fn from_atyp<C: ArkConfig>(mut self, typ: ATyp) -> Self {
-        match typ {
-            ATyp::Base(base) => match base {
-                ABase::G1 => {
-                    self = Self(self.0.add_bytes(C::G1::default().compressed_size(), "G1"));
-                }
-                ABase::G2 => {
-                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "G2"));
-                }
-                ABase::GT => {
-                    self = Self(self.0.add_bytes(C::G2::default().compressed_size(), "GT"));
-                }
-                ABase::Scalar => {
-                    self = Self(self.0.add_bytes(C::F::default().compressed_size(), "F"));
-                }
-                _ => {
-                    panic!("Cannot add this base element to transcript");
-                }
-            },
-            ATyp::Vec(another_typ, size) => {
-                for _ in 0..size {
-                    self =
-                    Self::from_atyp::<C>(self, *another_typ.clone());
-                }
-            }
-            _ => {
-                panic!("Cannot add this type to transcript");
-            }
-        }
-        self
-    }
-
-    pub fn from_dag<C: ArkConfig, A>(mut self, dag: &Dag<C, A>) -> Self {
-        let input_node_index = dag.input_node();
-        let node = &dag.0[input_node_index];
-        self = self.from_input_node(&node);
-
-        let transcript_nodes = dag.transcript_nodes();
-           
-        for transcript_node_index in transcript_nodes {
-            self = self.from_challenge_node(&dag.0[transcript_node_index], transcript_node_index.index());
-            self = self
-            .from_transcript_node(&dag.0[transcript_node_index], transcript_node_index.index());
-        }       
-
+        public_args.sort_by_key(|arg| {
+            arg.var().map(|v| v.0.clone()).unwrap_or_default()
+        });
         
-        Self(self.0.clone())
+        let mut instance_buf = Vec::new();
+        for arg in public_args {
+            if let Some(vid) = arg.var() {
+                let vid_bytes = vid.0.as_bytes();
+                instance_buf.extend_from_slice(vid_bytes);
+                
+                let type_size = arg.typ.size();
+                instance_buf.extend_from_slice(&(type_size as u64).to_le_bytes());
+            }
+        }
+        
+        Self { 
+            session: session.to_string(),
+            instance_bytes: instance_buf,
+            _phantom: PhantomData,
+        }
+    }
+    
+    pub fn std_prover(&self) -> spongefish::ProverState {
+        let session_bytes = session_id_from_str(&self.session);
+        let instance = InstanceBytes(self.instance_bytes.clone());
+        domain_separator!("zippel")
+            .session(session_bytes)
+            .instance(&instance)
+            .std_prover()
     }
 }
 
@@ -136,9 +88,10 @@ fn test_domain_separator() {
 "#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let domain_seperator = ZippelDomainSeparator::<DefaultHash>::new_zippel_domain_seperator(
+    let domain_seperator = ZippelDomainSeparator::new(
         "test_domain_separator",
         &gs[0],
     );
-    println!("Domain Seperator: {:?}", domain_seperator.0);
+    let _prover = domain_seperator.std_prover();
+    println!("Domain Seperator created successfully");
 }

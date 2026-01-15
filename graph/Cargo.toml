@@ -22,8 +22,9 @@ rand = { version = "0.8", features = ["std"] }
 good_lp = { version = "1.13.0", features = [
     "lp-solvers",
 ], default-features = false }
-spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", features = [
-    "arkworks-algebra",
+spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = [
+    "ark-ff",
+    "ark-ec",
 ] }
 
 grb = { version = "3.0.1", features = ["gurobi12"], default-features = false }

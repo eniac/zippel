@@ -16,21 +16,22 @@ pub struct PRef {
     pub index: usize,
     pub typ: ATyp,
     pub qualifier: Qualifier,
-    pub distribution: Distribution
+    pub distribution: Distribution,
+    pub from_transcript: bool,
 }
 
 impl PRef {
     pub fn new(reference: Ref, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference, index, typ, qualifier, distribution }
+        PRef { reference, index, typ, qualifier, distribution, from_transcript: false }
     }
     pub fn from_node(node: NodeIndex, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference: Ref::Node(node), index, typ, qualifier, distribution }
+        PRef { reference: Ref::Node(node), index, typ, qualifier, distribution, from_transcript: false }
     }
     pub fn from_var(v: Vid, node: NodeIndex, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference: Ref::Var(v, node), index, typ, qualifier, distribution }
+        PRef { reference: Ref::Var(v, node), index, typ, qualifier, distribution, from_transcript: false }
     }
     pub fn from_ref(reference: Ref, typ: ATyp, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference, index: 0, typ, qualifier, distribution }
+        PRef { reference, index: 0, typ, qualifier, distribution, from_transcript: false }
     }
     pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
         let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
@@ -51,6 +52,20 @@ impl PRef {
     }
     pub fn is_uniform_nz(&self) -> bool {
         self.distribution == Distribution::UniformNonZero
+    }
+
+    pub fn is_transcript_source(&self) -> bool {
+        self.from_transcript
+    }
+
+    pub fn mark_transcript_source(mut self) -> Self {
+        self.from_transcript = true;
+        self
+    }
+
+    pub fn with_transcript_source(mut self, flag: bool) -> Self {
+        self.from_transcript = flag;
+        self
     }
  
     pub fn node(&self) -> NodeIndex {
@@ -80,7 +95,14 @@ impl PRef {
     }
 
     pub fn with_index(&self, index: usize) -> Self {
-        PRef { reference: self.reference.clone(), index: self.index + index, typ: self.typ.clone(), qualifier: self.qualifier.clone(), distribution: self.distribution.clone() }
+        PRef {
+            reference: self.reference.clone(),
+            index: self.index + index,
+            typ: self.typ.clone(),
+            qualifier: self.qualifier.clone(),
+            distribution: self.distribution.clone(),
+            from_transcript: self.from_transcript,
+        }
     }
 
     pub fn verbose(&self) -> String {

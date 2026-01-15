@@ -14,7 +14,7 @@ use crate::poly_variant::PolyVariant;
 use crate::virtual_polynomial::VirtualPolynomial;
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::{BytesToUnitSerialize, ProverState, DuplexSpongeInterface};
+use spongefish::{ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
@@ -1614,33 +1614,29 @@ impl<C: ArkConfig> Value<C> {
         Value::Bool(Value::equ(self, other))
     }
 
-    pub fn challenge<H: DuplexSpongeInterface>(state: &mut ProverState<H>) -> Self {
+    pub fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> Self {
         Value::Scalar(C::FOps::challenge(state))
     }
 
-    pub fn hash<H: DuplexSpongeInterface>(&self, state: &mut ProverState<H>) {
+    pub fn hash<H: DuplexSpongeInterface<U = u8>>(&self, state: &mut ProverState<H>) {
         match self {
-            Value::Bool(b) => state.add_bytes(&to_bytes!(b).unwrap()).unwrap(),
-            Value::VecBool(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::Index(i) => state.add_bytes(&to_bytes!(i).unwrap()).unwrap(),
-            Value::Scalar(f) => state.add_bytes(&to_bytes!(f).unwrap()).unwrap(),
-            Value::VecIndex(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::VecScalar(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::G1(g1) => state.add_bytes(&to_bytes!(g1).unwrap()).unwrap(),
-            Value::G2(g2) => state.add_bytes(&to_bytes!(g2).unwrap()).unwrap(),
-            Value::GT(pairing_output) => state
-                .add_bytes(&to_bytes!(pairing_output).unwrap())
-                .unwrap(),
-            Value::VecG1(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::VecG2(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::VecGT(pairing_outputs) => state
-                .add_bytes(&to_bytes!(pairing_outputs).unwrap())
-                .unwrap(),
-            Value::G1Affine(g1) => state.add_bytes(&to_bytes!(g1).unwrap()).unwrap(),
-            Value::G2Affine(g2) => state.add_bytes(&to_bytes!(g2).unwrap()).unwrap(),
-            Value::VecG1Affine(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::VecG2Affine(items) => state.add_bytes(&to_bytes!(items).unwrap()).unwrap(),
-            Value::Vec(values) => values.iter().map(|v| v.hash(state)).collect(),
+            Value::Bool(b) => state.public_message(to_bytes!(b).unwrap().as_slice()),
+            Value::VecBool(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::Index(i) => state.public_message(to_bytes!(i).unwrap().as_slice()),
+            Value::Scalar(f) => state.public_message(to_bytes!(f).unwrap().as_slice()),
+            Value::VecIndex(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::VecScalar(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::G1(g1) => state.public_message(to_bytes!(g1).unwrap().as_slice()),
+            Value::G2(g2) => state.public_message(to_bytes!(g2).unwrap().as_slice()),
+            Value::GT(pairing_output) => state.public_message(to_bytes!(pairing_output).unwrap().as_slice()),
+            Value::VecG1(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::VecG2(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::VecGT(pairing_outputs) => state.public_message(to_bytes!(pairing_outputs).unwrap().as_slice()),
+            Value::G1Affine(g1) => state.public_message(to_bytes!(g1).unwrap().as_slice()),
+            Value::G2Affine(g2) => state.public_message(to_bytes!(g2).unwrap().as_slice()),
+            Value::VecG1Affine(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::VecG2Affine(items) => state.public_message(to_bytes!(items).unwrap().as_slice()),
+            Value::Vec(values) => values.iter().for_each(|v| v.hash(state)),
             _ => panic!("Cannot hash {}", self),
         }
     }

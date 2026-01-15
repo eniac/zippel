@@ -62,6 +62,8 @@ pub type DQDags<C> = Dags<C, (Qualifier, Distribution)>;
 pub enum GraphError {
     #[error("Variable not found {0}")]
     VarNotFound(Vid),
+    #[error("Node not found: {0}")]
+    NodeNotFound(usize),
     #[error("Relation not found in {0}")]
     RelationNotFound(Vid),
     #[error("Private node found in verifier: {0}: {1}")]
@@ -91,6 +93,9 @@ impl GraphError {
     }
     pub fn relation_not_found(vid: &Vid) -> Self {
         GraphError::RelationNotFound(vid.clone())
+    }
+    pub fn node_not_found(n: NodeIndex) -> Self {
+        GraphError::NodeNotFound(n.index())
     }
 }
 
@@ -259,11 +264,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .find(|edge| edge.weight().is_transcript())
     }
 
-    /// Get all transcript node from the graph
+    /// Get all transcript node from the graph (challenges and proof nodes)
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
         let transcript_nodes_list: Vec<NodeIndex> = self.0.node_indices()
             .filter(|n| self[*n].is_transcript())
             .collect();
+        
+        // Do a topological sort of the transcript nodes
         let mut ordered = Vec::new();
         if !transcript_nodes_list.is_empty() {
             let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
@@ -291,6 +298,22 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }  
         }
         ordered
+    }
+
+    /// Get all proof nodes from the graph
+    pub fn get_proof_nodes(&self) -> Vec<NodeIndex> {
+        self.transcript_nodes()
+            .into_iter()
+            .filter(|n| self[*n].is_proof())
+            .collect()
+    }
+
+    /// Get all challenge nodes from the graph
+    pub fn get_challenge_nodes(&self) -> Vec<NodeIndex> {
+        self.transcript_nodes()
+            .into_iter()
+            .filter(|n| self[*n].is_challenge())
+            .collect()
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
@@ -415,27 +438,26 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// and stopping at transcript nodes.
     pub fn get_verifier(&self) -> Result<Dag<C, A>, GraphError> where A: Clone {
         let mut verifier = Dag::new();
+        let proof_nodes = self.get_proof_nodes();
 
         // Rebuild the input node to take transcript arguments
         let mut args = self.args().into_iter().filter(|pr| pr.is_public()).collect::<Vec<_>>();
         let name = self.name();
 
         // Add the transcript nodes (public) to the arguments
-        for node in self.transcript_nodes() {
-            if let Some(transcript_var) = self.find_var(node) {
-                if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
-                    continue;
-                }
-                args.push(
-                    PRef::from_var(transcript_var,
-                        self.input_node(),
-                        self[node].clone().into_op().typ(),
-                        0,
-                        Qualifier::Public,
-                        Distribution::default()));
-            } else {
-                println!("No transcript var found for node: {}", node.index());
+        for node in &proof_nodes {
+            let transcript_var = self.find_var(*node).ok_or(GraphError::node_not_found(*node))?;
+            if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
+                continue;
             }
+            args.push(
+                PRef::from_var(transcript_var,
+                    self.input_node(),
+                    self[*node].clone().into_op().typ(),
+                    0,
+                    Qualifier::Public,
+                    Distribution::default())
+                    .mark_transcript_source());
         }
         // Associate old node indices with new node indices
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
@@ -443,9 +465,29 @@ impl<C: ArkConfig, A> Dag<C, A> {
         // Make new input node
         let n_input = verifier.add_node(Node::Inp(name, args));
         node_map_self.insert(self.input_node(), n_input);
-        // Map all transcript arguments to to the new input node
-        for n_transcr in self.transcript_nodes().into_iter() {
-            node_map_self.insert(n_transcr, n_input);
+        let mut non_challenge_transcripts: HashSet<NodeIndex> = HashSet::new();
+
+        // Add transcript nodes to verifier graph
+        for &n_transcr in &self.transcript_nodes() {
+            let node = &self[n_transcr];
+            if node.is_challenge() {
+                let new_node = verifier.add_node(node.clone());
+                node_map_self.insert(n_transcr, new_node);
+                continue;
+            }
+            non_challenge_transcripts.insert(n_transcr);
+            if let Some(transcript_var) = self.find_var(n_transcr) {
+                let typ = node.op().expect("Transcript node must have op").typ();
+                let mut new_node = node.clone();
+                if let Node::Transcr(op, _) = &mut new_node {
+                    *op = GOp::var(&transcript_var, n_input, typ);
+                }
+                let new_idx = verifier.add_node(new_node);
+                verifier.add_edge(n_input, new_idx, Dep::data());
+                node_map_self.insert(n_transcr, new_idx);
+            } else {
+                node_map_self.insert(n_transcr, n_input);
+            }
         }
 
         // Add the verifier nodes, start with the verifier assertion
@@ -492,6 +534,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
             if let Some(new_node) = node_map_self.get(&old_target_idx) {
                 if verifier[*new_node].is_input() {
+                    continue;
+                }
+                if non_challenge_transcripts.contains(&old_target_idx) && edge_ref.weight().is_data() {
                     continue;
                 }
             }
