@@ -170,6 +170,7 @@ impl ATyp {
             CTyp::Poly(_, _m, _n) => Some(ATyp::virtual_poly()),  // General poly -> Virtual
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
+            CTyp::Record(_) => None,  // Records not supported in backend yet
         }
     }
 }

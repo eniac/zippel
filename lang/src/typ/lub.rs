@@ -469,6 +469,41 @@ impl Lub for CTyp {
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
                 Ok(CTyp::vec(&CTyp::lub_equ(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, *n)),
+            // Record types: width and depth subtyping, permutation
+            (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
+                use std::collections::{BTreeMap, BTreeSet};
+                let mut result_fields = BTreeMap::new();
+                
+                // For each field in both records, compute the lub
+                // This handles width subtyping (fields in one but not the other are ignored)
+                // and depth subtyping (field types are unified)
+                let all_fields: BTreeSet<_> = fields_a.keys()
+                    .chain(fields_b.keys())
+                    .cloned()
+                    .collect();
+                
+                for field_name in all_fields {
+                    match (fields_a.get(&field_name), fields_b.get(&field_name)) {
+                        (Some(typ_a), Some(typ_b)) => {
+                            // Both records have this field - compute lub of field types (depth subtyping)
+                            let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                                .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
+                            result_fields.insert(field_name, lub_typ);
+                        },
+                        (Some(typ_a), None) => {
+                            // Only in a - include it (width subtyping: {a:T, b:U} > {a:T})
+                            result_fields.insert(field_name, typ_a.clone());
+                        },
+                        (None, Some(typ_b)) => {
+                            // Only in b - include it (width subtyping)
+                            result_fields.insert(field_name, typ_b.clone());
+                        },
+                        (None, None) => unreachable!()
+                    }
+                }
+                
+                Ok(CTyp::Record(result_fields))
+            },
             // Indices can act like finite fields
             (a, b) => {
                 let ta = a.to_scalar(ctx).ok_or(LubError::equ(&x, &y))?;

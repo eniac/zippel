@@ -1,0 +1,11 @@
+// Toy example demonstrating record types in Zippel
+
+proto toy_record<F: Field>
+    (public x: F, public y: F)
+    where true {
+    
+    let a = {| name: 1, balance: 100 |};
+    let name = a.name;
+    let balance = a.balance;
+    verify(name == 1 && balance == 100)
+}

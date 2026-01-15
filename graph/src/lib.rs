@@ -1353,6 +1353,113 @@ impl<C: ArkConfig> UDag<C> {
                 let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
                 
                 Ok(GOp::Value(poly_value))
+            },
+            CExp::Record(fields) => {
+                // For records, we add each field to the graph
+                // Since records aren't fully supported in ATyp/Value yet, we'll use a workaround:
+                // Store field operations and return a Vec operation containing all fields
+                // Fields are stored in sorted order by name for consistency
+                let mut field_ops = Vec::new();
+                
+                // Process fields in sorted order for consistency
+                let mut sorted_fields: Vec<_> = fields.iter().collect();
+                sorted_fields.sort_by_key(|(name, _)| *name);
+                
+                for (_field_name, field_exp) in sorted_fields {
+                    let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
+                    field_ops.push(field_op);
+                }
+                
+                // Return a Vec operation containing all fields in sorted order
+                Ok(GOp::Vec(field_ops))
+            },
+            CExp::Proj(box record_exp, field_name) => {
+                // For projection, we need to extract the field from the record
+                // Check if the record expression is a Record literal
+                match record_exp {
+                    CExp::Record(fields) => {
+                        // Direct field extraction from record literal
+                        let field_exp = fields.get(field_name.as_str())
+                            .ok_or_else(|| {
+                                // Convert fields map to types map for error message
+                                use std::collections::BTreeMap;
+                                let mut field_types = BTreeMap::new();
+                                for (name, exp) in &fields {
+                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), vctx) {
+                                        field_types.insert(name.clone(), typ);
+                                    }
+                                }
+                                GraphError::Type(TypeError::field_not_found(
+                                    kctx, vctx, &CExp::Record(fields.clone()), field_name.as_str(), &field_types
+                                ))
+                            })?;
+                        
+                        // Add the field expression to the graph
+                        self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)
+                    },
+                    CExp::Var(id) => {
+                        // For record variables, get the record operation from vars
+                        let id_clone = id.clone();
+                        let record_op = vars.get(&id_clone)
+                            .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, vctx, &CExp::Var(id_clone.clone()))))?;
+                        
+                        // Try to infer the record type to get field order
+                        let record_typ = CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), vctx)?;
+                        
+                        match record_typ {
+                            CTyp::Record(fields) => {
+                                // Verify the field exists
+                                let _field_typ = fields.get(field_name.as_str())
+                                    .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                        kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), &fields
+                                    )))?;
+                                
+                                // Get sorted field names to find the index
+                                let mut sorted_field_names: Vec<_> = fields.keys().collect();
+                                sorted_field_names.sort();
+                                
+                                // Find the index of the requested field
+                                let field_index = sorted_field_names.iter()
+                                    .position(|&name| name == field_name.as_str())
+                                    .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                        kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), &fields
+                                    )))?;
+                                
+                                // Extract the field using Ram operation
+                                // The record is stored as a Vec, so we index into it
+                                let index_op = GOp::Value(Value::Index(field_index));
+                                Ok(GOp::Ram(Box::new(record_op.clone()), Box::new(index_op)))
+                            },
+                            _ => Err(GraphError::Type(TypeError::not_a_record(
+                                kctx, vctx, &CExp::Var(id_clone), &record_typ
+                            )))
+                        }
+                    },
+                    _ => {
+                        // For other expressions, try to infer the record type
+                        let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                        
+                        match record_typ {
+                            CTyp::Record(fields) => {
+                                // Get the field type
+                                let _field_typ = fields.get(field_name.as_str())
+                                    .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                        kctx, vctx, &record_exp, field_name.as_str(), &fields
+                                    )))?;
+                                
+                                // For complex expressions, we'd need to evaluate them first
+                                // For now, return an error indicating this isn't fully supported
+                                Err(GraphError::Type(TypeError::next(
+                                    TypeError::exp(kctx, vctx, &exp),
+                                    TypeError::ark(kctx, vctx, &exp, &typ)
+                                )))
+                            },
+                            _ => Err(GraphError::Type(TypeError::not_a_record(
+                                kctx, vctx, &record_exp, &record_typ
+                            )))
+                        }
+                    }
+                }
             }
         }
     }
