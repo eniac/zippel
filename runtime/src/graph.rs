@@ -81,6 +81,14 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
                 return  Value::value_vec(value_vector);
             },
+            Op::Record(fields) => {
+                let mut record_values = std::collections::BTreeMap::new();
+                for (name, op) in fields {
+                    let field_value = self.handle_op(op, Arc::clone(&inputs));
+                    record_values.insert(name.clone(), field_value);
+                }
+                return Value::Record(record_values);
+            },
             Op::Ram(box v, box index_val) => {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let inputs_index_val_clone = Arc::clone(&inputs);

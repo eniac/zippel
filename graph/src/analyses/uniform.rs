@@ -47,6 +47,7 @@ impl UniformityPropagation {
             GOp::Random(_, _) => Set::new(),
             GOp::Challenge(_, _) => Set::new(),
             GOp::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
+            GOp::Record(fields) => fields.values().flat_map(|v| self.op_ancestors(v)).collect(),
             GOp::Pair(box a, box b, _) 
             | GOp::Bin(_, box a, box b, _) => {
                 let a_ancestors = self.op_ancestors(a);
@@ -129,6 +130,13 @@ impl UniformityPropagation {
                     distr = distr.add(&d);
                 }
                 Some(distr)
+            },
+            GOp::Record(fields) => {
+                if let Some(first_field) = fields.values().next() {
+                    self.from_op(first_field)
+                } else {
+                    Some(Distribution::Nonuniform)
+                }
             },
             GOp::Random(_, b) => 
                 Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),

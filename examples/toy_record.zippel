@@ -1,11 +1,12 @@
-// Toy example demonstrating record types in Zippel
-
-proto toy_record<F: Field>
-    (public x: F, public y: F)
+proto toy_record<F: Field, G: Group>
+    (public x: F, public y: F, public status_g1: G)
     where true {
     
-    let a = {| name: 1, balance: 100 |};
+    let a = {| name: 1, balance: 100, status: status_g1 |};
     let name = a.name;
     let balance = a.balance;
-    verify(name == 1 && balance == 100)
+    let status = a.status;
+    let b = {| name: 1, balance: 100, status: status_g1 |};
+    verify(name == 1  && balance == 100 && status == status_g1 && a.name == b.name && a == b);
+    
 }

@@ -1,26 +1,19 @@
 use zippel::*;
 use std::path::PathBuf;
-use backend::{ArkBls12_381, Value};
+use backend::{ArkBls12_381, Value, ATyp};
 use lang::id::Vid;
 use share::Ctx;
 
 fn main() {
     println!("Starting toy_record example");
     let args = ZippelArgs::new(PathBuf::from("toy_record.zippel"))
-        .with_pdf(PathBuf::from("toy_record.pdf"));
+        .with_pdf(PathBuf::from("toy_record_example.pdf"));
     
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     
     println!("Compiling...");
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        handler.compile();
-    })) {
-        Ok(_) => println!("Compiled and wrote PDF"),
-        Err(_) => {
-            println!("Compilation panicked!");
-            return;
-        }
-    }
+    handler.compile();
+    println!("Compiled and wrote PDF");
     
     let inputs = create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
@@ -42,8 +35,15 @@ fn main() {
 }
 
 fn create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
-    let ctx = Ctx::new();
- 
+    let mut rng = rand::rngs::OsRng;
     
-    ctx
+    let x: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
+    let y: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
+    let status_g1: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::g1());
+    
+    Ctx::from_iter([
+        (Vid("x".to_string()), x),
+        (Vid("y".to_string()), y),
+        (Vid("status_g1".to_string()), status_g1),
+    ])
 }

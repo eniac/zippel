@@ -3,6 +3,7 @@ pub use lang::typ::lub::{Lub, LubError};
 use lang::typ::range::CRange;
 use lang::id::Tid;
 use share::{Ctx, Pretty, DocAllocator, DocBuilder};
+use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -21,6 +22,8 @@ pub enum ATyp {
     Base(ABase),
     /// Vector
     Vec(Box<ATyp>, usize),
+    /// Record type with named fields
+    Record(std::collections::BTreeMap<String, ATyp>),
     /// TODO: Sync with lang::typ::Poly
     /// Univariate polynomial in coefficient form
     Uni(usize),
@@ -131,6 +134,9 @@ impl ATyp {
         match self {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
+            ATyp::Record(fields) => {
+                fields.values().map(|t| t.size()).sum()
+            }
             ATyp::Uni(n) => *n,
             ATyp::Mle(n) => *n,
             ATyp::Virtual => 1  // Virtual polynomials don't have a fixed size representation
@@ -170,7 +176,17 @@ impl ATyp {
             CTyp::Poly(_, _m, _n) => Some(ATyp::virtual_poly()),  // General poly -> Virtual
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
-            CTyp::Record(_) => None,  // Records not supported in backend yet
+            CTyp::Record(fields) => {
+                let mut atyp_fields = BTreeMap::new();
+                for (name, field_typ) in fields {
+                    if let Some(atyp) = ATyp::from_ctyp(field_typ, kctx) {
+                        atyp_fields.insert(name.clone(), atyp);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(ATyp::Record(atyp_fields))
+            },
         }
     }
 }
@@ -554,6 +570,16 @@ impl fmt::Display for ATyp {
         match self {
             ATyp::Base(b) => write!(f, "{}", b),
             ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
+            ATyp::Record(fields) => {
+                write!(f, "{{|")?;
+                for (i, (name, typ)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", name, typ)?;
+                }
+                write!(f, "|}}")
+            }
             ATyp::Uni(n) => write!(f, "Uni<{}>", n),
             ATyp::Mle(n) => write!(f, "Mle<{}>", n),
             ATyp::Virtual => write!(f, "Virtual"),

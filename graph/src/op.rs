@@ -7,6 +7,7 @@ use backend::{Value, ABase, ATyp, ArkConfig, ArkScalarOps};
 
 use petgraph::graph::NodeIndex;
 use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign, BitAndAssign, Add, Sub, Mul, Div, Rem, BitXor, BitAnd};
 
@@ -36,6 +37,9 @@ pub enum Op<C: ArkConfig, R> {
 
     /// Vector of values
     Vec(Vec<Op<C, R>>),
+
+    /// Record with named fields
+    Record(std::collections::BTreeMap<String, Op<C, R>>),
 
     /// Random element
     Random(ATyp, bool),
@@ -110,8 +114,9 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Pair(_, _, _) => 13,
             Op::Ram(_, _) => 14,
             Op::Vec(_) => 15,
-            Op::Random(_, _) => 16,
-            Op::Challenge(_, _) => 17,
+            Op::Record(_) => 16,
+            Op::Random(_, _) => 17,
+            Op::Challenge(_, _) => 18,
             Op::Ifft(_) => 18,
             Op::Fft(_) => 19,
             Op::Check(_) => 20,
@@ -134,6 +139,9 @@ impl<C: ArkConfig, R> Op<C, R> {
                     (ATyp::Vec(box typ, _), ATyp::Base(_)) => typ,
                     (ATyp::Vec(box typ, _), ATyp::Vec(_, m)) =>
                         ATyp::vec(&typ, m),
+                    (ATyp::Record(_), _) => {
+                        panic!("Records do not support indexed access. Use direct field access (record.field) instead.")
+                    },
                     (a, b) =>
                         panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
                 }
@@ -144,6 +152,13 @@ impl<C: ArkConfig, R> Op<C, R> {
                         .expect(format!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ()).as_str());
                 }
                 ATyp::vec(&typ, vs.len())
+            }
+            Op::Record(fields) => {
+                let mut atyp_fields = BTreeMap::new();
+                for (name, op) in fields {
+                    atyp_fields.insert(name.clone(), op.typ());
+                }
+                ATyp::Record(atyp_fields)
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
@@ -566,6 +581,10 @@ impl<C: ArkConfig, R> Op<C, R> {
                 vs.into_iter()
                     .flat_map(|v| v.references())
                     .collect(),
+            Op::Record(fields) =>
+                fields.values()
+                    .flat_map(|v| v.references())
+                    .collect(),
             Op::Ifft(box v)
             | Op::Check(box v)
             | Op::Poly(box v)
@@ -605,6 +624,7 @@ impl<C: ArkConfig> GOp<C> {
             Op::Ram(box a, box b) =>
                 Op::Ram(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_node_indices(f)).collect()),
+            Op::Record(fields) => Op::Record(fields.into_iter().map(|(k, v)| (k.clone(), v.map_node_indices(f))).collect()),
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
             Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
@@ -626,6 +646,7 @@ impl<C: ArkConfig> GOp<C> {
             Op::Ram(box a, box b) =>
                 Op::Ram(Box::new(a.map_refs(f)), Box::new(b.map_refs(f))),
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_refs(f)).collect()),
+            Op::Record(fields) => Op::Record(fields.into_iter().map(|(k, v)| (k.clone(), v.map_refs(f))).collect()),
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
             Op::Check(box op) => Op::Check(Box::new(op.map_refs(f))),
@@ -667,6 +688,8 @@ impl<C: ArkConfig> GOp<C> {
             Op::Vec(vs) =>
                 Op::Vec(vs.into_iter().map(|v| v.inline(vars, except))
                     .collect::<Vec<_>>()),
+            Op::Record(fields) =>
+                Op::Record(fields.into_iter().map(|(k, v)| (k.clone(), v.inline(vars, except))).collect()),
             Op::Check(box op) => op.inline(vars, except),
             Op::Ifft(box v) => Op::Ifft(Box::new(v.inline(vars, except))),
             Op::Fft(box v) => Op::Fft(Box::new(v.inline(vars, except))),
@@ -928,6 +951,21 @@ where
                 vs.into_iter().map(|v| v.pretty(allocator)), ", "),
                 allocator.text("]"),
             ]),
+            Op::Record(fields) => {
+                let mut field_docs = Vec::new();
+                for (name, op) in fields {
+                    field_docs.push(allocator.concat([
+                        allocator.text(name.clone()),
+                        allocator.text(": "),
+                        op.pretty(allocator),
+                    ]));
+                }
+                allocator.concat([
+                    allocator.text("{|"),
+                    allocator.intersperse(field_docs.into_iter(), ", "),
+                    allocator.text("|}"),
+                ])
+            }
             Op::Ref(n, _) => n.pretty(allocator),
         }
     }

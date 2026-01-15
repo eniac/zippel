@@ -63,6 +63,8 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     pub fn find_ref(&self, r: &Ref) -> PRef {
+        // println!("Finding ref: {:?}", r);
+        // println!("Vars: {:?}", self.vars());
         self.vars()
         .into_iter()
         .find(|v| v.reference == *r)
