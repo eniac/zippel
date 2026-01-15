@@ -212,29 +212,220 @@ impl fmt::Display for UniformityPropagation {
     }
 }
 
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::analyses::QualifierPropagation;
-#[cfg(test)] use crate::{WritePdf, UDags};
-#[cfg(test)] use share::unwrap;
-#[test]
-#[ignore]
-fn uniformity_prop() {
-    let ex = r#"
-        proto foo<F: Field>(private uniform* s: F, public x: F) where true {
-            let r = random<F>;
-            a <- r * s;
-            b <- r * x;
-            verify(a == b);
-        }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lang::ast::UModule;
+    use backend::ArkBls12_381;
+    use crate::analyses::QualifierPropagation;
+    use crate::{UDags, Node};
+    use share::unwrap;
+    use petgraph::graph::NodeIndex;
 
-    let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    #[test]
+    #[ignore]
+    fn uniformity_prop() {
+        let ex = r#"
+            proto foo<F: Field>(private uniform* s: F, public x: F) where true {
+                let r = random<F>;
+                a <- r * s;
+                b <- r * x;
+                verify(a == b);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
-    println!("{}", up);
-    g.write_pdf("uniformity").unwrap();
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        println!("{}", up);
+        assert!(g.node_count() > 0);
+    }
+
+    #[test]
+    fn test_uniformity_propagation_new() {
+        let up = UniformityPropagation::new();
+        assert_eq!(up.ancestors.len(), 0);
+        assert_eq!(up.distributions.len(), 0);
+    }
+
+    #[test]
+    fn test_uniformity_from_op_value() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(42u64)));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_random() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Uniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_random_nonzero() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), true);
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::UniformNonZero));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_challenge() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), false);
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Uniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_challenge_nonzero() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Challenge(backend::ATyp::scalar(), true);
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::UniformNonZero));
+    }
+
+    #[test]
+    fn test_uniformity_op_ancestors_value() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let ancestors = up.op_ancestors(&op);
+        assert_eq!(ancestors.len(), 0);
+    }
+
+    #[test]
+    fn test_uniformity_op_ancestors_random() {
+        let up = UniformityPropagation::new();
+        let op = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let ancestors = up.op_ancestors(&op);
+        assert_eq!(ancestors.len(), 0);
+    }
+
+    #[test]
+    fn test_uniformity_is_independent_disjoint() {
+        let up = UniformityPropagation::new();
+        let op1 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        let op2 = GOp::<ArkBls12_381>::Random(backend::ATyp::scalar(), false);
+        assert!(up.is_independent(&op1, &op2));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_poly() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Poly(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_mle() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Mle(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_coef() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Coef(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_fft() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Fft(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_ifft() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Ifft(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_check() {
+        let up = UniformityPropagation::new();
+        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Check(Box::new(inner));
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_rem() {
+        let up = UniformityPropagation::new();
+        let a = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(10u64)));
+        let b = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(3u64)));
+        let op = GOp::<ArkBls12_381>::Bin(BinOp::Rem, Box::new(a), Box::new(b), backend::ATyp::scalar());
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_pow() {
+        let up = UniformityPropagation::new();
+        let a = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
+        let b = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(3u64)));
+        let op = GOp::<ArkBls12_381>::Bin(BinOp::Pow, Box::new(a), Box::new(b), backend::ATyp::scalar());
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_from_op_vec() {
+        let up = UniformityPropagation::new();
+        let val1 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let val2 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
+        let op = GOp::<ArkBls12_381>::Vec(vec![val1, val2]);
+        let dist = up.from_op(&op);
+        assert_eq!(dist, Some(Distribution::Nonuniform));
+    }
+
+    #[test]
+    fn test_uniformity_find_distribution_default() {
+        let up = UniformityPropagation::new();
+        let node_idx = NodeIndex::new(0);
+        let dist = up.find_distribution(node_idx);
+        assert_eq!(dist, Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_uniformity_from_dag_simple() {
+        let ex = r#"
+            proto simple<F: Field>(private x: F) where true {
+                verify(x == x);
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let result = up.from_dag(&g);
+        
+        assert!(result.node_count() > 0);
+    }
+
+    #[test]
+    fn test_uniformity_display_empty() {
+        let up = UniformityPropagation::new();
+        let s = format!("{}", up);
+        assert!(s.contains("UniformityPropagation"));
+    }
 }
 

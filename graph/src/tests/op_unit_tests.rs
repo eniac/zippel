@@ -449,3 +449,266 @@ mod ref_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod op_additional_tests {
+    use crate::Op;
+    use crate::tests::test_helpers::*;
+    use backend::{ATyp, Value, ABase};
+    use lang::typ::CRange;
+    use lang::ast::BinOp;
+    
+    type C = TestConfig;
+    
+    #[test]
+    fn test_op_one_scalar() {
+        let typ = ATyp::scalar();
+        let one = Op::<C, ()>::one(&typ);
+        match one {
+            Op::Value(Value::Scalar(_)) => (),
+            _ => panic!("Expected scalar one"),
+        }
+    }
+    
+    #[test]
+    fn test_op_one_vec_scalar() {
+        let typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
+        let one = Op::<C, ()>::one(&typ);
+        match one {
+            Op::Value(Value::VecScalar(v)) => assert_eq!(v.len(), 3),
+            _ => panic!("Expected vector of scalar ones"),
+        }
+    }
+    
+    #[test]
+    fn test_op_one_fin() {
+        let r = CRange::new(0, 5);
+        let typ = ATyp::Base(ABase::Fin(r));
+        let one = Op::<C, ()>::one(&typ);
+        match one {
+            Op::Value(Value::Index(1)) => (),
+            _ => panic!("Expected index one"),
+        }
+    }
+    
+    #[test]
+    fn test_op_one_vec_fin() {
+        let r = CRange::new(0, 5);
+        let typ = ATyp::Vec(Box::new(ATyp::Base(ABase::Fin(r))), 2);
+        let one = Op::<C, ()>::one(&typ);
+        match one {
+            Op::Value(Value::VecIndex(v)) => {
+                assert_eq!(v.len(), 2);
+                assert_eq!(v[0], 1);
+                assert_eq!(v[1], 1);
+            }
+            _ => panic!("Expected vector of index ones"),
+        }
+    }
+    
+    #[test]
+    fn test_op_one_uni() {
+        let typ = ATyp::Uni(3);
+        let one = Op::<C, ()>::one(&typ);
+        match one {
+            Op::Value(Value::VecIndex(v)) => {
+                assert_eq!(v.len(), 3);
+                assert_eq!(v[0], 1);
+                assert_eq!(v[1], 0);
+                assert_eq!(v[2], 0);
+            }
+            _ => panic!("Expected univariate polynomial one"),
+        }
+    }
+    
+    #[test]
+    fn test_op_pow_zero_exponent() {
+        let base = Op::<C, ()>::value(&scalar::<C>(42));
+        let exp = Op::<C, ()>::Value(Value::Index(0));
+        let typ = ATyp::scalar();
+        let result = Op::pow(base, exp, typ.clone());
+        
+        match result {
+            Op::Value(_) => (),
+            _ => panic!("Expected value for pow with zero exponent"),
+        }
+    }
+    
+    #[test]
+    fn test_op_pow_one_exponent() {
+        let base = Op::<C, ()>::value(&scalar::<C>(42));
+        let exp = Op::<C, ()>::Value(Value::Index(1));
+        let typ = ATyp::scalar();
+        let result = Op::pow(base.clone(), exp, typ);
+        
+        assert_eq!(result, base);
+    }
+    
+    #[test]
+    fn test_op_pow_general() {
+        let base = Op::<C, ()>::value(&scalar::<C>(2));
+        let exp = Op::<C, ()>::value(&scalar::<C>(3));
+        let typ = ATyp::scalar();
+        let result = Op::pow(base, exp, typ.clone());
+        
+        match result {
+            Op::Bin(BinOp::Pow, _, _, _) => (),
+            _ => panic!("Expected Pow binary operation"),
+        }
+    }
+    
+    #[test]
+    fn test_op_dot_values() {
+        use ark_bls12_381::Fr;
+        let a = Op::<C, ()>::Value(Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let b = Op::<C, ()>::Value(Value::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]));
+        let typ = ATyp::scalar();
+        let result = Op::dot(a, b, typ);
+        
+        match result {
+            Op::Value(_) => (),
+            _ => panic!("Expected value from dot product of values"),
+        }
+    }
+    
+    #[test]
+    fn test_op_dot_non_values() {
+        let a = Op::<C, ()>::Random(ATyp::scalar(), false);
+        let b = Op::<C, ()>::Random(ATyp::scalar(), false);
+        let typ = ATyp::scalar();
+        let result = Op::dot(a, b, typ);
+        
+        match result {
+            Op::Bin(BinOp::Dot, _, _, _) => (),
+            _ => panic!("Expected Dot binary operation"),
+        }
+    }
+    
+    #[test]
+    fn test_op_concat_vecs() {
+        let v1 = Op::<C, ()>::Vec(vec![
+            Op::value(&scalar::<C>(1)),
+            Op::value(&scalar::<C>(2)),
+        ]);
+        let v2 = Op::<C, ()>::Vec(vec![
+            Op::value(&scalar::<C>(3)),
+        ]);
+        let typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
+        let result = Op::concat(v1, v2, typ);
+        
+        match result {
+            Op::Vec(v) => assert_eq!(v.len(), 3),
+            _ => panic!("Expected concatenated vector"),
+        }
+    }
+    
+    #[test]
+    fn test_op_concat_vec_and_element() {
+        let v = Op::<C, ()>::Vec(vec![Op::value(&scalar::<C>(1))]);
+        let e = Op::<C, ()>::value(&scalar::<C>(2));
+        let typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
+        let result = Op::concat(v, e, typ);
+        
+        match result {
+            Op::Vec(v) => assert_eq!(v.len(), 2),
+            _ => panic!("Expected concatenated vector"),
+        }
+    }
+    
+    #[test]
+    fn test_op_div_by_zero_panics() {
+        let a = Op::<C, ()>::value(&scalar::<C>(42));
+        let zero = Op::<C, ()>::zero(&ATyp::scalar());
+        let typ = ATyp::scalar();
+        
+        let result = std::panic::catch_unwind(|| {
+            Op::div(a, zero, typ)
+        });
+        
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_op_div_zero_numerator() {
+        let zero = Op::<C, ()>::zero(&ATyp::scalar());
+        let b = Op::<C, ()>::value(&scalar::<C>(5));
+        let typ = ATyp::scalar();
+        let result = Op::div(zero, b, typ.clone());
+        
+        assert_eq!(result, Op::zero(&typ));
+    }
+    
+    #[test]
+    fn test_op_div_by_one() {
+        let a = Op::<C, ()>::value(&scalar::<C>(42));
+        let one = Op::<C, ()>::one(&ATyp::scalar());
+        let typ = ATyp::scalar();
+        let result = Op::div(a.clone(), one, typ);
+        
+        assert_eq!(result, a);
+    }
+    
+    #[test]
+    fn test_op_rem_indices() {
+        let a = Op::<C, ()>::Value(Value::Index(10));
+        let b = Op::<C, ()>::Value(Value::Index(3));
+        let r = CRange::new(0, 20);
+        let typ = ATyp::Base(ABase::Fin(r));
+        let result = Op::rem(a, b, typ);
+        
+        match result {
+            Op::Value(_) => (),
+            _ => panic!("Expected value from rem of values"),
+        }
+    }
+    
+    #[test]
+    fn test_op_mul_by_zero() {
+        let a = Op::<C, ()>::value(&scalar::<C>(42));
+        let zero = Op::<C, ()>::zero(&ATyp::scalar());
+        let typ = ATyp::scalar();
+        let result = Op::mul(a, zero, typ.clone());
+        
+        assert_eq!(result, Op::zero(&typ));
+    }
+    
+    #[test]
+    fn test_op_mul_by_one() {
+        let a = Op::<C, ()>::value(&scalar::<C>(42));
+        let one = Op::<C, ()>::one(&ATyp::scalar());
+        let typ = ATyp::scalar();
+        let result = Op::mul(a.clone(), one, typ);
+        
+        assert_eq!(result, a);
+    }
+    
+    #[test]
+    fn test_op_add_commutative_fft() {
+        let a = Op::<C, ()>::value(&scalar::<C>(1));
+        let b = Op::<C, ()>::value(&scalar::<C>(2));
+        let fft_a = Op::Fft(Box::new(a));
+        let fft_b = Op::Fft(Box::new(b));
+        let typ = ATyp::scalar();
+        let result = Op::add(fft_a, fft_b, typ);
+        
+        match result {
+            Op::Fft(_) => (),
+            _ => panic!("Expected Fft wrapper for add of fft values"),
+        }
+    }
+    
+    #[test]
+    fn test_op_sub_commutative_ifft() {
+        let a = Op::<C, ()>::value(&scalar::<C>(5));
+        let b = Op::<C, ()>::value(&scalar::<C>(2));
+        let ifft_a = Op::Ifft(Box::new(a));
+        let ifft_b = Op::Ifft(Box::new(b));
+        let typ = ATyp::scalar();
+        let result = Op::sub(ifft_a, ifft_b, typ);
+        
+        match result {
+            Op::Ifft(_) => (),
+            _ => panic!("Expected Ifft wrapper for sub of ifft values"),
+        }
+    }
+}

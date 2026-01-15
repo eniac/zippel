@@ -514,3 +514,649 @@ fn set_extract_if() {
     assert_eq!(s.into_iter().collect::<Vec<_>>(), vec![1, 3, 5]);
     assert_eq!(s2.into_iter().collect::<Vec<_>>(), vec![2, 4]);
 }
+
+#[cfg(test)]
+mod additional_tests {
+    use super::*;
+
+    // Ctx tests
+    #[test]
+    fn test_ctx_singleton() {
+        let ctx = Ctx::singleton("key", 42);
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx.get(&"key"), Some(&42));
+    }
+
+    #[test]
+    fn test_ctx_find_map() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        ctx.insert(&3, &"three");
+        
+        let result = ctx.find_map(|k, v| {
+            if *k == 2 {
+                Some(v.to_uppercase())
+            } else {
+                None
+            }
+        });
+        assert_eq!(result, Some("TWO".to_string()));
+    }
+
+    #[test]
+    fn test_ctx_find_map_not_found() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        
+        let result = ctx.find_map(|k, _v| {
+            if *k == 99 {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_ctx_last() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        ctx.insert(&3, &"three");
+        
+        let last = ctx.last();
+        assert_eq!(last, Some((&3, &"three")));
+    }
+
+    #[test]
+    fn test_ctx_last_empty() {
+        let ctx: Ctx<i32, &str> = Ctx::new();
+        assert_eq!(ctx.last(), None);
+    }
+
+    #[test]
+    fn test_ctx_pop_first() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        ctx.insert(&3, &"three");
+        
+        let first = ctx.pop_first();
+        assert_eq!(first, Some((1, "one")));
+        assert_eq!(ctx.len(), 2);
+    }
+
+    #[test]
+    fn test_ctx_pop_first_empty() {
+        let mut ctx: Ctx<i32, &str> = Ctx::new();
+        assert_eq!(ctx.pop_first(), None);
+    }
+
+    #[test]
+    fn test_ctx_any_true() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        ctx.insert(&3, &30);
+        
+        assert!(ctx.any(|_k, v| *v == 20));
+    }
+
+    #[test]
+    fn test_ctx_any_false() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        
+        assert!(!ctx.any(|_k, v| *v == 99));
+    }
+
+    #[test]
+    fn test_ctx_clear() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        assert_eq!(ctx.len(), 2);
+        
+        ctx.clear();
+        assert_eq!(ctx.len(), 0);
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn test_ctx_insert_with_no_conflict() {
+        let mut ctx = Ctx::new();
+        let result = ctx.insert_with(1, "one", &|_k, _v1, _v2| Ok::<_, ()>(1));
+        assert!(result.is_ok());
+        assert_eq!(ctx.get(&1), Some(&"one"));
+    }
+
+    #[test]
+    fn test_ctx_insert_with_conflict() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"original");
+        
+        // Use a different key to avoid infinite recursion
+        let result = ctx.insert_with(1, "new", &|_k, _v1, _v2| Ok::<i32, ()>(2));
+        assert!(result.is_ok());
+        assert_eq!(ctx.get(&2), Some(&"new"));
+    }
+
+    #[test]
+    fn test_ctx_insert_with_error() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"original");
+        
+        let result = ctx.insert_with(1, "new", &|_k, _v1, _v2| Err::<i32, _>("conflict"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ctx_append() {
+        let mut ctx1 = Ctx::new();
+        ctx1.insert(&1, &"one");
+        ctx1.insert(&2, &"two");
+        
+        let mut ctx2 = Ctx::new();
+        ctx2.insert(&3, &"three");
+        ctx2.insert(&4, &"four");
+        
+        ctx1.append(&ctx2);
+        assert_eq!(ctx1.len(), 4);
+        assert_eq!(ctx1.get(&3), Some(&"three"));
+    }
+
+    #[test]
+    fn test_ctx_union() {
+        let mut ctx1 = Ctx::new();
+        ctx1.insert(&1, &"one");
+        ctx1.insert(&2, &"two");
+        
+        let mut ctx2 = Ctx::new();
+        ctx2.insert(&3, &"three");
+        
+        let ctx3 = ctx1.union(&ctx2);
+        assert_eq!(ctx3.len(), 3);
+        assert_eq!(ctx3.get(&1), Some(&"one"));
+        assert_eq!(ctx3.get(&3), Some(&"three"));
+    }
+
+    #[test]
+    fn test_ctx_get_mut() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &42);
+        
+        if let Some(v) = ctx.get_mut(&1) {
+            *v = 100;
+        }
+        assert_eq!(ctx.get(&1), Some(&100));
+    }
+
+    #[test]
+    fn test_ctx_get_mut_not_found() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &42);
+        
+        assert_eq!(ctx.get_mut(&99), None);
+    }
+
+    #[test]
+    fn test_ctx_remove() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        
+        let removed = ctx.remove(&1);
+        assert_eq!(removed, Some("one"));
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx.get(&1), None);
+    }
+
+    #[test]
+    fn test_ctx_remove_not_found() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        
+        let removed = ctx.remove(&99);
+        assert_eq!(removed, None);
+    }
+
+    #[test]
+    fn test_ctx_find_one_single_match() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        ctx.insert(&3, &30);
+        
+        let result = ctx.find_one(|_k, v| *v == 20);
+        assert_eq!(result, Some((2, 20)));
+    }
+
+    #[test]
+    fn test_ctx_find_one_no_match() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        
+        let result = ctx.find_one(|_k, v| *v == 99);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_ctx_find_one_multiple_matches() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &10);
+        ctx.insert(&3, &30);
+        
+        let result = ctx.find_one(|_k, v| *v == 10);
+        assert_eq!(result, None); // Multiple matches return None
+    }
+
+    // Set tests
+    #[test]
+    fn test_set_singleton() {
+        let s = Set::singleton(42);
+        assert_eq!(s.len(), 1);
+        assert!(s.contains(&42));
+    }
+
+    #[test]
+    fn test_set_pop_first() {
+        let mut s = Set::from([1, 2, 3]);
+        let first = s.pop_first();
+        assert_eq!(first, Some(1));
+        assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn test_set_pop_first_empty() {
+        let mut s: Set<i32> = Set::new();
+        assert_eq!(s.pop_first(), None);
+    }
+
+    #[test]
+    fn test_set_append_iterator() {
+        let mut s = Set::from([1, 2]);
+        let inserted = s.append(vec![3, 4, 5].into_iter());
+        assert!(inserted);
+        assert_eq!(s.len(), 5);
+    }
+
+    #[test]
+    fn test_set_append_duplicates() {
+        let mut s = Set::from([1, 2, 3]);
+        let inserted = s.append(vec![2, 3].into_iter());
+        assert!(!inserted); // No new elements inserted
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn test_set_first() {
+        let s = Set::from([3, 1, 2]);
+        assert_eq!(s.first(), Some(&1)); // BTreeSet is sorted
+    }
+
+    #[test]
+    fn test_set_first_empty() {
+        let s: Set<i32> = Set::new();
+        assert_eq!(s.first(), None);
+    }
+
+    #[test]
+    fn test_set_last() {
+        let s = Set::from([1, 3, 2]);
+        assert_eq!(s.last(), Some(&3));
+    }
+
+    #[test]
+    fn test_set_last_empty() {
+        let s: Set<i32> = Set::new();
+        assert_eq!(s.last(), None);
+    }
+
+    #[test]
+    fn test_set_is_disjoint_true() {
+        let s1 = Set::from([1, 2, 3]);
+        let s2 = Set::from([4, 5, 6]);
+        assert!(s1.is_disjoint(&s2));
+    }
+
+    #[test]
+    fn test_set_is_disjoint_false() {
+        let s1 = Set::from([1, 2, 3]);
+        let s2 = Set::from([3, 4, 5]);
+        assert!(!s1.is_disjoint(&s2));
+    }
+
+    #[test]
+    fn test_set_find() {
+        let s = Set::from([1, 2, 3, 4, 5]);
+        let result = s.find(|v| *v == 3);
+        assert_eq!(result, Some(&3));
+    }
+
+    #[test]
+    fn test_set_find_not_found() {
+        let s = Set::from([1, 2, 3]);
+        let result = s.find(|v| *v == 99);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_set_union() {
+        let s1 = Set::from([1, 2, 3]);
+        let s2 = Set::from([3, 4, 5]);
+        let s3 = s1.union(s2);
+        assert_eq!(s3.len(), 5);
+        assert!(s3.contains(&1));
+        assert!(s3.contains(&5));
+    }
+
+    #[test]
+    fn test_set_intersection() {
+        let s1 = Set::from([1, 2, 3, 4]);
+        let s2 = Set::from([3, 4, 5, 6]);
+        let s3 = s1.intersection(s2);
+        assert_eq!(s3.len(), 2);
+        assert!(s3.contains(&3));
+        assert!(s3.contains(&4));
+    }
+
+    #[test]
+    fn test_set_intersection_empty() {
+        let s1 = Set::from([1, 2, 3]);
+        let s2 = Set::from([4, 5, 6]);
+        let s3 = s1.intersection(s2);
+        assert_eq!(s3.len(), 0);
+    }
+
+    #[test]
+    fn test_set_retain() {
+        let mut s = Set::from([1, 2, 3, 4, 5]);
+        s.retain(|v| *v % 2 == 0);
+        assert_eq!(s.into_iter().collect::<Vec<_>>(), vec![2, 4]);
+    }
+
+    #[test]
+    fn test_set_cloned() {
+        let s = Set::from([&1, &2, &3]);
+        let s2 = s.cloned();
+        assert_eq!(s2.into_iter().collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_ctx_traverse2() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        
+        let result = ctx.traverse2(&mut |v| Ok::<_, ()>(v * 2));
+        assert!(result.is_ok());
+        let ctx2 = result.unwrap();
+        assert_eq!(ctx2.get(&1), Some(&20));
+        assert_eq!(ctx2.get(&2), Some(&40));
+    }
+
+    #[test]
+    fn test_ctx_traverse2_error() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        
+        let result = ctx.traverse2(&mut |v| {
+            if v > 15 {
+                Err("Too large")
+            } else {
+                Ok(v)
+            }
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ctx_map2() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        
+        let ctx2 = ctx.map2(&mut |v| v * 3);
+        assert_eq!(ctx2.get(&1), Some(&30));
+        assert_eq!(ctx2.get(&2), Some(&60));
+    }
+
+    #[test]
+    fn test_ctx_display() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let display = format!("{}", ctx);
+        assert!(display.contains("1"));
+        assert!(display.contains("2"));
+    }
+
+    #[test]
+    fn test_set_display() {
+        let s = Set::from([1, 2, 3]);
+        let display = format!("{}", s);
+        assert!(display.contains("1"));
+        assert!(display.contains("2"));
+        assert!(display.contains("3"));
+    }
+
+    #[test]
+    fn test_ctx_from_array() {
+        let ctx: Ctx<i32, &str> = Ctx::from([(1, "one"), (2, "two")]);
+        assert_eq!(ctx.len(), 2);
+        assert_eq!(ctx.get(&1), Some(&"one"));
+    }
+
+    #[test]
+    fn test_ctx_from_vec() {
+        let v = vec![(1, "one"), (2, "two"), (3, "three")];
+        let ctx: Ctx<i32, &str> = Ctx::from(v);
+        assert_eq!(ctx.len(), 3);
+        assert_eq!(ctx.get(&2), Some(&"two"));
+    }
+
+    #[test]
+    fn test_set_from_array() {
+        let s: Set<i32> = Set::from([1, 2, 3]);
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn test_set_from_vec() {
+        let v = vec![1, 2, 3, 4];
+        let s: Set<i32> = Set::from(v);
+        assert_eq!(s.len(), 4);
+    }
+
+    #[test]
+    fn test_set_into_vec() {
+        let s = Set::from([3, 1, 2]);
+        let v: Vec<i32> = s.into();
+        assert_eq!(v, vec![1, 2, 3]); // BTreeSet is sorted
+    }
+
+    #[test]
+    fn test_ctx_index_ref() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        assert_eq!(ctx[&1], "one");
+        assert_eq!(ctx[&2], "two");
+    }
+
+    #[test]
+    fn test_ctx_index_owned() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        assert_eq!(ctx[1], "one");
+        assert_eq!(ctx[2], "two");
+    }
+
+    #[test]
+    fn test_ctx_default() {
+        let ctx: Ctx<i32, &str> = Ctx::default();
+        assert_eq!(ctx.len(), 0);
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn test_set_default() {
+        let s: Set<i32> = Set::default();
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_ctx_into_iter() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let vec: Vec<(i32, &str)> = ctx.into_iter().collect();
+        assert_eq!(vec.len(), 2);
+    }
+
+    #[test]
+    fn test_set_into_iter() {
+        let s = Set::from([1, 2, 3]);
+        let vec: Vec<i32> = s.into_iter().collect();
+        assert_eq!(vec, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_set_iter() {
+        let s = Set::from([1, 2, 3]);
+        let mut count = 0;
+        for _v in s.iter() {
+            count += 1;
+        }
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_ctx_iter() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let mut count = 0;
+        for (_k, _v) in ctx.iter() {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_ctx_iter_mut() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        for (_k, v) in ctx.iter_mut() {
+            *v += 1;
+        }
+        assert_eq!(ctx.get(&1), Some(&11));
+        assert_eq!(ctx.get(&2), Some(&21));
+    }
+
+    #[test]
+    fn test_ctx_modify() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        ctx.modify(|_k, v| *v *= 2);
+        assert_eq!(ctx.get(&1), Some(&20));
+        assert_eq!(ctx.get(&2), Some(&40));
+    }
+
+    #[test]
+    fn test_ctx_retain() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        ctx.insert(&3, &30);
+        ctx.retain(|k, _v| *k % 2 == 1);
+        assert_eq!(ctx.len(), 2);
+        assert!(ctx.contains(&1));
+        assert!(ctx.contains(&3));
+        assert!(!ctx.contains(&2));
+    }
+
+    #[test]
+    fn test_ctx_entry() {
+        let mut ctx = Ctx::new();
+        ctx.entry(1).or_insert("one");
+        ctx.entry(1).or_insert("uno");
+        assert_eq!(ctx.get(&1), Some(&"one"));
+    }
+
+    #[test]
+    fn test_ctx_extract_if() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        ctx.insert(&3, &30);
+        let extracted = ctx.extract_if(|_k, v| *v >= 20);
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(extracted.len(), 2);
+        assert_eq!(ctx.get(&1), Some(&10));
+        assert_eq!(extracted.get(&2), Some(&20));
+    }
+
+    #[test]
+    fn test_ctx_keys() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let keys = ctx.keys();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&1));
+        assert!(keys.contains(&2));
+    }
+
+    #[test]
+    fn test_ctx_values() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let values = ctx.values();
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&"one"));
+        assert!(values.contains(&"two"));
+    }
+
+    #[test]
+    fn test_ctx_find() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &10);
+        ctx.insert(&2, &20);
+        let found = ctx.find(|k, v| *k == 1 && *v == 10);
+        assert_eq!(found, Some((&1, &10)));
+    }
+
+    #[test]
+    fn test_ctx_first() {
+        let mut ctx = Ctx::new();
+        ctx.insert(&1, &"one");
+        ctx.insert(&2, &"two");
+        let first = ctx.first();
+        assert_eq!(first, Some((&1, &"one")));
+    }
+
+    #[test]
+    fn test_ctx_first_empty() {
+        let ctx: Ctx<i32, &str> = Ctx::new();
+        assert_eq!(ctx.first(), None);
+    }
+
+    #[test]
+    fn test_ctx_from_iter() {
+        let v = vec![(1, "one"), (2, "two")];
+        let ctx: Ctx<i32, &str> = v.into_iter().collect();
+        assert_eq!(ctx.len(), 2);
+    }
+}

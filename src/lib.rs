@@ -72,6 +72,10 @@ pub struct ZippelHandler<C:ArkConfig> {
 
 impl<C:ArkConfig> ZippelHandler<C> {
     pub fn new(args: ZippelArgs) -> Self {
+        // Enable detailed error messages from pest parser
+        // This provides more comprehensive error messages for debugging parser errors
+        lang::init_parser();
+        
         ZippelHandler { 
             args,
             sized_module: None, 
@@ -186,7 +190,7 @@ impl<C:ArkConfig> ZippelHandler<C> {
             &self.args.file_path.display().to_string(), 
             &prover.clone(),
         );
-        
+      
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();

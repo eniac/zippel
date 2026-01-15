@@ -2,6 +2,7 @@
 #![feature(associated_type_defaults)]
 pub mod config;
 pub mod poly_variant;
+pub mod virtual_polynomial;
 pub mod values;
 pub mod types;
 pub mod nothing;
@@ -9,6 +10,7 @@ pub mod nothing;
 pub use nothing::{NoField, NoCurve, NoPairing};
 pub use values::{Value, value_to_bytes};
 pub use types::{ABase, ATyp};
+pub use virtual_polynomial::VirtualPolynomial;
 pub use poly_variant::{PolyVariant, PolyError};
 pub use config::{
     ArkScalarOps,
@@ -30,6 +32,3 @@ pub use config::{
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod poly_variant_tests;

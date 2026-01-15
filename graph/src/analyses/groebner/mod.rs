@@ -319,3 +319,130 @@ impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerBuilder<C, T> {
             .render_fmt(100, f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use backend::ArkBls12_381;
+    use ark_ff::Zero;
+
+    #[test]
+    fn test_groebner_builder_new() {
+        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        assert_eq!(builder.basis.len(), 0);
+        assert_eq!(builder.np.len(), 0);
+        assert_eq!(builder.pl.len(), 0);
+        assert_eq!(builder.args.len(), 0);
+    }
+
+    #[test]
+    fn test_groebner_builder_vars_empty() {
+        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let vars = builder.vars();
+        assert_eq!(vars.len(), 0);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_scalar() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        use ark_bls12_381::Fr;
+        
+        let val = Value::Scalar(Fr::from(42u64));
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 1);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_bool_true() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        
+        let val = Value::Bool(true);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 1);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_bool_false() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        
+        let val = Value::Bool(false);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 1);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_index() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        
+        let val = Value::Index(5);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 1);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_vec_scalar() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        use ark_bls12_381::Fr;
+        
+        let val = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 3);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_vec_bool() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        
+        let val = Value::VecBool(vec![true, false, true]);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 3);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value_vec_index() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        
+        let val = Value::VecIndex(vec![0, 1, 2]);
+        let poly = builder.to_poly_value(&val);
+        assert_eq!(poly.len(), 3);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_value() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        use ark_bls12_381::Fr;
+        
+        let val = Value::Scalar(Fr::from(10u64));
+        let result = builder.to_poly(&Op::Value(val));
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_groebner_builder_to_poly_vec() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        use backend::Value;
+        use ark_bls12_381::Fr;
+        
+        let ops = vec![
+            Op::Value(Value::Scalar(Fr::from(1u64))),
+            Op::Value(Value::Scalar(Fr::from(2u64))),
+        ];
+        let result = builder.to_poly(&Op::Vec(ops));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_groebner_builder_display_empty() {
+        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let s = format!("{}", builder);
+        assert!(!s.is_empty());
+    }
+}

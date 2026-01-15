@@ -27,10 +27,16 @@ path = "src/schnorr/main.rs"
 name = "cp"
 path = "src/cp/main.rs"
 
+[[bin]]
+name = "sumcheck"
+path = "src/sumcheck/main.rs"
+
+
 [dependencies]
 zippel = { path = ".." }
 ark-std = "0.5.0"
 ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 backend = { path = "../backend" }
 lang = { path = "../lang" }
 share = { path = "../share" }

@@ -125,4 +125,174 @@ impl<'pest> FromPest<'pest> for Distribution {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_uniform() {
+        assert!(Distribution::Uniform.is_uniform());
+        assert!(!Distribution::UniformNonZero.is_uniform());
+        assert!(!Distribution::Nonuniform.is_uniform());
+    }
+
+    #[test]
+    fn test_is_uniform_nz() {
+        assert!(!Distribution::Uniform.is_uniform_nz());
+        assert!(Distribution::UniformNonZero.is_uniform_nz());
+        assert!(!Distribution::Nonuniform.is_uniform_nz());
+    }
+
+    #[test]
+    fn test_is_nonuniform() {
+        assert!(!Distribution::Uniform.is_nonuniform());
+        assert!(!Distribution::UniformNonZero.is_nonuniform());
+        assert!(Distribution::Nonuniform.is_nonuniform());
+    }
+
+    #[test]
+    fn test_add_uniform_uniform_nz() {
+        let result = Distribution::Uniform.add(&Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn test_add_uniform_nz_uniform() {
+        let result = Distribution::UniformNonZero.add(&Distribution::Uniform);
+        assert_eq!(result, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn test_add_uniform_nonuniform() {
+        let result = Distribution::Uniform.add(&Distribution::Nonuniform);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_add_nonuniform_uniform() {
+        let result = Distribution::Nonuniform.add(&Distribution::Uniform);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_add_same() {
+        assert_eq!(Distribution::Uniform.add(&Distribution::Uniform), Distribution::Uniform);
+        assert_eq!(Distribution::UniformNonZero.add(&Distribution::UniformNonZero), Distribution::UniformNonZero);
+        assert_eq!(Distribution::Nonuniform.add(&Distribution::Nonuniform), Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_add_uniform_nz_nonuniform() {
+        let result = Distribution::UniformNonZero.add(&Distribution::Nonuniform);
+        assert_eq!(result, Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_sub_uniform_uniform_nz() {
+        let result = Distribution::Uniform.sub(&Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn test_sub_uniform_nz_uniform() {
+        let result = Distribution::UniformNonZero.sub(&Distribution::Uniform);
+        assert_eq!(result, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn test_sub_uniform_nonuniform() {
+        let result = Distribution::Uniform.sub(&Distribution::Nonuniform);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_sub_nonuniform_uniform() {
+        let result = Distribution::Nonuniform.sub(&Distribution::Uniform);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_sub_same() {
+        assert_eq!(Distribution::Uniform.sub(&Distribution::Uniform), Distribution::Uniform);
+        assert_eq!(Distribution::UniformNonZero.sub(&Distribution::UniformNonZero), Distribution::UniformNonZero);
+        assert_eq!(Distribution::Nonuniform.sub(&Distribution::Nonuniform), Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_mul_uniform_uniform_nz() {
+        let result = Distribution::Uniform.mul(&Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_mul_uniform_nz_uniform() {
+        let result = Distribution::UniformNonZero.mul(&Distribution::Uniform);
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_mul_uniform_uniform() {
+        let result = Distribution::Uniform.mul(&Distribution::Uniform);
+        assert_eq!(result, Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_mul_uniform_nz_uniform_nz() {
+        let result = Distribution::UniformNonZero.mul(&Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::UniformNonZero);
+    }
+
+    #[test]
+    fn test_mul_with_nonuniform() {
+        assert_eq!(Distribution::Uniform.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(Distribution::Nonuniform.mul(&Distribution::Uniform), Distribution::Nonuniform);
+        assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_inv_uniform_nz() {
+        let result = Distribution::UniformNonZero.inv();
+        assert_eq!(result, Distribution::Uniform);
+    }
+
+    #[test]
+    fn test_inv_uniform() {
+        let result = Distribution::Uniform.inv();
+        assert_eq!(result, Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_inv_nonuniform() {
+        let result = Distribution::Nonuniform.inv();
+        assert_eq!(result, Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_default() {
+        assert_eq!(Distribution::default(), Distribution::Nonuniform);
+    }
+
+    #[test]
+    fn test_display_uniform() {
+        assert_eq!(Distribution::Uniform.to_string(), "uniform ");
+    }
+
+    #[test]
+    fn test_display_uniform_nz() {
+        assert_eq!(Distribution::UniformNonZero.to_string(), "uniform*");
+    }
+
+    #[test]
+    fn test_display_nonuniform() {
+        assert_eq!(Distribution::Nonuniform.to_string(), "");
+    }
+
+    #[test]
+    fn test_is_nil() {
+        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Uniform));
+        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::UniformNonZero));
+        assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Nonuniform));
+    }
+}
 

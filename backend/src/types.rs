@@ -25,7 +25,9 @@ pub enum ATyp {
     /// Univariate polynomial in coefficient form
     Uni(usize),
     /// Multilinear extension
-    Mle(usize)
+    Mle(usize),
+    /// Virtual polynomial - product of polynomials
+    Virtual
 }
 
 impl ATyp {
@@ -74,6 +76,9 @@ impl ATyp {
     pub fn mle(n: usize) -> Self {
         ATyp::Mle(n)
     }
+    pub fn virtual_poly() -> Self {
+        ATyp::Virtual
+    }
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
@@ -96,6 +101,10 @@ impl ATyp {
 
     pub fn is_mle(&self) -> bool {
         matches!(self, ATyp::Mle(_))
+    }
+
+    pub fn is_virtual(&self) -> bool {
+        matches!(self, ATyp::Virtual)
     }
 
     pub fn is_fin(&self) -> bool {
@@ -123,7 +132,8 @@ impl ATyp {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
             ATyp::Uni(n) => *n,
-            ATyp::Mle(n) => *n
+            ATyp::Mle(n) => *n,
+            ATyp::Virtual => 1  // Virtual polynomials don't have a fixed size representation
         }
     }
 
@@ -157,7 +167,7 @@ impl ATyp {
                 Some(ATyp::Vec(Box::new(ATyp::from_ctyp(&t, kctx)?), *n)),
             CTyp::Poly(_, 1, n) => Some(ATyp::uni(*n)),  // Uni<N>
             CTyp::Poly(_, m, 1) => Some(ATyp::vec_scalar(1 << m)),  // Mle<M>
-            CTyp::Poly(_, _m, _n) => None,  // General poly not supported
+            CTyp::Poly(_, _m, _n) => Some(ATyp::virtual_poly()),  // General poly -> Virtual
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
         }
@@ -306,6 +316,8 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n1))
             },
             (ATyp::Uni(n1), ATyp::Uni(n2)) if n1 == n2 => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            (ATyp::Virtual, ATyp::Virtual) => Ok(ATyp::virtual_poly()),
                         (a, b) => Err(LubError::equ(&a, &b))
         }
     }
@@ -324,6 +336,11 @@ impl Lub for ATyp {
             },
 
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            (ATyp::Virtual, ATyp::Virtual) => Ok(ATyp::virtual_poly()),
+            // Virtual + any polynomial -> Virtual
+            (ATyp::Virtual, ATyp::Uni(_)) | (ATyp::Uni(_), ATyp::Virtual) => Ok(ATyp::virtual_poly()),
+            (ATyp::Virtual, ATyp::Mle(_)) | (ATyp::Mle(_), ATyp::Virtual) => Ok(ATyp::virtual_poly()),
             (a, b) => Err(LubError::add(&a, &b))
         }
     }
@@ -340,6 +357,11 @@ impl Lub for ATyp {
                 Ok(ATyp::vec(&t, *n1))
             },
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            (ATyp::Virtual, ATyp::Virtual) => Ok(ATyp::virtual_poly()),
+            // Virtual - any polynomial -> Virtual
+            (ATyp::Virtual, ATyp::Uni(_)) | (ATyp::Uni(_), ATyp::Virtual) => Ok(ATyp::virtual_poly()),
+            (ATyp::Virtual, ATyp::Mle(_)) | (ATyp::Mle(_), ATyp::Virtual) => Ok(ATyp::virtual_poly()),
             (a, b) => Err(LubError::sub(&a, &b))
         }
     }
@@ -349,7 +371,14 @@ impl Lub for ATyp {
                 ABase::lub_mul(a, b, ctx)
                     .map(|b| ATyp::Base(b))
                     .map_err(|e| LubError::next(LubError::mul(&a, &b), e)),
-            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1 + n2)),
+            // Multiplying any polynomials -> Virtual
+            (ATyp::Uni(_), ATyp::Uni(_)) => Ok(ATyp::virtual_poly()),
+            (ATyp::Uni(_), ATyp::Mle(_)) | (ATyp::Mle(_), ATyp::Uni(_)) => Ok(ATyp::virtual_poly()),
+            (ATyp::Mle(_), ATyp::Mle(_)) => Ok(ATyp::virtual_poly()),
+            (ATyp::Virtual, _) | (_, ATyp::Virtual) => Ok(ATyp::virtual_poly()),
+            // Scalar * polynomial -> same polynomial type (handled by Vec cases below)
+            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar)) | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar)) | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::mul(&a, &a), e))?;
@@ -526,6 +555,7 @@ impl fmt::Display for ATyp {
             ATyp::Vec(t, n) => write!(f, "[{}; {}]", t, n),
             ATyp::Uni(n) => write!(f, "Uni<{}>", n),
             ATyp::Mle(n) => write!(f, "Mle<{}>", n),
+            ATyp::Virtual => write!(f, "Virtual"),
         }
     }
 }

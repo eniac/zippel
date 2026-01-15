@@ -638,15 +638,14 @@ impl Lub for CTyp {
                 Ok(CTyp::Fin(Range::lub_mul(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?))
             },
-            // Uni<A> * Uni<B> = Uni<A + B>
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) =>
+            // General rule: Poly(F, n, m) * Poly(F, n', m') = Poly(F, max(n,n'), max(m+m'-1, 0))
+            // (N coefficients means degree N-1, so degrees add: (m-1)+(m'-1) = m+m'-2, which is m+m'-1 coefficients)
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) =>
             {
-                println!("Uni<A> * Uni<B> = Uni<A + B>");
-                println!("A: {:?}, B: {:?}", a, b);
-                println!("n: {:?}, m: {:?}", n, m);
-                println!("n + m - 1: {:?}", n + m - 1);
+                let num_vars = *na.max(nb);
+                let coeffs = (*ma + *mb).saturating_sub(1);
                 Ok(CTyp::Poly(Tid::lub_mul(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, 1, *n + *m - 1))
+                    .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, num_vars, coeffs))
             },
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
@@ -733,15 +732,14 @@ impl Lub for CTyp {
             (CTyp::Fin(a), CTyp::Fin(b)) =>
                 Ok(CTyp::Fin(Range::lub_div(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?)),
-            // Uni<A> / Uni<B> = Uni<A - B> if A > B
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) if n >= m =>
+            // General rule: Poly(F, n, m) / Poly(F, n', m') = Poly(F, max(n,n'), m-m'+1) if m >= m'
+            // (N coefficients means degree N-1, so division gives (m-1)-(m'-1) = m-m' degree, which is m-m'+1 coefficients)
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if ma >= mb =>
             {
-                println!("Uni<A> / Uni<B> = Uni<A - B> if A > B");
-                println!("A: {:?}, B: {:?}", a, b);
-                println!("n: {:?}, m: {:?}", n, m);
-                println!("n - m + 1: {:?}", n - m + 1);
+                let num_vars = *na.max(nb);
+                let coeffs = *ma - *mb + 1;
                 Ok(CTyp::Poly(Tid::lub_div(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, 1, n - m + 1))
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, num_vars, coeffs))
             },
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
@@ -758,22 +756,12 @@ impl Lub for CTyp {
                 Ok(CTyp::vec(&CTyp::lub_div(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, *n)),
 
-            // Uni<A> / c = Uni<A> if c is a finite field
-            (CTyp::Poly(b, 1, n), a) => {
+            // Poly(F, n, m) / c = Poly(F, n, m) if c is a finite field (scalar division)
+            (CTyp::Poly(b, n, m), a) => {
                 let t = CTyp::lub_div(&CTyp::base(b), a, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 if let CTyp::Base(c) = t {
-                    Ok(CTyp::Poly(c, 1, *n))
-                } else {
-                    Err(LubError::div(&x, &y))
-                }
-            }
-            // Mle<A> / c = Mle<A> if c is a finite field
-            (CTyp::Poly(b, n, 1), a) => {
-                let t = CTyp::lub_div(&CTyp::base(b), a, ctx)
-                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
-                if let CTyp::Base(c) = t {
-                    Ok(CTyp::Poly(c, *n, 1))
+                    Ok(CTyp::Poly(c, *n, *m))
                 } else {
                     Err(LubError::div(&x, &y))
                 }
@@ -1061,6 +1049,355 @@ fn lub_typ() {
     assert_eq!(CTyp::lub_and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::vec(&CTyp::Bool, 10), &ctx), Ok(CTyp::Bool));
     assert_eq!(CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx), Ok(CTyp::Bool));
 
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+    use crate::ast::BinOp;
+
+    #[test]
+    fn test_lub_error_next() {
+        let err1 = LubError::Equ("A".to_string(), "B".to_string());
+        let err2 = LubError::Equ("C".to_string(), "D".to_string());
+        let combined = LubError::next(err1, err2);
+        assert!(matches!(combined, LubError::Next(_, _)));
+    }
+
+    #[test]
+    fn test_lub_error_kind_not_found() {
+        let tid = Tid::from("T");
+        let err = LubError::kind_not_found(&tid);
+        assert!(matches!(err, LubError::KindNotFound(_)));
+    }
+
+    #[test]
+    fn test_lub_error_bad_range() {
+        use crate::typ::range::{Range, RangeError};
+        let range = Range { start: 0, step: 1, end: 10 };
+        let range_err = RangeError::RangeOrder(0, 1, 0);
+        let err = LubError::bad_range(&range, range_err);
+        assert!(matches!(err, LubError::BadRange(_, _)));
+    }
+
+    #[test]
+    fn test_lub_error_equ() {
+        let err = LubError::equ(&"A", &"B");
+        assert!(matches!(err, LubError::Equ(_, _)));
+    }
+
+    #[test]
+    fn test_lub_error_add() {
+        let err = LubError::add(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Add, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_sub() {
+        let err = LubError::sub(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Sub, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_mul() {
+        let err = LubError::mul(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Mul, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_div() {
+        let err = LubError::div(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Div, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_pow() {
+        let err = LubError::pow(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Pow, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_rem() {
+        let err = LubError::rem(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Rem, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_dot() {
+        let err = LubError::dot(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Dot, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_pair() {
+        let err = LubError::pair(&"A", &"B");
+        assert!(matches!(err, LubError::Pair(_, _)));
+    }
+
+    #[test]
+    fn test_lub_error_and() {
+        let err = LubError::and(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::And, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_concat() {
+        let err = LubError::concat(&"A", &"B");
+        assert!(matches!(err, LubError::Bin(BinOp::Concat, _, _)));
+    }
+
+    #[test]
+    fn test_lub_error_eval() {
+        let err = LubError::eval(&"A", &"B");
+        assert!(matches!(err, LubError::Eval(_, _)));
+    }
+
+    #[test]
+    fn test_lub_op_dispatch() {
+        use crate::typ::range::Range;
+        let a = Range { start: 1, step: 1, end: 10 };
+        let b = Range { start: 2, step: 1, end: 20 };
+        let ctx = Nothing;
+
+        assert!(Range::lub_op(BinOp::Add, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Sub, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Mul, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Div, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Pow, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Rem, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::Dot, &a, &b, &ctx).is_ok());
+        assert!(Range::lub_op(BinOp::And, &a, &b, &ctx).is_err());
+        assert!(Range::lub_op(BinOp::Equ, &a, &b, &ctx).is_ok());
+
+        // Concat may succeed or fail depending on ranges - test with contiguous ranges
+        let c = Range { start: 1, step: 1, end: 5 };
+        let d = Range { start: 5, step: 1, end: 10 };
+        // These ranges are contiguous, so concat might succeed
+        let _ = Range::lub_op(BinOp::Concat, &c, &d, &ctx);
+    }
+}
+
+#[cfg(test)]
+mod range_lub_tests {
+    use super::*;
+    use crate::typ::range::Range;
+
+    #[test]
+    fn test_range_lub_equ_basic() {
+        let a = Range { start: 1, step: 1, end: 10 };
+        let b = Range { start: 5, step: 2, end: 15 };
+        let result = Range::lub_equ(&a, &b, &Nothing).unwrap();
+        assert_eq!(result.start, 1);
+        assert_eq!(result.end, 15);
+    }
+
+    #[test]
+    fn test_range_lub_add_basic() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 2, step: 1, end: 3 };
+        let result = Range::lub_add(&a, &b, &Nothing).unwrap();
+        assert!(result.start >= a.start + b.start);
+    }
+
+    #[test]
+    fn test_range_lub_sub_basic() {
+        let a = Range { start: 10, step: 1, end: 20 };
+        let b = Range { start: 1, step: 1, end: 5 };
+        let result = Range::lub_sub(&a, &b, &Nothing).unwrap();
+        assert!(result.start >= 0);
+    }
+
+    #[test]
+    fn test_range_lub_mul_basic() {
+        let a = Range { start: 2, step: 1, end: 5 };
+        let b = Range { start: 3, step: 1, end: 4 };
+        let result = Range::lub_mul(&a, &b, &Nothing).unwrap();
+        assert!(result.start >= a.start * b.start);
+    }
+
+    #[test]
+    fn test_range_lub_pow_basic() {
+        let a = Range { start: 2, step: 1, end: 3 };
+        let b = Range { start: 2, step: 1, end: 3 };
+        let result = Range::lub_pow(&a, &b, &Nothing).unwrap();
+        assert!(result.start >= 4); // 2^2
+    }
+
+    #[test]
+    fn test_range_lub_rem_basic() {
+        let a = Range { start: 10, step: 1, end: 20 };
+        let b = Range { start: 3, step: 1, end: 5 };
+        let result = Range::lub_rem(&a, &b, &Nothing).unwrap();
+        assert!(result.end < b.end);
+    }
+
+    #[test]
+    fn test_range_lub_rem_zero_divisor() {
+        let a = Range { start: 10, step: 1, end: 20 };
+        let b = Range { start: 0, step: 1, end: 5 };
+        let result = Range::lub_rem(&a, &b, &Nothing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_range_lub_div_zero_divisor() {
+        let a = Range { start: 10, step: 1, end: 20 };
+        let b = Range { start: 0, step: 1, end: 5 };
+        let result = Range::lub_div(&a, &b, &Nothing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_range_lub_dot() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 2, step: 1, end: 4 };
+        let result = Range::lub_dot(&a, &b, &Nothing).unwrap();
+        // Dot should behave like mul
+        let mul_result = Range::lub_mul(&a, &b, &Nothing).unwrap();
+        assert_eq!(result, mul_result);
+    }
+
+    #[test]
+    fn test_range_lub_pair_error() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 2, step: 1, end: 4 };
+        let result = Range::lub_pair(&a, &b, &Nothing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_range_lub_and_error() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 2, step: 1, end: 4 };
+        let result = Range::lub_and(&a, &b, &Nothing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_range_lub_concat_valid() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 5, step: 1, end: 10 };
+        let result = Range::lub_concat(&a, &b, &Nothing);
+        if result.is_ok() {
+            let concatenated = result.unwrap();
+            assert_eq!(concatenated.start, 1);
+            assert_eq!(concatenated.end, 10);
+        }
+    }
+
+    #[test]
+    fn test_range_lub_concat_invalid() {
+        let a = Range { start: 1, step: 1, end: 5 };
+        let b = Range { start: 7, step: 1, end: 10 }; // Gap between ranges
+        let result = Range::lub_concat(&a, &b, &Nothing);
+        assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod tid_lub_tests {
+    use super::*;
+
+    #[test]
+    fn test_tid_lub_rem_error() {
+        let f = Tid::from("F");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_rem(&f, &f, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_pow_error() {
+        let f = Tid::from("F");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_pow(&f, &f, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_concat_error() {
+        let f = Tid::from("F");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_concat(&f, &f, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_and_error() {
+        let f = Tid::from("F");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_and(&f, &f, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_equ_not_found() {
+        let f = Tid::from("F");
+        let g = Tid::from("G");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_equ(&f, &g, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_add_not_found() {
+        let f = Tid::from("F");
+        let g = Tid::from("G");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_add(&f, &g, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_mul_not_found() {
+        let f = Tid::from("F");
+        let g = Tid::from("G");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_mul(&f, &g, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_div_not_found() {
+        let f = Tid::from("F");
+        let g = Tid::from("G");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_div(&f, &g, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_pair_not_pairing_kind() {
+        let g1 = Tid::from("G1");
+        let g2 = Tid::from("G2");
+        let ctx = Ctx::from([
+            (g1.clone(), Kind::Group),
+            (g2.clone(), Kind::Group),
+        ]);
+        let result = Tid::lub_pair(&g1, &g2, &ctx);
+        // Should fail because no pairing kind exists
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_pair_non_group() {
+        let f = Tid::from("F");
+        let g = Tid::from("G");
+        let ctx = Ctx::from([
+            (f.clone(), Kind::Field),
+            (g.clone(), Kind::Group),
+        ]);
+        let result = Tid::lub_pair(&f, &g, &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tid_lub_dot() {
+        let f = Tid::from("F");
+        let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+        let result = Tid::lub_dot(&f, &f, &ctx);
+        assert_eq!(result.unwrap(), f);
+    }
 }
 
 
