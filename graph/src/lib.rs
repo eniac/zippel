@@ -1421,9 +1421,13 @@ impl<C: ArkConfig> UDag<C> {
                                     }
                                 }
                             },
-                            _ => Err(GraphError::Type(TypeError::not_a_record(
-                                kctx, vctx, &CExp::Var(id_clone), &record_typ
-                            )))
+                            _ => {
+                                // If the left side is not a record, try to reinterpret as a dot product
+                                use lang::id::Vid;
+                                let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
+                                let dot_exp = CExp::Bin(BinOp::Dot, Box::new(CExp::Var(id_clone.clone())), Box::new(rhs_var));
+                                self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                            }
                         }
                     },
                     _ => {
@@ -1445,9 +1449,13 @@ impl<C: ArkConfig> UDag<C> {
                                     TypeError::ark(kctx, vctx, &exp, &typ)
                                 )))
                             },
-                            _ => Err(GraphError::Type(TypeError::not_a_record(
-                                kctx, vctx, &record_exp, &record_typ
-                            )))
+                            _ => {
+                                // If the left side is not a record, try to reinterpret as a dot product
+                                use lang::id::Vid;
+                                let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
+                                let dot_exp = CExp::Bin(BinOp::Dot, Box::new(record_exp.clone()), Box::new(rhs_var));
+                                self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                            }
                         }
                     }
                 }

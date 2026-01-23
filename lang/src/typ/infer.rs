@@ -799,10 +799,18 @@ impl Typeable for CExp {
                                 )
                             })
                     },
-                    _ => Err(TypeError::next(
-                        TypeError::exp(kctx, vctx, self),
-                        TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
-                    ))
+                    _ => {
+                        // If the left side is not a record, try to reinterpret as a dot product
+                        use crate::ast::BinOp;
+                        use crate::id::Vid;
+                        let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
+                        let dot_exp = CExp::Bin(BinOp::Dot, Box::new(record_exp.clone()), Box::new(rhs_var));
+                        dot_exp.infer(kctx, fctx, vctx)
+                            .map_err(|_| TypeError::next(
+                                TypeError::exp(kctx, vctx, self),
+                                TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
+                            ))
+                    }
                 }
             }
         }
