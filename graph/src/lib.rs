@@ -1398,8 +1398,8 @@ impl<C: ArkConfig> UDag<C> {
                         
                         match &record_typ {
                             CTyp::Record(fields) => {
-                                // Verify the field exists
-                                let _field_typ = fields.get(field_name.as_str())
+                                // Verify the field exists and get its type
+                                let field_typ_ctyp = fields.get(field_name.as_str())
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                         kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                     )))?;
@@ -1413,6 +1413,15 @@ impl<C: ArkConfig> UDag<C> {
                                                 kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                             )))
                                             .map(|op| op.clone())
+                                    },
+                                    GOp::Ref(Ref::Var(vid, node), _op_typ) => {
+                                        let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
+                                            .ok_or_else(|| GraphError::Type(TypeError::ark(
+                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
+                                            )))?;
+                                        
+                                        // The field is accessed via projection, so we return a Ref with the field type
+                                        Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
                                     },
                                     _ => {
                                         Err(GraphError::Type(TypeError::not_a_record(

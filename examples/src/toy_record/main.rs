@@ -28,8 +28,8 @@ fn main() {
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     println!("Verifier result: {:?}", verifier_result);
     
-    handler.analyze_completeness();
-    handler.analyze_knowledge();
+    // handler.analyze_completeness();
+    // handler.analyze_knowledge();
     
     println!("Finished toy_record example");
 }

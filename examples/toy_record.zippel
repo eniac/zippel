@@ -1,4 +1,11 @@
-proto toy_record<F: Field, G: Group>
+fn test_record<F: Field>(public user: {name: F, balance: F}) -> {name: F, balance: F} {
+    let x = user.name;
+    let y = user.balance;
+    let x2 = {| name: x, balance: y |};
+    x2
+}
+
+proto toy_record_proto<F: Field, G: Group>
     (public x: F, public y: F, public status_g1: G)
     where true {
     
@@ -7,6 +14,9 @@ proto toy_record<F: Field, G: Group>
     let balance = a.balance;
     let status = a.status;
     let b = {| name: 1, balance: 100, status: status_g1 |};
-    verify(name == 1  && balance == 100 && status == status_g1 && a.name == b.name && a == b);
+    let user1 = {| name: 4, balance: 3, status: status_g1 |};
+    let user_record = {| name: x, balance: y |};
+    let result = test_record(user_record);
+    verify(name == 1  && balance == 100 && status == status_g1 && a.name == b.name && a == b && result.name == x && result.balance == y);
     
 }
