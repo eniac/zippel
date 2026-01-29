@@ -1,6 +1,5 @@
 use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, Index};
 use std::collections::BTreeMap;
-use std::collections::BTreeMap;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
@@ -272,22 +271,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     a.name
     ///     ```
-    Proj(Box<Exp<N>>, String)
-    Fun(Vec<Vid>, Box<Exp<N>>),
-
-    ///     Record construction
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let a = {| name: "Sydnie", balance: 100 |};
-    ///     ```
-    Record(BTreeMap<String, Exp<N>>),
-
-    ///     Field projection
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     a.name
-    ///     ```
-    Proj(Box<Exp<N>>, String)
+    Proj(Box<Exp<N>>, String),
 }
 
 /// Free variables
@@ -363,17 +347,7 @@ impl<N> ToTraversal1<N> for Exp<N> {
                 Ok(Exp::Record(new_fields))
             },
             Exp::Proj(box exp, field) =>
-                Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field))
-                Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
-            Exp::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, exp) in fields {
-                    new_fields.insert(name, exp.traverse1(f)?);
-                }
-                Ok(Exp::Record(new_fields))
-            },
-            Exp::Proj(box exp, field) =>
-                Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field))
+                Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
         }
     }
 }
@@ -413,12 +387,6 @@ impl TidSubst for CExp {
                 b.tid_subst(from, to);
             },
             Exp::Fun(_, box body) => body.tid_subst(from, to),
-            Exp::Record(fields) => {
-                for field_exp in fields.values_mut() {
-                    field_exp.tid_subst(from, to);
-                }
-            },
-            Exp::Proj(box exp, _) => exp.tid_subst(from, to),
             Exp::Record(fields) => {
                 for field_exp in fields.values_mut() {
                     field_exp.tid_subst(from, to);
@@ -470,12 +438,6 @@ impl FreeVars for CExp {
                     .fold(Set::new(), |acc, x| acc.union(x))
             },
             Exp::Proj(box exp, _) => exp.freevars()
-            },
-            Exp::Record(fields) => {
-                fields.values().map(|exp| exp.freevars())
-                    .fold(Set::new(), |acc, x| acc.union(x))
-            },
-            Exp::Proj(box exp, _) => exp.freevars()
         }
     }
 }
@@ -516,14 +478,6 @@ impl<N> RangeTraversal<N> for Exp<N> {
             Exp::Verify(box x) => Ok(Exp::verify(x.range_traverse(f)?)),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
-            Exp::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, exp) in fields {
-                    new_fields.insert(name, exp.range_traverse(f)?);
-                }
-                Ok(Exp::Record(new_fields))
-            },
-            Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
             Exp::Record(fields) => {
                 let mut new_fields = BTreeMap::new();
                 for (name, exp) in fields {
@@ -713,12 +667,6 @@ impl<N> Exp<N> {
     pub fn proj(exp: Self, field: String) -> Self {
         Exp::Proj(Box::new(exp), field)
     }
-    pub fn record(fields: BTreeMap<String, Self>) -> Self {
-        Exp::Record(fields)
-    }
-    pub fn proj(exp: Self, field: String) -> Self {
-        Exp::Proj(Box::new(exp), field)
-    }
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
@@ -740,8 +688,6 @@ impl<N> Exp<N> {
             Exp::Fft(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
             Exp::Fun(_, box body) => body.is_pure(),
-            Exp::Record(fields) => fields.values().all(|e| e.is_pure()),
-            Exp::Proj(box exp, _) => exp.is_pure(),
             Exp::Record(fields) => fields.values().all(|e| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
         }
@@ -945,26 +891,6 @@ where
                     allocator.text(" => "),
                     (*body).pretty(allocator),
                 ])
-            },
-            Exp::Record(fields) => {
-                let mut docs = Vec::new();
-                docs.push(allocator.text("{|"));
-                let field_docs: Vec<_> = fields.into_iter().map(|(name, exp)| {
-                    allocator.concat([
-                        allocator.text(name),
-                        allocator.text(": "),
-                        exp.pretty(allocator)
-                    ])
-                }).collect();
-                docs.push(allocator.intersperse(field_docs.into_iter(), ", "));
-                docs.push(allocator.text("|}"));
-                allocator.concat(docs)
-            },
-            Exp::Proj(box exp, field) => allocator.concat([
-                exp.pretty(allocator),
-                allocator.text("."),
-                allocator.text(field)
-            ])
             },
             Exp::Record(fields) => {
                 let mut docs = Vec::new();
