@@ -1468,6 +1468,26 @@ impl<C: ArkConfig> UDag<C> {
                         }
                     }
                 }
+            },
+            CExp::SetRecord(box record_exp, field_name, box value_exp) => {
+                // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
+                let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                let CTyp::Record(typ_fields) = &record_typ else {
+                    return Err(GraphError::Type(TypeError::not_a_record(
+                        kctx, vctx, &record_exp, &record_typ
+                    )));
+                };
+                let mut new_record_fields = BTreeMap::new();
+                for (fname, _) in typ_fields {
+                    let field_exp = if fname == &field_name {
+                        value_exp.clone()
+                    } else {
+                        CExp::Proj(Box::new(record_exp.clone()), fname.clone())
+                    };
+                    new_record_fields.insert(fname.clone(), field_exp);
+                }
+                let new_record_exp = CExp::Record(new_record_fields);
+                self.add_exp(new_record_exp, transcr, edge_type, kctx, fctx, vctx, vars)
             }
         }
     }

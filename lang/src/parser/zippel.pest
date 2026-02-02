@@ -22,6 +22,7 @@ unary_minus = @{ "-" }
 /// Identifiers for functions, variables, type variables
 keyword = {"let" | "fn" | "proto" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
+string_lit = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 ids = _{ id ~ ("," ~ id)* }
 
 /// Ranges appear in types and expressions
@@ -55,7 +56,8 @@ typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty | recor
     record_field = { id ~ ":" ~ typ }                            // Record field definition
 
 /// Arithmetic expression language of Zippel
-exp       = { exp_term ~ (proj_op | bin_op ~ exp_term)* }
+exp       = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }
+    record_set_op = { "." ~ "set" ~ "(" ~ (id | string_lit) ~ "," ~ exp ~ ")" }
 exp_term  = _{
          range_exp
          | "(" ~ exp ~ ")"

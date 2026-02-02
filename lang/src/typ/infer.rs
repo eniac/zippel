@@ -812,6 +812,33 @@ impl Typeable for CExp {
                             ))
                     }
                 }
+            },
+
+            CExp::SetRecord(box record_exp, field_name, box value_exp) => {
+                // Infer the type of the record expression (must be a record)
+                let record_typ = record_exp.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let CTyp::Record(fields) = &record_typ else {
+                    return Err(TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
+                    ));
+                };
+                // Check the field exists and the value has a type compatible with the field (e.g. Fin unifies with F)
+                let field_typ = fields.get(field_name.as_str())
+                    .ok_or_else(|| TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::field_not_found(kctx, vctx, &record_exp, field_name, fields)
+                    ))?;
+                let value_typ = value_exp.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let _ = CTyp::lub_equ(&value_typ, field_typ, kctx)
+                    .map_err(|e| TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::lub(TypeError::exp(kctx, vctx, self), e)
+                    ))?;
+                // Result type is the same record type
+                Ok(record_typ.clone())
             }
         }
     }

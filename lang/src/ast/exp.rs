@@ -272,6 +272,14 @@ pub enum Exp<N> {
     ///     a.name
     ///     ```
     Proj(Box<Exp<N>>, String),
+
+    ///     Record update: create a new record identical to the given record
+    ///     except with the specified field set to the given value.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let new_record = old_record.set(name, 3);
+    ///     ```
+    SetRecord(Box<Exp<N>>, String, Box<Exp<N>>),
 }
 
 /// Free variables
@@ -348,6 +356,12 @@ impl<N> ToTraversal1<N> for Exp<N> {
             },
             Exp::Proj(box exp, field) =>
                 Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
+            Exp::SetRecord(box record, field, box value) =>
+                Ok(Exp::SetRecord(
+                    Box::new(record.traverse1(f)?),
+                    field,
+                    Box::new(value.traverse1(f)?),
+                )),
         }
     }
 }
@@ -393,6 +407,10 @@ impl TidSubst for CExp {
                 }
             },
             Exp::Proj(box exp, _) => exp.tid_subst(from, to),
+            Exp::SetRecord(box record, _, box value) => {
+                record.tid_subst(from, to);
+                value.tid_subst(from, to);
+            },
             Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
             | Exp::Challenge(_, _) | Exp::Random(_, _) => {}
         }
@@ -437,7 +455,9 @@ impl FreeVars for CExp {
                 fields.values().map(|exp| exp.freevars())
                     .fold(Set::new(), |acc, x| acc.union(x))
             },
-            Exp::Proj(box exp, _) => exp.freevars()
+            Exp::Proj(box exp, _) => exp.freevars(),
+            Exp::SetRecord(box record, _, box value) =>
+                record.freevars().union(value.freevars()),
         }
     }
 }
@@ -486,6 +506,12 @@ impl<N> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::Record(new_fields))
             },
             Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
+            Exp::SetRecord(box record, field, box value) =>
+                Ok(Exp::SetRecord(
+                    Box::new(record.range_traverse(f)?),
+                    field,
+                    Box::new(value.range_traverse(f)?),
+                )),
             other => Ok(other)
         }
     }
@@ -667,6 +693,9 @@ impl<N> Exp<N> {
     pub fn proj(exp: Self, field: String) -> Self {
         Exp::Proj(Box::new(exp), field)
     }
+    pub fn set_record(record: Self, field: String, value: Self) -> Self {
+        Exp::SetRecord(Box::new(record), field, Box::new(value))
+    }
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
@@ -690,6 +719,7 @@ impl<N> Exp<N> {
             Exp::Fun(_, box body) => body.is_pure(),
             Exp::Record(fields) => fields.values().all(|e| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
+            Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
         }
     }
 }
@@ -910,6 +940,14 @@ where
                 exp.pretty(allocator),
                 allocator.text("."),
                 allocator.text(field)
+            ]),
+            Exp::SetRecord(box record, field, box value) => allocator.concat([
+                record.pretty(allocator),
+                allocator.text(".set("),
+                allocator.text(field),
+                allocator.text(", "),
+                value.pretty(allocator),
+                allocator.text(")")
             ])
         }
     }
@@ -1065,7 +1103,7 @@ lazy_static! {
             .op(Op::infix(concat_op, Left))
             .op(Op::infix(pow_op, Right))
             .op(Op::prefix(unary_minus))
-            .op(Op::postfix(proj_op))
+            .op(Op::postfix(record_set_op))
             .op(Op::postfix(proj_op))
     };
 }
@@ -1261,16 +1299,21 @@ impl<'pest> FromPest<'pest> for UExp {
             })
             .map_postfix(|lhs, op| {
                 match op.as_rule() {
-                    Rule::proj_op => {
+                    Rule::record_set_op => {
                         let mut inner = op.into_inner();
-                        let field_name = Vid::from_pest(&mut inner)?.0;
-                        Ok(Exp::proj(lhs?, field_name))
+                        let field_name = match inner.next().ok_or(ConversionError::NoMatch)? {
+                            pair if pair.as_rule() == Rule::id =>
+                                Vid::from_pest(&mut Pairs::single(pair))?.0,
+                            pair if pair.as_rule() == Rule::string_lit => {
+                                let s = pair.as_str();
+                                s[1..s.len().saturating_sub(1)].to_string()
+                            },
+                            pair => return Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
+                        };
+                        let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                        let value = Exp::from_pest(&mut Pairs::single(value_pair))?;
+                        Ok(Exp::set_record(lhs?, field_name, value))
                     },
-                    _ => unreachable!(),
-                }
-            })
-            .map_postfix(|lhs, op| {
-                match op.as_rule() {
                     Rule::proj_op => {
                         let mut inner = op.into_inner();
                         let field_name = Vid::from_pest(&mut inner)?.0;
