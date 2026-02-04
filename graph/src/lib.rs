@@ -33,7 +33,7 @@ use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbor
 use std::process::Command;
 use std::ops::Index;
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Represents graphs in the Zippel language
 /// graph intermediate representation (Graph IR)
@@ -503,14 +503,18 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
 
             // Check if the node refers to a private argument, then it is a leak
-            // let op = self[n].clone().into_op();
-            // for r in op.references() {
-            //    if r.node() == self.input_node() {
-            //        if args.iter().all(|a| a.var() != r.var()) {
-            //            return Err(GraphError::private_node_in_verifier(&op, &r));
-            //        }
-            //    }
-            // }
+            let op = self[n].clone().into_op();
+            for r in op.references() {
+                if r.node() == self.input_node() {
+                    if let Some(r_var) = r.var() {
+                        let is_private_input = self.args().iter()
+                            .any(|a| a.var().as_ref() == Some(&r_var) && a.is_private());
+                        if is_private_input {
+                            return Err(GraphError::private_node_in_verifier(&op, &r));
+                        }
+                    }
+                }
+            }
 
             // Add node to prover graph
             let new_node = verifier.add_node(self[n].clone());
