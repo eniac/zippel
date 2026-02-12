@@ -39,7 +39,7 @@ pub enum Op<C: ArkConfig, R> {
     Vec(Vec<Op<C, R>>),
 
     /// Record with named fields
-    Record(std::collections::BTreeMap<String, Op<C, R>>),
+    Record(BTreeMap<String, Op<C, R>>),
 
     /// Random element
     Random(ATyp, bool),
