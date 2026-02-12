@@ -1,5 +1,5 @@
 use zippel::*;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 use backend::{ArkField17, Value, ATyp};
 use lang::id::Vid;
 use share::Ctx;
@@ -12,11 +12,17 @@ fn main() {
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
+    let prover_start = Instant::now();
     let proof = handler.run_prover(prover_scheduled, inputs);
+    let prover_elapsed = prover_start.elapsed();
+    println!("Prover runtime: {:?}", prover_elapsed);
 
 
     let verifier_scheduled = handler.default_schedule_verifier();
+    let verifier_start = Instant::now();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
+    let verifier_elapsed = verifier_start.elapsed();
+    println!("Verifier runtime: {:?}", verifier_elapsed);
     println!("Verifier result: {:?}", verifier_result);
 
 
@@ -26,7 +32,7 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkField17>> {
     let mut rng = rand::rngs::OsRng;
-    let n_val_const = 2;
+    let n_val_const = 4;
 
     let u_aux_base: Value<ArkField17> = Value::<ArkField17>::random(&mut rng, &ATyp::scalar());
 
@@ -36,8 +42,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkField17>> {
     let a_vec_witness: Value<ArkField17> = Value::<ArkField17>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
     let b_vec_witness: Value<ArkField17> = Value::<ArkField17>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
     let ip_val_claimed: Value<ArkField17> = a_vec_witness.clone().dot(b_vec_witness.clone());
-    let p_initial_commitment: Value<ArkField17> = g_vec.clone().dot(a_vec_witness.clone()) +
-    h_vec.clone().dot(b_vec_witness.clone());
+    let p_initial_commitment: Value<ArkField17> =
+        g_vec.clone().dot(a_vec_witness.clone())
+        + h_vec.clone().dot(b_vec_witness.clone());
 
     let inputs = Ctx::<Vid, Value<ArkField17>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
