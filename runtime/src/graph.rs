@@ -82,10 +82,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return  Value::value_vec(value_vector);
             },
             Op::Record(fields) => {
-                let mut record_values = std::collections::BTreeMap::new();
-                for (name, op) in fields {
+                let mut record_values = share::Ctx::new();
+                for (name, op) in fields.iter() {
                     let field_value = self.handle_op(op, Arc::clone(&inputs));
-                    record_values.insert(name.clone(), field_value);
+                    record_values.insert(name, &field_value);
                 }
                 return Value::Record(record_values);
             },

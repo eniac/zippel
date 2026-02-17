@@ -4,13 +4,13 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         where p == p {
         
         let p_val = poly(p);
-        c <- p . ss;
+        c <- dot(p, ss);
 
         let q_val = (p_val - y) / poly([-z, 1]);
 
         let pi_val = coef(q_val);
         let test = ss[0..N-1];
-        pi <- pi_val . test;
+        pi <- dot(pi_val, test);
 
 
         let lhs = pair(pi, (h_val) - (h * z));

@@ -30,7 +30,6 @@ use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
-use std::collections::BTreeMap;
 
 /// The types of expressions, [N] is the size parameter
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -48,7 +47,7 @@ pub enum Typ<T, N> {
     /// Boolean (BExp)
     Bool,
     /// Record type with named fields
-    Record(BTreeMap<String, Typ<T, N>>)
+    Record(Ctx<String, Typ<T, N>>)
 }
 
 /// Many types
@@ -74,7 +73,7 @@ impl<N> TidSubst for GTyp<N> {
             | Typ::Base(b) if b == from => *b = to.clone(),
             Typ::Vec(b, _) => b.tid_subst(from, to),
             Typ::Record(fields) => {
-                for field_typ in fields.values_mut() {
+                for (_, field_typ) in fields.iter_mut() {
                     field_typ.tid_subst(from, to);
                 }
             },
@@ -118,7 +117,7 @@ impl<T, N> Typ<T, N> {
     pub fn bool() -> Self {
         Typ::Bool
     }
-    pub fn record(fields: BTreeMap<String, Typ<T, N>>) -> Self {
+    pub fn record(fields: Ctx<String, Typ<T, N>>) -> Self {
         Typ::Record(fields)
     }
     pub fn into_vec(self) -> (Self, N) {
@@ -217,11 +216,10 @@ impl<T, N> ToTraversal1<T> for Typ<T, N> {
             Typ::Fin(r) => Ok(Typ::Fin(r)),
             Typ::Bool => Ok(Typ::Bool),
             Typ::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, typ) in fields {
-                    new_fields.insert(name, typ.traverse1(f)?);
-                }
-                Ok(Typ::Record(new_fields))
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.traverse1(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
             }
         }
     }
@@ -238,11 +236,10 @@ impl<T, N> ToTraversal2<N> for Typ<T, N> {
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
             Typ::Bool => Ok(Typ::Bool),
             Typ::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, typ) in fields {
-                    new_fields.insert(name, typ.traverse2(f)?);
-                }
-                Ok(Typ::Record(new_fields))
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.traverse2(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
             }
         }
     }
@@ -254,11 +251,10 @@ impl<T, N> RangeTraversal<N> for Typ<T, N> {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
             Typ::Vec(box t, n) => Ok(Typ::Vec(Box::new(t.range_traverse(f)?), n)),
             Typ::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, typ) in fields {
-                    new_fields.insert(name, typ.range_traverse(f)?);
-                }
-                Ok(Typ::Record(new_fields))
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.range_traverse(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
             },
             _ => Ok(self)
         }
@@ -419,13 +415,13 @@ impl<'pest> FromPest<'pest> for UTyp {
             }
             Rule::record_ty => {
                 let mut inner = pair.into_inner();
-                let mut fields = BTreeMap::new();
+                let mut fields = Ctx::new();
                 while let Some(field_pair) = inner.next() {
                     if field_pair.as_rule() == Rule::record_field {
                         let mut field_inner = field_pair.into_inner();
                         let field_name = Vid::from_pest(&mut field_inner)?.0;
                         let field_typ = Typ::from_pest(&mut field_inner)?;
-                        fields.insert(field_name, field_typ);
+                        fields.insert(&field_name, &field_typ);
                     }
                 }
                 Ok(Typ::Record(fields))

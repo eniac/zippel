@@ -33,7 +33,7 @@ use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbor
 use std::process::Command;
 use std::ops::Index;
 use std::path::PathBuf;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// Represents graphs in the Zippel language
 /// graph intermediate representation (Graph IR)
@@ -1356,11 +1356,11 @@ impl<C: ArkConfig> UDag<C> {
             },
             CExp::Record(fields) => {
                 // For records, we add each field to the graph and create a Record operation
-                let mut field_ops = BTreeMap::new();
+                let mut field_ops = Ctx::new();
                 
-                for (field_name, field_exp) in fields {
+                for (field_name, field_exp) in fields.iter() {
                     let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
-                    field_ops.insert(field_name.clone(), field_op);
+                    field_ops.insert(field_name, &field_op);
                 }
                 
                 // Return a Record operation with named fields
@@ -1371,13 +1371,12 @@ impl<C: ArkConfig> UDag<C> {
                 // Check if the record expression is a Record literal
                 match record_exp {
                     CExp::Record(fields) => {
-                        let field_exp = fields.get(field_name.as_str())
+                        let field_exp = fields.get(&field_name)
                             .ok_or_else(|| {
-                                use std::collections::BTreeMap;
-                                let mut field_types = BTreeMap::new();
-                                for (name, exp) in &fields {
+                                let mut field_types = Ctx::new();
+                                for (name, exp) in fields.iter() {
                                     if let Ok(typ) = exp.infer(kctx, &fctx.keys(), vctx) {
-                                        field_types.insert(name.clone(), typ);
+                                        field_types.insert(name, &typ);
                                     }
                                 }
                                 GraphError::Type(TypeError::field_not_found(
@@ -1399,7 +1398,7 @@ impl<C: ArkConfig> UDag<C> {
                         match &record_typ {
                             CTyp::Record(fields) => {
                                 // Verify the field exists and get its type
-                                let field_typ_ctyp = fields.get(field_name.as_str())
+                                let field_typ_ctyp = fields.get(&field_name)
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                         kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                     )))?;
@@ -1408,7 +1407,7 @@ impl<C: ArkConfig> UDag<C> {
                                 match record_op {
                                     GOp::Record(record_fields) => {
                                         // Direct field access from Record operation
-                                        record_fields.get(field_name.as_str())
+                                        record_fields.get(&field_name)
                                             .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                                 kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                             )))
@@ -1429,13 +1428,11 @@ impl<C: ArkConfig> UDag<C> {
                                         )))
                                     }
                                 }
-                            },
+                            }
                             _ => {
-                                // If the left side is not a record, try to reinterpret as a dot product
-                                use lang::id::Vid;
-                                let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
-                                let dot_exp = CExp::Bin(BinOp::Dot, Box::new(CExp::Var(id_clone.clone())), Box::new(rhs_var));
-                                self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                                Err(GraphError::Type(TypeError::not_a_record(
+                                    kctx, vctx, &CExp::Var(id_clone.clone()), &record_typ
+                                )))
                             }
                         }
                     },
@@ -1446,7 +1443,7 @@ impl<C: ArkConfig> UDag<C> {
                         match record_typ {
                             CTyp::Record(fields) => {
                                 // Get the field type
-                                let _field_typ = fields.get(field_name.as_str())
+                                let _field_typ = fields.get(&field_name)
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                         kctx, vctx, &record_exp, field_name.as_str(), &fields
                                     )))?;
@@ -1459,11 +1456,9 @@ impl<C: ArkConfig> UDag<C> {
                                 )))
                             },
                             _ => {
-                                // If the left side is not a record, try to reinterpret as a dot product
-                                use lang::id::Vid;
-                                let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
-                                let dot_exp = CExp::Bin(BinOp::Dot, Box::new(record_exp.clone()), Box::new(rhs_var));
-                                self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                                Err(GraphError::Type(TypeError::not_a_record(
+                                    kctx, vctx, &record_exp, &record_typ
+                                )))
                             }
                         }
                     }
@@ -1477,14 +1472,14 @@ impl<C: ArkConfig> UDag<C> {
                         kctx, vctx, &record_exp, &record_typ
                     )));
                 };
-                let mut new_record_fields = BTreeMap::new();
-                for (fname, _) in typ_fields {
+                let mut new_record_fields = Ctx::new();
+                for (fname, _) in typ_fields.iter() {
                     let field_exp = if fname == &field_name {
                         value_exp.clone()
                     } else {
                         CExp::Proj(Box::new(record_exp.clone()), fname.clone())
                     };
-                    new_record_fields.insert(fname.clone(), field_exp);
+                    new_record_fields.insert(fname, &field_exp);
                 }
                 let new_record_exp = CExp::Record(new_record_fields);
                 self.add_exp(new_record_exp, transcr, edge_type, kctx, fctx, vctx, vars)

@@ -12,7 +12,6 @@ sub_op = @{ "-" }
 mul_op = @{ "*" }
 div_op = @{ "/" }
 pow_op = @{ "^" }
-dot_op = @{ "." }
 rem_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
@@ -22,7 +21,6 @@ unary_minus = @{ "-" }
 /// Identifiers for functions, variables, type variables
 keyword = {"let" | "fn" | "proto" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
-string_lit = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 ids = _{ id ~ ("," ~ id)* }
 
 /// Ranges appear in types and expressions
@@ -57,7 +55,7 @@ typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty | recor
 
 /// Arithmetic expression language of Zippel
 exp       = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }
-    record_set_op = { "." ~ "set" ~ "(" ~ (id | string_lit) ~ "," ~ exp ~ ")" }
+    record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp ~ ")" }
 exp_term  = _{
          range_exp
          | "(" ~ exp ~ ")"
@@ -67,6 +65,7 @@ exp_term  = _{
          | fft_exp
          | poly_exp
          | eval_exp
+         | dot_exp
          | coef_exp
          | challenge_exp
          | random_exp
@@ -92,6 +91,7 @@ exp_term  = _{
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
+    dot_exp       = { "dot" ~ "(" ~ exp ~ "," ~ exp ~ ")" }            // Dot product (use dot(a,b) instead of a . b)
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
@@ -111,7 +111,7 @@ exp_term  = _{
     minus_exp     = _{ unary_minus ~ exp }                            // Negative expressions
     record_exp    = { "{|" ~ record_field_exp ~ ("," ~ record_field_exp)* ~ "|}" }  // Record construction
     record_field_exp = { id ~ ":" ~ exp }                             // Record field with value
-    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op | eq_op | and_op }
+    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op | eq_op | and_op }
 exps = { exp ~ ("," ~ exp)* }
 stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 

@@ -16,7 +16,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use spongefish::{ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use share::Ctx;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
 use crate::{to_bytes, ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps};
@@ -48,7 +48,7 @@ pub enum Value<C: ArkConfig> {
     /// Vectors of vectors etc
     Vec(Vec<Value<C>>),
     /// Record with named fields
-    Record(std::collections::BTreeMap<String, Value<C>>),
+    Record(Ctx<String, Value<C>>),
     /// Virtual Polynomial (sum-of-products of univariate or multilinear, dense or sparse)
     Poly(VirtualPolynomial<C::F>),
 }
@@ -185,7 +185,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
         Value::Record(fields) => {
             // Serialize record fields
             (fields.len() as u64).serialize_compressed(&mut *writer)?;
-            for (name, value) in fields {
+            for (name, value) in fields.iter() {
                 // Serialize field name length and name
                 name.as_bytes().serialize_compressed(&mut *writer)?;
                 serialize_value_internal(value, &mut *writer)?;
@@ -274,9 +274,10 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(v)
             }
             ATyp::Record(fields) => {
-                let mut record_fields = BTreeMap::new();
-                for (name, field_typ) in fields {
-                    record_fields.insert(name.clone(), Value::<C>::zero(field_typ));
+                let mut record_fields = Ctx::new();
+                for (name, field_typ) in fields.iter() {
+                    let v = Value::<C>::zero(field_typ);
+                    record_fields.insert(name, &v);
                 }
                 Value::Record(record_fields)
             }
@@ -1999,9 +2000,10 @@ impl<C: ArkConfig> Value<C> {
                 ))
             },
             ATyp::Record(fields) => {
-                let mut record_fields = BTreeMap::new();
-                for (name, field_typ) in fields {
-                    record_fields.insert(name.clone(), Self::random(rng, field_typ));
+                let mut record_fields = Ctx::new();
+                for (name, field_typ) in fields.iter() {
+                    let v = Self::random(rng, field_typ);
+                    record_fields.insert(name, &v);
                 }
                 Value::Record(record_fields)
             }
@@ -2040,9 +2042,10 @@ impl<C: ArkConfig> Value<C> {
                 ATyp::Vec(Box::new(typ), v.len())
             },
             Value::Record(fields) => {
-                let mut atyp_fields = BTreeMap::new();
-                for (name, value) in fields {
-                    atyp_fields.insert(name.clone(), value.typ());
+                let mut atyp_fields = Ctx::new();
+                for (name, value) in fields.iter() {
+                    let t = value.typ();
+                    atyp_fields.insert(name, &t);
                 }
                 ATyp::Record(atyp_fields)
             },
@@ -2306,7 +2309,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecIndex(a) => a.par_iter().all(|a| *a == 0),
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
-            Value::Record(fields) => fields.values().all(|v| v.is_zero()),
+            Value::Record(fields) => fields.iter().all(|(_, v)| v.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
         }
     }

@@ -35,7 +35,7 @@ proto kzh<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, NX: 
 ) where z0 == f_xy(x0 ++ y0) {
     // 1) Commitment: C = <fft(f_xy), H_xy>
     let f_all: [F; 2^(NX + NY)] = fft(f_xy);
-    C <- f_all . H_xy; // G1
+    C <- dot(f_all, H_xy); // G1
 
     // 2) Row polynomial f*(Y) = f(x0, Y)
     let f_row = f_xy(x0);                  // Mle<F, NY>
@@ -52,9 +52,9 @@ proto kzh<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, NX: 
 
     // 5) Verify MSM relation for the opened row (Figure 2, Check 2)
     //    sum_y f*(y) * H^(y) == sum_x eq(x, x0) * D^(x)
-    let lhs2: G1 = pi_vals . H_y;
+    let lhs2: G1 = dot(pi_vals, H_y);
     let eqw: [F; 2^NX] = eq_weights(x0);
-    let rhs2: G1 = eqw . D_x;
+    let rhs2: G1 = dot(eqw, D_x);
     verify(lhs2 == rhs2);
 
     // 6) Verify claimed evaluation matches pi at y0 (Figure 2, Check 3)

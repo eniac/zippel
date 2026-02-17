@@ -4,13 +4,13 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         where p(z) == y && ss[0] == g && [(pair(ss[i], h) == pair(ss[i-1], s)) for i in 1..N] {
 
         // Commitment [c: G1]
-        c <- (p . ss);
+        c <- dot(p, ss);
 
         // q(X) = p(X) / X - y
         let q = p / poly([-y, 1]); // p(X) = X - y
 
         // Proof [pi: G1]
-        pi <- (q . ss[0..(N-1)]);
+        pi <- dot(q, ss[0..(N-1)]);
 
         //verify(c == c)
         verify(pair(pi, s - z*h) == pair(c - g * y, h))

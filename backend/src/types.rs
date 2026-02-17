@@ -3,7 +3,6 @@ pub use lang::typ::lub::{Lub, LubError};
 use lang::typ::range::CRange;
 use lang::id::Tid;
 use share::{Ctx, Pretty, DocAllocator, DocBuilder};
-use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -23,7 +22,7 @@ pub enum ATyp {
     /// Vector
     Vec(Box<ATyp>, usize),
     /// Record type with named fields
-    Record(std::collections::BTreeMap<String, ATyp>),
+    Record(Ctx<String, ATyp>),
     /// TODO: Sync with lang::typ::Poly
     /// Univariate polynomial in coefficient form
     Uni(usize),
@@ -135,7 +134,7 @@ impl ATyp {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
             ATyp::Record(fields) => {
-                fields.values().map(|t| t.size()).sum()
+                fields.iter().map(|(_, t)| t.size()).sum()
             }
             ATyp::Uni(n) => *n,
             ATyp::Mle(n) => *n,
@@ -177,10 +176,10 @@ impl ATyp {
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {
-                let mut atyp_fields = BTreeMap::new();
-                for (name, field_typ) in fields {
+                let mut atyp_fields = Ctx::new();
+                for (name, field_typ) in fields.iter() {
                     if let Some(atyp) = ATyp::from_ctyp(field_typ, kctx) {
-                        atyp_fields.insert(name.clone(), atyp);
+                        atyp_fields.insert(name, &atyp);
                     } else {
                         return None;
                     }

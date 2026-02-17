@@ -204,7 +204,7 @@ impl<'a> TypeError {
     pub fn pair(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &CExp, ta: &CTyp, e: &CExp, te: &CTyp) -> Self {
         TypeError::Pair(kctx.clone(), vctx.clone(), t.clone(), ta.clone(), e.clone(), te.clone())
     }
-    pub fn field_not_found(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, field: &str, _fields: &std::collections::BTreeMap<String, CTyp>) -> Self {
+    pub fn field_not_found(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, field: &str, _fields: &Ctx<String, CTyp>) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
     }
     pub fn not_a_record(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
@@ -769,14 +769,13 @@ impl Typeable for CExp {
             },
 
             CExp::Record(fields) => {
-                use std::collections::BTreeMap;
-                let mut field_types = BTreeMap::new();
+                let mut field_types = Ctx::new();
                 
                 // Infer the type of each field
-                for (field_name, field_exp) in fields {
+                for (field_name, field_exp) in fields.iter() {
                     let field_typ = field_exp.infer(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                    field_types.insert(field_name.clone(), field_typ);
+                    field_types.insert(field_name, &field_typ);
                 }
                 
                 Ok(CTyp::Record(field_types))
@@ -790,7 +789,7 @@ impl Typeable for CExp {
                 match record_typ {
                     CTyp::Record(fields) => {
                         // Look up the field in the record type
-                        fields.get(field_name.as_str())
+                        fields.get(&field_name)
                             .cloned()
                             .ok_or_else(|| {
                                 TypeError::next(
@@ -798,19 +797,11 @@ impl Typeable for CExp {
                                     TypeError::field_not_found(kctx, vctx, &record_exp, &field_name, &fields)
                                 )
                             })
-                    },
-                    _ => {
-                        // If the left side is not a record, try to reinterpret as a dot product
-                        use crate::ast::BinOp;
-                        use crate::id::Vid;
-                        let rhs_var = CExp::Var(Vid::from(field_name.as_str()));
-                        let dot_exp = CExp::Bin(BinOp::Dot, Box::new(record_exp.clone()), Box::new(rhs_var));
-                        dot_exp.infer(kctx, fctx, vctx)
-                            .map_err(|_| TypeError::next(
-                                TypeError::exp(kctx, vctx, self),
-                                TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
-                            ))
                     }
+                    _ => Err(TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
+                    )),
                 }
             },
 
@@ -825,7 +816,7 @@ impl Typeable for CExp {
                     ));
                 };
                 // Check the field exists and the value has a type compatible with the field (e.g. Fin unifies with F)
-                let field_typ = fields.get(field_name.as_str())
+                let field_typ = fields.get(&field_name)
                     .ok_or_else(|| TypeError::next(
                         TypeError::exp(kctx, vctx, self),
                         TypeError::field_not_found(kctx, vctx, &record_exp, field_name, fields)

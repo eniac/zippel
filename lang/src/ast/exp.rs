@@ -1,5 +1,5 @@
 use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, Index};
-use std::collections::BTreeMap;
+use share::Ctx;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
@@ -264,7 +264,7 @@ pub enum Exp<N> {
     ///     ```zippel
     ///     let a = {| name: "Sydnie", balance: 100 |};
     ///     ```
-    Record(BTreeMap<String, Exp<N>>),
+    Record(Ctx<String, Exp<N>>),
 
     ///     Field projection
     ///     **Zippel Code:**
@@ -348,11 +348,10 @@ impl<N> ToTraversal1<N> for Exp<N> {
             Exp::Fun(vars, box body) =>
                 Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, exp) in fields {
-                    new_fields.insert(name, exp.traverse1(f)?);
-                }
-                Ok(Exp::Record(new_fields))
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, exp)| exp.traverse1(f).map(|new_exp| (name, new_exp)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Exp::Record(Ctx::from_iter(pairs)))
             },
             Exp::Proj(box exp, field) =>
                 Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
@@ -402,7 +401,7 @@ impl TidSubst for CExp {
             },
             Exp::Fun(_, box body) => body.tid_subst(from, to),
             Exp::Record(fields) => {
-                for field_exp in fields.values_mut() {
+                for (_, field_exp) in fields.iter_mut() {
                     field_exp.tid_subst(from, to);
                 }
             },
@@ -452,7 +451,7 @@ impl FreeVars for CExp {
                     .collect()
             },
             Exp::Record(fields) => {
-                fields.values().map(|exp| exp.freevars())
+                fields.iter().map(|(_, exp)| exp.freevars())
                     .fold(Set::new(), |acc, x| acc.union(x))
             },
             Exp::Proj(box exp, _) => exp.freevars(),
@@ -499,11 +498,10 @@ impl<N> RangeTraversal<N> for Exp<N> {
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
-                let mut new_fields = BTreeMap::new();
-                for (name, exp) in fields {
-                    new_fields.insert(name, exp.range_traverse(f)?);
-                }
-                Ok(Exp::Record(new_fields))
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, exp)| exp.range_traverse(f).map(|new_exp| (name, new_exp)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Exp::Record(Ctx::from_iter(pairs)))
             },
             Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
             Exp::SetRecord(box record, field, box value) =>
@@ -687,7 +685,7 @@ impl<N> Exp<N> {
     pub fn fun(vars: Vec<Vid>, body: Self) -> Self {
         Exp::Fun(vars, Box::new(body))
     }
-    pub fn record(fields: BTreeMap<String, Self>) -> Self {
+    pub fn record(fields: Ctx<String, Self>) -> Self {
         Exp::Record(fields)
     }
     pub fn proj(exp: Self, field: String) -> Self {
@@ -717,7 +715,7 @@ impl<N> Exp<N> {
             Exp::Fft(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
             Exp::Fun(_, box body) => body.is_pure(),
-            Exp::Record(fields) => fields.values().all(|e| e.is_pure()),
+            Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
             Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
         }
@@ -1099,7 +1097,7 @@ lazy_static! {
             .op(Op::infix(and_op, Left))
             .op(Op::infix(eq_op, Left))
             .op(Op::infix(add_op, Left) | Op::infix(sub_op, Left))
-            .op(Op::infix(mul_op, Left) | Op::infix(dot_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
+            .op(Op::infix(mul_op, Left) | Op::infix(div_op, Left) | Op::infix(rem_op, Left))
             .op(Op::infix(concat_op, Left))
             .op(Op::infix(pow_op, Right))
             .op(Op::prefix(unary_minus))
@@ -1123,7 +1121,6 @@ impl<'pest> FromPest<'pest> for BinOp {
             Rule::mul_op => Ok(BinOp::Mul),
             Rule::div_op => Ok(BinOp::Div),
             Rule::pow_op => Ok(BinOp::Pow),
-            Rule::dot_op => Ok(BinOp::Dot),
             Rule::rem_op => Ok(BinOp::Rem),
             Rule::concat_op => Ok(BinOp::Concat),
             Rule::eq_op => Ok(BinOp::Equ),
@@ -1229,6 +1226,13 @@ impl<'pest> FromPest<'pest> for UExp {
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
                     ))
                 },
+                Rule::dot_exp => {
+                    let mut inner = pair.into_inner();
+                    Ok(Exp::dot(
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                    ))
+                },
                 Rule::app_exp => {
                     let mut inner = pair.into_inner();
                     // Call a function
@@ -1265,13 +1269,13 @@ impl<'pest> FromPest<'pest> for UExp {
                 },
                 Rule::record_exp => {
                     let mut inner = pair.into_inner();
-                    let mut fields = BTreeMap::new();
+                    let mut fields = Ctx::new();
                     while let Some(field_pair) = inner.next() {
                         if field_pair.as_rule() == Rule::record_field_exp {
                             let mut field_inner = field_pair.into_inner();
                             let field_name = Vid::from_pest(&mut field_inner)?.0;
                             let field_value = Exp::from_pest(&mut field_inner)?;
-                            fields.insert(field_name, field_value);
+                            fields.insert(&field_name, &field_value);
                         }
                     }
                     Ok(Exp::Record(fields))
@@ -1287,7 +1291,6 @@ impl<'pest> FromPest<'pest> for UExp {
                     Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
                     Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
                     Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
-                    Rule::dot_op => Ok(Exp::dot(lhs?, rhs?)),
                     Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
                     Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
                     Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
@@ -1301,15 +1304,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 match op.as_rule() {
                     Rule::record_set_op => {
                         let mut inner = op.into_inner();
-                        let field_name = match inner.next().ok_or(ConversionError::NoMatch)? {
-                            pair if pair.as_rule() == Rule::id =>
-                                Vid::from_pest(&mut Pairs::single(pair))?.0,
-                            pair if pair.as_rule() == Rule::string_lit => {
-                                let s = pair.as_str();
-                                s[1..s.len().saturating_sub(1)].to_string()
-                            },
-                            pair => return Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
-                        };
+                        let field_name = Vid::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?.0;
                         let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
                         let value = Exp::from_pest(&mut Pairs::single(value_pair))?;
                         Ok(Exp::set_record(lhs?, field_name, value))

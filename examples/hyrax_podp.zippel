@@ -40,7 +40,7 @@ proto proof_of_dot_product<G: Group, F: Scalar<G>, N: 4>(
 // It uses the conceptual helper functions for clarity.
 where xi == Com_Vec(g_vec, h, x_vec, r_xi)
   && tau == Com_Scal(g, h, y, r_tau)
-  && y == x_vec . a_vec {
+  && y == dot(x_vec, a_vec) {
 
       // --- Prover Phase ---
 
@@ -54,7 +54,7 @@ where xi == Com_Vec(g_vec, h, x_vec, r_xi)
       let delta_commit = Com_Vec(g_vec, h, d_vec, r_delta);
 
       // Compute beta = Com(<a_vec, d_vec>; r_beta)
-      let dot_ad = a_vec . d_vec;
+      let dot_ad = dot(a_vec, d_vec);
       let beta_commit = Com_Scal(g, h, dot_ad, r_beta);
 
       // Add commitments to the transcript
@@ -84,7 +84,7 @@ where xi == Com_Vec(g_vec, h, x_vec, r_xi)
       let check1 = (xi*c + delta == check1_rhs);
 
       // Check 2: tau*c + beta == Com(<z_vec, a_vec>; z_beta)
-      let dot_za = z_vec . a_vec; // Compute dot product <z_vec, a_vec>
+      let dot_za = dot(z_vec, a_vec); // Compute dot product <z_vec, a_vec>
       let check2_rhs = Com_Scal(g, h, dot_za, z_beta);
       let check2 = (tau*c + beta == check2_rhs);
 

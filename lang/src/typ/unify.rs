@@ -102,12 +102,12 @@ impl Unify for CTyp {
                 },
             // Record types: unify each field
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
-                let mut unified_fields = std::collections::BTreeMap::new();
+                let mut unified_fields = share::Ctx::new();
                 for (field_name, typ_a) in fields_a.iter() {
                     if let Some(typ_b) = fields_b.get(field_name) {
                         let unified_typ = CTyp::unify(typ_a, typ_b, ctx, subs)
                             .map_err(|e| UnifyError::typ(&x, &y, e))?;
-                        unified_fields.insert(field_name.clone(), unified_typ);
+                        unified_fields.insert(field_name, &unified_typ);
                     } else {
                         return Err(UnifyError::typ_mismatch(&x, &y));
                     }

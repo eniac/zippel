@@ -45,7 +45,7 @@ impl QualifierPropagation {
             }
             GOp::Record(fields) => {
                 let mut qual = Qualifier::Public;
-                for v in fields.values() {
+                for (_, v) in fields.iter() {
                     let q = self.from_op(v)?;
                     qual = qual.join(&q);
                 }
