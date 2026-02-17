@@ -1402,8 +1402,8 @@ fn parser_bin() {
         Ok(Exp::pow(Exp::varstr("x"), Exp::from(2)))
     );
 
-    // Dot
-    let ex7 = "x . 2";
+    // Dot (function-style syntax)
+    let ex7 = "dot(x, 2)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex7).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
