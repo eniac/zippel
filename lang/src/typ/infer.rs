@@ -100,6 +100,12 @@ pub enum TypeError {
     #[error("PairError: Expected group pairing between two pairing-friendly curves:\n\t{0}, {1} |- pair({2}: {3}, {4} : {5})")]
     Pair(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
+    #[error("RecordError: Field {3} not found in record:\n\t{0}, {1} |- {2}.{3}")]
+    FieldNotFound(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, String),
+
+    #[error("RecordError: Expression is not a record type:\n\t{0}, {1} |- {2} : {3}")]
+    NotARecord(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
     #[error(transparent)]
     Unify(#[from] UnifyError),
 
@@ -197,6 +203,12 @@ impl<'a> TypeError {
     }
     pub fn pair(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &CExp, ta: &CTyp, e: &CExp, te: &CTyp) -> Self {
         TypeError::Pair(kctx.clone(), vctx.clone(), t.clone(), ta.clone(), e.clone(), te.clone())
+    }
+    pub fn field_not_found(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, field: &str, _fields: &Ctx<String, CTyp>) -> Self {
+        TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
+    }
+    pub fn not_a_record(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
+        TypeError::NotARecord(kctx.clone(), vctx.clone(), e.clone(), t.clone())
     }
 }
 
@@ -644,7 +656,7 @@ impl Typeable for CExp {
 
                         // The argument must be a field and the same as the MLE
                         match param_types.0[0].clone() {
-                            CTyp::Fin(r) if *n > 0 => 
+                            CTyp::Fin(_r) if *n > 0 => 
                                 Ok(CTyp::mle(tbase, n - 1)),
                             CTyp::Base(tb) if &tb == tbase && *n > 0 => 
                                 Ok(CTyp::mle(tbase, n - 1)),
@@ -754,6 +766,70 @@ impl Typeable for CExp {
                         _ => Err(TypeError::exp(kctx, vctx, self))
                     }
                 }
+            },
+
+            CExp::Record(fields) => {
+                let mut field_types = Ctx::new();
+                
+                // Infer the type of each field
+                for (field_name, field_exp) in fields.iter() {
+                    let field_typ = field_exp.infer(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    field_types.insert(field_name, &field_typ);
+                }
+                
+                Ok(CTyp::Record(field_types))
+            },
+
+            CExp::Proj(box record_exp, field_name) => {
+                // Infer the type of the record expression
+                let record_typ = record_exp.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                
+                match record_typ {
+                    CTyp::Record(fields) => {
+                        // Look up the field in the record type
+                        fields.get(&field_name)
+                            .cloned()
+                            .ok_or_else(|| {
+                                TypeError::next(
+                                    TypeError::exp(kctx, vctx, self),
+                                    TypeError::field_not_found(kctx, vctx, &record_exp, &field_name, &fields)
+                                )
+                            })
+                    }
+                    _ => Err(TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
+                    )),
+                }
+            },
+
+            CExp::SetRecord(box record_exp, field_name, box value_exp) => {
+                // Infer the type of the record expression (must be a record)
+                let record_typ = record_exp.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let CTyp::Record(fields) = &record_typ else {
+                    return Err(TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::not_a_record(kctx, vctx, &record_exp, &record_typ)
+                    ));
+                };
+                // Check the field exists and the value has a type compatible with the field (e.g. Fin unifies with F)
+                let field_typ = fields.get(&field_name)
+                    .ok_or_else(|| TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::field_not_found(kctx, vctx, &record_exp, field_name, fields)
+                    ))?;
+                let value_typ = value_exp.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let _ = CTyp::lub_equ(&value_typ, field_typ, kctx)
+                    .map_err(|e| TypeError::next(
+                        TypeError::exp(kctx, vctx, self),
+                        TypeError::lub(TypeError::exp(kctx, vctx, self), e)
+                    ))?;
+                // Result type is the same record type
+                Ok(record_typ.clone())
             }
         }
     }

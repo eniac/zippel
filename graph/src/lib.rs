@@ -1353,6 +1353,136 @@ impl<C: ArkConfig> UDag<C> {
                 let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
                 
                 Ok(GOp::Value(poly_value))
+            },
+            CExp::Record(fields) => {
+                // For records, we add each field to the graph and create a Record operation
+                let mut field_ops = Ctx::new();
+                
+                for (field_name, field_exp) in fields.iter() {
+                    let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
+                    field_ops.insert(field_name, &field_op);
+                }
+                
+                // Return a Record operation with named fields
+                Ok(GOp::Record(field_ops))
+            },
+            CExp::Proj(box record_exp, field_name) => {
+                // For projection, we need to extract the field from the record
+                // Check if the record expression is a Record literal
+                match record_exp {
+                    CExp::Record(fields) => {
+                        let field_exp = fields.get(&field_name)
+                            .ok_or_else(|| {
+                                let mut field_types = Ctx::new();
+                                for (name, exp) in fields.iter() {
+                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), vctx) {
+                                        field_types.insert(name, &typ);
+                                    }
+                                }
+                                GraphError::Type(TypeError::field_not_found(
+                                    kctx, vctx, &CExp::Record(fields.clone()), field_name.as_str(), &field_types
+                                ))
+                            })?;
+                        
+                        // Add the field expression to the graph
+                        self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)
+                    },
+                    CExp::Var(id) => {
+                        let id_clone = id.clone();
+                        let record_op = vars.get(&id_clone)
+                            .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, vctx, &CExp::Var(id_clone.clone()))))?;
+                        
+                        // Try to infer the record type to verify the field exists
+                        let record_typ = CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), vctx)?;
+                        
+                        match &record_typ {
+                            CTyp::Record(fields) => {
+                                // Verify the field exists and get its type
+                                let field_typ_ctyp = fields.get(&field_name)
+                                    .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                        kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
+                                    )))?;
+                                
+                                // Extract the field from the record operation
+                                match record_op {
+                                    GOp::Record(record_fields) => {
+                                        // Direct field access from Record operation
+                                        record_fields.get(&field_name)
+                                            .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
+                                            )))
+                                            .map(|op| op.clone())
+                                    },
+                                    GOp::Ref(Ref::Var(vid, node), _op_typ) => {
+                                        let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
+                                            .ok_or_else(|| GraphError::Type(TypeError::ark(
+                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
+                                            )))?;
+                                        
+                                        // The field is accessed via projection, so we return a Ref with the field type
+                                        Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
+                                    },
+                                    _ => {
+                                        Err(GraphError::Type(TypeError::not_a_record(
+                                            kctx, vctx, &CExp::Var(id_clone.clone()), &record_typ
+                                        )))
+                                    }
+                                }
+                            }
+                            _ => {
+                                Err(GraphError::Type(TypeError::not_a_record(
+                                    kctx, vctx, &CExp::Var(id_clone.clone()), &record_typ
+                                )))
+                            }
+                        }
+                    },
+                    _ => {
+                        // For other expressions, try to infer the record type
+                        let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                        
+                        match record_typ {
+                            CTyp::Record(fields) => {
+                                // Get the field type
+                                let _field_typ = fields.get(&field_name)
+                                    .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
+                                        kctx, vctx, &record_exp, field_name.as_str(), &fields
+                                    )))?;
+                                
+                                // For complex expressions, we'd need to evaluate them first
+                                // For now, return an error indicating this isn't fully supported
+                                Err(GraphError::Type(TypeError::next(
+                                    TypeError::exp(kctx, vctx, &exp),
+                                    TypeError::ark(kctx, vctx, &exp, &typ)
+                                )))
+                            },
+                            _ => {
+                                Err(GraphError::Type(TypeError::not_a_record(
+                                    kctx, vctx, &record_exp, &record_typ
+                                )))
+                            }
+                        }
+                    }
+                }
+            },
+            CExp::SetRecord(box record_exp, field_name, box value_exp) => {
+                // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
+                let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                let CTyp::Record(typ_fields) = &record_typ else {
+                    return Err(GraphError::Type(TypeError::not_a_record(
+                        kctx, vctx, &record_exp, &record_typ
+                    )));
+                };
+                let mut new_record_fields = Ctx::new();
+                for (fname, _) in typ_fields.iter() {
+                    let field_exp = if fname == &field_name {
+                        value_exp.clone()
+                    } else {
+                        CExp::Proj(Box::new(record_exp.clone()), fname.clone())
+                    };
+                    new_record_fields.insert(fname, &field_exp);
+                }
+                let new_record_exp = CExp::Record(new_record_fields);
+                self.add_exp(new_record_exp, transcr, edge_type, kctx, fctx, vctx, vars)
             }
         }
     }

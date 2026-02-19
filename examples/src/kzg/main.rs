@@ -22,10 +22,17 @@ fn main() {
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     println!("Verifier result for mle test: {:?}", verifier_result);
-    println!("Finished KZG example");
+    
+    // Check if verification succeeded
+    let success = verifier_result.iter().any(|v| {
+        matches!(v, Value::Bool(true))
+    });
     
     handler.analyze_completeness();
     handler.analyze_knowledge();
+    
+    println!("Finished KZG example");
+    println!("{}", success);
 }
 
 

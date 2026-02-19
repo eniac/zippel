@@ -153,6 +153,12 @@ fn evaluate_op<C: ArkConfig>(
             let mut rng = ThreadRng::default();
             Value::random(&mut rng, typ)
         }
+        Op::Record(fields) => {
+            let evaluated_fields: Ctx<String, Value<C>> = fields.iter()
+                .map(|(k, v)| (k.clone(), evaluate_op(v, computed, inputs)))
+                .collect();
+            Value::Record(evaluated_fields)
+        }
         Op::Ifft(_) | Op::Fft(_) | Op::Poly(_) | Op::Mle(_) | 
         Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")

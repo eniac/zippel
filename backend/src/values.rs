@@ -16,6 +16,7 @@ use rand::Rng;
 use rayon::prelude::*;
 use spongefish::{ProverState, DuplexSpongeInterface};
 use std::cmp::Ordering;
+use share::Ctx;
 use std::fmt;
 use std::ops::{Add, AddAssign, BitAnd, BitOr, BitXor, Div, Mul, MulAssign, Rem, Sub};
 use crate::{to_bytes, ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps};
@@ -46,6 +47,8 @@ pub enum Value<C: ArkConfig> {
     VecG2Affine(Vec<C::G2Affine>),
     /// Vectors of vectors etc
     Vec(Vec<Value<C>>),
+    /// Record with named fields
+    Record(Ctx<String, Value<C>>),
     /// Virtual Polynomial (sum-of-products of univariate or multilinear, dense or sparse)
     Poly(VirtualPolynomial<C::F>),
 }
@@ -78,6 +81,7 @@ impl<C: ArkConfig> PartialEq for Value<C> {
             (Value::VecG1Affine(a), Value::VecG1Affine(b)) => a == b,
             (Value::VecG2Affine(a), Value::VecG2Affine(b)) => a == b,
             (Value::Vec(a), Value::Vec(b)) => a == b,
+            (Value::Record(a), Value::Record(b)) => a == b,
             (Value::Poly(a), Value::Poly(b)) => a == b,
             // Different variants are not equal
             _ => false,
@@ -178,6 +182,16 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         }
+        Value::Record(fields) => {
+            // Serialize record fields
+            (fields.len() as u64).serialize_compressed(&mut *writer)?;
+            for (name, value) in fields.iter() {
+                // Serialize field name length and name
+                name.as_bytes().serialize_compressed(&mut *writer)?;
+                serialize_value_internal(value, &mut *writer)?;
+            }
+            Ok(())
+        }
         Value::Poly(_poly) => {
             // VirtualPolynomial serialization not implemented
             Err(SerializationError::InvalidData)
@@ -222,6 +236,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG1Affine(_) => 2,
             Value::VecG2Affine(_) => 1,
             Value::Vec(_) => 0,
+            Value::Record(_) => 0,
         }
     }
 
@@ -257,6 +272,14 @@ impl<C: ArkConfig> Value<C> {
                     v.push(Value::<C>::zero(&vt));
                 }
                 Value::Vec(v)
+            }
+            ATyp::Record(fields) => {
+                let mut record_fields = Ctx::new();
+                for (name, field_typ) in fields.iter() {
+                    let v = Value::<C>::zero(field_typ);
+                    record_fields.insert(name, &v);
+                }
+                Value::Record(record_fields)
             }
             _ => panic!("Cannot create zero value for type {}", typ),
         }
@@ -350,6 +373,9 @@ impl<C: ArkConfig> Value<C> {
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
                 .for_each(|(a, b)| a.value_add(b)),
+            Value::Record(_) => {
+                panic!("Cannot add records")
+            }
         }
     }
 
@@ -441,6 +467,9 @@ impl<C: ArkConfig> Value<C> {
                 },
                 _ => panic!("Expected polynomial or scalar, found {}", other)
             },
+            Value::Record(_) => {
+                panic!("Cannot subtract records")
+            }
         }
     }
 
@@ -503,6 +532,9 @@ impl<C: ArkConfig> Value<C> {
                     &b,
                     &a.iter().map(|b| (*b).into()).collect(),
                 ))
+            }
+            (Value::Record(_), _) | (_, Value::Record(_)) => {
+                panic!("Cannot pair records")
             }
             _ => panic!("Cannot pair {} and {}", self, other),
         }
@@ -577,7 +609,13 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(C::FOps::from_usize(*a)));
                 },
+                Value::Record(_) => {
+                    panic!("Cannot multiply Index and Record")
+                }
             },
+            Value::Record(_) => {
+                panic!("Cannot multiply records")
+            }
             Value::Scalar(a) => match &other {
                 Value::Bool(_) | Value::VecBool(_) => {
                     panic!("Cannot multiply bools {} * {}", self, other)
@@ -629,6 +667,9 @@ impl<C: ArkConfig> Value<C> {
                 Value::Poly(poly) => {
                     *other = Value::Poly(poly.poly_mul_scalar(a.clone()));
                 },
+                Value::Record(_) => {
+                    panic!("Cannot multiply Scalar and Record")
+                }
             },
             Value::G1(a) => match &other {
                 // Group1 * scalar multiplication
@@ -765,6 +806,9 @@ impl<C: ArkConfig> Value<C> {
                     .for_each(|(a, b)| Value::Index(*a).value_mul(b)),
                 Value::Poly(_) => {
                     panic!("Cannot multiply Vec<Index> and Poly");
+                }
+                Value::Record(_) => {
+                    panic!("Cannot multiply Vec<Index> and Record")
                 }
             },
             Value::VecScalar(v) => match &other {
@@ -961,6 +1005,9 @@ impl<C: ArkConfig> Value<C> {
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_div(b)),
+                Value::Record(_) => {
+                    panic!("Cannot divide Index and Record")
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::Scalar(a) => match &other {
@@ -987,6 +1034,9 @@ impl<C: ArkConfig> Value<C> {
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_div(b)),
+                Value::Record(_) => {
+                    panic!("Cannot divide Scalar and Record")
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::G1(a) => match &other {
@@ -1124,7 +1174,9 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::Scalar(*a).value_div(b)),
-
+                Value::Record(_) => {
+                    panic!("Cannot divide Vec<Scalar> and Record")
+                }
                 _ => panic!("Expected vec index, found {}", other),
             },
             Value::VecG1(v) => match &other {
@@ -1159,7 +1211,9 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::G1(*a).value_div(b)),
-
+                Value::Record(_) => {
+                    panic!("Cannot divide Vec<G1> and Record")
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::VecG2(v) => match &other {
@@ -1194,7 +1248,9 @@ impl<C: ArkConfig> Value<C> {
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::G2(*a).value_div(b)),
-
+                Value::Record(_) => {
+                    panic!("Cannot divide Vec<G2> and Record")
+                }
                 _ => panic!("Expected scalar, found {}", other),
             },
             Value::VecG1Affine(v) => Self::value_div(
@@ -1254,9 +1310,15 @@ impl<C: ArkConfig> Value<C> {
                         *other = Value::Poly(p.poly_div_scalar(other.into_scalar())
                             .expect("Polynomial division by scalar failed"));
                     }
+                    Value::Record(_) => {
+                        panic!("Cannot divide Poly and Record")
+                    }
                     _ => panic!("Expected poly, found {}", other),
                 }
             },
+            Value::Record(_) => {
+                panic!("Cannot divide records")
+            }
         }
     }
 
@@ -1606,6 +1668,9 @@ impl<C: ArkConfig> Value<C> {
                 // Use PolyVariant's PartialEq implementation
                 a == b
             },
+            (Value::Record(a), Value::Record(b)) => {
+                a == b
+            }
             (a, b) => panic!("Cannot compare {} == {}", a, b),
         }
     }
@@ -1682,6 +1747,9 @@ impl<C: ArkConfig> Value<C> {
             }
             (Value::Vec(a), Value::Vec(b)) => {
                 Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect())
+            }
+            (Value::Record(_), _) => {
+                panic!("Records do not support indexed access. Use direct field access (record.field) instead.")
             }
             (a, b) => panic!("Cannot do {}[{}]", a, b),
         }
@@ -1931,6 +1999,14 @@ impl<C: ArkConfig> Value<C> {
                     PolyVariant::DenseUni(p)
                 ))
             },
+            ATyp::Record(fields) => {
+                let mut record_fields = Ctx::new();
+                for (name, field_typ) in fields.iter() {
+                    let v = Self::random(rng, field_typ);
+                    record_fields.insert(name, &v);
+                }
+                Value::Record(record_fields)
+            }
         }
     }
 
@@ -1964,6 +2040,14 @@ impl<C: ArkConfig> Value<C> {
                     }
                 }
                 ATyp::Vec(Box::new(typ), v.len())
+            },
+            Value::Record(fields) => {
+                let mut atyp_fields = Ctx::new();
+                for (name, value) in fields.iter() {
+                    let t = value.typ();
+                    atyp_fields.insert(name, &t);
+                }
+                ATyp::Record(atyp_fields)
             },
             Value::Poly(poly) => {
                 if poly.is_univariate() {
@@ -2225,6 +2309,7 @@ impl<C: ArkConfig> Value<C> {
             Value::VecIndex(a) => a.par_iter().all(|a| *a == 0),
             Value::VecBool(a) => a.par_iter().all(|a| !*a),
             Value::Vec(a) => a.par_iter().all(|a| a.is_zero()),
+            Value::Record(fields) => fields.iter().all(|(_, v)| v.is_zero()),
             Value::Poly(poly) => poly.is_zero(),
         }
     }
@@ -2583,6 +2668,16 @@ impl<C: ArkConfig> fmt::Display for Value<C> {
                 }
                 write!(f, "]")
             },
+            Value::Record(fields) => {
+                write!(f, "{{|")?;
+                for (i, (name, value)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", name, value)?;
+                }
+                write!(f, "|}}")
+            }
             Value::Poly(poly) => write!(f, "{}", poly),
         }
     }

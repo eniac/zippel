@@ -100,6 +100,20 @@ impl Unify for CTyp {
                 } else {
                     Err(UnifyError::typ_mismatch(&x, &y))
                 },
+            // Record types: unify each field
+            (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
+                let mut unified_fields = share::Ctx::new();
+                for (field_name, typ_a) in fields_a.iter() {
+                    if let Some(typ_b) = fields_b.get(field_name) {
+                        let unified_typ = CTyp::unify(typ_a, typ_b, ctx, subs)
+                            .map_err(|e| UnifyError::typ(&x, &y, e))?;
+                        unified_fields.insert(field_name, &unified_typ);
+                    } else {
+                        return Err(UnifyError::typ_mismatch(&x, &y));
+                    }
+                }
+                Ok(CTyp::Record(unified_fields))
+            },
             // Finite fields can act like 0 degree polynomals
             (CTyp::Poly(a, 1, n), b) | (b, CTyp::Poly(a, 1, n)) => {
                 let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(&x, &y))?;

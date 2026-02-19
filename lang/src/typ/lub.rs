@@ -469,6 +469,36 @@ impl Lub for CTyp {
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m =>
                 Ok(CTyp::vec(&CTyp::lub_equ(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?, *n)),
+            // Record types: width and depth subtyping, permutation
+            (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
+                use std::collections::BTreeSet;
+                let all_fields: BTreeSet<_> = fields_a.keys().iter()
+                    .chain(fields_b.keys().iter())
+                    .cloned()
+                    .collect();
+                
+                let mut result_fields = share::Ctx::new();
+                for field_name in all_fields {
+                    match (fields_a.get(&field_name), fields_b.get(&field_name)) {
+                        (Some(typ_a), Some(typ_b)) => {
+                            let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                                .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
+                            result_fields.insert(&field_name, &lub_typ);
+                        },
+                        (Some(typ_a), None) => {
+                            // Only in a - include it (width subtyping: {a:T, b:U} > {a:T})
+                            result_fields.insert(&field_name, typ_a);
+                        },
+                        (None, Some(typ_b)) => {
+                            // Only in b - include it (width subtyping)
+                            result_fields.insert(&field_name, typ_b);
+                        },
+                        (None, None) => unreachable!()
+                    }
+                }
+                
+                Ok(CTyp::Record(result_fields))
+            },
             // Indices can act like finite fields
             (a, b) => {
                 let ta = a.to_scalar(ctx).ok_or(LubError::equ(&x, &y))?;

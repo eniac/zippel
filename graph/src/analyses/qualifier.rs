@@ -43,6 +43,14 @@ impl QualifierPropagation {
                 }
                 Some(qual)
             }
+            GOp::Record(fields) => {
+                let mut qual = Qualifier::Public;
+                for (_, v) in fields.iter() {
+                    let q = self.from_op(v)?;
+                    qual = qual.join(&q);
+                }
+                Some(qual)
+            }
             GOp::Random(_, _) => Some(Qualifier::Private),
             GOp::Challenge(_, _) => Some(Qualifier::Public),
         }

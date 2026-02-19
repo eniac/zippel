@@ -12,7 +12,6 @@ sub_op = @{ "-" }
 mul_op = @{ "*" }
 div_op = @{ "/" }
 pow_op = @{ "^" }
-dot_op = @{ "." }
 rem_op = @{ "%" }
 concat_op = @{ "++" }
 eq_op = @{ "==" }
@@ -43,7 +42,7 @@ kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | positive }
     scalar_ty  = { "Scalar" ~ "<" ~ ids ~ ">" }
     range_ty   = { range }
 
-typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
+typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty | record_ty }
     base_ty = { id }                                              // Base type variable
     poly_ty = { "Poly" ~ "<" ~ id ~ "," ~ size_ty ~ "," ~ size_ty ~ ">" }  // Polynomial type (M vars, degree N)
     uni_ty  = { "Uni" ~ "<" ~ id ~ "," ~ size_ty ~ ">" }          // Univariate polynomial
@@ -51,9 +50,12 @@ typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty }
     fin_ty  = { "Fin" ~ "<" ~ (range | size_ty) ~ ">"  }          // Index type
     vec_ty  = { "[" ~ typ ~ ";" ~ size_ty ~ "]" }                 // Vector type
     bool_ty = { "Bool" }                                          // Boolean type
+    record_ty = { "{" ~ record_field ~ ("," ~ record_field)* ~ "}" }  // Record type
+    record_field = { id ~ ":" ~ typ }                            // Record field definition
 
 /// Arithmetic expression language of Zippel
-exp       = { exp_term ~ (bin_op ~ exp_term)* }
+exp       = { exp_term ~ (record_set_op | proj_op | bin_op ~ exp_term)* }
+    record_set_op = { "." ~ "set" ~ "(" ~ id ~ "," ~ exp ~ ")" }
 exp_term  = _{
          range_exp
          | "(" ~ exp ~ ")"
@@ -63,6 +65,7 @@ exp_term  = _{
          | fft_exp
          | poly_exp
          | eval_exp
+         | dot_exp
          | coef_exp
          | challenge_exp
          | random_exp
@@ -78,14 +81,17 @@ exp_term  = _{
          | app_exp
          | bool_exp
          | minus_exp
+         | record_exp
          | positive
          | id
     }
+    proj_op   = { "." ~ id }
     fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                  // Polynomial function definition
     ifft_exp      = { "ifft" ~ "(" ~ exp ~ ")"  }                 // Coefficient form (IFFT) univariate polynomial
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
+    dot_exp       = { "dot" ~ "(" ~ exp ~ "," ~ exp ~ ")" }            // Dot product (use dot(a,b) instead of a . b)
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
@@ -103,7 +109,9 @@ exp_term  = _{
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
     bool_exp      = { "true" | "false" }                              // True or false constants
     minus_exp     = _{ unary_minus ~ exp }                            // Negative expressions
-    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | dot_op | rem_op | eq_op | and_op }
+    record_exp    = { "{|" ~ record_field_exp ~ ("," ~ record_field_exp)* ~ "|}" }  // Record construction
+    record_field_exp = { id ~ ":" ~ exp }                             // Record field with value
+    bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op | eq_op | and_op }
 exps = { exp ~ ("," ~ exp)* }
 stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 
@@ -122,10 +130,11 @@ arg = { qualifier? ~ distribution? ~ id ~ ":" ~ typ }
    distribution = { "uniform" ~ star? }
 args = { arg? ~ ("," ~ arg)* }
 
-/// Declarations are either [protocols] or [functions].
-decl = { proto_decl | func_decl }
+/// Declarations are either [protocols], [functions], or [type aliases].
+decl = { proto_decl | func_decl | type_decl }
     proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ stmts ~ "}" }
     func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }
+    type_decl  = { "type" ~ id ~ "=" ~ typ ~ ";" }
 
 /// Top-level module
 decls = { SOI ~ decl* ~ EOI }

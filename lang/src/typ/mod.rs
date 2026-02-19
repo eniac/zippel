@@ -11,7 +11,7 @@ pub mod lub;
 pub mod range;
 pub mod subst;
 
-use crate::id::{Tid, TidSubst};
+use crate::id::{Tid, TidSubst, Vid};
 
 pub use kind::Kind;
 pub use size::{Size, EvalError};
@@ -45,7 +45,9 @@ pub enum Typ<T, N> {
     /// Fin within range
     Fin(Range<N>),
     /// Boolean (BExp)
-    Bool
+    Bool,
+    /// Record type with named fields
+    Record(Ctx<String, Typ<T, N>>)
 }
 
 /// Many types
@@ -70,6 +72,11 @@ impl<N> TidSubst for GTyp<N> {
             Typ::Poly(b, _, _)
             | Typ::Base(b) if b == from => *b = to.clone(),
             Typ::Vec(b, _) => b.tid_subst(from, to),
+            Typ::Record(fields) => {
+                for (_, field_typ) in fields.iter_mut() {
+                    field_typ.tid_subst(from, to);
+                }
+            },
             Typ::Fin(_) | Typ::Bool | Typ::Base(_)
             | Typ::Poly(_, _, _) => {}
         }
@@ -109,6 +116,9 @@ impl<T, N> Typ<T, N> {
     }
     pub fn bool() -> Self {
         Typ::Bool
+    }
+    pub fn record(fields: Ctx<String, Typ<T, N>>) -> Self {
+        Typ::Record(fields)
     }
     pub fn into_vec(self) -> (Self, N) {
         match self {
@@ -204,7 +214,13 @@ impl<T, N> ToTraversal1<T> for Typ<T, N> {
             Typ::Vec(box b, n) =>
                 Ok(Typ::Vec(Box::new(b.traverse1(f)?), n)),
             Typ::Fin(r) => Ok(Typ::Fin(r)),
-            Typ::Bool => Ok(Typ::Bool)
+            Typ::Bool => Ok(Typ::Bool),
+            Typ::Record(fields) => {
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.traverse1(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
+            }
         }
     }
 }
@@ -218,7 +234,13 @@ impl<T, N> ToTraversal2<N> for Typ<T, N> {
             Typ::Vec(box b, n) =>
                 Ok(Typ::Vec(Box::new(b.traverse2(f)?), f(n)?)),
             Typ::Fin(r) => Ok(Typ::Fin(r.traverse1(f)?)),
-            Typ::Bool => Ok(Typ::Bool)
+            Typ::Bool => Ok(Typ::Bool),
+            Typ::Record(fields) => {
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.traverse2(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
+            }
         }
     }
 }
@@ -228,6 +250,12 @@ impl<T, N> RangeTraversal<N> for Typ<T, N> {
         match self {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
             Typ::Vec(box t, n) => Ok(Typ::Vec(Box::new(t.range_traverse(f)?), n)),
+            Typ::Record(fields) => {
+                let pairs: Vec<_> = fields.into_iter()
+                    .map(|(name, typ)| typ.range_traverse(f).map(|new_typ| (name, new_typ)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Typ::Record(Ctx::from_iter(pairs)))
+            },
             _ => Ok(self)
         }
     }
@@ -286,7 +314,21 @@ where
                 r.pretty(allocator),
                 allocator.text(">")
             ]),
-            Typ::Bool => allocator.text("Bool")
+            Typ::Bool => allocator.text("Bool"),
+            Typ::Record(fields) => {
+                let mut docs = Vec::new();
+                docs.push(allocator.text("{"));
+                let field_docs: Vec<_> = fields.into_iter().map(|(name, typ)| {
+                    allocator.concat([
+                        allocator.text(name),
+                        allocator.text(": "),
+                        typ.pretty(allocator)
+                    ])
+                }).collect();
+                docs.push(allocator.intersperse(field_docs.into_iter(), ", "));
+                docs.push(allocator.text("}"));
+                allocator.concat(docs)
+            }
         }
     }
 
@@ -370,6 +412,19 @@ impl<'pest> FromPest<'pest> for UTyp {
                 let id = Typ::from_pest(&mut inner)?;
                 let size = Size::from_pest(&mut inner)?;
                 Ok(Typ::vec(&id, size))
+            }
+            Rule::record_ty => {
+                let mut inner = pair.into_inner();
+                let mut fields = Ctx::new();
+                while let Some(field_pair) = inner.next() {
+                    if field_pair.as_rule() == Rule::record_field {
+                        let mut field_inner = field_pair.into_inner();
+                        let field_name = Vid::from_pest(&mut field_inner)?.0;
+                        let field_typ = Typ::from_pest(&mut field_inner)?;
+                        fields.insert(&field_name, &field_typ);
+                    }
+                }
+                Ok(Typ::Record(fields))
             }
             _ => unreachable!(),
         }

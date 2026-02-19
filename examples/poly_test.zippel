@@ -8,13 +8,13 @@ proto kzg<F: Field, N: 4>
 
         let q_val = (p_val - y) / poly([-z, 1]);
 
-        let test = coef(q_val) . ss_index[0..N-1];
+        let test = dot(coef(q_val), ss_index[0..N-1]);
         
         verify(test == test && q_val == q_val && z == z && y == y);
 
         // let p_val = poly(p);
         // let poly_eval = eval(p_val, [tau]);
-        // let vec_dot = p . ss_index;
+        // let vec_dot = dot(p, ss_index);
 
         // verify(poly_eval[0] == vec_dot)
 
