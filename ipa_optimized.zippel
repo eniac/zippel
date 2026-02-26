@@ -60,14 +60,14 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..13>(
         let h_v_lo = h_vec_k[0..2^(N_current-1)];
         let h_v_hi = h_vec_k[2^(N_current-1) .. 2^N_current];
 
-        let cL_val = dot(a_p_lo, b_p_hi); // Dot product <a_lo, b_hi>
-        let cR_val = dot(a_p_hi, b_p_lo); // Dot product <a_hi, b_lo>
+        let cL_val = a_p_lo . b_p_hi; // Dot product <a_lo, b_hi>
+        let cR_val = a_p_hi . b_p_lo; // Dot product <a_hi, b_lo>
 
         // Prover "sends" L and R by adding them to the transcript.
         // L = (g_hi^a_lo) * (h_lo^b_hi) * (u^c_L)  (multiplicative notation)
         // L = g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
-        L_transcript <- dot(g_v_hi, a_p_lo) + dot(h_v_lo, b_p_hi) + (u_base_for_ipa * cL_val);
-        R_transcript <- dot(g_v_lo, a_p_hi) + dot(h_v_hi, b_p_lo) + (u_base_for_ipa * cR_val);
+        L_transcript <- (g_v_hi . a_p_lo) + (h_v_lo . b_p_hi) + (u_base_for_ipa * cL_val);
+        R_transcript <- (g_v_lo . a_p_hi) + (h_v_hi . b_p_lo) + (u_base_for_ipa * cR_val);
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
         x_challenge <- challenge<F>;

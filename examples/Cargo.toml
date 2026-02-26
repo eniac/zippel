@@ -16,6 +16,10 @@ name = "ipa"
 path = "src/ipa/main.rs"
 
 [[bin]]
+name = "ipa_optimized"
+path = "src/ipa_optimized/main.rs"
+
+[[bin]]
 name = "ipa_field"
 path = "src/ipa_field/main.rs"
 
@@ -31,6 +35,13 @@ path = "src/cp/main.rs"
 name = "sumcheck"
 path = "src/sumcheck/main.rs"
 
+[[bin]]
+name = "zerocheck"
+path = "src/zerocheck/main.rs"
+
+[[bin]]
+name = "hadamard"
+path = "src/hadamard/main.rs"
 
 [[bin]]
 name = "toy_record"
