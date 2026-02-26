@@ -115,8 +115,8 @@ proto ipa_wrapper<F: Field, N_val_const: 4>(
     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
 ) where
-        (P_initial_commitment == ((g_vec . a_vec_witness)
-        + (h_vec . b_vec_witness))) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
+        (P_initial_commitment == (dot(g_vec, a_vec_witness)
+        + dot(h_vec, b_vec_witness))) && (ip_val_claimed == dot(a_vec_witness, b_vec_witness)) {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
     //    The challenge 'x_chal' is a scalar of type F.

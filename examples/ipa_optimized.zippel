@@ -60,14 +60,14 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..17>(
         let h_v_lo = h_vec_k[0..2^(N_current-1)];
         let h_v_hi = h_vec_k[2^(N_current-1) .. 2^N_current];
 
-        let cL_val = a_p_lo . b_p_hi; // Dot product <a_lo, b_hi>
-        let cR_val = a_p_hi . b_p_lo; // Dot product <a_hi, b_lo>
+        let cL_val = dot(a_p_lo, b_p_hi); // Dot product <a_lo, b_hi>
+        let cR_val = dot(a_p_hi, b_p_lo); // Dot product <a_hi, b_lo>
 
         // Prover "sends" L and R by adding them to the transcript.
         // L = (g_hi^a_lo) * (h_lo^b_hi) * (u^c_L)  (multiplicative notation)
         // L = g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
-        L_transcript <- (g_v_hi . a_p_lo) + (h_v_lo . b_p_hi) + (u_base_for_ipa * cL_val);
-        R_transcript <- (g_v_lo . a_p_hi) + (h_v_hi . b_p_lo) + (u_base_for_ipa * cR_val);
+        L_transcript <- dot(g_v_hi, a_p_lo) + dot(h_v_lo, b_p_hi) + (u_base_for_ipa * cL_val);
+        R_transcript <- dot(g_v_lo, a_p_hi) + dot(h_v_hi, b_p_lo) + (u_base_for_ipa * cR_val);
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
         x_challenge <- challenge<F>;
@@ -123,8 +123,8 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const:32>(
         // P_initial_commitment is a Pedersen-style commitment using weighted bases:
         //   G'_i = G_i * G_factors_i,  H'_i = H_i * H_factors_i
         // so that P = <G', a> + <H', b>.
-        (P_initial_commitment == (((g_vec * G_factors) . a_vec_witness)
-        + ((h_vec * H_factors) . b_vec_witness))) && (ip_val_claimed == (a_vec_witness . b_vec_witness)) {
+        (P_initial_commitment == (dot((g_vec * G_factors), a_vec_witness)
+        + dot((h_vec * H_factors), b_vec_witness))) && (ip_val_claimed == dot(a_vec_witness, b_vec_witness)) {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
     //    The challenge 'x_chal' is a scalar of type F.
