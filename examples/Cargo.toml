@@ -36,6 +36,10 @@ path = "src/sumcheck/main.rs"
 name = "toy_record"
 path = "src/toy_record/main.rs"
 
+[[bin]]
+name = "marginalize"
+path = "src/marginalize/main.rs"
+
 [dependencies]
 zippel = { path = ".." }
 ark-std = "0.5.0"
