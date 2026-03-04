@@ -247,6 +247,10 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
                 serialize_value_internal(value, &mut *writer)?;
             }
             Ok(())
+        }
+        Value::Poly(poly) => {
+            poly.serialize_compressed(writer)
+        }
         },
     }
 }
