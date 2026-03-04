@@ -319,6 +319,41 @@ impl Typeable for CExp {
                     },
                     _ => Err(TypeError::mle(kctx, &vctx, self))
                 }
+            }
+
+            // Infer the type of a marginalize call.
+            CExp::Marginalize(box rec) => {
+                let rec_typ = rec.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                let CTyp::Record(ref fields) = rec_typ else {
+                    return Err(TypeError::not_a_record(kctx, vctx, &rec, &rec_typ));
+                };
+
+                let poly_typ = fields.get(&"poly".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "poly", &fields))?;
+                let num_vars_typ = fields.get(&"num_variables".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields))?;
+                let max_deg_typ = fields.get(&"max_degree".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields))?;
+
+                let (field_tid, n, d) = match poly_typ {
+                    CTyp::Poly(tid, n, d) => (tid.clone(), *n, *d),
+                    _ => return Err(TypeError::poly(kctx, vctx, self)),
+                };
+
+                match (num_vars_typ, max_deg_typ) {
+                    (CTyp::Fin(_rn), CTyp::Fin(_rd)) => { /* use n, d from poly */ }
+                    _ => return Err(TypeError::ark(kctx, vctx, self, &rec_typ)),
+                }
+
+                let mut out_fields = Ctx::new();
+                let f_typ = CTyp::Base(field_tid.clone());
+                out_fields.insert(&"evaluations".to_string(), &CTyp::vec(&f_typ, d + 1));
+                let next_n = if n > 0 { n - 1 } else { 0 };
+                out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, d));
+
+                Ok(CTyp::Record(out_fields))
             },
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements

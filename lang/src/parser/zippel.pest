@@ -80,6 +80,7 @@ exp_term  = _{
          | verify_exp
          | let_exp
          | log_exp
+         | marginalize_exp
          | app_exp
          | bool_exp
          | minus_exp
@@ -96,6 +97,7 @@ exp_term  = _{
     dot_exp       = { "dot" ~ "(" ~ exp ~ "," ~ exp ~ ")" }            // Dot product (use dot(a,b) instead of a . b)
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
+    marginalize_exp = { "marginalize" ~ "(" ~ exp ~ ")" }             // Sum-check round marginalization helper
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension

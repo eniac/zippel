@@ -1153,6 +1153,21 @@ impl<C: HasOpFactory> UDag<C> {
                 })?))
             },
 
+            CExp::Marginalize(box rec) => {
+                let child = self.add_exp(rec, transcr, edge_type, kctx, fctx, vctx, vars)?;
+
+                let nmarg = self.add_node(Node::marginalize(&child));
+
+                self.add_edges(edge_type, nmarg, child);
+
+                Ok(GOp::underscore(nmarg, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, vctx, &exp),
+                        TypeError::ark(kctx, vctx, &exp, &typ),
+                    )
+                })?))
+            },
+
             // Billinear pairing
             CExp::Pair(box a, box b) => {
                 a.infer(kctx, &fctx.keys(), &vctx)?;
@@ -1538,6 +1553,16 @@ impl<C: HasOpFactory> UDag<C> {
                                         
                                         // The field is accessed via projection, so we return a Ref with the field type
                                         return Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
+                                    },
+                                    GOp::Ref(Ref::Node(node), _op_typ) => {
+                                        // Record produced by a node (e.g. marginalize); add Proj node
+                                        let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
+                                            .ok_or_else(|| GraphError::Type(TypeError::ark(
+                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
+                                            )))?;
+                                        let proj_node = self.add_node(Node::proj(&record_op, &field_name, &field_typ_atyp));
+                                        self.add_edges(edge_type, proj_node, record_op.clone());
+                                        Ok(GOp::Ref(Ref::Node(proj_node), field_typ_atyp))
                                     },
                                     _ => {
                                         Err(GraphError::Type(TypeError::not_a_record(

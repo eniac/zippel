@@ -1,0 +1,51 @@
+[package]
+name = "examples"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "mle"
+path = "src/mle_example/main.rs"
+
+[[bin]]
+name = "kzg"
+path = "src/kzg/main.rs"
+
+[[bin]]
+name = "ipa"
+path = "src/ipa/main.rs"
+
+[[bin]]
+name = "ipa_field"
+path = "src/ipa_field/main.rs"
+
+[[bin]]
+name = "schnorr"
+path = "src/schnorr/main.rs"
+
+[[bin]]
+name = "cp"
+path = "src/cp/main.rs"
+
+[[bin]]
+name = "sumcheck"
+path = "src/sumcheck/main.rs"
+
+
+[[bin]]
+name = "toy_record"
+path = "src/toy_record/main.rs"
+
+[[bin]]
+name = "marginalize"
+path = "src/marginalize/main.rs"
+
+[dependencies]
+zippel = { path = ".." }
+ark-std = "0.5.0"
+ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+backend = { path = "../backend" }
+lang = { path = "../lang" }
+share = { path = "../share" }
+rand = { version = "0.8", features = ["std"] }

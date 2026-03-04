@@ -62,6 +62,13 @@ pub enum Op<C: ArkConfig, R> {
 
     /// Multilinear extension
     Mle(HOp<C>),
+    Mle(Box<Op<C, R>>),
+
+    /// Sum-check marginalization helper
+    Marginalize(Box<Op<C, R>>),
+
+    /// Project a field from a record value (runtime projection)
+    Proj(Box<Op<C, R>>, String, ATyp),
 
     /// Coefficients of a polynomial
     Coef(HOp<C>),
@@ -145,6 +152,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Coef(_) => 23,
             Op::Mle(_) => 24,
             Op::Reduce(_, _) => 25,
+            Op::Marginalize(_) => 25,
+            Op::Proj(_, _, _) => 26,
         }
     }
 
@@ -196,6 +205,15 @@ impl<C: ArkConfig, R> Op<C, R> {
                 ATyp::lub_op(*op, &elem, &elem, &Nothing)
                     .expect("Reduce: type error in binary op")
             },
+            Op::Ifft(box op) => op.typ(),
+            Op::Fft(box op) => op.typ(),
+            Op::Check(box op) => op.typ(),
+            Op::Poly(box op) => op.typ(),
+            Op::Eval(box _p, box x) => x.typ(),
+            Op::Coef(box op) => op.typ(),
+            Op::Mle(box op) => op.typ(),
+            Op::Marginalize(box op) => op.typ(),
+            Op::Proj(_, _, typ) => typ.clone(),
         }
     }
 
@@ -564,6 +582,21 @@ impl<C: HasOpFactory> GOp<C> {
     }
     
     pub fn ifft(op: Self) -> GOp<C> {
+    pub fn marginalize(op: Self) -> Op<C, R> {
+        Op::Marginalize(Box::new(op))
+    }
+    pub fn proj(record_op: Self, field: String, typ: ATyp) -> Op<C, R> {
+        Op::Proj(Box::new(record_op), field, typ)
+    }
+    
+    pub fn ifft(op: Self) -> Op<C, R> {
+        match op {
+            Op::Fft(box op) => op,
+            _ => Op::Ifft(Box::new(op)),
+        }
+    }
+
+    pub fn fft(op: Self) -> Op<C, R> {
         match op {
             Op::Fft(inner) => inner.get().clone(),
             _ => Op::Ifft(mk::<C>(op)),
@@ -662,6 +695,14 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Coef(v)
             | Op::Reduce(_, v)
             | Op::Fft(v) => v.references(),
+            Op::Ifft(box v)
+            | Op::Check(box v)
+            | Op::Poly(box v)
+            | Op::Mle(box v)
+            | Op::Marginalize(box v)
+            | Op::Proj(box v, _, _)
+            | Op::Coef(box v)
+            | Op::Fft(box v) => v.references(),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => vec![],
@@ -691,6 +732,24 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             _ => self.clone()
+            Op::Bin(op, box a, box b, typ) =>
+                Op::Bin(*op, Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
+            Op::Ram(box a, box b) =>
+                Op::Ram(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
+            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_node_indices(f)).collect()),
+            Op::Record(fields) => Op::Record(fields.iter().map(|(k, v)| (k.clone(), v.map_node_indices(f))).collect()),
+            Op::Pair(box a, box b, typ) =>
+                Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
+            Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
+            Op::Poly(box op) => Op::Poly(Box::new(op.map_node_indices(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
+            Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
+            Op::Ifft(box op) => Op::Ifft(Box::new(op.map_node_indices(f))),
+            Op::Fft(box op) => Op::Fft(Box::new(op.map_node_indices(f))),
+            Op::Mle(box op) => Op::Mle(Box::new(op.map_node_indices(f))),
+            Op::Marginalize(box op) => Op::Marginalize(Box::new(op.map_node_indices(f))),
+            Op::Proj(box op, field, typ) => Op::Proj(Box::new(op.map_node_indices(f)), field.clone(), typ.clone()),
+            Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
         }
     }
 
@@ -716,6 +775,12 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_refs(f))),
+            Op::Poly(box op) => Op::Poly(Box::new(op.map_refs(f))),
+            Op::Coef(box op) => Op::Coef(Box::new(op.map_refs(f))),
+            Op::Eval(box p, box x) => Op::Eval(Box::new(p.map_refs(f)), Box::new(x.map_refs(f))),
+            Op::Mle(box op) => Op::Mle(Box::new(op.map_refs(f))),
+            Op::Marginalize(box op) => Op::Marginalize(Box::new(op.map_refs(f))),
+            Op::Proj(box op, field, typ) => Op::Proj(Box::new(op.map_refs(f)), field.clone(), typ.clone()),
         }
     }
 
@@ -751,6 +816,11 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Ifft(v) => Op::Ifft(mk::<C>(v.inline(vars, except))),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
+                Op::Record(fields.iter().map(|(k, v)| (k.clone(), v.inline(vars, except))).collect()),
+            Op::Check(box op) => op.inline(vars, except),
+            Op::Ifft(box v) => Op::Ifft(Box::new(v.inline(vars, except))),
+            Op::Fft(box v) => Op::Fft(Box::new(v.inline(vars, except))),
+            Op::Proj(box v, field, typ) => Op::Proj(Box::new(v.inline(vars, except)), field.clone(), typ.clone()),
             _ => self.clone()
         }
     }
@@ -976,6 +1046,19 @@ where
                 allocator.text(")"),
             ]),
             Op::Pair(a, b, _) => allocator.concat([
+            Op::Marginalize(box v) => allocator.concat([
+                allocator.text("(marginalize "),
+                v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Proj(box v, field, _) => allocator.concat([
+                allocator.text("(proj "),
+                v.pretty(allocator),
+                allocator.text(" ."),
+                allocator.text(field.clone()),
+                allocator.text(")"),
+            ]),
+            Op::Pair(box a, box b, _) => allocator.concat([
                 allocator.text("(pair "),
                 a.get().clone().pretty(allocator),
                 allocator.text(", "),

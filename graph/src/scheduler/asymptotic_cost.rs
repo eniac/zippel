@@ -35,7 +35,8 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ABase::Fin(_), ABase::Scalar) | (ABase::Scalar, ABase::Fin(_)) => {
                 2.0
             }
-            (_, _) => unreachable!(),
+            // Mixed base types we don't care to distinguish: treat as unit cost.
+            (_, _) => 1.0,
         }
     }
 
@@ -179,6 +180,8 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
                 let (_, n) = v.typ().into_vec();
                 cost += self.cost(v, nthreads).0 + (n as f64 - 1.0) * Self::SCALAR_MUL;
             },
+            Op::Marginalize(box op) => cost += self.cost(op, nthreads).0,
+            Op::Proj(box op, _, _) => cost += self.cost(op, nthreads).0,
         };
         cost.into()
     }

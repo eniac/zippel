@@ -3,6 +3,7 @@ use petgraph::graph::NodeIndex;
 use spongefish::{ProverState, DuplexSpongeInterface};
 use std::sync::{Arc, Mutex};
 use backend::{ArkConfig, Value, value_to_bytes};
+use backend::values::marginalize as backend_marginalize;
 use graph::{Dag, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
@@ -193,6 +194,63 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
                 return v_val.value_reduce(*op);
+            }
+            Op::Marginalize(box a) => {
+                let inputs_a_clone = Arc::clone(&inputs);
+                let cfg_val: Value<C> = self.handle_op(a, inputs_a_clone);
+
+                let record = match cfg_val {
+                    Value::Record(r) => r,
+                    _ => panic!("marginalize expects a record argument"),
+                };
+
+                let poly_val = record.get(&"poly".to_string()).expect("marginalize: missing field 'poly'");
+                let num_vars_val = record.get(&"num_variables".to_string()).expect("marginalize: missing field 'num_variables'");
+                let max_deg_val = record.get(&"max_degree".to_string()).expect("marginalize: missing field 'max_degree'");
+                let challenge_val = record.get(&"challenge".to_string()).expect("marginalize: missing field 'challenge'");
+
+                let poly = match poly_val {
+                    Value::Poly(p) => p.clone(),
+                    _ => panic!("marginalize: 'poly' must be a polynomial"),
+                };
+
+                let num_variables = match num_vars_val {
+                    Value::Index(i) => *i,
+                    _ => panic!("marginalize: 'num_variables' must be an index"),
+                };
+
+                let max_degree = match max_deg_val {
+                    Value::Index(i) => *i,
+                    _ => panic!("marginalize: 'max_degree' must be an index"),
+                };
+
+                let challenge = match challenge_val {
+                    Value::Scalar(f) => Some(*f),
+                    _ => panic!("marginalize: 'challenge' must be a scalar"),
+                };
+
+                let round = record
+                    .get(&"round".to_string())
+                    .map(|v| match v {
+                        Value::Index(i) => *i,
+                        _ => panic!("marginalize: 'round' must be an index"),
+                    })
+                    .unwrap_or(0usize);
+                let (evals, next_poly) = backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
+
+                let mut out_fields = Ctx::new();
+                out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
+                out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
+
+                return Value::Record(out_fields);
+            }
+            Op::Proj(box record_op, field_name, _) => {
+                let inputs_rec = Arc::clone(&inputs);
+                let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);
+                match rec_val {
+                    Value::Record(r) => r.get(&field_name).cloned().expect("Proj: missing field"),
+                    _ => panic!("Proj expects a record value"),
+                }
             }
         }
     }

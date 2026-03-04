@@ -6,7 +6,7 @@ use ark_poly::{
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use ark_std::log2;
 use lang::typ::{Nothing, CRange};
 use lang::ast::BinOp;
@@ -248,6 +248,9 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         },
+        Value::Poly(poly) => {
+            poly.serialize_compressed(writer)
+        }
     }
 }
 
@@ -2569,6 +2572,79 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected vector, found {}", self),
         }
     }
+}
+
+pub fn marginalize<C: ArkConfig>(
+    poly: &VirtualPolynomial<C::F>,
+    num_variables: usize,
+    max_degree: usize,
+    round: usize,
+    challenge: Option<C::F>,
+) -> (Vec<C::F>, VirtualPolynomial<C::F>) {
+    // if self.round >= self.poly.aux_info.num_variables
+    if num_variables == 0 {
+        panic!("marginalize: num_variables must be > 0");
+    }
+
+    if let Some(n) = poly.num_vars() {
+        if n != num_variables {
+            panic!(
+                "marginalize: num_variables mismatch: polynomial has {}, argument is {}",
+                n, num_variables
+            );
+        }
+    }
+
+    // Step 1:
+    // fix argument and evaluate f(x) over x_m = r; where r is the challenge
+    // for the current round, and m is the round number, indexed from 1
+    //
+    // i.e.:
+    // at round m <= n, for each mle g(x_1, ... x_n) within the flattened_mle
+    // which has already been evaluated to g(r_1, ..., r_{m-1}, x_m ... x_n)
+    //
+    //    g(r_1, ..., r_{m-1}, x_m ... x_n)
+    //
+    // eval g over r_m, and mutate g to g(r_1, ... r_m, x_{m+1}... x_n)
+    let next_poly = if round == 0 {
+        poly.clone()
+    } else if let Some(r) = challenge {
+        poly.fix_first_mle_variables_factorwise(&[r])
+            .unwrap_or_else(|_| poly.clone())
+    } else {
+        poly.clone()
+    };
+
+    // Step 2: generate sum for the partial evaluated polynomial:
+    // f(r_1, ... r_m,, x_{m+1}... x_n)
+
+    let mut evaluations = vec![C::F::zero(); max_degree + 1];
+
+   let num_remaining_vars = num_variables - 1;
+    let total: usize = 1usize << num_remaining_vars;
+
+    for t_idx in 0..=max_degree {
+        let t = C::FOps::from_usize(t_idx);
+        let mut sum = C::F::zero();
+
+        for b in 0..total {
+            let mut point: Vec<C::F> = Vec::with_capacity(num_variables);
+            point.push(t);
+            for j in 0..num_remaining_vars {
+                let bit = (b >> j) & 1;
+                point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+            }
+
+            let val = poly
+                .evaluate_mv(&point)
+                .expect("marginalize: polynomial evaluation failed");
+            sum += val;
+        }
+
+        evaluations[t_idx] = sum;
+    }
+
+    (evaluations, next_poly)
 }
 
 impl<C: ArkConfig> AddAssign for Value<C> {

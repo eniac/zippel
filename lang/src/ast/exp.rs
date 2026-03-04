@@ -157,6 +157,15 @@ pub enum Exp<N> {
     ///     ```
     Mle(Box<Exp<N>>),
 
+    ///     One round of sum-check style marginalization over a Boolean hypercube.
+    ///     The argument is typically a record containing fields like the polynomial,
+    ///     number of variables, maximum degree, and optional challenge.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let out = marginalize {| poly: p, num_variables: 3, max_degree: 2, challenge: r |};
+    ///     ```
+    Marginalize(Box<Exp<N>>),
+
     ///     A vector of elements
     ///     **Zippel Code:**
     ///     ```zippel
@@ -311,6 +320,7 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
             Exp::Eval(box p, box x) => Ok(Exp::Eval(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
+            Exp::Marginalize(box p) => Ok(Exp::Marginalize(Box::new(p.traverse1(f)?))),
             Exp::Pair(box x, box y) =>
                 Ok(Exp::Pair(Box::new(x.traverse1(f)?), Box::new(y.traverse1(f)?))),
             Exp::Vec(v) =>
@@ -381,6 +391,7 @@ impl TidSubst for CExp {
             Exp::Random(t, _) if t == from => *t = to.clone(),
             Exp::Ifft(box p)
             | Exp::Mle(box p)
+            | Exp::Marginalize(box p)
             | Exp::Poly(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
@@ -430,6 +441,7 @@ impl FreeVars for CExp {
             | Exp::Lit(_) | Exp::Range(_) => Set::new(),
             Exp::Ifft(box p)
             | Exp::Mle(box p)
+            | Exp::Marginalize(box p)
             | Exp::Poly(box p)
             | Exp::Reduce(_, box p)
             | Exp::Assert(box p)
@@ -475,6 +487,7 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
             Exp::Ifft(box p) => Ok(Exp::ifft(p.range_traverse(f)?)),
             Exp::Poly(box p) => Ok(Exp::poly(p.range_traverse(f)?)),
             Exp::Mle(box p) => Ok(Exp::mle(p.range_traverse(f)?)),
+            Exp::Marginalize(box p) => Ok(Exp::marginalize(p.range_traverse(f)?)),
             Exp::Vec(v) =>
                 Ok(Exp::Vec(v.range_traverse(f)?)),
             Exp::Eval(box p, box x) =>
@@ -585,6 +598,9 @@ impl<N> Exp<N> {
     }
     pub fn mle(a: Self) -> Self {
         Exp::Mle(Box::new(a))
+    }
+    pub fn marginalize(a: Self) -> Self {
+        Exp::Marginalize(Box::new(a))
     }
     pub fn fft(e: Self) -> Self {
         Exp::Fft(Box::new(e))
@@ -718,6 +734,7 @@ impl<N> Exp<N> {
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
             Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
+            Exp::Marginalize(box p) => p.is_pure(),
         }
     }
 }
@@ -810,6 +827,11 @@ where
             ]),
             Exp::Mle(p) => allocator.concat([
                 allocator.text("mle("),
+                p.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::Marginalize(p) => allocator.concat([
+                allocator.text("marginalize("),
                 p.pretty(allocator),
                 allocator.text(")"),
             ]),
@@ -1161,6 +1183,7 @@ impl<'pest> FromPest<'pest> for UExp {
                 Rule::fft_exp => Ok(Exp::fft(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::ifft_exp => Ok(Exp::ifft(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::marginalize_exp => Ok(Exp::marginalize(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
