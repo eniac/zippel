@@ -278,9 +278,10 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (p_typ, x_typ) {
-                    (CTyp::Poly(_i, 1, n), CTyp::Vec(b, _)) => {
+                    // Univariate polynomial evaluated at a vector of points:
+                    (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
                         let _i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
-                        Ok(CTyp::Vec(b, n))
+                        Ok(CTyp::Vec(b, len_vec))
                     }
                     (CTyp::Poly(_i, n, 1), CTyp::Vec(b, len_vec)) => {
                         let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;

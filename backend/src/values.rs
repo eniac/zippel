@@ -182,6 +182,23 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         }
+        Value::Poly(poly) => {
+            // Serialize VirtualPolynomial by first trying to get univariate coefficients,
+            // and falling back to a generic vector view if available.
+            if let Some(coeffs) = poly.to_coeffs() {
+                for f in coeffs {
+                    f.serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
+            } else if let Some(vec) = poly.to_vec() {
+                for f in vec {
+                    f.serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
+            } else {
+                Err(SerializationError::InvalidData)
+            }
+        },
         Value::Record(fields) => {
             // Serialize record fields
             (fields.len() as u64).serialize_compressed(&mut *writer)?;
@@ -191,10 +208,23 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
                 serialize_value_internal(value, &mut *writer)?;
             }
             Ok(())
-        }
-        Value::Poly(_poly) => {
-            // VirtualPolynomial serialization not implemented
-            Err(SerializationError::InvalidData)
+        },
+        Value::Poly(poly) => {
+            // Serialize VirtualPolynomial by first trying to get univariate coefficients,
+            // and falling back to a generic vector view if available.
+            if let Some(coeffs) = poly.to_coeffs() {
+                for f in coeffs {
+                    f.serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
+            } else if let Some(vec) = poly.to_vec() {
+                for f in vec {
+                    f.serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
+            } else {
+                Err(SerializationError::InvalidData)
+            }
         }
     }
 }
@@ -1517,7 +1547,15 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_eval(self, other: Self) -> Self {
         let mut other = other;
-        self.eval(&mut other);
+        match &self {
+            // For Uni/MLE stored as coefficient or evaluation vectors, promote to a polynomial first.
+            Value::VecScalar(_) | Value::VecIndex(_) => {
+                self.value_poly().eval(&mut other);
+            }
+            _ => {
+                self.eval(&mut other);
+            }
+        }
         other
     }
 
@@ -2343,7 +2381,10 @@ impl<C: ArkConfig> Value<C> {
                 let coeffs = p.to_coeffs().expect("Can only get coefficients from univariate polynomials");
                 Value::VecScalar(coeffs)
             },
-            _ => panic!("Expected poly, found {}", self),
+            // `Uni` values are often represented directly as coefficient vectors already.
+            Value::VecScalar(v) => Value::VecScalar(v.clone()),
+            Value::VecIndex(v) => Value::VecScalar(v.iter().map(|i| C::FOps::from_usize(*i)).collect()),
+            _ => panic!("Expected poly or coefficient vector, found {}", self),
         }
     }
 
