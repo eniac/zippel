@@ -248,23 +248,6 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         },
-        Value::Poly(poly) => {
-            // Serialize VirtualPolynomial by first trying to get univariate coefficients,
-            // and falling back to a generic vector view if available.
-            if let Some(coeffs) = poly.to_coeffs() {
-                for f in coeffs {
-                    f.serialize_compressed(&mut *writer)?;
-                }
-                Ok(())
-            } else if let Some(vec) = poly.to_vec() {
-                for f in vec {
-                    f.serialize_compressed(&mut *writer)?;
-                }
-                Ok(())
-            } else {
-                Err(SerializationError::InvalidData)
-            }
-        }
     }
 }
 

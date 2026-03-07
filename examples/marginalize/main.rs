@@ -1,6 +1,7 @@
 use zippel::*;
 use std::path::PathBuf;
 use backend::ArkBls12_381;
+<<<<<<< HEAD
 use share::Ctx;
 
 fn main() {
@@ -23,4 +24,13 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
+=======
+
+fn main() {
+    println!("=== Marginalize (ArkBls12_381, compile-only) ===");
+    let args = ZippelArgs::new(PathBuf::from("examples/marginalize_test.zippel"));
+    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    handler.compile();
+    println!("Compilation:    ✓ OK");
+>>>>>>> 9327b6c (Cleanup)
 }

@@ -5,9 +5,14 @@ use lang::typ::{Qualifier, Distribution, Kind, Size};
 use lang::typ::range::Range;
 use graph::Dag;
 use graph::{analyses::KnowledgeAnalysis, WritePdf};
+<<<<<<< HEAD
 use lang::id::{Tid, Vid};
 use backend::{ArkConfig, Value, value_to_bytes};
 use backend::op::HasOpFactory;
+=======
+use lang::id::Vid;
+use backend::{ArkConfig, Value, value_to_bytes};
+>>>>>>> 9327b6c (Cleanup)
 use lang::ast::{UModule, CModule};
 use share::{Ctx, unwrap};
 use graph::{
@@ -403,4 +408,28 @@ mod tests {
         let s_val = *sizes.get(&Tid::new("S")).unwrap();
         assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
     }
+}
+
+/// Result of verifying a proof
+pub struct VerificationResult<C: ArkConfig> {
+    pub passed: bool,
+    pub outputs: Vec<Value<C>>,
+}
+
+/// Interpret verifier output as pass/fail.
+/// Passes if every `Value::Bool` in the output is `true`.
+pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
+    let passed = outputs.iter().all(|v| match v {
+        Value::Bool(b) => *b,
+        _ => true,
+    });
+    VerificationResult { passed, outputs }
+}
+
+/// Compute the total serialized size (in bytes) of a proof certificate.
+pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
+    proof.iter()
+        .filter_map(|v| value_to_bytes(v).ok())
+        .map(|b| b.len())
+        .sum()
 }
