@@ -1,5 +1,7 @@
 use backend::ArkConfig;
-use log::warn;
+use log::{warn};
+#[cfg(test)]
+use log::debug;
 use crate::{DQDag, PRef};
 use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder};
 
@@ -114,12 +116,12 @@ fn knowledge_foo() {
             verify(a == b);
         }"#;
 
-    println!("Parsing example: {}", ex);
+    debug!("Parsing example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
     // Propagate qualifiers
@@ -147,12 +149,12 @@ fn groebner_bar() {
             verify(a == b);
         }"#;
 
-    println!("Parsing example: {}", ex);
+    debug!("Parsing example: {}", ex);
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
@@ -182,7 +184,7 @@ fn groebner_baz() {
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
@@ -219,7 +221,7 @@ fn groebner_ex3() {
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 
     let g = QualifierPropagation::from_dag(&gs[0]);

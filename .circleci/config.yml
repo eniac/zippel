@@ -6,8 +6,8 @@ jobs:
     steps:
       - checkout
       - run: |
-          docker pull elefthei/gurobi-rust:latest
-          docker run -v .:/app -e GUROBI_KEY=$GUROBI_KEY elefthei/gurobi-rust:latest
+          docker pull elefthei/zippel:latest
+          docker run -v .:/app elefthei/zippel:latest
   docker:
     machine:
       image: ubuntu-2204:2024.05.1
@@ -15,8 +15,8 @@ jobs:
       - checkout
       - run: |
           echo "$DOCKER_PASS" | docker login --username $DOCKER_USER --password-stdin
-          docker build -t elefthei/gurobi-rust:latest .
-          docker push elefthei/gurobi-rust:latest
+          docker build -t elefthei/zippel:latest .
+          docker push elefthei/zippel:latest
 
 workflows:
   test:

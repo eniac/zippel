@@ -1,3 +1,5 @@
+#[cfg(test)]
+use log::debug;
 use crate::{GOp, Ref, Node, Dag, QDag, DQDag};
 use petgraph::{
     graph::NodeIndex,
@@ -247,7 +249,7 @@ mod tests {
         let mut up = UniformityPropagation::new();
         let g = up.from_dag(&g);
 
-        println!("{}", up);
+        debug!("{}", up);
         assert!(g.node_count() > 0);
     }
 

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use log::debug;
 use backend::ArkConfig;
 use spongefish::{
     domain_separator, session_id_from_str, Encoding,
@@ -93,5 +95,5 @@ fn test_domain_separator() {
         &gs[0],
     );
     let _prover = domain_seperator.std_prover();
-    println!("Domain Seperator created successfully");
+    debug!("Domain Seperator created successfully");
 }

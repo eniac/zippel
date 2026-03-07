@@ -1,6 +1,5 @@
 [env]
 SYMBOLICA_HIDE_BANNER = "1"
-GUROBI_LIBNAME = "gurobi120"
 
 [alias]
 # Make 'cargo test' default to testing the entire workspace

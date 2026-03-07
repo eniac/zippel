@@ -175,7 +175,6 @@ impl Lub for Range<usize> {
     }
 
     fn lub_div(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
-        println!("Here Lub::div with a: {:?}, b: {:?}", a, b);
         // Validate Ranges
         a.check().map_err(|e|
                 LubError::next(
@@ -368,7 +367,6 @@ impl Lub for Tid {
 
     /// Least-upper-bound for division of different kinds
     fn lub_div(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
-        println!("Here 2 Tid::div with a: {:?}, b: {:?}", a, b);
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(b)
@@ -377,14 +375,10 @@ impl Lub for Tid {
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => 
             {
-                println!("Field / Field");
-                println!("a: {:?}, b: {:?}", a, b);
                 Ok(a.clone())
             },
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => 
             {
-                println!("Scalar / Scalar");
-                println!("a: {:?}, b: {:?}", a, b);
                 Ok(a.clone())
             },
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
@@ -510,7 +504,6 @@ impl Lub for CTyp {
     }
 
     fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
-        println!("Here 1 CTyp::add with x: {:?}, y: {:?}", x, y);
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_add(a, b, ctx)
@@ -663,8 +656,6 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?)),
             (CTyp::Fin(a), CTyp::Fin(b)) =>
             {
-                println!("Fin<A> * Fin<B> = Fin<A * B>");
-                println!("A: {:?}, B: {:?}", a, b);
                 Ok(CTyp::Fin(Range::lub_mul(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?))
             },
@@ -680,10 +671,6 @@ impl Lub for CTyp {
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
             {
-                println!("Vec<A> * Vec<B> = Vec<C> where C = A = B");
-                println!("A: {:?}, B: {:?}", a, b);
-                println!("n: {:?}, m: {:?}", n, m);
-                println!("n + m - 1: {:?}", n + m - 1);
                 if n == m {
                     Ok(CTyp::vec(&CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?, *n))
@@ -751,11 +738,8 @@ impl Lub for CTyp {
     }
 
     fn lub_div(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
-        println!("Lub::div with x: {:?}, y: {:?}", x, y);
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) => {
-                println!("Base<A> / Base<B>");
-                println!("a: {:?}, b: {:?}", a, b);
                 Ok(CTyp::Base(Tid::lub_div(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?))
                 },
@@ -773,8 +757,6 @@ impl Lub for CTyp {
             },
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
-                println!("Vec<A> / Vec<B> = Vec<C> where C = A = B");
-                println!("A: {:?}, B: {:?}", a, b);
                 if n == m {
                     Ok(CTyp::vec(&CTyp::lub_div(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::div(&x, &y), e))?, *n))

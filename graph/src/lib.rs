@@ -33,7 +33,7 @@ use petgraph::{dot::Dot, graph::{EdgeReference, NodeIndex, NodeIndices, Neighbor
 use std::process::Command;
 use std::ops::Index;
 use std::path::PathBuf;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// Represents graphs in the Zippel language
 /// graph intermediate representation (Graph IR)
@@ -110,7 +110,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         for edge in self.0.edge_references() {
             let source = edge.source();
             let target = edge.target();
-            println!("Edge from {:?} to {:?}", source, target);
+            debug!("Edge from {:?} to {:?}", source, target);
         }
     }
 
@@ -524,7 +524,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             for e in self.0.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 if !node_map_self.contains_key(&e.source()) {
-                    println!("Adding parent {} of {} to worklist", self[e.source()].drop_annotation(), self[n].drop_annotation());
+                    debug!("Adding parent {} of {} to worklist", self[e.source()].drop_annotation(), self[n].drop_annotation());
                     worklist.push(e.source());
                 }
             }
@@ -686,7 +686,7 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
         // Remove DOT file
         // std::fs::remove_file(fdot)?;
 
-        println!("Wrote PDF to {:?}", fpdf);
+        debug!("Wrote PDF to {:?}", fpdf);
         // Print success
         debug!("Wrote {:?}", std::fs::canonicalize(PathBuf::from(fpdf.clone())));
         Ok(())
@@ -787,7 +787,7 @@ impl<C: ArkConfig> UDags<C> {
             m.iter().map(|(sig, body)|
                 (sig.clone(), body.clone())).collect::<Ctx<CSig, CBody>>();
 
-        println!("fctx: {}", fctx);
+        debug!("fctx: {}", fctx);
         for (sig, body) in m.into_iter() {
             debug!("Adding declaration: {}", sig);
             let mut g = UDag::new();
@@ -1527,10 +1527,10 @@ fn graph_sum() {
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
     assert_eq!(m.len(), 4);
-    println!("{}", m);
+    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_sum").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
 
@@ -1546,11 +1546,11 @@ fn graph_foo() {
             verify(a * s == b * x[3]);
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    println!("{}", m);
+    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     // Output graph
     gs.write_pdf("graph_foo").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
 
@@ -1563,10 +1563,10 @@ fn graph_poly() {
             verify(p(r) == (a(r) * b(r)));
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    println!("{}", m);
+    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }
 
@@ -1577,9 +1577,9 @@ fn graph_reduce() {
             reduce(+, a)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize().unwrap();
-    println!("{}", m);
+    debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {
-        println!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
     });
 }

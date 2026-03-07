@@ -540,15 +540,15 @@ fn test_linear() {
     ]);
 
     let initial_basis = GroebnerBasis::new(num_vars, vec![f1, f2]);
-    println!("Ideal:");
+    debug!("Ideal:");
     for p in initial_basis.iter() {
-        println!("{}", p);
+        debug!("{}", p);
     }
 
     let groebner_basis = initial_basis.buchberger();
-    println!("Computed Gröbner Basis:");
+    debug!("Computed Gröbner Basis:");
     for p in groebner_basis.iter() {
-        println!("{}", p);
+        debug!("{}", p);
     }
 }
 

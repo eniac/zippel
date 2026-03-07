@@ -1,5 +1,5 @@
 use zippel::*;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
 use lang::id::Vid;
 use share::Ctx;
@@ -7,32 +7,32 @@ use ark_std::UniformRand;
 use ark_ff::fields::Field;
 
 fn main() {
-    println!("Starting KZG example");
-    let args = ZippelArgs::new(PathBuf::from("kzg_test.zippel"))
-        .with_pdf(PathBuf::from("kzg_test.pdf"));
-    
+    println!("=== KZG (ArkBls12_381) ===");
+    let args = ZippelArgs::new(PathBuf::from("examples/kzg_test.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile();
-    println!("Compiled and wrote PDF");
+
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
+    let prover_start = Instant::now();
     let proof = handler.run_prover(prover_scheduled, inputs);
-    println!("Ran prover");
+    let prover_elapsed = prover_start.elapsed();
+    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
+    println!("Prover time:    {prover_elapsed:.2?}");
+    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
 
     let verifier_scheduled = handler.default_schedule_verifier();
+    let verifier_start = Instant::now();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
-    println!("Verifier result for mle test: {:?}", verifier_result);
-    
-    // Check if verification succeeded
-    let success = verifier_result.iter().any(|v| {
-        matches!(v, Value::Bool(true))
-    });
-    
-    handler.analyze_completeness();
-    handler.analyze_knowledge();
-    
-    println!("Finished KZG example");
-    println!("{}", success);
+    let verifier_elapsed = verifier_start.elapsed();
+    let result = check_verification(verifier_result);
+    println!("Verifier time:  {verifier_elapsed:.2?}");
+    if result.passed {
+        println!("Verification:   ✓ PASSED");
+    } else {
+        println!("Verification:   ✗ FAILED");
+        std::process::exit(1);
+    }
 }
 
 

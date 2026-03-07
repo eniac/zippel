@@ -1,3 +1,4 @@
+use log::debug;
 use petgraph::graph::NodeIndex;
 use spongefish::{ProverState, DuplexSpongeInterface};
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn print_edges(&self) {
         for node in self.mutex_graph.node_indices() {
             for neighbor in self.mutex_graph.neighbors_directed(node, petgraph::Direction::Outgoing) {
-                println!("Edge from {:?} to {:?}", node, neighbor);
+                debug!("Edge from {:?} to {:?}", node, neighbor);
             }
         }
     }

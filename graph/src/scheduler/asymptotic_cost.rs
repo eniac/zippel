@@ -1,3 +1,4 @@
+use log::debug;
 use ark_ec::CurveGroup;
 use lang::ast::BinOp;
 use lang::typ::CRange;
@@ -79,7 +80,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ATyp::Uni(n), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) =>
                 (*n as f64) * Self::SCALAR_MUL / (nthreads as f64),
-            (a, b) => {println!("{} {}", a, b); 1.0}//unreachable!()} TODO: fix this
+            (a, b) => {debug!("{} {}", a, b); 1.0}//unreachable!()} TODO: fix this
         }
     }
 

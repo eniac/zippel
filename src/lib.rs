@@ -5,7 +5,7 @@ use lang::typ::{Qualifier, Distribution};
 use graph::Dag;
 use graph::{analyses::KnowledgeAnalysis, WritePdf};
 use lang::id::Vid;
-use backend::{ArkConfig, Value};
+use backend::{ArkConfig, Value, value_to_bytes};
 use lang::ast::{UModule, CModule};
 use share::{Ctx, unwrap};
 use graph::{
@@ -13,7 +13,7 @@ use graph::{
     UDag,
     analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
 };
-use log::{error, debug};
+use log::{error, debug, info};
 use graph::domain_seperator::ZippelDomainSeparator;
 
 use graph::scheduler::{TDag, Scheduler, AsymptoticCost};
@@ -240,9 +240,9 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
         if completeness.run() {
-            println!("Complete protocol: {}", g_analyze.name());
+            info!("Complete protocol: {}", g_analyze.name());
         } else {
-            println!("Incomplete protocol: {}", g_analyze.name());
+            info!("Incomplete protocol: {}", g_analyze.name());
         }
     }
 
@@ -250,6 +250,30 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
         let leaks = knowledge.run();
-        println!("Leaks: {:?}", leaks);
+        info!("Leaks: {:?}", leaks);
     }
+}
+
+/// Result of verifying a proof
+pub struct VerificationResult<C: ArkConfig> {
+    pub passed: bool,
+    pub outputs: Vec<Value<C>>,
+}
+
+/// Interpret verifier output as pass/fail.
+/// Passes if every `Value::Bool` in the output is `true`.
+pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
+    let passed = outputs.iter().all(|v| match v {
+        Value::Bool(b) => *b,
+        _ => true,
+    });
+    VerificationResult { passed, outputs }
+}
+
+/// Compute the total serialized size (in bytes) of a proof certificate.
+pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
+    proof.iter()
+        .filter_map(|v| value_to_bytes(v).ok())
+        .map(|b| b.len())
+        .sum()
 }

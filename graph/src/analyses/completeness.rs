@@ -62,7 +62,7 @@ mod tests {
                 verify(a == b);
             }"#;
 
-        println!("Parsing example: {}", ex);
+        debug!("Parsing example: {}", ex);
         let m = UModule::from_str(ex).unwrap().concretize().unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 

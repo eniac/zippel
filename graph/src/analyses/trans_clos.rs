@@ -1,3 +1,5 @@
+#[cfg(test)]
+use log::debug;
 use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis};
 use petgraph::graph::NodeIndex;
 use std::fmt;
@@ -260,7 +262,7 @@ fn trans_clos_many() {
     // Compute transitive closure
     let tc = TransClos::from_input(&g);
 
-    println!("{}", tc);
+    debug!("{}", tc);
     for (_, op) in tc.clos.iter() {
         assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
         assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
