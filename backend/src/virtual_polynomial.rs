@@ -1,4 +1,4 @@
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use std::ops::{Add, Sub, Mul};
 use std::fmt;
 use std::cmp::Ordering;
@@ -437,9 +437,10 @@ impl<F: Field> VirtualPolynomial<F> {
     where
         F: ark_ff::PrimeField,
     {
-        let normalized = self.normalize()?;
-        let result = normalized.poly_div_scalar(scalar)?;
-        Ok(VirtualPolynomial::from_poly(result))
+        let inv = scalar.inverse().ok_or_else(|| PolyError::DivisionByZero {
+            v: PolyVariant::from_scalar(scalar),
+        })?;
+        Ok(self.poly_mul_scalar(inv))
     }
 
     pub fn scalar_div_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
@@ -531,38 +532,51 @@ impl<F: Field> Mul for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> PartialEq for VirtualPolynomial<F> {
+impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
     fn eq(&self, other: &Self) -> bool {
         // Normalize both and compare the result for semantic equality
         match (self.normalize(), other.normalize()) {
             (Ok(p1), Ok(p2)) => p1 == p2,
             (Err(_), Err(_)) => {
-                // Both failed to normalize, fall back to structural comparison
-                if self.products.len() != other.products.len() {
-                    return false;
-                }
-                for (i, (c1, indices1)) in self.products.iter().enumerate() {
-                    if let Some((c2, indices2)) = other.products.get(i) {
-                        if c1 != c2 || indices1.len() != indices2.len() {
-                            return false;
-                        }
-                        for (idx1, idx2) in indices1.iter().zip(indices2.iter()) {
-                            if self.flattened_polys.get(*idx1) != other.flattened_polys.get(*idx2) {
-                                return false;
+                // Both failed to normalize — canonicalize and compare structurally.
+                // Resolve indices to actual polynomials, sort factors within each
+                // product, merge like terms, remove zeros, then compare.
+                type CanonProduct<F> = (F, Vec<PolyVariant<F>>);
+
+                let canonicalize = |vp: &VirtualPolynomial<F>| -> Vec<CanonProduct<F>> {
+                    let mut prods: Vec<CanonProduct<F>> = vp.products.iter().map(|(coeff, indices)| {
+                        let mut polys: Vec<PolyVariant<F>> = indices.iter()
+                            .map(|&idx| (*vp.flattened_polys[idx]).clone())
+                            .collect();
+                        polys.sort();
+                        (*coeff, polys)
+                    }).collect();
+                    // Sort by polynomial factors first so like terms are adjacent
+                    prods.sort_by(|(_, p1), (_, p2)| p1.cmp(p2));
+                    // Merge products with the same polynomial factors
+                    let mut merged: Vec<CanonProduct<F>> = Vec::new();
+                    for (coeff, polys) in prods {
+                        if let Some(last) = merged.last_mut() {
+                            if last.1 == polys {
+                                last.0 += coeff;
+                                continue;
                             }
                         }
-                    } else {
-                        return false;
+                        merged.push((coeff, polys));
                     }
-                }
-                true
+                    // Remove zero-coefficient products
+                    merged.retain(|(c, _)| !c.is_zero());
+                    merged
+                };
+
+                canonicalize(self) == canonicalize(other)
             }
             _ => false, // One normalized, one didn't
         }
     }
 }
 
-impl<F: Field> Eq for VirtualPolynomial<F> {}
+impl<F: PrimeField> Eq for VirtualPolynomial<F> {}
 
 impl<F: Field> PartialOrd for VirtualPolynomial<F> where F: ark_ff::PrimeField {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

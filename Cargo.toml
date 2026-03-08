@@ -70,3 +70,7 @@ path = "examples/toy_record/main.rs"
 name = "marginalize"
 path = "examples/marginalize/main.rs"
 
+[[example]]
+name = "vpoly"
+path = "examples/vpoly/main.rs"
+

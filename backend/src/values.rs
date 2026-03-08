@@ -268,7 +268,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
             ATyp::Uni(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero()))),
             ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero()))),
-            ATyp::Virtual => Value::Poly(VirtualPolynomial::new()),
+            ATyp::VPoly(_, _) => Value::Poly(VirtualPolynomial::new()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -1784,6 +1784,8 @@ impl<C: ArkConfig> Value<C> {
 
                 let result_poly = if poly.is_univariate() {
                     poly.evaluate_vec(&points)
+                } else if let Ok(scalar) = poly.evaluate_mv(&points) {
+                    VirtualPolynomial::from_scalar(scalar)
                 } else {
                     poly.evaluate_or_fix_mle(&points).expect("MLE evaluation failed")
                 };
@@ -1800,6 +1802,8 @@ impl<C: ArkConfig> Value<C> {
             (Value::Poly(poly), Value::VecScalar(v)) => {
                 let result_poly = if poly.is_univariate() {
                     poly.evaluate_vec(v)
+                } else if let Ok(scalar) = poly.evaluate_mv(v) {
+                    VirtualPolynomial::from_scalar(scalar)
                 } else {
                     poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
                 };
@@ -2013,7 +2017,7 @@ impl<C: ArkConfig> Value<C> {
                     PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals))
                 ))
             },
-            ATyp::Virtual => {
+            ATyp::VPoly(_, _) => {
                 // For Virtual random, create a random univariate polynomial wrapped in virtual
                 let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
                 Value::Poly(VirtualPolynomial::from_poly(
@@ -3899,5 +3903,522 @@ mod value_tests {
         let lhs = a.clone() / (b.clone() / c.clone());
         let rhs = (a * c) / b;
         assert_eq!(lhs, rhs);
+    }
+
+    // ========== Property-Based Tests for Polynomial Values ==========
+
+    use arbitrary::{Arbitrary, Unstructured};
+
+    /// Random univariate polynomial value (degree 1-4, non-zero coefficients)
+    #[derive(Debug, Clone)]
+    struct UniPoly(TestValue);
+
+    impl<'a> Arbitrary<'a> for UniPoly {
+        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+            let degree: usize = u.int_in_range(1..=4)?;
+            let mut coeffs = Vec::new();
+            for _ in 0..=degree {
+                coeffs.push(Fr::from(u.int_in_range(1u64..=100)?));
+            }
+            Ok(UniPoly(TestValue::Poly(
+                VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs))
+            )))
+        }
+    }
+
+    /// Random MLE value with exactly 2 variables (4 evaluations)
+    #[derive(Debug, Clone)]
+    struct Mle2Poly(TestValue);
+
+    impl<'a> Arbitrary<'a> for Mle2Poly {
+        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+            let mut evals = Vec::new();
+            for _ in 0..4 {
+                evals.push(Fr::from(u.int_in_range(1u64..=100)?));
+            }
+            Ok(Mle2Poly(TestValue::Poly(VirtualPolynomial::from_poly(
+                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(2, evals))
+            ))))
+        }
+    }
+
+    /// Non-zero scalar polynomial (for division tests)
+    #[derive(Debug, Clone)]
+    struct NonZeroScalarPoly(TestValue);
+
+    impl<'a> Arbitrary<'a> for NonZeroScalarPoly {
+        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+            let s = Fr::from(u.int_in_range(1u64..=100)?);
+            Ok(NonZeroScalarPoly(TestValue::Poly(VirtualPolynomial::from_scalar(s))))
+        }
+    }
+
+    fn zero_poly() -> TestValue {
+        TestValue::Poly(VirtualPolynomial::from_scalar(Fr::from(0)))
+    }
+
+    fn one_poly() -> TestValue {
+        TestValue::Poly(VirtualPolynomial::from_scalar(Fr::from(1)))
+    }
+
+    // --- Cross-type interaction: VPoly + Uni → Poly ---
+
+    #[test]
+    fn pbt_vpoly_add_uni() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            let vpoly = a.0.clone() * b.0.clone();
+            let c: UniPoly = u.arbitrary()?;
+            let result = vpoly + c.0;
+            assert!(matches!(result, TestValue::Poly(_)));
+            Ok(())
+        });
+    }
+
+    // --- Cross-type interaction: VPoly + Mle → Poly ---
+
+    #[test]
+    fn pbt_vpoly_add_mle() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            let vpoly = a.0.clone() * b.0.clone();
+            let c: Mle2Poly = u.arbitrary()?;
+            let result = vpoly + c.0;
+            assert!(matches!(result, TestValue::Poly(_)));
+            Ok(())
+        });
+    }
+
+    // --- Cross-type interaction: Uni + Mle → Poly ---
+
+    #[test]
+    fn pbt_uni_add_mle() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            let result = a.0 + b.0;
+            assert!(matches!(result, TestValue::Poly(_)));
+            Ok(())
+        });
+    }
+
+    // --- Univariate add: commutativity ---
+
+    #[test]
+    fn pbt_uni_add_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() + b.0.clone(), b.0 + a.0);
+            Ok(())
+        });
+    }
+
+    // --- Univariate add: associativity ---
+
+    #[test]
+    fn pbt_uni_add_associativity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            let c: UniPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() + b.0.clone()) + c.0.clone(),
+                a.0 + (b.0 + c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- Univariate add: identity (zero polynomial) ---
+
+    #[test]
+    fn pbt_uni_add_identity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let z = zero_poly();
+            assert_eq!(a.0.clone() + z.clone(), a.0.clone());
+            assert_eq!(z + a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- Univariate add/sub inverse: a + b - b = a ---
+
+    #[test]
+    fn pbt_uni_add_sub_inverse() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            assert_eq!((a.0.clone() + b.0.clone()) - b.0, a.0);
+            Ok(())
+        });
+    }
+
+    // --- Univariate mul: commutativity ---
+
+    #[test]
+    fn pbt_uni_mul_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() * b.0.clone(), b.0 * a.0);
+            Ok(())
+        });
+    }
+
+    // --- Univariate mul: associativity ---
+
+    #[test]
+    fn pbt_uni_mul_associativity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            let c: UniPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() * b.0.clone()) * c.0.clone(),
+                a.0 * (b.0 * c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- Univariate mul: identity (one polynomial) ---
+
+    #[test]
+    fn pbt_uni_mul_identity() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let o = one_poly();
+            assert_eq!(a.0.clone() * o.clone(), a.0.clone());
+            assert_eq!(o * a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- Univariate mul/div inverse: (a * b) / b = a ---
+
+    #[test]
+    fn pbt_uni_mul_div_inverse() {
+        arbtest::arbtest(|u| {
+            let a: UniPoly = u.arbitrary()?;
+            let b: NonZeroScalarPoly = u.arbitrary()?;
+            let result = (a.0.clone() * b.0.clone()) / b.0;
+            assert_eq!(result, a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE add: commutativity ---
+
+    #[test]
+    fn pbt_mle_add_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            assert_eq!(a.0.clone() + b.0.clone(), b.0 + a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE add: associativity ---
+
+    #[test]
+    fn pbt_mle_add_associativity() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            let c: Mle2Poly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() + b.0.clone()) + c.0.clone(),
+                a.0 + (b.0 + c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- MLE add: identity (zero polynomial) ---
+
+    #[test]
+    fn pbt_mle_add_identity() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let z = zero_poly();
+            assert_eq!(a.0.clone() + z.clone(), a.0.clone());
+            assert_eq!(z + a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE add/sub inverse: a + b - b = a ---
+
+    #[test]
+    fn pbt_mle_add_sub_inverse() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            assert_eq!((a.0.clone() + b.0.clone()) - b.0, a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE scalar mul/div inverse: (a * s) / s = a ---
+
+    #[test]
+    fn pbt_mle_scalar_mul_div_inverse() {
+        arbtest::arbtest(|u| {
+            let a: Mle2Poly = u.arbitrary()?;
+            let s = Fr::from(u.int_in_range(1u64..=100)?);
+            let sv = TestValue::Scalar(s);
+            let result = (a.0.clone() * sv.clone()) / sv;
+            assert_eq!(result, a.0);
+            Ok(())
+        });
+    }
+
+    // ========== VPoly (product polynomial) Property-Based Tests ==========
+
+    /// Uni-based VPoly: product of two random univariates (degree 1-3 each)
+    /// Normalizes to DenseUni, so PartialEq is exact.
+    #[derive(Debug, Clone)]
+    struct UniVPoly(TestValue);
+
+    impl<'a> Arbitrary<'a> for UniVPoly {
+        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+            let a: UniPoly = u.arbitrary()?;
+            let b: UniPoly = u.arbitrary()?;
+            Ok(UniVPoly(a.0 * b.0))
+        }
+    }
+
+    /// MLE-based VPoly: product of two random 2-variable MLEs.
+    /// Cannot normalize (MLE multiplication unsupported at PolyVariant level),
+    /// uses canonical structural comparison via sorted products.
+    #[derive(Debug, Clone)]
+    struct MleVPoly(TestValue);
+
+    impl<'a> Arbitrary<'a> for MleVPoly {
+        fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+            let a: Mle2Poly = u.arbitrary()?;
+            let b: Mle2Poly = u.arbitrary()?;
+            Ok(MleVPoly(a.0 * b.0))
+        }
+    }
+
+    // --- Uni VPoly add: commutativity ---
+
+    #[test]
+    fn pbt_uni_vpoly_add_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let b: UniVPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() + b.0.clone(), b.0 + a.0);
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly add: associativity ---
+
+    #[test]
+    fn pbt_uni_vpoly_add_associativity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let b: UniVPoly = u.arbitrary()?;
+            let c: UniVPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() + b.0.clone()) + c.0.clone(),
+                a.0 + (b.0 + c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly add: identity (zero) ---
+
+    #[test]
+    fn pbt_uni_vpoly_add_identity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let z = zero_poly();
+            assert_eq!(a.0.clone() + z.clone(), a.0.clone());
+            assert_eq!(z + a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly add/sub inverse: a + b - b = a ---
+
+    #[test]
+    fn pbt_uni_vpoly_add_sub_inverse() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let b: UniVPoly = u.arbitrary()?;
+            assert_eq!((a.0.clone() + b.0.clone()) - b.0, a.0);
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly mul: commutativity ---
+
+    #[test]
+    fn pbt_uni_vpoly_mul_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let b: UniVPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() * b.0.clone(), b.0 * a.0);
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly mul: associativity ---
+
+    #[test]
+    fn pbt_uni_vpoly_mul_associativity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let b: UniVPoly = u.arbitrary()?;
+            let c: UniVPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() * b.0.clone()) * c.0.clone(),
+                a.0 * (b.0 * c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly mul: identity (one) ---
+
+    #[test]
+    fn pbt_uni_vpoly_mul_identity() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let o = one_poly();
+            assert_eq!(a.0.clone() * o.clone(), a.0.clone());
+            assert_eq!(o * a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- Uni VPoly scalar mul/div inverse: (a * s) / s = a ---
+
+    #[test]
+    fn pbt_uni_vpoly_scalar_mul_div_inverse() {
+        arbtest::arbtest(|u| {
+            let a: UniVPoly = u.arbitrary()?;
+            let s: NonZeroScalarPoly = u.arbitrary()?;
+            let result = (a.0.clone() * s.0.clone()) / s.0;
+            assert_eq!(result, a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly add: commutativity ---
+
+    #[test]
+    fn pbt_mle_vpoly_add_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let b: MleVPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() + b.0.clone(), b.0 + a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly add: associativity ---
+
+    #[test]
+    fn pbt_mle_vpoly_add_associativity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let b: MleVPoly = u.arbitrary()?;
+            let c: MleVPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() + b.0.clone()) + c.0.clone(),
+                a.0 + (b.0 + c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly add: identity (zero) ---
+
+    #[test]
+    fn pbt_mle_vpoly_add_identity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let z = zero_poly();
+            assert_eq!(a.0.clone() + z.clone(), a.0.clone());
+            assert_eq!(z + a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly add/sub inverse: a + b - b = a ---
+
+    #[test]
+    fn pbt_mle_vpoly_add_sub_inverse() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let b: MleVPoly = u.arbitrary()?;
+            assert_eq!((a.0.clone() + b.0.clone()) - b.0, a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly mul: commutativity ---
+
+    #[test]
+    fn pbt_mle_vpoly_mul_commutativity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let b: MleVPoly = u.arbitrary()?;
+            assert_eq!(a.0.clone() * b.0.clone(), b.0 * a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly mul: associativity ---
+
+    #[test]
+    fn pbt_mle_vpoly_mul_associativity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let b: MleVPoly = u.arbitrary()?;
+            let c: MleVPoly = u.arbitrary()?;
+            assert_eq!(
+                (a.0.clone() * b.0.clone()) * c.0.clone(),
+                a.0 * (b.0 * c.0)
+            );
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly mul: identity (one) ---
+
+    #[test]
+    fn pbt_mle_vpoly_mul_identity() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let o = one_poly();
+            assert_eq!(a.0.clone() * o.clone(), a.0.clone());
+            assert_eq!(o * a.0.clone(), a.0);
+            Ok(())
+        });
+    }
+
+    // --- MLE VPoly scalar mul/div inverse: (a * s) / s = a ---
+
+    #[test]
+    fn pbt_mle_vpoly_scalar_mul_div_inverse() {
+        arbtest::arbtest(|u| {
+            let a: MleVPoly = u.arbitrary()?;
+            let s = Fr::from(u.int_in_range(1u64..=100)?);
+            let sv = TestValue::Scalar(s);
+            let result = (a.0.clone() * sv.clone()) / sv;
+            assert_eq!(result, a.0);
+            Ok(())
+        });
     }
 }
