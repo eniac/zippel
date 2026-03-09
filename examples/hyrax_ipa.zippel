@@ -36,7 +36,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
 }
 
 // RECURSIVE STEP (n > 1)
-fn bullet_reduce<G: Group, F: Scalar<G>, N: 2..13>(
+fn bullet_reduce<G: Group, F: Scalar<G>, N: 1..13>(
     public Upsilon: G,
     public a_vec: [F; 2^N],
     public g_vec: [G; 2^N],
