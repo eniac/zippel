@@ -74,3 +74,11 @@ path = "examples/marginalize/main.rs"
 name = "vpoly"
 path = "examples/vpoly/main.rs"
 
+[[example]]
+name = "hyrax_pop"
+path = "examples/hyrax_pop/main.rs"
+
+[[example]]
+name = "hyrax_podp"
+path = "examples/hyrax_podp/main.rs"
+
