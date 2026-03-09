@@ -1,0 +1,156 @@
+// Hyrax Log-of-Dot-Product
+
+// BASE CASE (n=1)
+// Figure 8: bullet-reduce(Upsilon, a, g) for n=1
+fn bullet_reduce<G: Group, F: Scalar<G>>(
+    public Upsilon: G,
+    public a_hat: [F; 1],
+    public g_hat: [G; 1],
+    public g_base: G,
+    public h_base: G,
+    private x_hat: [F; 1],
+    private y_hat: F,
+    private r_Upsilon_hat: F
+) -> Bool {
+    // Prover Step 5
+    let d = random<F>;
+    let r_delta = random<F>;
+    let r_beta = random<F>;
+
+    delta <- g_hat[0] * d + h_base * r_delta;
+    beta <- g_base * d + h_base * r_beta;
+
+    // Verifier Step 6
+    c <- challenge<F>;
+
+    // Prover Step 7
+    z1 <- d + c * y_hat;
+    z2 <- a_hat[0] * (c * r_Upsilon_hat + r_beta) + r_delta;
+
+    // Verifier Step 8
+    // Additive translation: a_hat[0] * (Upsilon*c + beta) + delta == z1 * (g_hat[0] + g_base*a_hat[0]) + h_base * z2
+    let lhs = (Upsilon * c + beta) * a_hat[0] + delta;
+    let rhs = (g_hat[0] + g_base * a_hat[0]) * z1 + h_base * z2;
+
+    lhs == rhs
+}
+
+// RECURSIVE STEP (n > 1)
+fn bullet_reduce<G: Group, F: Scalar<G>, N: 2..13>(
+    public Upsilon: G,
+    public a_vec: [F; 2^N],
+    public g_vec: [G; 2^N],
+    public g_base: G,
+    public h_base: G,
+    private x_vec: [F; 2^N],
+    private y: F,
+    private r_Upsilon: F
+) -> Bool {
+    let x_1 = x_vec[0..2^(N-1)];
+    let x_2 = x_vec[2^(N-1)..2^N];
+    
+    let a_1 = a_vec[0..2^(N-1)];
+    let a_2 = a_vec[2^(N-1)..2^N];
+    
+    let g_1 = g_vec[0..2^(N-1)];
+    let g_2 = g_vec[2^(N-1)..2^N];
+
+    // Prover Step 2
+    let r_Upsilon_neg1 = random<F>;
+    let r_Upsilon_1 = random<F>;
+
+    let dot_x1_a2 = dot(x_1, a_2);
+    let dot_x2_a1 = dot(x_2, a_1);
+
+    // Upsilon_{-1} = h^{r_{Upsilon_{-1}}} * g^{<x_1, a_2>} * prod_i g_{i+n/2}^{x_i}
+    Upsilon_neg1 <- h_base * r_Upsilon_neg1 + g_base * dot_x1_a2 + dot(g_2, x_1);
+    
+    // Upsilon_1 = h^{r_{Upsilon_1}} * g^{<x_2, a_1>} * prod_i g_i^{x_{i+n/2}}
+    Upsilon_1 <- h_base * r_Upsilon_1 + g_base * dot_x2_a1 + dot(g_1, x_2);
+
+    // Verifier Step 3
+    c <- challenge<F>;
+    
+    let c_inv = 1 / c;
+    let c_sq = c * c;
+    let c_inv_sq = c_inv * c_inv;
+
+    // Prover and Verifier Step 4
+    // Upsilon' = Upsilon_{-1}^{c^2} * Upsilon * Upsilon_1^{c^{-2}}
+    let Upsilon_prime = Upsilon_neg1 * c_sq + Upsilon + Upsilon_1 * c_inv_sq;
+    
+    // a' = c^{-1} * a_1 + c * a_2
+    let a_prime = a_1 * c_inv + a_2 * c;
+    
+    // g' = g_1^{c^{-1}} circ g_2^c
+    let g_prime = g_1 * c_inv + g_2 * c;
+
+    // Prover Step 4 (Private witness computation)
+    // x' = c * x_1 + c^{-1} * x_2
+    let x_prime = x_1 * c + x_2 * c_inv;
+    
+    // y' = c^2 * <x_1, a_2> + y + c^{-2} * <x_2, a_1>
+    let y_prime = dot_x1_a2 * c_sq + y + dot_x2_a1 * c_inv_sq;
+    
+    // r_Upsilon' = r_Upsilon_{-1} * c^2 + r_Upsilon + r_Upsilon_1 * c^{-2}
+    let r_Upsilon_prime = r_Upsilon_neg1 * c_sq + r_Upsilon + r_Upsilon_1 * c_inv_sq;
+
+    // Step 5: Return bullet-reduce(Upsilon', a', g')
+    bullet_reduce(
+        Upsilon_prime,
+        a_prime,
+        g_prime,
+        g_base,
+        h_base,
+        x_prime,
+        y_prime,
+        r_Upsilon_prime
+    )
+}
+
+// Corrected Figure 7 protocol wrapper
+proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, N_CONST: 64>(
+    // Public Inputs
+    public xi: G,
+    public tau: G,
+    public a_vec_public: [F; N_CONST],
+    public g_vec_public: [G; N_CONST],
+    public g_base: G,
+    public h_base: G,
+    
+    // Private Inputs
+    private x_vec_private: [F; N_CONST],
+    private y_private: F,
+    private r_xi_private: F,
+    private r_tau_private: F
+) where 
+    xi == h_base * r_xi_private + dot(g_vec_public, x_vec_private)
+    && tau == g_base * y_private + h_base * r_tau_private
+    && y_private == dot(x_vec_private, a_vec_public) 
+{
+    // Verifier Step 1
+    rho <- challenge<F>;
+
+    // Step 2 & 3
+    let Upsilon = xi + tau * rho;
+    let r_Upsilon = r_xi_private + r_tau_private * rho;
+    let a_rho = a_vec_public * rho;
+    
+    // To maintain correctness of the evaluations inside bullet-reduce, y must be scaled by rho
+    // y_hat = x_hat * a_hat -> In our context, since a is scaled by rho, y must also be scaled.
+    let y_rho = y_private * rho;
+
+    // Step 4: Execute bullet-reduce
+    let result = bullet_reduce(
+        Upsilon,
+        a_rho,
+        g_vec_public,
+        g_base,
+        h_base,
+        x_vec_private,
+        y_rho,
+        r_Upsilon
+    );
+
+    verify(result);
+}

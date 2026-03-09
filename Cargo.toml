@@ -82,3 +82,7 @@ path = "examples/hyrax_pop/main.rs"
 name = "hyrax_podp"
 path = "examples/hyrax_podp/main.rs"
 
+[[example]]
+name = "hyrax_ipa"
+path = "examples/hyrax_ipa/main.rs"
+
