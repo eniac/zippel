@@ -86,3 +86,7 @@ path = "examples/hyrax_podp/main.rs"
 name = "hyrax_ipa"
 path = "examples/hyrax_ipa/main.rs"
 
+[[example]]
+name = "pedersen_eq"
+path = "examples/pedersen_eq/main.rs"
+
