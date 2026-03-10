@@ -339,6 +339,10 @@ impl Lub for Tid {
             // Scalar multiplication: Scalar * Group = Group * Scalar = Group
             (Kind::Scalar(g), Kind::Group) if g.contains(b) => Ok(b.clone()),
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
+            // Scalar multiplication: Scalar * Pairing Target = Pairing Target * Scalar = Pairing Target
+            // The scalar F ranges over G1, G2, so we ensure g contains g1 or g2
+            (Kind::Pairing(g1, g2), Kind::Scalar(g)) if g.contains(g1) || g.contains(g2) => Ok(a.clone()),
+            (Kind::Scalar(g), Kind::Pairing(g1, g2)) if g.contains(g1) || g.contains(g2) => Ok(b.clone()),
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
             (_, _) => Err(LubError::mul(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
