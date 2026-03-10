@@ -222,7 +222,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             Ok(())
         }
         Value::Poly(poly) => {
-            // Serialize VirtualPolynomial by first trying to get univariate coefficients,
+            // Serialize `VirtualPolynomial` by first trying to get univariate coefficients,
             // and falling back to a generic vector view if available.
             if let Some(coeffs) = poly.to_coeffs() {
                 for f in coeffs {
@@ -235,9 +235,25 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
                 }
                 Ok(())
             } else {
-                Err(SerializationError::InvalidData)
+                // Fallback for arbitrary virtual polynomials (e.g. product of MLEs) so
+                // public inputs can be serialized for the transcript.
+                const VIRTUAL_POLY_TAG: u8 = 2;
+                VIRTUAL_POLY_TAG.serialize_compressed(&mut *writer)?;
+                (poly.products.len() as u64).serialize_compressed(&mut *writer)?;
+                for (coeff, indices) in &poly.products {
+                    coeff.serialize_compressed(&mut *writer)?;
+                    (indices.len() as u64).serialize_compressed(&mut *writer)?;
+                    for &idx in indices {
+                        (idx as u64).serialize_compressed(&mut *writer)?;
+                    }
+                }
+                (poly.flattened_polys.len() as u64).serialize_compressed(&mut *writer)?;
+                for poly_arc in &poly.flattened_polys {
+                    (**poly_arc).serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
             }
-        },
+        }
         Value::Record(fields) => {
             // Serialize record fields
             (fields.len() as u64).serialize_compressed(&mut *writer)?;
@@ -248,10 +264,6 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             }
             Ok(())
         }
-        Value::Poly(poly) => {
-            poly.serialize_compressed(writer)
-        }
-        },
     }
 }
 
@@ -2656,32 +2668,109 @@ pub fn marginalize<C: ArkConfig>(
     };
 
     // Step 2: generate sum for the partial evaluated polynomial:
-    // f(r_1, ... r_m,, x_{m+1}... x_n)
+    // f(r_1, ... r_m, x_{m+1}... x_n); we sum over the hypercube for the remaining
+    let num_remaining_vars = num_variables.saturating_sub(round + 1);
+    let total: usize = 1usize << num_remaining_vars;
+    let expected_mle_vars = num_variables.saturating_sub(round);
+
+    let all_mle = next_poly.flattened_polys.iter().all(|p| p.as_mle_evaluations().is_some());
+    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
+        let tables: Vec<&[C::F]> = next_poly
+            .flattened_polys
+            .iter()
+            .filter_map(|p| p.as_mle_evaluations())
+            .collect();
+        if tables.len() == next_poly.flattened_polys.len()
+            && tables.iter().all(|t| t.len() == (1usize << expected_mle_vars))
+        {
+            Some(tables)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut evaluations = vec![C::F::zero(); max_degree + 1];
 
-   let num_remaining_vars = num_variables - 1;
-    let total: usize = 1usize << num_remaining_vars;
+    if let Some(tables) = mle_tables {
+        let half = 1usize << num_remaining_vars;
+        let mut products_sum = vec![C::F::zero(); max_degree + 1];
 
-    for t_idx in 0..=max_degree {
-        let t = C::FOps::from_usize(t_idx);
-        let mut sum = C::F::zero();
+        for (coefficient, products) in &next_poly.products {
+            let mut coeff_acc = vec![C::F::zero(); max_degree + 1];
+            let product_tables: Vec<&[C::F]> = products
+                .iter()
+                .map(|&idx| tables[idx])
+                .collect();
+            let k = product_tables.len();
 
-        for b in 0..total {
-            let mut point: Vec<C::F> = Vec::with_capacity(num_variables);
-            point.push(t);
-            for j in 0..num_remaining_vars {
-                let bit = (b >> j) & 1;
-                point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+            let partials: Vec<Vec<C::F>> = (0..total)
+                .into_par_iter()
+                .map(|b| {
+                    let v0: Vec<C::F> = product_tables
+                        .iter()
+                        .map(|tab| tab[b])
+                        .collect();
+                    let v1: Vec<C::F> = product_tables
+                        .iter()
+                        .map(|tab| tab[half + b])
+                        .collect();
+                    // P(t) = prod_i ((1-t)*v0_i + t*v1_i); compute coeffs of P (degree k).
+                    let mut coeffs = vec![C::F::zero(); k + 1];
+                    coeffs[0] = C::F::one();
+                    for i in 0..k {
+                        let a = v0[i];
+                        let b_i = v1[i] - v0[i];
+                        for d in (1..=i + 1).rev() {
+                            coeffs[d] = coeffs[d] * a + coeffs[d - 1] * b_i;
+                        }
+                        coeffs[0] = coeffs[0] * a;
+                    }
+                    coeffs
+                })
+                .collect();
+
+            for partial in partials {
+                for (acc, &p) in coeff_acc.iter_mut().zip(partial.iter()) {
+                    *acc += p;
+                }
             }
-
-            let val = poly
-                .evaluate_mv(&point)
-                .expect("marginalize: polynomial evaluation failed");
-            sum += val;
+            for (ps, &acc) in products_sum.iter_mut().zip(coeff_acc.iter()) {
+                *ps += *coefficient * acc;
+            }
         }
 
-        evaluations[t_idx] = sum;
+        for t_idx in 0..=max_degree {
+            let t = C::FOps::from_usize(t_idx);
+            let mut val = C::F::zero();
+            let mut t_pow = C::F::one();
+            for d in 0..=max_degree {
+                val += products_sum[d] * t_pow;
+                t_pow *= t;
+            }
+            evaluations[t_idx] = val;
+        }
+    } else {
+        let point_len = num_variables - round;
+        for t_idx in 0..=max_degree {
+            let t = C::FOps::from_usize(t_idx);
+            let sum: C::F = (0..total)
+                .into_par_iter()
+                .map(|b| {
+                    let mut point: Vec<C::F> = Vec::with_capacity(point_len);
+                    point.push(t);
+                    for j in 0..num_remaining_vars {
+                        let bit = (b >> j) & 1;
+                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+                    }
+                    next_poly
+                        .evaluate_mv(&point)
+                        .expect("marginalize: polynomial evaluation failed")
+                })
+                .sum();
+            evaluations[t_idx] = sum;
+        }
     }
 
     (evaluations, next_poly)

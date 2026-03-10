@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("Starting marginalize example");
-    let args = ZippelArgs::new(PathBuf::from("marginalize.zippel"))
+    let args = ZippelArgs::new(PathBuf::from("examples/marginalize.zippel"))
         .with_pdf(PathBuf::from("marginalize_example.pdf"));
 
     // Use a tiny field (mod 17) so the numbers that appear in the
