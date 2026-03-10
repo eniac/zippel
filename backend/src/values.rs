@@ -975,28 +975,6 @@ impl<C: ArkConfig> Value<C> {
                     .for_each(|(a, b)| Value::GT(*a).value_mul(b)),
                 _ => panic!("Expected scalar, found {}", other),
             },
-            Value::GT(a) => match &other {
-                Value::Index(_) | Value::Scalar(_) => {
-                    let alpha = other.into_scalar();
-                    let mut group = *a;
-                    C::POps::mul(&alpha, &mut group);
-                    *other = Value::GT(group);
-                }
-                Value::VecIndex(_) | Value::VecScalar(_) => {
-                    let vl = &*other.into_vec_scalar_mut();
-                    // Multiply scalar vec by single group element
-                    let mut vr = vec![*a; vl.len()];
-                    vl.par_iter()
-                        .zip(vr.par_iter_mut())
-                        .for_each(|(s, g)| C::POps::mul(s, g));
-                    *other = Value::VecGT(vr);
-                }
-                Value::Vec(_) => other
-                    .into_vec_mut()
-                    .par_iter_mut()
-                    .for_each(|b| Value::GT(*a).value_mul(b)),
-                _ => panic!("Expected scalar, found {}", other),
-            },
             Value::Vec(v) => v
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())
