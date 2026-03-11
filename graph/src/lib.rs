@@ -446,7 +446,18 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
         // Add the transcript nodes (public) to the arguments
         for node in &proof_nodes {
-            let transcript_var = self.find_var(*node).ok_or(GraphError::node_not_found(*node))?;
+            let transcript_var = if let Some(t) = self.find_var(*node) {
+                t
+            } else {
+                let mut trans_var = None;
+                for e in self.0.edges_directed(*node, petgraph::Direction::Incoming) {
+                    if e.weight().is_transcript() {
+                        trans_var = e.weight().1.clone();
+                        break;
+                    }
+                }
+                trans_var.ok_or(GraphError::node_not_found(*node))?
+            };
             if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
                 continue;
             }
@@ -1300,24 +1311,27 @@ impl<C: ArkConfig> UDag<C> {
                 // Add left-hand side as node
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
                 // Record transcript interaction
-                match ol {
+                let transcr_op = match ol {
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
                         self.add_edge(*transcr, n, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(n).unwrap().set_transcript();
                         *transcr = n;
+                        ol.clone()
                     },
                     _ => {
                         // Add new node
                         let nl = self.add_node(Node::transcr(&ol));
+                        self.add_edges(DepType::Data, nl, ol.clone()); // Connect dependencies
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         *transcr = nl;
+                        GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }
-                }
+                };
                 // Add [id] to the variable context
                 let mut vctx = vctx.clone();
                 vctx.insert(&id, &tl);
                 let mut vars = vars.clone();
-                vars.insert(&id, &ol);
+                vars.insert(&id, &transcr_op);
                 // Add right-hand side as Node
                 self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
             },
