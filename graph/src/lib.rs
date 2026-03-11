@@ -446,18 +446,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
         // Add the transcript nodes (public) to the arguments
         for node in &proof_nodes {
-            let transcript_var = if let Some(t) = self.find_var(*node) {
-                t
-            } else {
-                let mut trans_var = None;
-                for e in self.0.edges_directed(*node, petgraph::Direction::Incoming) {
-                    if e.weight().is_transcript() {
-                        trans_var = e.weight().1.clone();
-                        break;
-                    }
-                }
-                trans_var.ok_or(GraphError::node_not_found(*node))?
-            };
+            let transcript_var = self.find_var(*node).ok_or(GraphError::node_not_found(*node))?;
             if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
                 continue;
             }
