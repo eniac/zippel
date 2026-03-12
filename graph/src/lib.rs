@@ -99,6 +99,63 @@ impl GraphError {
     }
 }
 
+/// Compare two `Ref` values for isomorphism-compatible equality,
+/// ignoring `NodeIndex` (which differs between isomorphic graphs).
+fn refs_isomorphic_eq(a: &Ref, b: &Ref) -> bool {
+    match (a, b) {
+        (Ref::Node(_), Ref::Node(_)) => true,
+        (Ref::Var(v1, _), Ref::Var(v2, _)) => v1 == v2,
+        _ => false,
+    }
+}
+
+/// Compare two `PRef` slices for isomorphism-compatible equality.
+fn prefs_isomorphic_eq(a: &[PRef], b: &[PRef]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| {
+                refs_isomorphic_eq(&x.reference, &y.reference)
+                    && x.index == y.index
+                    && x.typ == y.typ
+                    && x.qualifier == y.qualifier
+                    && x.distribution == y.distribution
+                    && x.from_transcript == y.from_transcript
+            })
+}
+
+/// Compare two `Node` values for isomorphism-compatible equality.
+/// Erases `NodeIndex` inside `GOp` and `PRef` so that structurally
+/// identical nodes from different graphs compare as equal.
+fn nodes_isomorphic_eq<C: ArkConfig, A: PartialEq + Clone>(
+    a: &Node<C, A>,
+    b: &Node<C, A>,
+) -> bool {
+    let erase = |_: NodeIndex| NodeIndex::new(0);
+    match (a, b) {
+        (Node::Inp(v1, p1), Node::Inp(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
+        (Node::Rel(v1, p1), Node::Rel(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
+        (Node::Op(op1, ann1), Node::Op(op2, ann2)) => {
+            op1.map_node_indices(&erase) == op2.map_node_indices(&erase) && ann1 == ann2
+        }
+        (Node::Transcr(op1, ann1), Node::Transcr(op2, ann2)) => {
+            op1.map_node_indices(&erase) == op2.map_node_indices(&erase) && ann1 == ann2
+        }
+        _ => false,
+    }
+}
+
+impl<C: ArkConfig, A: PartialEq + Clone> PartialEq for Dag<C, A> {
+    fn eq(&self, other: &Self) -> bool {
+        petgraph::algo::is_isomorphic_matching(
+            &self.0,
+            &other.0,
+            |a, b| nodes_isomorphic_eq(a, b),
+            |a, b| a == b,
+        )
+    }
+}
+
 impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn new() -> Self {
