@@ -90,3 +90,7 @@ path = "examples/hyrax_ipa/main.rs"
 name = "pedersen_eq"
 path = "examples/pedersen_eq/main.rs"
 
+[[example]]
+name = "pst13"
+path = "examples/pst13/main.rs"
+

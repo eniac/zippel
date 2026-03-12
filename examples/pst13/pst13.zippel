@@ -1,0 +1,177 @@
+// PST13 Multilinear Polynomial Commitment Scheme
+// Reference: Papamanthou, Shi, Tamassia 2013 (PST)
+//
+// Generic over N variables: the polynomial p has 2^N coefficients indexed
+// by {0,1}^N in lexicographic order.
+//
+// Key derivation insight (enables genericity):
+//   ck_{K-1}[i] = ck_K[i] + ck_K[i + 2^(K-1)]
+// because eq_K(alpha,(0,i)) + eq_K(alpha,(1,i)) = (1-alpha_1)*ck_{K-1}[i] + alpha_1*ck_{K-1}[i].
+// So we only need to pass ck_N and derive all smaller keys recursively.
+
+// =============================================================================
+// PST.Setup helpers: pst13_ck builds ck_N = [eq_N(alpha,i)*G for i in {0,1}^N]
+// recursively using the identity:
+//   ck_N = (ck_{N-1} * (1-alpha_N)) ++ (ck_{N-1} * alpha_N)
+// BASE CASE (N=1): ck_1 = [(1-alpha_1)*G, alpha_1*G]
+// =============================================================================
+fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>>(
+    private alpha: [F; 1],
+    public G: G1
+) -> [G1; 2] {
+    let a = alpha[0];
+    [G * (1 - a), G * a]
+}
+
+// RECURSIVE CASE (N >= 2): strip the first trapdoor coordinate and recurse.
+// ck_N = (ck_{N-1} * (1-alpha_1)) ++ (ck_{N-1} * alpha_1)
+// where ck_{N-1} is built from alpha[1..N] (the remaining N-1 coordinates).
+fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>, N: 2..10>(
+    private alpha: [F; N],
+    public G: G1
+) -> [G1; 2^N] {
+    let a = alpha[0];
+    let prev = pst13_ck(alpha[1..N], G);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// =============================================================================
+// PST.Setup (generic over N)
+//   Computes ck_N (commitment key) and vk (verification key) from trapdoor alpha.
+// =============================================================================
+fn pst13_setup<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 1..10>(
+    private alpha: [F; N],
+    public G: G1,
+    public H: G2
+) -> {ck_N: [G1; 2^N], vk: [G2; N]} {
+    {|
+        ck_N: pst13_ck(alpha, G),
+        vk: [H * alpha[i] for i in 0..N]
+    |}
+}
+
+// =============================================================================
+// PST.Commit  (generic over M = number of variables)
+//   C_p = dot(p, ck_N) = p(alpha) * G
+// =============================================================================
+fn pst13_commit<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: 1..10>(
+    private p: [F; 2^M],
+    public ck_N: [G1; 2^M]
+) -> G1 {
+    dot(p, ck_N)
+}
+
+// =============================================================================
+// PST.Open rounds -- BASE CASE (1 variable remaining)
+//
+// Receives rem = LHS - (contributions from all previous rounds).
+// Logs the final quotient commitment pi_last and checks that rem equals
+// this round's pairing contribution, completing the verification.
+// =============================================================================
+fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    private p_curr: [F; 2],
+    public ck_curr: [G1; 2],
+    public z_curr: [F; 1],
+    public alpha_H_curr: [G2; 1],
+    public H: G2,
+    public rem: GT          // remaining: LHS minus contributions so far
+) -> Bool {
+    // Derive ck_0 = G
+    let ck_lo = ck_curr[0..1];
+    let ck_hi = ck_curr[1..2];
+    let ck_0 = ck_lo + ck_hi;
+
+    // Quotient polynomial q (length 1)
+    let p_lo = p_curr[0..1];
+    let p_hi = p_curr[1..2];
+    let q = p_hi - p_lo;
+
+    // Log pi_last to transcript
+    pi_last <- dot(q, ck_0);
+
+    // Check: rem == e(pi_last, (alpha - z)*H)
+    rem == pair(pi_last, alpha_H_curr[0] - (H * z_curr[0]))
+}
+
+// =============================================================================
+// PST.Open rounds -- RECURSIVE CASE (K >= 2 variables remaining)
+//
+// Receives rem = LHS - (contributions from all previous rounds).
+// Logs pi_curr, subtracts its pairing contribution from rem, folds the
+// polynomial, then recurses on the remaining K-1 variables.
+// =============================================================================
+fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..10>(
+    private p_curr: [F; 2^K],
+    public ck_curr: [G1; 2^K],
+    public z_curr: [F; K],
+    public alpha_H_curr: [G2; K],
+    public H: G2,
+    public rem: GT          // remaining: LHS minus contributions so far
+) -> Bool {
+    // Derive next commitment key: ck_{K-1}[i] = ck_curr[i] + ck_curr[i + 2^(K-1)]
+    let ck_lo = ck_curr[0..2^(K-1)];
+    let ck_hi = ck_curr[2^(K-1)..2^K];
+    let ck_next = ck_lo + ck_hi;
+
+    // Split polynomial into x_1=0 and x_1=1 halves
+    let p_lo = p_curr[0..2^(K-1)];
+    let p_hi = p_curr[2^(K-1)..2^K];
+
+    // Quotient polynomial for this variable
+    let q_curr = p_hi - p_lo;
+
+    // Log pi_curr to transcript
+    pi_curr <- dot(q_curr, ck_next);
+
+    // Fold polynomial at z_curr[0]
+    let p_red = p_lo + (q_curr * z_curr[0]);
+
+    // Subtract this round's contribution from the remaining LHS
+    let rem_next = rem - pair(pi_curr, alpha_H_curr[0] - (H * z_curr[0]));
+
+    // Recurse on the remaining K-1 variables
+    pst13_open_rounds(
+        p_red,
+        ck_next,
+        z_curr[1..K],
+        alpha_H_curr[1..K],
+        H,
+        rem_next
+    )
+}
+
+// =============================================================================
+// PST.Open + PST.Check  (generic in N via pst13_open_rounds)
+//
+// The prover runs pst13_open_rounds to compute and log pi_1, ..., pi_N.
+// The verifier checks the bilinear pairing equation:
+//   e(C_p - y*G, H) == sum_{i=1}^N e(pi_i, (alpha_i - z_i)*H)
+//
+// pst13_open_rounds receives rem = LHS and subtracts each round's contribution;
+// the base case checks rem == final contribution, completing the proof.
+//
+// To use a different N: change N below and provide matching Rust inputs.
+// =============================================================================
+proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>(
+    private p: [F; 2^N],       // polynomial coefficients indexed by {0,1}^N
+
+    public z: [F; N],           // evaluation point (z_1, ..., z_N)
+    public y: F,                // claimed evaluation p(z)
+    public C_p: G1,             // commitment  C_p = dot(p, ck_N) = p(alpha) * G
+
+    public ck_N: [G1; 2^N],     // [eq_N(alpha, i)*G  for i in {0,1}^N]
+    public G: G1,
+    public H: G2,
+    public alpha_H: [G2; N]     // [alpha_i * H  for i in 1..N]
+
+) where C_p == pst13_commit(p, ck_N) {
+
+    // LHS of the pairing check: e(C_p - y*G, H)
+    let lhs = pair(C_p - (G * y), H);
+
+    // Run the recursive open rounds, threading the remaining LHS.
+    // Returns true iff e(C_p - y*G, H) == sum_i e(pi_i, (alpha_i - z_i)*H).
+    let result = pst13_open_rounds(p, ck_N, z, alpha_H, H, lhs);
+
+    verify(result)
+}
