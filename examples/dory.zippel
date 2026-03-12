@@ -1,4 +1,4 @@
-// Protocol 14 from Thaler's book but with asymmetric pairings (since symmetric is not OK) 
+// Protocol 14 from Thaler's book but with asymmetric pairings (since symmetric is not OK)
 // Dory Evaluation Proof (Inner Product Argument using Bilinear Pairings)
 // This proves knowledge of vectors u in G1^n and g in G2^n such that:
 // c1 = <u, g>
@@ -33,7 +33,7 @@ fn dory_reduce<
     check1 && check2 && check3
 }
 
-// Intermediate case: LOG_N = 1 (size = 2 elements). 
+// Intermediate case: LOG_N = 1 (size = 2 elements).
 // Here we recurse down to array size = 1 (LOG_N=0).
 fn dory_reduce<
     G1: Group,
@@ -136,7 +136,7 @@ fn dory_reduce<
     G2: Group,
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
-    LOG_N: 2..8
+    LOG_N: 2..14
 >(
     public c1: GT,
     public c2: GT,
@@ -258,7 +258,7 @@ proto dory_eval<
     G2: Group,
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
-    LOG_N: 6
+    LOG_N: 13
 >(
     // Inputs (from the top-level LOG_N)
     public c1: GT,
