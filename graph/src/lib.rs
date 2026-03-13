@@ -214,7 +214,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     /// Dep deduplication
-    fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
+    pub(crate) fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         // If the edge is not a self-loop add it
         if source != sink {
             self.0.add_edge(source, sink, edge);
