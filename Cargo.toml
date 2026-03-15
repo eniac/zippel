@@ -93,3 +93,7 @@ path = "examples/pedersen_eq/main.rs"
 [[example]]
 name = "dory"
 path = "examples/dory/main.rs"
+
+[[example]]
+name = "node_issue"
+path = "examples/node_issue/main.rs"
