@@ -1361,8 +1361,12 @@ impl<C: ArkConfig> UDag<C> {
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
                         // Reuse: create a wrapper transcript node (value from n) and a ref-holder
                         // node that has Ref::Var(id, nl) so find_var(nl) resolves without fallback.
+                        let wrapper_ref = match &ol {
+                            GOp::Ref(Ref::Var(v, n), _) => Ref::Var(v.clone(), *n),
+                            _ => Ref::Node(*n),
+                        };
                         let nl = self.add_node(Node::transcr(&GOp::Ref(
-                            Ref::Var(id.clone(), *n),
+                            wrapper_ref,
                             ol.typ(),
                         )));
                         self.add_edges(DepType::Data, nl, ol.clone());
@@ -1381,8 +1385,8 @@ impl<C: ArkConfig> UDag<C> {
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(nl).unwrap().set_transcript();
                         let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
-                        let _ref_node = self.add_node(Node::ret(&ref_to_nl));
-                        self.add_edges(DepType::Data, _ref_node, ref_to_nl);
+                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
+                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }

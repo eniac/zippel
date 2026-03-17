@@ -453,15 +453,21 @@ fn pin_log_node_ref() {
 
     // s + s → Bin(Add) node, then set_transcript converts it to Transcr
     let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
-    expected[bin_add].set_transcript();
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
-    // Transcript edge from inp to the bin/transcr node
-    expected.add_edge(inp, bin_add, Dep::transcript_var(a_vid.clone()));
+
+    let bin_add_ref = GOp::<B>::underscore(bin_add, ATyp::scalar());
+    let transcr_op = GOp::<B>::Ref(Ref::Node(bin_add), ATyp::scalar());
+    let transcr = expected.add_node(Node::transcr(&transcr_op));
+    expected.add_edges(DepType::Data, transcr, bin_add_ref.clone());
+    expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
+    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), ATyp::scalar());
+    let ret = expected.add_node(Node::ret(&ref_to_transcr));
+    expected.add_edges(DepType::Data, ret, ref_to_transcr.clone());
 
     // `a` resolves to Var("a", bin_add), `s` to Var("s", inp)
     // a == s → Bin(Equ)
-    let var_a = GOp::<B>::var(&a_vid, bin_add, ATyp::scalar());
+    let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_s);
@@ -503,8 +509,13 @@ fn pin_log_new_transcr() {
     // `1` is Value(Index(1)), not a Ref → second branch of Log: creates new Transcr node
     let lit_op = GOp::<B>::Value(backend::Value::Index(1));
     let transcr = expected.add_node(Node::transcr(&lit_op));
+    expected[transcr].set_transcript();
     // transcript edge from inp to transcr
     expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
+    // ref-holder ret node for Ref::Var(a, transcr)
+    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), lit_op.typ());
+    let ret = expected.add_node(Node::ret(&ref_to_transcr));
+    expected.add_edges(DepType::Data, ret, ref_to_transcr);
 
     // verify(s == s): Bin(Equ) + Check
     let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
@@ -1157,24 +1168,26 @@ fn pin_log_var_ref() {
     let mut expected = UDag::<B>::new();
     let s_vid = Vid::new("s");
     let a_vid = Vid::new("a");
-    let x_vid = Vid::new("x");
-
     // Body
     let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![priv_scalar_pref("s")]));
     let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
 
     // let x = s + s → Bin(Add) node
     let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
-    // set_transcript because `a <- x` sees Ref::Var(x, bin_add)
-    expected[bin_add].set_transcript();
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
-    // Transcript edge from inp to the bin/transcr node
-    expected.add_edge(inp, bin_add, Dep::transcript_var(a_vid.clone()));
+    let transcr_op = GOp::<B>::Ref(Ref::Var(Vid::new("x"), bin_add), ATyp::scalar());
+    let transcr = expected.add_node(Node::transcr(&transcr_op));
+    expected[transcr].set_transcript();
+    expected.add_edges(DepType::Data, transcr, transcr_op.clone());
+    expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
+    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), ATyp::scalar());
+    let ret = expected.add_node(Node::ret(&ref_to_transcr));
+    expected.add_edges(DepType::Data, ret, ref_to_transcr.clone());
 
     // `a` resolves to the transcr_op from Log: Ref(Var(x, bin_add), scalar)
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = Ref(Var(x, bin_add), scalar)
-    let var_a = GOp::<B>::var(&x_vid, bin_add, ATyp::scalar());
+    let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ, var_a);
     expected.add_edges(DepType::Data, equ, var_s);

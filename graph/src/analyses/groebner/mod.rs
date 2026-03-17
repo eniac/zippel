@@ -203,6 +203,14 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
     /// Convert an operation to a polynomial and add it to the context
     fn add_op(&mut self, pr: PRef, op: GOp<C>) {
         match op {
+            Op::Ref(r, typ) => {
+                let ref_poly = self.to_poly(&Op::Ref(r, typ));
+                for (i, p) in ref_poly.into_iter().enumerate() {
+                    let pf = pr.clone().with_index(i);
+                    self.pl.insert(&pf, &p);
+                    self.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
             // Polynomial operations
             Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
                 self.to_poly(&a).into_iter()
