@@ -170,6 +170,15 @@ impl<C:ArkConfig> ZippelHandler<C> {
         let combined = verifier.combine_dag(&prover);
         self.output_pdf(&combined, "combined_graph");
     }
+    
+    pub fn set_public_inputs(&mut self, public_inputs: Ctx<Vid, Value<C>>) {
+        self.public_inputs = Some(public_inputs);
+        let prover = self.prover_graph.as_ref().unwrap();
+        
+        // save public inputs as public_inputs
+        let prover_args = prover.args();
+        self.prover_args = Some(prover_args);
+    }
 
     //Schedule prover with default scheduler
     pub fn default_schedule_prover(&self) -> TDag<C> {
