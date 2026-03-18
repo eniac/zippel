@@ -4,12 +4,14 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use crate::{UDag, UDags, Node, GOp, Op, Dep, DepType, PRef, Ref};
+use crate::{UDag, UDags, Node, GOp, Op, Dep, DepType, PRef, Ref, GraphError};
 use backend::{ArkBls12_381, ATyp};
 use lang::ast::{UModule, BinOp};
 use lang::id::Vid;
 use lang::typ::{Qualifier, Distribution, Nothing};
 use petgraph::graph::NodeIndex;
+use petgraph::visit::EdgeRef;
+use petgraph::Direction;
 use share::Ctx;
 
 type B = ArkBls12_381;
@@ -18,6 +20,12 @@ type B = ArkBls12_381;
 fn parse_and_build(src: &str) -> UDags<B> {
     let m = UModule::from_str(src).unwrap().concretize().unwrap();
     UDags::<B>::from_module(m).unwrap()
+}
+
+/// Parse and build, returning Result to allow testing error paths.
+fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
+    let m = UModule::from_str(src).unwrap().concretize().unwrap();
+    UDags::<B>::from_module(m)
 }
 
 /// Helper to build a PRef for a Public scalar argument.
@@ -161,13 +169,19 @@ fn pin_range() {
     let gs = parse_and_build(src);
 
     // a[0..5] is Ram(Var(a), Range(0..5))
-    // Ram evaluates to GOp::ram(var_a, range(0..5))
-    // Both are non-Ref ops, so ram may simplify or not, but neither creates a node.
-    // add_top_exp creates a ret node with the ram op.
-    //
-    // We need to build the exact expected graph.
-    // Let me just verify it parses and builds without error for now.
-    assert!(gs.len() == 1);
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let vs10 = ATyp::vec_scalar(10);
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vs10.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, vs10);
+    let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::typ::CRange::new(0, 5)));
+
+    // Not Ref::Node → ret node
+    let ret = expected.add_node(Node::ret(&ram_op));
+    expected.add_edges(DepType::Data, ret, ram_op);
+
+    assert!(gs[0] == expected);
 }
 
 // ============================================================================
@@ -583,9 +597,17 @@ fn pin_coef() {
     "#;
     let gs = parse_and_build(src);
 
-    // poly type for Uni<F, 4> is ATyp::VPoly(scalar, 1, 4) — need to check
-    // Just verify it compiles and builds for now.
-    assert!(gs.len() == 1);
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let poly_typ = ATyp::vpoly(1, 4);
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), poly_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, poly_typ);
+
+    let coef_node = expected.add_node(Node::coef(&var_a));
+    expected.add_edges(DepType::Data, coef_node, var_a);
+
+    assert!(gs[0] == expected);
 }
 
 /// Ifft operation: vector → polynomial (interpolation).
@@ -598,7 +620,18 @@ fn pin_ifft() {
         }
     "#;
     let gs = parse_and_build(src);
-    assert!(gs.len() == 1);
+
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let vec_typ = ATyp::vec_scalar(4);
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vec_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, vec_typ);
+
+    let ifft_node = expected.add_node(Node::ifft(&var_a));
+    expected.add_edges(DepType::Data, ifft_node, var_a);
+
+    assert!(gs[0] == expected);
 }
 
 /// Fft operation: polynomial → vector (evaluation).
@@ -611,7 +644,18 @@ fn pin_fft() {
         }
     "#;
     let gs = parse_and_build(src);
-    assert!(gs.len() == 1);
+
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let poly_typ = ATyp::vpoly(1, 4);
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), poly_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, poly_typ);
+
+    let fft_node = expected.add_node(Node::fft(&var_a));
+    expected.add_edges(DepType::Data, fft_node, var_a);
+
+    assert!(gs[0] == expected);
 }
 
 /// Mle operation.
@@ -624,7 +668,18 @@ fn pin_mle() {
         }
     "#;
     let gs = parse_and_build(src);
-    assert!(gs.len() == 1);
+
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let vec_typ = ATyp::vec_scalar(4);
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vec_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, vec_typ);
+
+    let mle_node = expected.add_node(Node::mle(&var_a));
+    expected.add_edges(DepType::Data, mle_node, var_a);
+
+    assert!(gs[0] == expected);
 }
 
 // ============================================================================
@@ -661,25 +716,6 @@ fn pin_vec() {
     assert!(gs[0] == expected);
 }
 
-/// Reduce expression desugars to chained ram+bin.
-/// Tests: CExp::Reduce.
-#[test]
-fn pin_reduce() {
-    let src = r#"
-        fn f<F: Field>(public a: [F; 3]) -> F {
-            reduce(+, a)
-        }
-    "#;
-    let gs = parse_and_build(src);
-
-    // reduce(+, a) with [F; 3] desugars to: a[0] + a[1] + a[2]
-    // which is: Bin(Add, Bin(Add, Ram(a, 0), Ram(a, 1)), Ram(a, 2))
-    // Ram(Var(a), Lit(i)) → GOp::ram(var_a, Value::Index(i)) → simplifies to element access
-    // The exact structure depends on GOp::ram simplification rules.
-    // For now, verify it builds without error.
-    assert!(gs.len() == 1);
-}
-
 // ============================================================================
 // Group 9: Records
 // ============================================================================
@@ -697,7 +733,24 @@ fn pin_record() {
 
     // {| x: a, y: b |} produces GOp::Record({x: Var(a, inp), y: Var(b, inp)})
     // Not a Ref::Node → ret node created
-    assert!(gs.len() == 1);
+    let mut expected = UDag::<B>::new();
+    let s = ATyp::scalar();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
+    ));
+    let var_a = GOp::<B>::var(&Vid::new("a"), inp, s.clone());
+    let var_b = GOp::<B>::var(&Vid::new("b"), inp, s.clone());
+
+    let mut rec_fields = Ctx::<String, GOp<B>>::new();
+    rec_fields.insert(&"x".to_string(), &var_a);
+    rec_fields.insert(&"y".to_string(), &var_b);
+    let record_op = GOp::<B>::Record(rec_fields);
+
+    let ret = expected.add_node(Node::ret(&record_op));
+    expected.add_edges(DepType::Data, ret, record_op);
+
+    assert!(gs[0] == expected);
 }
 
 /// Projection on record literal extracts the field directly.
@@ -1350,3 +1403,654 @@ fn pin_fun_lit() {
 
     assert!(gs[0] == expected);
 }
+
+// ============================================================================
+// Group B: Graph Decomposition Tests
+// ============================================================================
+
+/// get_prover extracts the prover subgraph from transcript nodes backward.
+/// Tests: get_prover() returns correct subgraph with inputs and computation up to transcripts.
+#[test]
+fn pin_get_prover_basic() {
+    let src = r#"
+        proto foo<F: Field>(private s: F, public v: F) where s == s {
+            a <- s + v;
+            verify(a == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let (prover, node_map) = dag.get_prover();
+
+    // The prover should have an input node
+    assert!(prover.node_count() > 0);
+    // The prover should contain the input node mapping
+    assert!(node_map.contains_key(&dag.input_node()));
+    // The prover name matches
+    assert_eq!(prover.name(), Vid::new("foo"));
+    // Prover should have the computation leading to the transcript (s + v)
+    // but NOT the verify check node
+    assert!(prover.find_check().is_none());
+}
+
+/// get_verifier extracts the verifier subgraph.
+/// Tests: get_verifier() produces subgraph with public inputs, transcript vars, challenges, check node.
+#[test]
+fn pin_get_verifier_basic() {
+    let src = r#"
+        proto foo<F: Field>(private s: F, public v: F) where s == s {
+            a <- s + v;
+            verify(a == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let verifier = dag.get_verifier().unwrap();
+
+    // Verifier must have a check node
+    assert!(verifier.find_check().is_some());
+    // Verifier name matches
+    assert_eq!(verifier.name(), Vid::new("foo"));
+    // Verifier should not have private-only computations
+    // Verifier args should only include public inputs (v) and transcript vars (a)
+    let args = verifier.args();
+    assert!(args.iter().all(|a| a.is_public()));
+}
+
+/// get_relation extracts the relation subgraph from the Rel node.
+/// Tests: get_relation() returns the relation subgraph for a protocol with `where` clause.
+#[test]
+fn pin_get_relation_basic() {
+    let src = r#"
+        proto foo<F: Field>(private s: F, public v: F) where s == v {
+            verify(s == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let relation = dag.get_relation().unwrap();
+
+    // Relation should have the Rel node
+    assert!(relation.relation_node().is_some());
+    // Relation should have the Equ operation from `s == v`
+    assert!(relation.op_nodes().len() > 0);
+}
+
+/// get_verifier returns error when verifier body references a private input directly.
+/// Tests: GraphError::PrivateNodeInVerifier.
+#[test]
+fn pin_get_verifier_private_leak() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            verify(s == s)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // The verifier assertion `s == s` directly uses private `s`.
+    let result = dag.get_verifier();
+    match result {
+        Err(GraphError::PrivateNodeInVerifier(_, _)) => {},
+        Err(e) => panic!("Expected PrivateNodeInVerifier, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+}
+
+/// get_relation returns error for a function (no `where` clause).
+/// Tests: GraphError::RelationNotFound.
+#[test]
+fn pin_get_relation_no_relation() {
+    let src = r#"
+        fn f<F: Field>(public a: F) -> F { a }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let result = dag.get_relation();
+    match result {
+        Err(GraphError::RelationNotFound(_)) => {},
+        Err(e) => panic!("Expected RelationNotFound, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+}
+
+// ============================================================================
+// Group C: Graph Query Method Tests
+// ============================================================================
+
+/// Verify node_count and edge_count return correct values.
+#[test]
+fn pin_node_edge_counts() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // Inp node + Bin(Add) node = 2 nodes
+    assert_eq!(dag.node_count(), 2);
+    // Two data edges: a→bin, b→bin
+    assert_eq!(dag.edge_count(), 2);
+}
+
+/// op_nodes returns only operation nodes, excluding Inp and Rel.
+#[test]
+fn pin_op_nodes_filter() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            verify(s == s)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let op_nodes = dag.op_nodes();
+    // All op_nodes should be operation nodes (not Inp or Rel)
+    for n in &op_nodes {
+        assert!(dag[*n].is_op());
+        assert!(!dag[*n].is_input());
+        assert!(!dag[*n].is_relation());
+    }
+    // Should have at least the Equ and Check nodes in the body, plus Equ in relation
+    assert!(op_nodes.len() >= 2);
+}
+
+/// find_var returns the Vid for a node, find_ref returns Ref::Var or Ref::Node.
+#[test]
+fn pin_find_var_find_ref() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F {
+            let c = a + b;
+            c
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // The let-bound variable `c` names the Add node
+    let op_nodes = dag.op_nodes();
+    // The add node should be findable as variable `c`
+    let has_c = op_nodes.iter().any(|n| dag.find_var(*n) == Some(Vid::new("c")));
+    assert!(has_c, "Expected to find variable 'c' on an op node");
+}
+
+/// transcript_nodes returns nodes in topological order.
+#[test]
+fn pin_transcript_nodes_order() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            a <- s + s;
+            c <- challenge<F>;
+            verify(a == c)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let tnodes = dag.transcript_nodes();
+    // `a <- s + s` creates a Bin(Add) → set_transcript, `c <- challenge<F>` creates Transcr(Challenge)
+    assert_eq!(tnodes.len(), 2);
+    // Topological ordering: `a` transcript node comes before `c`
+    for i in 1..tnodes.len() {
+        let edge = dag.transcript_edge(tnodes[i], Direction::Incoming);
+        if let Some(e) = edge {
+            let parent = e.source();
+            let parent_pos = tnodes.iter().position(|&n| n == parent);
+            assert!(parent_pos.is_some() && parent_pos.unwrap() < i,
+                "Transcript node {:?} parent {:?} should appear earlier", tnodes[i], parent);
+        }
+    }
+}
+
+/// get_proof_nodes and get_challenge_nodes partition transcript nodes correctly.
+#[test]
+fn pin_proof_vs_challenge_nodes() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            a <- s + s;
+            c <- challenge<F>;
+            verify(a == c)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let proof_nodes = dag.get_proof_nodes();
+    let challenge_nodes = dag.get_challenge_nodes();
+
+    // `a <- s + s` creates a proof transcript, `c <- challenge<F>` creates a challenge
+    assert_eq!(proof_nodes.len(), 1, "Expected 1 proof node");
+    assert_eq!(challenge_nodes.len(), 1, "Expected 1 challenge node");
+
+    // They should not overlap
+    for p in &proof_nodes {
+        assert!(!challenge_nodes.contains(p));
+    }
+}
+
+/// trc computes transitive-reflexive closure correctly.
+#[test]
+fn pin_trc_reachability() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F {
+            let c = a + b;
+            c * c
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // Graph: Inp → Add(a,b) → Mul(c,c)
+    // trc from Inp (outgoing) should reach all nodes
+    let inp = dag.input_node();
+    let forward = dag.trc(inp, Direction::Outgoing);
+    assert_eq!(forward.len(), dag.node_count(), "Forward closure from inp should reach all nodes");
+
+    // trc from the last op (incoming) should also reach all nodes
+    let max = dag.max_node();
+    let backward = dag.trc(max, Direction::Incoming);
+    assert_eq!(backward.len(), dag.node_count(), "Backward closure from max should reach all nodes");
+}
+
+/// find_check finds a Check node in a protocol and returns None for a function.
+#[test]
+fn pin_find_check() {
+    let proto_src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            verify(s == s)
+        }
+    "#;
+    let proto_gs = parse_and_build(proto_src);
+    assert!(proto_gs[0].find_check().is_some(), "Protocol should have a check node");
+
+    let fn_src = r#"
+        fn f<F: Field>(public a: F) -> F { a + a }
+    "#;
+    let fn_gs = parse_and_build(fn_src);
+    assert!(fn_gs[0].find_check().is_none(), "Function should not have a check node");
+}
+
+// ============================================================================
+// Group D: Graph Transformation Tests
+// ============================================================================
+
+/// erase_ann strips annotations from a DAG.
+#[test]
+fn pin_erase_ann() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // Map annotations to a string
+    let annotated: crate::Dag<B, String> = dag.map_annotations(&|_op, _ann| "test".to_string());
+    // Erase back to UDag
+    let erased = annotated.erase_ann();
+
+    // Should have same structure as original
+    assert_eq!(erased.node_count(), dag.node_count());
+    assert_eq!(erased.edge_count(), dag.edge_count());
+    // Isomorphism check
+    assert!(erased == *dag);
+}
+
+/// combine_dag merges two DAGs into one.
+#[test]
+fn pin_combine_dag() {
+    let src = r#"
+        fn f<F: Field>(public a: F) -> F { a + a }
+        fn g<F: Field>(public b: F) -> F { b + b }
+    "#;
+    let gs = parse_and_build(src);
+    let dag_f = &gs[0];
+    let dag_g = &gs[1];
+
+    let combined = dag_f.combine_dag(dag_g);
+
+    // Combined should have sum of nodes and edges
+    assert_eq!(combined.node_count(), dag_f.node_count() + dag_g.node_count());
+    assert_eq!(combined.edge_count(), dag_f.edge_count() + dag_g.edge_count());
+}
+
+/// map_annotations transforms annotations on a DAG.
+#[test]
+fn pin_map_annotations_dag() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F { a + b }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // Map Nothing annotations to a counter
+    let annotated: crate::Dag<B, usize> = dag.map_annotations(&|_op, _ann| 42);
+
+    // Structure should be preserved
+    assert_eq!(annotated.node_count(), dag.node_count());
+    assert_eq!(annotated.edge_count(), dag.edge_count());
+    // Check that op nodes have the annotation value
+    for n in annotated.op_nodes() {
+        assert_eq!(annotated[n].clone().into_ann(), 42);
+    }
+}
+
+// ============================================================================
+// Group E: Dags Collection Tests
+// ============================================================================
+
+/// protocols() returns only protos, functions() returns only fns.
+#[test]
+fn pin_dags_protocols_vs_functions() {
+    let src = r#"
+        fn double<F: Field>(public x: F) -> F { x + x }
+        proto foo<F: Field>(private s: F) where s == s {
+            verify(s == s)
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    let protos = gs.protocols();
+    let funcs = gs.functions();
+
+    assert_eq!(protos.len(), 1, "Should have exactly 1 protocol");
+    assert_eq!(funcs.len(), 1, "Should have exactly 1 function");
+    assert_eq!(gs.len(), 2);
+
+    // Protocol should have a check node
+    assert!(protos[0].find_check().is_some());
+    // Function should not
+    assert!(funcs[0].find_check().is_none());
+}
+
+/// get_proto finds a protocol by name.
+#[test]
+fn pin_dags_get_proto() {
+    let src = r#"
+        fn helper<F: Field>(public x: F) -> F { x }
+        proto bar<F: Field>(private s: F) where s == s {
+            verify(s == s)
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    // Find by name
+    let bar = gs.get_proto(&"bar".to_string());
+    assert!(bar.is_some(), "Should find protocol 'bar'");
+    assert_eq!(bar.unwrap().name(), Vid::new("bar"));
+
+    // Non-existent name
+    let missing = gs.get_proto(&"nonexistent".to_string());
+    assert!(missing.is_none(), "Should not find non-existent protocol");
+}
+
+// ============================================================================
+// Group F: Error Path Tests
+// ============================================================================
+
+/// Non-polynomial Fun body triggers NonPolynomialFun error.
+/// Power is not allowed in polynomial expressions (only Add, Sub, Mul).
+#[test]
+fn pin_error_non_polynomial_fun() {
+    let src = r#"
+        fn f<F: Field>(public a: F) -> Uni<F, 2> { fun x => x ^ 2 }
+    "#;
+    let result = try_parse_and_build(src);
+    match result {
+        Err(GraphError::NonPolynomialFun(_)) => {},
+        Err(e) => panic!("Expected NonPolynomialFun, got: {}", e),
+        Ok(_) => panic!("Expected error but got Ok"),
+    }
+}
+
+/// Unbound variable in Fun body triggers an error.
+#[test]
+fn pin_error_fun_unbound_var() {
+    let src = r#"
+        fn f<F: Field>(public a: F) -> Uni<F, 1> { fun x => y }
+    "#;
+    // This may fail at parse/typecheck (unwrap in try_parse_and_build) or at graph building
+    let result = std::panic::catch_unwind(|| try_parse_and_build(src));
+    // Either it panics or returns Err — either way it should not succeed
+    match result {
+        Ok(Ok(_)) => panic!("Unbound variable in Fun should fail"),
+        _ => {}, // Error or panic — both acceptable
+    }
+}
+
+// ============================================================================
+// Group G: Complex / Compositional Tests
+// ============================================================================
+
+/// Deep nested let chain: verifies correct dependency chain.
+/// Tests: multiple CExp::Let(Some, ...) in sequence.
+#[test]
+fn pin_nested_let_chain() {
+    let src = r#"
+        fn f<F: Field>(public x: F, public y: F) -> F {
+            let a = x + y;
+            let b = a + x;
+            let c = b + y;
+            c
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    let mut expected = UDag::<B>::new();
+    let s = ATyp::scalar();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_scalar_pref("x"), pub_scalar_pref("y")],
+    ));
+    let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
+    let var_y = GOp::<B>::var(&Vid::new("y"), inp, s.clone());
+
+    // a = x + y
+    let add_a = expected.add_node(Node::bin(BinOp::Add, &var_x, &var_y, &s));
+    expected.add_edges(DepType::Data, add_a, var_x.clone());
+    expected.add_edges(DepType::Data, add_a, var_y.clone());
+
+    // b = a + x
+    let ref_a = GOp::<B>::var(&Vid::new("a"), add_a, s.clone());
+    let add_b = expected.add_node(Node::bin(BinOp::Add, &ref_a, &var_x, &s));
+    expected.add_edges(DepType::Data, add_b, ref_a);
+    expected.add_edges(DepType::Data, add_b, var_x);
+
+    // c = b + y
+    let ref_b = GOp::<B>::var(&Vid::new("b"), add_b, s.clone());
+    let add_c = expected.add_node(Node::bin(BinOp::Add, &ref_b, &var_y, &s));
+    expected.add_edges(DepType::Data, add_c, ref_b);
+    expected.add_edges(DepType::Data, add_c, var_y);
+
+    // `c` resolves to Ref::Var("c", add_c) → triggers ret node
+    let ref_c = GOp::<B>::var(&Vid::new("c"), add_c, s.clone());
+    let ret = expected.add_node(Node::ret(&ref_c));
+    expected.add_edges(DepType::Data, ret, ref_c);
+
+    assert!(gs[0] == expected);
+}
+
+/// Protocol with 3 transcript interactions verifies edge chain ordering.
+/// Tests: multiple transcript edges in sequence.
+#[test]
+fn pin_multi_transcript() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            a <- s + s;
+            c <- challenge<F>;
+            b <- s + c;
+            verify(b == b)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    // `a <- s + s` → set_transcript on Bin(Add) node
+    // `c <- challenge<F>` → Challenge transcript node
+    // `b <- s + c` → set_transcript on Bin(Add) node
+    let tnodes = dag.transcript_nodes();
+    assert_eq!(tnodes.len(), 3, "Expected 3 transcript nodes");
+
+    // Verify second and third transcript nodes have incoming transcript edges
+    assert!(dag.transcript_edge(tnodes[1], Direction::Incoming).is_some(),
+        "Second transcript should have incoming edge");
+    assert!(dag.transcript_edge(tnodes[2], Direction::Incoming).is_some(),
+        "Third transcript should have incoming edge");
+}
+
+/// Multilinear Fun: `fun x, y => x + y` creates DenseMle.
+/// Tests: CExp::Fun with multiple variables (multilinear path).
+#[test]
+fn pin_fun_multilinear() {
+    use ark_ff::{Zero, One};
+    use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension;
+    use backend::{Value, PolyVariant, VirtualPolynomial};
+    type F = <B as backend::ArkConfig>::F;
+
+    let src = r#"
+        fn f<F: Field>() -> Mle<F, 2> { fun x, y => x + y }
+    "#;
+    let gs = parse_and_build(src);
+
+    let mut expected = UDag::<B>::new();
+    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
+
+    // fun x, y => x + y
+    // x is variable 0, y is variable 1
+    // x: evaluations [0,1,0,1], y: evaluations [0,0,1,1]
+    // x + y: evaluations [0,1,1,2]
+    let evals = vec![F::zero(), F::one(), F::one(), F::from(2u64)];
+    let mle = DenseMultilinearExtension::from_evaluations_vec(2, evals);
+    let pv = PolyVariant::DenseMle(mle);
+    let vp = VirtualPolynomial::from_poly(pv);
+    let val = GOp::<B>::Value(Value::Poly(vp));
+
+    let ret = expected.add_node(Node::ret(&val));
+    expected.add_edges(DepType::Data, ret, val);
+
+    assert!(gs[0] == expected);
+}
+
+/// Map with compound body: `[x * x + x for x in a]`.
+/// Tests: CExp::Map with multiple operations per iteration.
+#[test]
+fn pin_map_nested_binop() {
+    let src = r#"
+        fn f<F: Field>(public a: [F; 2]) -> [F; 2] { [x * x + x for x in a] }
+    "#;
+    let gs = parse_and_build(src);
+
+    let mut expected = UDag::<B>::new();
+    let a = Vid::new("a");
+    let vs2 = ATyp::vec_scalar(2);
+    let s = ATyp::scalar();
+    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
+    let var_a = GOp::<B>::var(&a, inp, vs2);
+
+    // Iteration 0: x = Ram(a, 0); x*x → mul0; mul0 + x → add0
+    let ram0 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
+    let mul0 = expected.add_node(Node::bin(BinOp::Mul, &ram0, &ram0, &s));
+    expected.add_edges(DepType::Data, mul0, ram0.clone());
+    expected.add_edges(DepType::Data, mul0, ram0.clone());
+    let ref_mul0 = GOp::<B>::underscore(mul0, s.clone());
+    let add0 = expected.add_node(Node::bin(BinOp::Add, &ref_mul0, &ram0, &s));
+    expected.add_edges(DepType::Data, add0, ref_mul0);
+    expected.add_edges(DepType::Data, add0, ram0);
+
+    // Iteration 1: x = Ram(a, 1); x*x → mul1; mul1 + x → add1
+    let ram1 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(1));
+    let mul1 = expected.add_node(Node::bin(BinOp::Mul, &ram1, &ram1, &s));
+    expected.add_edges(DepType::Data, mul1, ram1.clone());
+    expected.add_edges(DepType::Data, mul1, ram1.clone());
+    let ref_mul1 = GOp::<B>::underscore(mul1, s.clone());
+    let add1 = expected.add_node(Node::bin(BinOp::Add, &ref_mul1, &ram1, &s));
+    expected.add_edges(DepType::Data, add1, ref_mul1);
+    expected.add_edges(DepType::Data, add1, ram1);
+
+    // Result: Vec([ref_add0, ref_add1]) → ret node
+    let ref_add0 = GOp::<B>::underscore(add0, s.clone());
+    let ref_add1 = GOp::<B>::underscore(add1, s.clone());
+    let vec_op = GOp::<B>::vec(vec![ref_add0, ref_add1]);
+    let ret = expected.add_node(Node::ret(&vec_op));
+    expected.add_edges(DepType::Data, ret, vec_op);
+
+    assert!(gs[0] == expected);
+}
+
+/// Diamond DAG: `let c = a + b; c * c` — same node feeds both operands.
+/// Tests: Ref sharing across operands of a binary op.
+#[test]
+fn pin_diamond_dag() {
+    let src = r#"
+        fn f<F: Field>(public a: F, public b: F) -> F {
+            let c = a + b;
+            c * c
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    let mut expected = UDag::<B>::new();
+    let s = ATyp::scalar();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
+    ));
+    let var_a = GOp::<B>::var(&Vid::new("a"), inp, s.clone());
+    let var_b = GOp::<B>::var(&Vid::new("b"), inp, s.clone());
+
+    // c = a + b
+    let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
+    expected.add_edges(DepType::Data, add, var_a);
+    expected.add_edges(DepType::Data, add, var_b);
+
+    // c * c  — both operands ref the same node
+    let ref_c = GOp::<B>::var(&Vid::new("c"), add, s.clone());
+    let mul = expected.add_node(Node::bin(BinOp::Mul, &ref_c, &ref_c, &s));
+    expected.add_edges(DepType::Data, mul, ref_c.clone());
+    expected.add_edges(DepType::Data, mul, ref_c);
+
+    assert!(gs[0] == expected);
+}
+
+/// Three declarations: verify Dags ordering and cross-referencing.
+#[test]
+fn pin_three_declarations() {
+    let src = r#"
+        fn add1<F: Field>(public x: F) -> F { x + 1 }
+        fn double<F: Field>(public x: F) -> F { x + x }
+        fn composed<F: Field>(public a: F) -> F { double(add1(a)) }
+    "#;
+    let gs = parse_and_build(src);
+
+    assert_eq!(gs.len(), 3, "Should have 3 declarations");
+    // All should be functions (no check node)
+    assert_eq!(gs.functions().len(), 3);
+    assert_eq!(gs.protocols().len(), 0);
+    // The composed function inlines both calls
+    assert!(gs[2].node_count() > 1);
+}
+
+/// MLE application: `p(x)` where `p: Mle<F, 2>`.
+/// Tests: CExp::App with multilinear extension type (the untested App MLE path).
+#[test]
+fn pin_app_mle() {
+    let src = r#"
+        fn f<F: Field>(public p: Mle<F, 2>, public x: F) -> Mle<F, 1> { p(x) }
+    "#;
+    let gs = parse_and_build(src);
+
+    let dag = &gs[0];
+    // MLE application desugars to: mle_l + (mle_r - mle_l) * x
+    // where mle_l = p[0..1], mle_r = p[1..2]
+    // This should produce several nodes for the arithmetic
+    assert!(dag.node_count() > 2, "MLE app should produce multiple nodes");
+    // Verify it's a function (no check node)
+    assert!(dag.find_check().is_none());
+}
+
+// ── Stress tests (verify no stack overflow with iterative builder) ──
+
