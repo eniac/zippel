@@ -13,7 +13,7 @@ fn main() {
     handler.compile();
 
     let inputs = prover_create_inputs();
-    let private_inputs = inputs
+    let public_inputs = inputs
         .clone()
         .into_iter()
         .filter(|(vid, _)| vid.0 != "p")
@@ -28,7 +28,7 @@ fn main() {
 
     let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     verifier_handler.compile();
-    verifier_handler.set_public_inputs(private_inputs);
+    verifier_handler.set_public_inputs(public_inputs);
     let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof);
