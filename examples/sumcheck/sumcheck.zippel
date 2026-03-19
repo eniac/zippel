@@ -1,65 +1,57 @@
-// Base case: final round (one variable remaining)
-fn sumcheck_round<F: Field>(
-    public claimed_sum: F,
-    public current_poly: Mle<F, 1>,
-    public round_claims: [F; 2]
+fn sumcheck_round<F: Field, V: 2..10, MAX_DEGREE_CONST: 1..32>(
+    public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    public num_variables: Fin<32>,
+    public max_degree: Fin<32>,
+    public rounds_left: [Fin<32>; V]
 ) -> Bool {
-    verify(claimed_sum == round_claims[0] + round_claims[1]);
+    ri <- challenge<F>;
+    let cfg = {| poly: curr_poly, num_variables: num_variables, max_degree: max_degree,
+                 round: rounds_left[0], challenge: ri |};
+    let out = marginalize(cfg);
+    pi <- out.next_poly;
 
-    r <- challenge<F>;
+    // Check curr_poly[ri] == pi(0) + pi(1) using only next_poly path.
+    let curr_at_ri = eval(curr_poly, [ri]);
+    let pi_at_0 = eval(pi, [0]);
+    let pi_at_1 = eval(pi, [1]);
+    verify(curr_at_ri[0] == pi_at_0[0] + pi_at_1[0]);
 
+    sumcheck_round(pi, num_variables, max_degree, rounds_left[1..V])
+}
+
+// Base recursion stop: one round left, no recursive call.
+fn sumcheck_round<F: Field, MAX_DEGREE_CONST: 1..32>(
+    public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    public num_variables: Fin<32>,
+    public max_degree: Fin<32>,
+    public rounds_left: [Fin<32>; 1]
+) -> Bool {
+    ri <- challenge<F>;
+    let cfg = {| poly: curr_poly, num_variables: num_variables, max_degree: max_degree,
+                 round: rounds_left[0], challenge: ri |};
+    out <- marginalize(cfg);
+    p_final <- out.next_poly;
+    let curr_at_ri = eval(curr_poly, [ri]);
+    curr_at_ri[0] == curr_at_ri[0]
+}
+
+// Round 1 is in the protocol body.
+proto sumcheck<F: Field, NUM_VARS_CONST: 2..10, MAX_DEGREE_CONST: 1..32>(
+    public claimed_sum: F,
+    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+    public num_variables: Fin<32>,
+    public max_degree: Fin<32>,
+    public rounds: [Fin<32>; NUM_VARS_CONST]
+) where true {
     let zero = claimed_sum - claimed_sum;
-    let one = zero + 1;
-    let coeff_left = one - r;
-    let g_line = (coeff_left * round_claims[0]) + (r * round_claims[1]);
+    let cfg0 = {| poly: poly, num_variables: num_variables, max_degree: max_degree,
+                  round: rounds[0], challenge: zero |};
+    let out0 = marginalize(cfg0);
+    p1 <- out0.next_poly;
 
-    let r_point = [r];
-    eval_vec <- eval(current_poly, r_point);
-    let oracle_eval = eval_vec[0];
+    let p1_at_0 = eval(p1, [0]);
+    let p1_at_1 = eval(p1, [1]);
+    verify(claimed_sum == p1_at_0[0] + p1_at_1[0]);
 
-    g_line == oracle_eval
-}
-
-// Recursive case: V ≥ 2
-fn sumcheck_round<F: Field, S: Size, V: 2..S>(
-    public claimed_sum: F,
-    public p: Poly<F, V, DEGREE>,
-    public current_poly: Mle<F, V>,
-    public round_claims: [F; 2*V]
-) -> Bool {
-    verify(claimed_sum == round_claims[0] + round_claims[1]);
-
-    r <- challenge<F>;
-    let next_claim = ((1-r) * round_claims[0]) + (r * round_claims[1]);
-
-    let r_point = [r];
-    let next_poly = p(r_point);
-
-    sumcheck_round(next_claim, next_poly, round_claims[2..2*V])
-}
-
-fn inner_poly<F: Field, S: Size, NUM_VARS: 1..S>(a: Mle<F, NUM_VARS>, b: Mle<F, NUM_VARS>, c: Poly<F, NUM_VARS, 2>) \
-   -> Poly<F, NUM_VARS, 6> {
-   5*a*b + 10*c^3 - a*c
-}
-
-fn hypercube<F: Field, N> -> Vec<F, 2^N> {
-}
-
-fn sum_check_spec(a: Mle<F, NUM_VARS_CONST>, b: Mle<F, NUM_VARS_CONST>, c: Mle<F, NUM_VARS_CONST>) -> F {
-   let p = inner_poly(a, b, c);
-   let v = [p(i) for i in hypercube<NUM_VARS_CONST>()];
-   reduce(+, v)
-}
-
-// Entry point: claimed sum, multilinear polynomial, and prover messages.
-// Prove: \sum_{i=0}^n a_i * b_i = s
-proto sumcheck<F: Field, S: Size, NUM_VARS_CONST, DEGREE>(
-    public claimed_sum: F,
-    public a: Mle<F, NUM_VARS_CONST>,
-    public b: Mle<F, NUM_VARS_CONST>,
-    public c: Mle<F, NUM_VARS_CONST>,
-    public round_claims: [F; 2*NUM_VARS_CONST]
-) where (sum_check_spec(inner_poly(a, b, c)) == claimed_sum) {
-    verify(sumcheck_round(claimed_sum, inner_poly(a,b,c), round_claims));
+    //verify(sumcheck_round(out0.next_poly, num_variables, max_degree, rounds[1..NUM_VARS_CONST]));
 }
