@@ -9,6 +9,7 @@ use ark_ff::Field;
 use ark_ff::{PrimeField, Zero};
 use ark_std::log2;
 use lang::typ::{Nothing, CRange};
+use lang::ast::BinOp;
 use crate::types::Lub;
 use crate::poly_variant::PolyVariant;
 use crate::virtual_polynomial::VirtualPolynomial;
@@ -85,6 +86,44 @@ impl<C: ArkConfig> PartialEq for Value<C> {
             (Value::Poly(a), Value::Poly(b)) => a == b,
             // Different variants are not equal
             _ => false,
+        }
+    }
+}
+
+impl<C: ArkConfig> std::hash::Hash for Value<C> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Bool(b) => b.hash(state),
+            Value::VecBool(v) => v.hash(state),
+            Value::Index(i) => i.hash(state),
+            Value::Scalar(f) => f.hash(state),
+            Value::VecIndex(v) => v.hash(state),
+            Value::VecScalar(v) => v.hash(state),
+            // Projective → affine for canonical hashing (matches PartialEq)
+            Value::G1(g) => g.into_affine().hash(state),
+            Value::G2(g) => g.into_affine().hash(state),
+            Value::GT(g) => g.hash(state),
+            Value::VecG1(v) => {
+                v.len().hash(state);
+                for g in v { g.into_affine().hash(state); }
+            },
+            Value::VecG2(v) => {
+                v.len().hash(state);
+                for g in v { g.into_affine().hash(state); }
+            },
+            Value::VecGT(v) => v.hash(state),
+            Value::G1Affine(g) => g.hash(state),
+            Value::G2Affine(g) => g.hash(state),
+            Value::VecG1Affine(v) => v.hash(state),
+            Value::VecG2Affine(v) => v.hash(state),
+            Value::Vec(v) => v.hash(state),
+            Value::Record(r) => r.hash(state),
+            Value::Poly(p) => {
+                let mut bytes = Vec::new();
+                p.serialize_compressed(&mut bytes).unwrap_or_default();
+                bytes.hash(state);
+            },
         }
     }
 }
@@ -295,6 +334,28 @@ impl<C: ArkConfig> Value<C> {
                 Value::Record(record_fields)
             }
             _ => panic!("Cannot create zero value for type {}", typ),
+        }
+    }
+
+    /// Creates the multiplicative identity (one) for the given type.
+    pub fn one(typ: &ATyp) -> Self {
+        match typ {
+            ATyp::Base(ABase::Bool) => Value::Bool(true),
+            ATyp::Base(ABase::Fin(r)) if r.contains(1) => Value::Index(1),
+            ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::one()),
+            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => Value::VecScalar(vec![C::FOps::one(); *n]),
+            ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![true; *n]),
+            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
+                Value::VecIndex(vec![1; *n])
+            },
+            ATyp::Vec(box vt, n) => {
+                let mut v = Vec::<Value<C>>::with_capacity(*n);
+                for _ in 0..*n {
+                    v.push(Value::<C>::one(&vt));
+                }
+                Value::Vec(v)
+            }
+            _ => panic!("Cannot create one value for type {}", typ),
         }
     }
 
@@ -2442,6 +2503,61 @@ impl<C: ArkConfig> Value<C> {
                 Value::VecScalar(v)
             },
             _ => panic!("Expected vec scalar or vec index, found {}", self),
+        }
+    }
+
+    /// Reduce a vector using a binary operation.
+    /// Commutative operations (Add, Mul, And) use parallel fold via rayon.
+    /// Non-commutative operations use sequential left fold.
+    pub fn value_reduce(self, op: BinOp) -> Self {
+        let elements = self.into_elements();
+        assert!(!elements.is_empty(), "Cannot reduce empty vector");
+        match op {
+            BinOp::Add => {
+                let elem_typ = elements[0].typ();
+                elements.into_par_iter()
+                    .reduce(|| Value::<C>::zero(&elem_typ), |a, b| a + b)
+            },
+            BinOp::Mul => {
+                let elem_typ = elements[0].typ();
+                elements.into_par_iter()
+                    .reduce(|| Value::<C>::one(&elem_typ), |a, b| a * b)
+            },
+            BinOp::And => {
+                let elem_typ = elements[0].typ();
+                elements.into_par_iter()
+                    .reduce(|| Value::<C>::one(&elem_typ), |a, b| a & b)
+            },
+            _ => {
+                let mut iter = elements.into_iter();
+                let first = iter.next().unwrap();
+                iter.fold(first, |acc, x| match op {
+                    BinOp::Sub => acc - x,
+                    BinOp::Div => acc / x,
+                    BinOp::Pow => acc ^ x,
+                    BinOp::Rem => acc % x,
+                    BinOp::Dot => acc.dot(x),
+                    BinOp::Concat => acc.value_concat(x),
+                    BinOp::Equ => acc.value_equ(&x),
+                    _ => unreachable!(),
+                })
+            },
+        }
+    }
+
+    /// Convert a vector Value into a Vec of element Values.
+    fn into_elements(self) -> Vec<Value<C>> {
+        match self {
+            Value::VecScalar(v) => v.into_iter().map(Value::Scalar).collect(),
+            Value::VecIndex(v) => v.into_iter().map(Value::Index).collect(),
+            Value::VecBool(v) => v.into_iter().map(Value::Bool).collect(),
+            Value::VecG1(v) => v.into_iter().map(Value::G1).collect(),
+            Value::VecG2(v) => v.into_iter().map(Value::G2).collect(),
+            Value::VecGT(v) => v.into_iter().map(Value::GT).collect(),
+            Value::VecG1Affine(v) => v.into_iter().map(Value::G1Affine).collect(),
+            Value::VecG2Affine(v) => v.into_iter().map(Value::G2Affine).collect(),
+            Value::Vec(v) => v,
+            _ => panic!("Expected vector, found {}", self),
         }
     }
 }

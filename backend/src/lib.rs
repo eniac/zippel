@@ -6,10 +6,12 @@ pub mod virtual_polynomial;
 pub mod values;
 pub mod types;
 pub mod nothing;
+pub mod op;
 
 pub use nothing::{NoField, NoCurve, NoPairing};
 pub use values::{Value, value_to_bytes};
 pub use types::{ABase, ATyp};
+pub use op::{Op, Ref, GOp, HasOpFactory};
 pub use virtual_polynomial::VirtualPolynomial;
 pub use poly_variant::{PolyVariant, PolyError};
 pub use config::{

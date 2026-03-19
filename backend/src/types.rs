@@ -5,7 +5,7 @@ use lang::id::Tid;
 use share::{Ctx, Pretty, DocAllocator, DocBuilder};
 use std::fmt;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ABase {
     G1,
     G2,
@@ -15,7 +15,7 @@ pub enum ABase {
     Fin(CRange),
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ATyp {
     /// Base type
     Base(ABase),

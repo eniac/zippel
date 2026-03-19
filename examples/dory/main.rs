@@ -5,6 +5,7 @@ use lang::id::Vid;
 use share::Ctx;
 
 fn main() {
+    env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/dory.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -42,7 +43,7 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let n = 64;
+    let n = 8192;
 
     // Generate random vectors
     let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);

@@ -1,4 +1,5 @@
 use backend::ArkConfig;
+use backend::op::HasOpFactory;
 use log::debug;
 use crate::DQDag;
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
@@ -15,7 +16,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub verifier: GroebnerBuilder<C, GrevLexTerm>
 }
 
-impl<C: ArkConfig> CompletenessAnalysis<C> {
+impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let spec = dag.get_relation().unwrap();
         let (prover, _node_map) = dag.get_prover();

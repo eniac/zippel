@@ -4,11 +4,11 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use crate::{UDag, UDags, Node, GOp, Op, Dep, DepType, PRef, Ref, GraphError};
+use crate::{UDag, UDags, Node, GOp, HOp, Dep, DepType, PRef, Ref, GraphError, mk};
 use backend::{ArkBls12_381, ATyp};
 use lang::ast::{UModule, BinOp};
 use lang::id::Vid;
-use lang::typ::{Qualifier, Distribution, Nothing};
+use lang::typ::{Qualifier, Distribution};
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
@@ -48,6 +48,18 @@ fn priv_scalar_pref(name: &str) -> PRef {
         ATyp::scalar(),
         0,
         Qualifier::Private,
+        Distribution::Nonuniform,
+    )
+}
+
+/// Helper to build a PRef for a Public argument with a custom type.
+fn pub_pref(name: &str, typ: ATyp) -> PRef {
+    PRef::from_var(
+        Vid::new(name),
+        NodeIndex::new(0),
+        typ,
+        0,
+        Qualifier::Public,
         Distribution::Nonuniform,
     )
 }
@@ -742,9 +754,9 @@ fn pin_record() {
     let var_a = GOp::<B>::var(&Vid::new("a"), inp, s.clone());
     let var_b = GOp::<B>::var(&Vid::new("b"), inp, s.clone());
 
-    let mut rec_fields = Ctx::<String, GOp<B>>::new();
-    rec_fields.insert(&"x".to_string(), &var_a);
-    rec_fields.insert(&"y".to_string(), &var_b);
+    let mut rec_fields = Ctx::<String, HOp<B>>::new();
+    rec_fields.insert(&"x".to_string(), &mk::<B>(var_a));
+    rec_fields.insert(&"y".to_string(), &mk::<B>(var_b));
     let record_op = GOp::<B>::Record(rec_fields);
 
     let ret = expected.add_node(Node::ret(&record_op));
@@ -1189,9 +1201,9 @@ fn pin_set_record() {
     let var_v = GOp::<B>::Ref(Ref::Var(Vid::new("v"), inp), s.clone());
     let var_r = GOp::<B>::Ref(Ref::Var(Vid::new("r"), inp), s.clone());
 
-    let mut rec_fields = Ctx::<String, GOp<B>>::new();
-    rec_fields.insert(&"x".to_string(), &var_v);
-    rec_fields.insert(&"y".to_string(), &var_r);
+    let mut rec_fields = Ctx::<String, HOp<B>>::new();
+    rec_fields.insert(&"x".to_string(), &mk::<B>(var_v));
+    rec_fields.insert(&"y".to_string(), &mk::<B>(var_r));
     let record_op = GOp::<B>::Record(rec_fields);
 
     // Not Ref::Node → ret node
@@ -2053,4 +2065,84 @@ fn pin_app_mle() {
 }
 
 // ── Stress tests (verify no stack overflow with iterative builder) ──
+
+// ── Reduce operation tests ──
+
+/// Reduce with addition: `reduce(+, [a, b, c])` creates a single Reduce node.
+#[test]
+fn pin_reduce_add() {
+    let src = r#"
+        fn f<F: Field>(public v: [F; 3]) -> F {
+            reduce(+, v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let mut expected = UDag::<B>::new();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_pref("v", ATyp::vec_scalar(3))],
+    ));
+    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
+
+    let reduce = expected.add_node(Node::ret(
+        &GOp::reduce(BinOp::Add, var_v.clone()),
+    ));
+    expected.add_edges(DepType::Data, reduce, var_v);
+
+    assert!(gs[0] == expected);
+}
+
+/// Reduce with multiplication: `reduce(*, [a, b, c])`.
+#[test]
+fn pin_reduce_mul() {
+    let src = r#"
+        fn f<F: Field>(public v: [F; 4]) -> F {
+            reduce(*, v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let mut expected = UDag::<B>::new();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_pref("v", ATyp::vec_scalar(4))],
+    ));
+    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(4));
+
+    let reduce = expected.add_node(Node::ret(
+        &GOp::reduce(BinOp::Mul, var_v.clone()),
+    ));
+    expected.add_edges(DepType::Data, reduce, var_v);
+
+    assert!(gs[0] == expected);
+}
+
+/// Reduce with subtraction (non-commutative): `reduce(-, [a, b, c])`.
+#[test]
+fn pin_reduce_sub() {
+    let src = r#"
+        fn f<F: Field>(public v: [F; 3]) -> F {
+            reduce(-, v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let mut expected = UDag::<B>::new();
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_pref("v", ATyp::vec_scalar(3))],
+    ));
+    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
+
+    let reduce = expected.add_node(Node::ret(
+        &GOp::reduce(BinOp::Sub, var_v.clone()),
+    ));
+    expected.add_edges(DepType::Data, reduce, var_v);
+
+    assert!(gs[0] == expected);
+}
 

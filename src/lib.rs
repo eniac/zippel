@@ -6,6 +6,7 @@ use graph::Dag;
 use graph::{analyses::KnowledgeAnalysis, WritePdf};
 use lang::id::Vid;
 use backend::{ArkConfig, Value, value_to_bytes};
+use backend::op::HasOpFactory;
 use lang::ast::{UModule, CModule};
 use share::{Ctx, unwrap};
 use graph::{
@@ -70,7 +71,7 @@ pub struct ZippelHandler<C:ArkConfig> {
     pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
-impl<C:ArkConfig> ZippelHandler<C> {
+impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn new(args: ZippelArgs) -> Self {
         // Enable detailed error messages from pest parser
         // This provides more comprehensive error messages for debugging parser errors

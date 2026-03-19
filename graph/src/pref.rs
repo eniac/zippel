@@ -1,8 +1,8 @@
 use petgraph::graph::NodeIndex;
 use lang::{ast::CArg, id::Vid, typ::Distribution};
 use share::{Ctx, Pretty, DocAllocator, BoxAllocator, DocBuilder};
-use backend::ArkConfig;
-use crate::{GOp, Op, Ref};
+use crate::{GOp, HOp, Op, Ref, mk};
+use backend::op::HasOpFactory;
 use lang::typ::{Kind, Qualifier};
 use lang::id::Tid;
 
@@ -86,11 +86,11 @@ impl PRef {
     pub fn is_var(&self) -> bool {
         self.var().is_some()
     }
-    pub fn into_op<C: ArkConfig>(&self) -> GOp<C> {
+    pub fn into_op<C: HasOpFactory>(&self) -> HOp<C> {
         if self.typ.size() > 1 {
-            GOp::Ram(Box::new(GOp::Ref(self.reference.clone(), self.typ.clone())), Box::new(Op::Value(Value::Index(self.index))))
+            mk::<C>(GOp::Ram(mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone())), mk::<C>(Op::Value(Value::Index(self.index)))))
         } else {
-            GOp::Ref(self.reference.clone(), self.typ.clone())
+            mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone()))
         }
     }
 

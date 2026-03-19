@@ -767,11 +767,11 @@ mod vector_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
         let d1 = builder1.add_input("d", ATyp::scalar());
         
-        let vec1 = Op::Vec(vec![
+        let vec1 = Op::vec(vec![
             Op::Ref(a1.clone(), ATyp::scalar()),
             Op::Ref(b1.clone(), ATyp::scalar()),
         ]);
-        let vec2 = Op::Vec(vec![
+        let vec2 = Op::vec(vec![
             Op::Ref(c1.clone(), ATyp::scalar()),
             Op::Ref(d1.clone(), ATyp::scalar()),
         ]);
@@ -787,11 +787,11 @@ mod vector_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
         let d2 = builder2.add_input("d", ATyp::scalar());
         
-        let vec1b = Op::Vec(vec![
+        let vec1b = Op::vec(vec![
             Op::Ref(c2.clone(), ATyp::scalar()),
             Op::Ref(d2.clone(), ATyp::scalar()),
         ]);
-        let vec2b = Op::Vec(vec![
+        let vec2b = Op::vec(vec![
             Op::Ref(a2.clone(), ATyp::scalar()),
             Op::Ref(b2.clone(), ATyp::scalar()),
         ]);
@@ -823,7 +823,7 @@ mod vector_properties {
         let b1 = builder1.add_input("b", ATyp::scalar());
         let c1 = builder1.add_input("c", ATyp::scalar());
         
-        let vec = Op::Vec(vec![
+        let vec = Op::vec(vec![
             Op::Ref(b1.clone(), ATyp::scalar()),
             Op::Ref(c1.clone(), ATyp::scalar()),
         ]);
@@ -849,7 +849,7 @@ mod vector_properties {
             ATyp::scalar(),
         );
         
-        let vec_explicit = Op::Vec(vec![ab, ac]);
+        let vec_explicit = Op::vec(vec![ab, ac]);
         builder2.add_op(vec_explicit);
         let dag2 = builder2.build();
 
@@ -878,15 +878,15 @@ mod vector_properties {
         let e1 = builder1.add_input("e", ATyp::scalar());
         let f1 = builder1.add_input("f", ATyp::scalar());
         
-        let vec1 = Op::Vec(vec![
+        let vec1 = Op::vec(vec![
             Op::Ref(a1.clone(), ATyp::scalar()),
             Op::Ref(b1.clone(), ATyp::scalar()),
         ]);
-        let vec2 = Op::Vec(vec![
+        let vec2 = Op::vec(vec![
             Op::Ref(c1.clone(), ATyp::scalar()),
             Op::Ref(d1.clone(), ATyp::scalar()),
         ]);
-        let vec3 = Op::Vec(vec![
+        let vec3 = Op::vec(vec![
             Op::Ref(e1.clone(), ATyp::scalar()),
             Op::Ref(f1.clone(), ATyp::scalar()),
         ]);
@@ -906,15 +906,15 @@ mod vector_properties {
         let e2 = builder2.add_input("e", ATyp::scalar());
         let f2 = builder2.add_input("f", ATyp::scalar());
         
-        let vec1b = Op::Vec(vec![
+        let vec1b = Op::vec(vec![
             Op::Ref(a2.clone(), ATyp::scalar()),
             Op::Ref(b2.clone(), ATyp::scalar()),
         ]);
-        let vec2b = Op::Vec(vec![
+        let vec2b = Op::vec(vec![
             Op::Ref(c2.clone(), ATyp::scalar()),
             Op::Ref(d2.clone(), ATyp::scalar()),
         ]);
-        let vec3b = Op::Vec(vec![
+        let vec3b = Op::vec(vec![
             Op::Ref(e2.clone(), ATyp::scalar()),
             Op::Ref(f2.clone(), ATyp::scalar()),
         ]);
@@ -949,11 +949,11 @@ mod vector_properties {
         let a = builder.add_input("a", ATyp::scalar());
         let b = builder.add_input("b", ATyp::scalar());
         
-        let vec = Op::Vec(vec![
+        let vec = Op::vec(vec![
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
         ]);
-        let zero_vec = Op::Vec(vec![
+        let zero_vec = Op::vec(vec![
             Op::Value(zero_scalar()),
             Op::Value(zero_scalar()),
         ]);

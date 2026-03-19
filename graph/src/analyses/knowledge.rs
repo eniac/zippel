@@ -1,4 +1,5 @@
 use backend::ArkConfig;
+use backend::op::HasOpFactory;
 use log::{warn};
 #[cfg(test)]
 use log::debug;
@@ -9,7 +10,7 @@ use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder};
 /// Perform a knowledge analysis using Groebner bases.
 pub struct KnowledgeAnalysis<C: ArkConfig>(GroebnerBuilder<C, ElimTerm>);
 
-impl<C: ArkConfig> KnowledgeAnalysis<C> {
+impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     pub fn new(gb: GroebnerBuilder<C, ElimTerm>) -> Self {
         Self(gb)
     }

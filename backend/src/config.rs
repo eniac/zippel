@@ -17,6 +17,8 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
+use crate::op::{OpFactory, HasOpFactory};
+use std::sync::RwLock;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig:
@@ -584,3 +586,28 @@ macro_rules! to_bytes {
         ark_serialize::CanonicalSerialize::serialize_compressed($x, &mut buf).map(|_| buf)
     }};
 }
+
+/// Macro to implement HasOpFactory for a concrete ArkConfig type.
+/// Creates a lazy_static RwLock<OpFactory<T>> and wires it up via the trait.
+macro_rules! impl_op_factory {
+    ($config:ty, $factory_name:ident) => {
+        lazy_static::lazy_static! {
+            static ref $factory_name: RwLock<OpFactory<$config>> =
+                RwLock::new(hashconsing::HConsign::empty());
+        }
+        impl HasOpFactory for $config {
+            fn op_factory() -> &'static RwLock<OpFactory<Self>> { &$factory_name }
+        }
+    };
+}
+
+impl_op_factory!(ArkBls12_381, BLS381_OP_FACTORY);
+impl_op_factory!(ArkBn254, BN254_OP_FACTORY);
+impl_op_factory!(ArkMNT4_298, MNT4_OP_FACTORY);
+impl_op_factory!(ArkCurve25519, CURVE25519_OP_FACTORY);
+impl_op_factory!(ArkSecp256k1, SECP256K1_OP_FACTORY);
+impl_op_factory!(ArkPallas, PALLAS_OP_FACTORY);
+impl_op_factory!(ArkVesta, VESTA_OP_FACTORY);
+impl_op_factory!(ArkEd25519, ED25519_OP_FACTORY);
+impl_op_factory!(ArkField17, FIELD17_OP_FACTORY);
+impl_op_factory!(ArkField65537, FIELD65537_OP_FACTORY);
