@@ -1,19 +1,57 @@
-use std::collections::{BTreeMap, BTreeSet};
+use im::OrdMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::hash::Hash;
 use std::ops::Index;
 
 use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
-use crate::traversal::{ToTraversal2, Traversal};
+use crate::traversal::Traversal;
 
-/// General BTreeMap context
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Ctx<K, V>(BTreeMap<K, V>);
+/// General ordered map context backed by im::OrdMap for O(1) structural-sharing clones
+pub struct Ctx<K, V>(OrdMap<K, V>);
+
+impl<K: Clone, V: Clone> Clone for Ctx<K, V> {
+    fn clone(&self) -> Self {
+        Ctx(self.0.clone())
+    }
+}
+
+impl<K: Ord + PartialEq, V: PartialEq> PartialEq for Ctx<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<K: Ord + Eq, V: Eq> Eq for Ctx<K, V> {}
+
+impl<K: Ord + PartialOrd, V: PartialOrd> PartialOrd for Ctx<K, V> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<K: Ord, V: Ord> Ord for Ctx<K, V> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<K: Ord + Hash, V: Hash> Hash for Ctx<K, V> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
+    }
+}
+
+impl<K: Ord + fmt::Debug, V: fmt::Debug> fmt::Debug for Ctx<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Pretty printer instance for Ctx
 impl<'a, D, A, K, V> Pretty<'a, D, A> for Ctx<K, V>
 where
-    K: Clone + Pretty<'a, D, A>,
+    K: Ord + Clone + Pretty<'a, D, A>,
     V: Clone + Pretty<'a, D, A>,
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
@@ -43,7 +81,7 @@ where
 
 /// Traversal instance for Ctx values
 pub struct CtxValueTraversal<K, V>(std::marker::PhantomData<(K, V)>);
-impl<K: Ord, V1, V2> Traversal<V1, V2> for CtxValueTraversal<K, V1> {
+impl<K: Ord + Clone, V1: Clone, V2: Clone> Traversal<V1, V2> for CtxValueTraversal<K, V1> {
     type Domain = Ctx<K, V1>;
     type Codomain = Ctx<K, V2>;
     fn traverse<E>(
@@ -54,17 +92,10 @@ impl<K: Ord, V1, V2> Traversal<V1, V2> for CtxValueTraversal<K, V1> {
     }
 }
 
-impl<K: Ord, V1> ToTraversal2<V1> for Ctx<K, V1> {
-    type Output<Z> = Ctx<K, Z>;
-    fn traverse2<V2, E>(self, f: &mut dyn FnMut(V1) -> Result<V2, E>) -> Result<Self::Output<V2>, E> {
-        CtxValueTraversal::traverse(self, f)
-    }
-}
-
 /// IntoIterator instance for Ctx
-impl<K, V> IntoIterator for Ctx<K, V> {
+impl<K: Ord + Clone, V: Clone> IntoIterator for Ctx<K, V> {
     type Item = (K, V);
-    type IntoIter = std::collections::btree_map::IntoIter<K, V>;
+    type IntoIter = im::ordmap::ConsumingIter<(K, V)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -73,17 +104,18 @@ impl<K, V> IntoIterator for Ctx<K, V> {
 
 impl<K, V> FromIterator<(K, V)> for Ctx<K, V>
 where
-    K: Ord
+    K: Ord + Clone,
+    V: Clone,
 {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        Ctx(BTreeMap::from_iter(iter))
+        Ctx(OrdMap::from_iter(iter))
     }
 }
 
 /// Display instance for Ctx calls the pretty printer
 impl<'a, K, V> fmt::Display for Ctx<K, V>
 where
-    K: Pretty<'a, BoxAllocator, ()> + Clone,
+    K: Ord + Pretty<'a, BoxAllocator, ()> + Clone,
     V: Pretty<'a, BoxAllocator, ()> + Clone
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,34 +142,38 @@ impl<K: Ord, V> Index<K> for Ctx<K, V> {
 /// Special and wrapper methods for Ctx
 impl<K, V> Ctx<K, V> {
     pub fn new() -> Self where K: Ord {
-        Ctx(BTreeMap::new())
+        Ctx(OrdMap::new())
     }
 
-    pub fn singleton(k: K, v: V) -> Self where K: Ord {
-        Ctx(BTreeMap::from([(k, v)]))
+    pub fn singleton(k: K, v: V) -> Self where K: Ord + Clone, V: Clone {
+        let mut m = OrdMap::new();
+        m.insert(k, v);
+        Ctx(m)
     }
 
-    pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)> where FF: Fn(&K, &V) -> bool {
+    pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)> where FF: Fn(&K, &V) -> bool, K: Ord {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
-    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y> where FF: Fn(&K, &V) -> Option<Y> {
+    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y> where FF: Fn(&K, &V) -> Option<Y>, K: Ord {
         self.0.iter().find_map(|(k, v)| f(k, v))
     }
 
-    pub fn first(&self) -> Option<(&K, &V)> {
+    pub fn first(&self) -> Option<(&K, &V)> where K: Ord {
         self.0.iter().next()
     }
 
-    pub fn last(&self) -> Option<(&K, &V)> {
+    pub fn last(&self) -> Option<(&K, &V)> where K: Ord {
         self.0.iter().next_back()
     }
 
     pub fn pop_first(&mut self) -> Option<(K, V)> where K: Ord + Clone, V: Clone {
-        self.0.pop_first()
+        let (result, new_map) = self.0.without_min_with_key();
+        self.0 = new_map;
+        result
     }
 
-    pub fn any<FF>(&self, f: FF) -> bool where FF: Fn(&K, &V) -> bool {
+    pub fn any<FF>(&self, f: FF) -> bool where FF: Fn(&K, &V) -> bool, K: Ord {
         self.find(f).is_some()
     }
     pub fn len(&self) -> usize {
@@ -170,17 +206,16 @@ impl<K, V> Ctx<K, V> {
     }
 
     pub fn append(&mut self, other: &Ctx<K, V>) where K: Ord + Clone, V: Clone {
-        self.0.append(&mut other.0.clone());
+        for (k, v) in other.0.iter() {
+            self.0.insert(k.clone(), v.clone());
+        }
     }
     pub fn union(&self, other: &Ctx<K, V>) -> Ctx<K, V>
     where
         K: Ord + Clone,
         V: Clone,
     {
-        let mut c = self.0.clone();
-        let mut o = other.0.clone();
-        c.append(&mut o);
-        Ctx(c)
+        Ctx(other.0.clone().union(self.0.clone()))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -190,13 +225,13 @@ impl<K, V> Ctx<K, V> {
         self.0.get(k)
     }
 
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> where K: Ord {
+    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> where K: Ord + Clone, V: Clone {
         self.0.get_mut(k)
     }
 
     pub fn remove(&mut self, k: &K) -> Option<V>
     where
-        K: Ord,
+        K: Ord + Clone,
         V: Clone,
     {
         self.0.remove(k)
@@ -205,31 +240,42 @@ impl<K, V> Ctx<K, V> {
     pub fn keys(&self) -> Set<K> where K: Ord + Clone {
         Set(self.0.keys().map(|x| x.clone()).collect::<BTreeSet<_>>())
     }
-    pub fn values(&self) -> Vec<V> where V: Clone {
+    pub fn values(&self) -> Vec<V> where V: Clone, K: Ord {
         self.0.values().cloned().collect()
     }
     pub fn contains(&self, k: &K) -> bool where K: Ord {
         self.0.contains_key(k)
     }
-    pub fn iter<'a>(&'a self) -> std::collections::btree_map::Iter<'a, K, V> {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + DoubleEndedIterator where K: Ord {
         self.0.iter()
-    }
-    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = (&'a K, &'a mut V)> {
-        self.0.iter_mut()
     }
     pub fn modify<F>(&mut self, mut f: F)
     where
+        K: Ord + Clone,
+        V: Clone,
         F: FnMut(&K, &mut V)
     {
-        for (k, v) in self.iter_mut() {
-            f(k, v);
+        let old = std::mem::replace(&mut self.0, OrdMap::new());
+        let mut new_map = OrdMap::new();
+        for (k, v) in old {
+            let mut v = v;
+            f(&k, &mut v);
+            new_map.insert(k, v);
         }
+        self.0 = new_map;
     }
-    pub fn retain(&mut self, f: impl Fn(&K, &mut V) -> bool) where K: Ord {
-        self.0.retain(f);
+    pub fn retain(&mut self, f: impl Fn(&K, &V) -> bool) where K: Ord + Clone, V: Clone {
+        let old = std::mem::replace(&mut self.0, OrdMap::new());
+        let mut new_map = OrdMap::new();
+        for (k, v) in old {
+            if f(&k, &v) {
+                new_map.insert(k, v);
+            }
+        }
+        self.0 = new_map;
     }
 
-    pub fn entry<'a>(&'a mut self, k: K) -> std::collections::btree_map::Entry<'a, K, V> where K: Ord {
+    pub fn entry(&mut self, k: K) -> im::ordmap::Entry<'_, K, V> where K: Ord + Clone, V: Clone {
         self.0.entry(k)
     }
 
@@ -264,20 +310,20 @@ impl<K, V> Ctx<K, V> {
 
 impl<K: Ord, V> Default for Ctx<K, V> {
     fn default() -> Self {
-        Ctx(BTreeMap::new())
+        Ctx(OrdMap::new())
     }
 }
 
 /// From instance
-impl<X, Y, K: From<X> + Ord, V: From<Y>, const N: usize> From<[(X, Y); N]> for Ctx<K, V> {
+impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone, const N: usize> From<[(X, Y); N]> for Ctx<K, V> {
     fn from(v: [(X, Y); N]) -> Self {
-        Ctx(BTreeMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
+        Ctx(OrdMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
     }
 }
 
-impl<X, Y, K: From<X> + Ord, V: From<Y>> From<Vec<(X, Y)>> for Ctx<K, V> {
+impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone> From<Vec<(X, Y)>> for Ctx<K, V> {
     fn from(v: Vec<(X, Y)>) -> Self {
-        Ctx(BTreeMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
+        Ctx(OrdMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
     }
 }
 
@@ -893,7 +939,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
         
-        let result = ctx.traverse2(&mut |v| Ok::<_, ()>(v * 2));
+        let result = CtxValueTraversal::traverse(ctx, &mut |v| Ok::<_, ()>(v * 2));
         assert!(result.is_ok());
         let ctx2 = result.unwrap();
         assert_eq!(ctx2.get(&1), Some(&20));
@@ -906,7 +952,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
         
-        let result = ctx.traverse2(&mut |v| {
+        let result = CtxValueTraversal::traverse(ctx, &mut |v: i32| {
             if v > 15 {
                 Err("Too large")
             } else {
@@ -922,7 +968,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
         
-        let ctx2 = ctx.map2(&mut |v| v * 3);
+        let ctx2 = CtxValueTraversal::traverse(ctx, &mut |v| Ok::<_, ()>(v * 3)).unwrap();
         assert_eq!(ctx2.get(&1), Some(&30));
         assert_eq!(ctx2.get(&2), Some(&60));
     }
@@ -1052,13 +1098,11 @@ mod additional_tests {
     }
 
     #[test]
-    fn test_ctx_iter_mut() {
+    fn test_ctx_modify_increment() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        for (_k, v) in ctx.iter_mut() {
-            *v += 1;
-        }
+        ctx.modify(|_k, v| *v += 1);
         assert_eq!(ctx.get(&1), Some(&11));
         assert_eq!(ctx.get(&2), Some(&21));
     }

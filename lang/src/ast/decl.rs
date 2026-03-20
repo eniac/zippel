@@ -227,9 +227,9 @@ impl CBody {
 }
 
 /// Traversable1 instance for Body (N)
-impl<N> ToTraversal1<N> for Body<N> {
+impl<N: Clone> ToTraversal1<N> for Body<N> {
     type Output<Z> = Body<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
         match self {
             Body::Proto { relation, body } =>
                 Ok(Body::Proto {
@@ -256,7 +256,7 @@ impl TidSubst for CBody {
     }
 }
 
-impl<N> RangeTraversal<N> for Body<N> {
+impl<N: Clone> RangeTraversal<N> for Body<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             Body::Proto { relation, body } =>

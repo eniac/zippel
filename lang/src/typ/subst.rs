@@ -30,16 +30,16 @@ impl<T> Substs<T> {
     }
 }
 
-impl<T> IntoIterator for Substs<T> {
+impl<T: Clone> IntoIterator for Substs<T> {
     type Item = (Tid, T);
-    type IntoIter = std::collections::btree_map::IntoIter<Tid, T>;
+    type IntoIter = share::CtxConsumingIter<(Tid, T)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<T> FromIterator<(Tid, T)> for Substs<T> {
+impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
     fn from_iter<I: IntoIterator<Item = (Tid, T)>>(iter: I) -> Self {
         Substs(Ctx::from_iter(iter))
     }
@@ -146,7 +146,7 @@ impl AliasSubsts {
 
 }
 
-impl<T> From<Vec<(Tid, T)>> for Substs<T> {
+impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
     fn from(v: Vec<(Tid, T)>) -> Self {
         Substs(Ctx::from(v))
     }
