@@ -13,11 +13,11 @@ pub mod subst;
 
 use crate::id::{Tid, TidSubst, Vid};
 
-pub use kind::Kind;
+pub use kind::{Kind, UKind, CKind};
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use distribution::Distribution;
-pub use typevar::{TypeVar, TypeVars};
+pub use typevar::{TypeVar, TypeVars, UTypeVar, CTypeVar, UTypeVars, CTypeVars};
 pub use nothing::Nothing;
 pub use subst::{SizeSubsts, AliasSubsts};
 pub use range::{Range, CRange, RangeError, RangeTraversal};
@@ -142,7 +142,7 @@ impl<N> GTyp<N> {
         Typ::Poly(b.clone(), m, N::from(1))
     }
 
-    pub fn to_scalar(&self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
+    pub fn to_scalar<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(b)?;
@@ -160,7 +160,7 @@ impl<N> GTyp<N> {
         }
     }
 
-    pub fn to_scalar_vec(&self, ctx: &Ctx<Tid, Kind>) -> Option<(Tid, N)> where N: Clone {
+    pub fn to_scalar_vec<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<(Tid, N)> where N: Clone {
         match self {
             Typ::Vec(box t, n) => {
                 let s = t.to_scalar(ctx)?;
