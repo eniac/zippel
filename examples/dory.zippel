@@ -137,7 +137,7 @@ fn dory_reduce<
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
     S: Size,
-    LOG_N: 2..S
+    LOG_N: 2..S+1
 >(
     public c1: GT,
     public c2: GT,

@@ -102,7 +102,12 @@ impl UModule {
 
         for decl in self.iter_decls() {
              let all_substs = decl.get_size_substitutions(sizes)?;
-             for substs in all_substs.into_iter() {
+             for mut substs in all_substs.into_iter() {
+                // Merge externally-provided size values (e.g. S: Size) into the
+                // substitution context so that concretize can resolve all Size::Var references
+                for (k, v) in sizes.iter() {
+                    substs.0.insert(k, v);
+                }
                 let cdecl = decl.concretize(&substs)?;
                  ctx.insert_with(cdecl.sig, cdecl.body,
                      &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
