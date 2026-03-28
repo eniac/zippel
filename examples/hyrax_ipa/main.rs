@@ -1,7 +1,7 @@
 use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 use ark_std::UniformRand;
 
@@ -9,7 +9,9 @@ fn main() {
     println!("=== Hyrax Log of Dot Product (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &6usize);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

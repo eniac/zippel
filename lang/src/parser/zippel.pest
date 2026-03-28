@@ -35,7 +35,7 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 
 /// Base kinds
-kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | positive | size_ref_ty }
+kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | size_ref_ty | positive }
     field_ty    = { "Field" }
     group_ty    = { "Group" }
     pairing_ty  = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }

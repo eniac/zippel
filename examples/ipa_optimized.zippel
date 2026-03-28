@@ -37,7 +37,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         P_commitment_k == expected_P_at_base
 }
 
-fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..17>(
+fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
     public g_vec_k: [G; 2^N_current],          // Current g bases for this round
     public h_vec_k: [G; 2^N_current],          // Current h bases for this round
     public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
@@ -105,7 +105,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, N_current: 1..17>(
 }
 
 
-proto ipa_wrapper<G: Group, F: Scalar<G>, N_val_const:32>(
+proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     // --- Public Inputs ---
     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
