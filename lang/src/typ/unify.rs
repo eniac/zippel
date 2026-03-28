@@ -1,4 +1,4 @@
-use crate::typ::{Nothing, Kind, CTyp, AliasSubsts};
+use crate::typ::{Nothing, Kind, CKind, CTyp, AliasSubsts};
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::range::Range;
 use crate::id::Tid;
@@ -14,7 +14,7 @@ pub enum UnifyError {
     #[error("UnifyError: Kind not found {0}")]
     KindNotFound(Tid),
     #[error("UnifyError: Type variable {0}: {1} does not match {2}: {3}")]
-    KindMismatch(Tid, Kind, Tid, Kind),
+    KindMismatch(Tid, CKind, Tid, CKind),
     #[error("UnifyError: Type mismatch {0} ~ {1}")]
     TypMismatch(CTyp, CTyp),
 }
@@ -26,7 +26,7 @@ impl UnifyError {
     pub fn typ(a: &CTyp, b: &CTyp, e: UnifyError) -> Self {
         UnifyError::Typ(a.clone(), b.clone(), Box::new(e))
     }
-    pub fn kind_mismatch(a: &Tid, ka: &Kind, b: &Tid, kb: &Kind) -> Self {
+    pub fn kind_mismatch(a: &Tid, ka: &CKind, b: &Tid, kb: &CKind) -> Self {
         UnifyError::KindMismatch(a.clone(), ka.clone(), b.clone(), kb.clone())
     }
     pub fn typ_mismatch(a: &CTyp, b: &CTyp) -> Self {
@@ -37,7 +37,7 @@ impl UnifyError {
 /// Instances of this trait can be equated with substitutions
 pub trait Unify where Self: Sized {
     type Error;
-    fn unify(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, Self::Error>;
+    fn unify(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>, subs: &mut AliasSubsts) -> Result<Self, Self::Error>;
 }
 
 /// Unify type variables by equating their kinds
@@ -45,7 +45,7 @@ impl Unify for Tid {
     type Error = UnifyError;
 
     /// Can the two kinds be unified into one kind that describes both?
-    fn unify(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
+    fn unify(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>, subs: &mut AliasSubsts) -> Result<Tid, UnifyError> {
         let ka = ctx.get(&a)
             .ok_or(UnifyError::kind_not_found(&a))?;
 
@@ -76,7 +76,7 @@ impl Unify for Tid {
 
 impl Unify for CTyp {
     type Error = UnifyError;
-    fn unify(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
+    fn unify(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>, subs: &mut AliasSubsts) -> Result<Self, UnifyError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::unify(a, b, ctx, subs)

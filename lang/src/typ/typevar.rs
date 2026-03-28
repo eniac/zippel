@@ -253,7 +253,6 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for TypeVars
 #[cfg(test)] use pest::Parser;
 #[test]
 fn typevars_parser() {
-    use crate::typ::kind::UKind;
     use crate::typ::range::Range as TRange;
 
     let ex = "A: Field, B1: Group, B2: Group, D1: Scalar<B2>, D2: Scalar<B1, B2>, E: Pairing<B1, B2>, F: 0..10";

@@ -90,13 +90,13 @@ impl FreeVars for CBody {
 
 /// Useful constructors
 impl<N> Decl<N> {
-    pub fn proto(name: Vid, typevars: TypeVars, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
+    pub fn proto(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret: GTyp::bool() };
         let body = Body::Proto { relation, body };
         Decl { sig, body }
     }
 
-    pub fn func(name: Vid, typevars: TypeVars, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
+    pub fn func(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
@@ -533,7 +533,7 @@ fn fn_parser1() {
         Vid::from("test"),
         TypeVars(vec![
             TypeVar::new_str("F", Kind::Field),
-            TypeVar::new_str("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
+            TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) }))
         ]),
         GArgs::from([GArg::private("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
         GTyp::varstr("F"),
@@ -592,7 +592,7 @@ fn decls_parser() {
             Vid::from("test"),
             TypeVars(vec![
                 TypeVar::new_str("F", Kind::Field),
-                TypeVar::new_str("N", Kind::Range(Range { start:0, step:1, end: 10 })),
+                TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) })),
             ]),
             GArgs::from([GArg::public("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
             GTyp::varstr("F"),

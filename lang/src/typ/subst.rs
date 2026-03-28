@@ -2,8 +2,9 @@ use itertools::Itertools;
 
 use share::{Ctx, Set};
 use crate::id::{Tid, TidSubst};
-use crate::typ::{Kind, TypeVars};
+use crate::typ::{Kind, UTypeVars};
 use crate::typ::range::Range;
+use share::traversal::ToTraversal1;
 
 /// Represents a possible valuation of sized type variables
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -50,13 +51,16 @@ impl SizeSubsts {
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
     // and take all possible combinations of sizes
     // Warning: exponential, the idea is the are few sizes (or even 1)
-    pub fn from_typevars(tv: &TypeVars) -> Set<Self> {
+    pub fn from_typevars(tv: &UTypeVars) -> Set<Self> {
         let typevar_ranges: Vec<(Tid, Range<usize>)> =
             tv.clone()
                 .into_iter()
                 .filter_map(|tv|
                     match tv.kind {
-                        Kind::Range(r) => Some((tv.id.clone(), r.clone())),
+                        Kind::Range(r) => {
+                            let cr = r.traverse1(&mut |s| s.eval(&Ctx::new())).ok()?;
+                            Some((tv.id.clone(), cr))
+                        },
                         _ => None
                     }).collect();
 
