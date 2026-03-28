@@ -9,7 +9,7 @@ fn main() {
     println!("=== Hyrax Log of Dot Product (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile();
+    handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

@@ -4,7 +4,7 @@ use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
 use backend::poly_variant::PolyVariant;
 use backend::VirtualPolynomial;
 use ark_poly::DenseMultilinearExtension;
-use lang::id::Vid;
+use lang::id::{Vid, Tid};
 use share::Ctx;
 use ark_ff::Zero;
 
@@ -14,7 +14,9 @@ fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/sumcheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &10);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

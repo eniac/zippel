@@ -51,14 +51,14 @@ impl SizeSubsts {
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
     // and take all possible combinations of sizes
     // Warning: exponential, the idea is the are few sizes (or even 1)
-    pub fn from_typevars(tv: &UTypeVars) -> Set<Self> {
+    pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Set<Self> {
         let typevar_ranges: Vec<(Tid, Range<usize>)> =
             tv.clone()
                 .into_iter()
                 .filter_map(|tv|
                     match tv.kind {
                         Kind::Range(r) => {
-                            let cr = r.traverse1(&mut |s| s.eval(&Ctx::new())).ok()?;
+                            let cr = r.traverse1(&mut |s| s.eval(sizes)).ok()?;
                             Some((tv.id.clone(), cr))
                         },
                         _ => None
@@ -160,7 +160,7 @@ impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars),
+    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),

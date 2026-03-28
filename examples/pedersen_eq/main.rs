@@ -10,7 +10,7 @@ fn main() {
     println!("=== Pedersen Equality (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    handler.compile();
+    handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

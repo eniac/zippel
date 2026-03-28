@@ -1,7 +1,7 @@
 use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkBls12_381, ArkConfig, Value, ArkGroupOps, ArkPairingOps};
-use lang::id::Vid;
+use lang::id::{Vid, Tid};
 use share::Ctx;
 
 fn main() {
@@ -10,7 +10,10 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/dory.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     println!("Compiling Zippel files...");
-    handler.compile();
+    const LOG_N: usize = 8;
+    let mut sizes: Ctx<Tid, usize> = Ctx::new();
+    sizes.insert(&Tid::new("S"), &LOG_N);
+    handler.compile(&sizes);
     println!("Compilation successful.");
 
 

@@ -102,6 +102,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
+#[cfg(test)] use share::Ctx;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::analyses::{UniformityPropagation, QualifierPropagation};
 #[cfg(test)] use crate::UDags;
@@ -118,7 +119,7 @@ fn knowledge_foo() {
         }"#;
 
     debug!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
@@ -151,7 +152,7 @@ fn groebner_bar() {
         }"#;
 
     debug!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
@@ -181,7 +182,7 @@ fn groebner_baz() {
             verify(a == b);
         }"#;
 
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
@@ -218,7 +219,7 @@ fn groebner_ex3() {
             d <- g * b;
             verify(c == d);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {

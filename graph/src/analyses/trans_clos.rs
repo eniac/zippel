@@ -197,7 +197,7 @@ fn trans_clos_simple() {
             b <- r * s';
             verify(a == b);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
@@ -253,7 +253,7 @@ fn trans_clos_many() {
             b <- r * s';
             verify(a == b);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers

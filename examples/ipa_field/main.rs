@@ -8,7 +8,7 @@ fn main() {
     println!("=== IPA Field (ArkField17) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/ipa-field.zippel"));
     let mut handler: zippel::ZippelHandler<ArkField17> = ZippelHandler::new(args);
-    handler.compile();
+    handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

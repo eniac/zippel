@@ -18,13 +18,13 @@ type B = ArkBls12_381;
 
 /// Parse a `.zippel` source string and build graphs via from_module.
 fn parse_and_build(src: &str) -> UDags<B> {
-    let m = UModule::from_str(src).unwrap().concretize().unwrap();
+    let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
     UDags::<B>::from_module(m).unwrap()
 }
 
 /// Parse and build, returning Result to allow testing error paths.
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = UModule::from_str(src).unwrap().concretize().unwrap();
+    let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
     UDags::<B>::from_module(m)
 }
 

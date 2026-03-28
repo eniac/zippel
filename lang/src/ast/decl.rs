@@ -5,7 +5,7 @@ use pest::Parser;
 use bumpalo::Bump;
 use thiserror::Error;
 
-use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
@@ -135,8 +135,8 @@ impl UDecl {
 
     /// Each declaration has typevariables that can be concretized to different sizes.
     /// This method returns all possible size substitutions for the declaration
-    pub fn get_size_substitutions(&'_ self) -> Result<Set<SizeSubsts>, DeclError> {
-        Ok(SizeSubsts::from_typevars(&self.sig.typevars))
+    pub fn get_size_substitutions(&'_ self, sizes: &Ctx<Tid, usize>) -> Result<Set<SizeSubsts>, DeclError> {
+        Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes))
     }
 
     /// Concretize a declaration with a given size substitution

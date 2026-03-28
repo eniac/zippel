@@ -50,6 +50,7 @@ mod tests {
     use lang::ast::UModule;
     use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
     use share::unwrap;
+    use share::Ctx;
     use backend::ArkBls12_381;
 
     #[test]
@@ -64,7 +65,7 @@ mod tests {
             }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -84,7 +85,7 @@ mod tests {
                 verify(a == x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -103,7 +104,7 @@ mod tests {
                 verify(a == x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -121,7 +122,7 @@ mod tests {
                 verify(x == a + b);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -141,7 +142,7 @@ mod tests {
                 verify(y == x * x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();

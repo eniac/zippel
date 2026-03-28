@@ -136,7 +136,8 @@ fn dory_reduce<
     G2: Group,
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
-    LOG_N: 2..9
+    S: Size,
+    LOG_N: 2..S
 >(
     public c1: GT,
     public c2: GT,
@@ -258,7 +259,8 @@ proto dory_eval<
     G2: Group,
     GT: Pairing<G1, G2>,
     F: Scalar<G1, G2>,
-    LOG_N: 8
+    S: Size,
+    LOG_N: S
 >(
     // Inputs (from the top-level LOG_N)
     public c1: GT,

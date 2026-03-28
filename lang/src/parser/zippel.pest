@@ -35,12 +35,14 @@ size_ty  = { size_ty_term ~ (size_bin_op ~ size_ty_term)* }
     size_ty_term  = _{ "(" ~ size_ty ~ ")" | positive | size_var }
 
 /// Base kinds
-kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | positive }
-    field_ty   = { "Field" }
-    group_ty   = { "Group" }
-    pairing_ty = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
-    scalar_ty  = { "Scalar" ~ "<" ~ ids ~ ">" }
-    range_ty   = { range }
+kind_ty = { field_ty | group_ty | range_ty | pairing_ty | scalar_ty | size_var_ty | positive | size_ref_ty }
+    field_ty    = { "Field" }
+    group_ty    = { "Group" }
+    pairing_ty  = { "Pairing" ~ "<" ~ id ~ "," ~ id ~ ">" }
+    scalar_ty   = { "Scalar" ~ "<" ~ ids ~ ">" }
+    range_ty    = { range }
+    size_var_ty = { "Size" }
+    size_ref_ty = { size_ty }
 
 typ = _{ poly_ty | uni_ty | mle_ty | vec_ty | fin_ty | bool_ty | base_ty | record_ty }
     base_ty = { id }                                              // Base type variable

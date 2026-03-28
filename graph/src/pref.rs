@@ -3,7 +3,7 @@ use lang::{ast::CArg, id::Vid, typ::Distribution};
 use share::{Ctx, Pretty, DocAllocator, BoxAllocator, DocBuilder};
 use crate::{GOp, HOp, Op, Ref, mk};
 use backend::op::HasOpFactory;
-use lang::typ::{Kind, Qualifier};
+use lang::typ::{CKind, Qualifier};
 use lang::id::Tid;
 
 use backend::{Value, ATyp};
@@ -33,7 +33,7 @@ impl PRef {
     pub fn from_ref(reference: Ref, typ: ATyp, qualifier: Qualifier, distribution: Distribution) -> Self {
         PRef { reference, index: 0, typ, qualifier, distribution, from_transcript: false }
     }
-    pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
+    pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
         Some(PRef::from_var(arg.id.clone(), node, atyp, 0, arg.qualifier, arg.distribution))
     }

@@ -119,7 +119,7 @@ mod tests {
                 b <- r * s';
                 verify(a == b);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -166,7 +166,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -183,7 +183,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -200,7 +200,7 @@ mod tests {
                 z <- x * y;
                 verify(z == x * y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -213,7 +213,7 @@ mod tests {
             proto simple<F: Field>(private x: F) where true {
                 verify(x == x);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         

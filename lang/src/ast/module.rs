@@ -1,5 +1,6 @@
 use crate::ast::{Sig, Body, CSig};
 use crate::ast::decl::{UDecls, UDecl, DeclError};
+use crate::id::Tid;
 
 use std::fmt;
 use thiserror::Error;
@@ -96,11 +97,11 @@ impl UModule {
     }
 
     /// Concretize sizes in all declarations to generate a CModule
-    pub fn concretize(&self) -> Result<CModule, ModuleError> {
+    pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
 
         for decl in self.iter_decls() {
-             let all_substs = decl.get_size_substitutions()?;
+             let all_substs = decl.get_size_substitutions(sizes)?;
              for substs in all_substs.into_iter() {
                 let cdecl = decl.concretize(&substs)?;
                  ctx.insert_with(cdecl.sig, cdecl.body,
@@ -176,7 +177,7 @@ fn from_decl_subst1() {
         "}");
     let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 2);
-    let cmod = umod.concretize().unwrap();
+    let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 4);
 }
 
@@ -189,7 +190,7 @@ fn from_decl_duplicate() {
         "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
         "   a[0]\n",
         "}");
-    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize(&Ctx::new()).is_err());
 }
 
 #[test]
@@ -198,7 +199,7 @@ fn from_decl_underflow() {
         "fn sum<N: 0..3, F: Field>(public a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}");
-    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize(&Ctx::new()).is_err());
 }
 
 #[test]
@@ -215,6 +216,6 @@ fn from_decl_subst2() {
         "}\n");
     let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 3);
-    let cmod = umod.concretize().unwrap();
+    let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 16);
 }

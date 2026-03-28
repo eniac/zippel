@@ -22,6 +22,8 @@ pub enum Kind<N> {
     Pairing(Tid, Tid),
     /// Range of numbers
     Range(Range<N>),
+    /// Externally-provided size parameter (value provided during concretize)
+    SizeVar,
 }
 
 /// Symbolically-sized kind (used during parsing)
@@ -82,6 +84,7 @@ impl<N> ToTraversal1<N> for Kind<N> {
             Kind::Scalar(s) => Ok(Kind::Scalar(s)),
             Kind::Pairing(a, b) => Ok(Kind::Pairing(a, b)),
             Kind::Range(r) => Ok(Kind::Range(r.traverse1(f)?)),
+            Kind::SizeVar => Ok(Kind::SizeVar),
         }
     }
 }
@@ -116,6 +119,7 @@ where
                 ]),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1, g2)),
             Kind::Range(r) => r.pretty(allocator),
+            Kind::SizeVar => allocator.text("Size"),
         }
     }
 
@@ -177,6 +181,15 @@ impl<'pest> FromPest<'pest> for UKind {
                     start: Size::Lit(n),
                     step: Size::one(),
                     end: Size::Lit(n + 1),
+                }))
+            },
+            Rule::size_var_ty => Ok(Kind::SizeVar),
+            Rule::size_ref_ty => {
+                let size = Size::from_pest(&mut pair.into_inner())?;
+                Ok(Kind::Range(Range {
+                    start: size.clone(),
+                    step: Size::one(),
+                    end: size + Size::one(),
                 }))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),

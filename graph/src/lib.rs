@@ -22,7 +22,7 @@ use backend::{ArkConfig, Value, ATyp, PolyVariant, VirtualPolynomial};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Tid, Vid};
-use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
+use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, CKind};
 use lang::typ::range::CRange;
 use lang::typ::infer::{Typeable, TypeError};
 use ark_poly::{univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial};
@@ -861,7 +861,7 @@ impl<C: HasOpFactory> UDags<C> {
 impl<C: HasOpFactory> UDag<C> {
     /// Add a new top-level expression to the graph
     fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
-        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
+        kctx: &Ctx<Tid, CKind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
         let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
@@ -1002,7 +1002,7 @@ impl<C: HasOpFactory> UDag<C> {
         initial_exp: CExp,
         transcr: &mut NodeIndex,
         edge_type: DepType,
-        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
+        kctx: &Ctx<Tid, CKind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
         // Own mutable copies for trampoline loop
         let mut exp = initial_exp;
@@ -1608,7 +1608,7 @@ fn graph_sum() {
         fn sum<F: Field>(public a: [F; 1]) -> F {
            a[0]
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     assert_eq!(m.len(), 4);
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -1628,7 +1628,7 @@ fn graph_foo() {
             x <- v[1..5];
             verify(a * s == b * x[3]);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     // Output graph
@@ -1645,7 +1645,7 @@ fn graph_poly() {
             let p = a * b;
             verify(p(r) == (a(r) * b(r)));
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
@@ -1659,7 +1659,7 @@ fn graph_reduce() {
         fn reduction_foo<F: Field>(public a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {

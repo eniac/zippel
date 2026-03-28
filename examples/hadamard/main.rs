@@ -2,14 +2,16 @@ use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkConfig, ArkSecp256k1, Value, ATyp};
 use ark_ff::{One, Zero};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 
 fn main() {
     println!("=== Hadamard (ArkSecp256k1) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/hadamard.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    handler.compile();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &5);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
