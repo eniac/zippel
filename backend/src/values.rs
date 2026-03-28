@@ -2301,6 +2301,15 @@ impl<C: ArkConfig> Value<C> {
     pub fn into_vec_gt_mut(&mut self) -> &mut Vec<PairingOutput<C::P>> {
         match self {
             Value::VecGT(v) => v,
+            Value::Vec(v) => {
+                *self = Value::VecGT(v.iter().map(|val| {
+                    match val {
+                        Value::GT(g) => *g,
+                        _ => panic!("Expected GT element in vec, found {}", val),
+                    }
+                }).collect());
+                self.into_vec_gt_mut()
+            }
             _ => panic!("Expected mut vec groupt, found {}", self),
         }
     }

@@ -12,7 +12,7 @@ fn main() {
     println!("Compiling Zippel files...");
     handler.compile();
     println!("Compilation successful.");
-    
+
 
     let inputs = prover_create_inputs();
     println!("Generating default schedule for prover...");
@@ -43,15 +43,15 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let n = 8192;
+    let n = 256;
 
     // Generate random vectors
     let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
     let g_vec = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
-    
+
     let gamma1 = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
     let gamma2 = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
-    
+
     // Preprocessing: we need exactly log_2(n) gamma' arrays
     // For n=64, we need level 1 (size 32), ... down to level 6 (size 1).
     // The top-level inputs to dory_eval require just gamma1, gamma2, gamma1_prime, gamma2_prime, and their hashes
