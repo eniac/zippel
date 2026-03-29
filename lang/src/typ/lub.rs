@@ -1,5 +1,5 @@
 use crate::ast::BinOp;
-use crate::typ::{Kind, Nothing, CTyp, TypeVar};
+use crate::typ::{Kind, Nothing, CTyp, CKind, CTypeVar};
 use crate::typ::range::{Range, RangeError};
 use crate::id::Tid;
 use share::Ctx;
@@ -268,9 +268,9 @@ impl Lub for Range<usize> {
 
 /// Least-upper bound of type variables
 impl Lub for Tid {
-    type Context = Ctx<Tid, Kind>;
+    type Context = Ctx<Tid, CKind>;
     /// Can the two kinds be unified into one kind that describes both?
-    fn lub_equ(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_equ(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
 
@@ -283,13 +283,13 @@ impl Lub for Tid {
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
-            (_, _) => Err(LubError::equ(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
+            (_, _) => Err(LubError::equ(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
     /// Least-upper-bound for addition of different kinds
-    fn lub_add(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_add(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
 
@@ -302,13 +302,13 @@ impl Lub for Tid {
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
-            (_, _) => Err(LubError::add(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
+            (_, _) => Err(LubError::add(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
     /// Least-upper-bound for subtraction same as addition
-    fn lub_sub(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_sub(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
 
@@ -321,13 +321,13 @@ impl Lub for Tid {
             (Kind::Group, Kind::Group) if a == b => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
-            (_, _) => Err(LubError::sub(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
+            (_, _) => Err(LubError::sub(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
     /// Least-upper-bound for multiplication of different kinds
-    fn lub_mul(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_mul(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(b)
@@ -339,13 +339,17 @@ impl Lub for Tid {
             // Scalar multiplication: Scalar * Group = Group * Scalar = Group
             (Kind::Scalar(g), Kind::Group) if g.contains(b) => Ok(b.clone()),
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
+            // Scalar multiplication: Scalar * Pairing Target = Pairing Target * Scalar = Pairing Target
+            // The scalar F ranges over G1, G2, so we ensure g contains g1 or g2
+            (Kind::Pairing(g1, g2), Kind::Scalar(g)) if g.contains(g1) || g.contains(g2) => Ok(a.clone()),
+            (Kind::Scalar(g), Kind::Pairing(g1, g2)) if g.contains(g1) || g.contains(g2) => Ok(b.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
-            (_, _) => Err(LubError::mul(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
+            (_, _) => Err(LubError::mul(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
-    fn lub_pair(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_pair(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(b)
@@ -359,14 +363,14 @@ impl Lub for Tid {
                 if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(&a, &b)) {
                     Ok(pid.clone())
                 } else {
-                    Err(LubError::pair(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+                    Err(LubError::pair(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
                 }
-            (_, _) => Err(LubError::pair(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (_, _) => Err(LubError::pair(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
     /// Least-upper-bound for division of different kinds
-    fn lub_div(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_div(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(b)
@@ -383,31 +387,31 @@ impl Lub for Tid {
             },
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
-            (_, _) => Err(LubError::div(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
+            (_, _) => Err(LubError::div(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
 
     /// Least-upper-bound for remainder of different kinds
-    fn lub_rem(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_rem(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(&a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(&b)
             .ok_or(LubError::kind_not_found(&b))?;
-        Err(LubError::rem(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        Err(LubError::rem(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
     }
 
     /// Least-upper-bound for exponentiation of different kinds
-    fn lub_pow(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_pow(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(&a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(&b)
             .ok_or(LubError::kind_not_found(&b))?;
-        Err(LubError::pow(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        Err(LubError::pow(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
     }
 
     /// Least-upper-bound for dot product is the same as multiplication (for kinds)
-    fn lub_dot(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_dot(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(&a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(&b)
@@ -415,33 +419,33 @@ impl Lub for Tid {
 
         Self::lub_mul(a, b, ctx)
             .map_err(|e|
-                LubError::next(LubError::dot(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)), e))
+                LubError::next(LubError::dot(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)), e))
     }
 
     /// Least-upper-bound for Concatenation is always an error
-    fn lub_concat(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_concat(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
 
         let kb = ctx.get(b)
             .ok_or(LubError::kind_not_found(&b))?;
 
-        Err(LubError::sub(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        Err(LubError::sub(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
     }
 
-    fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Tid, LubError> {
+    fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a)
             .ok_or(LubError::kind_not_found(&a))?;
         let kb = ctx.get(b)
             .ok_or(LubError::kind_not_found(&b))?;
 
-        Err(LubError::and(&TypeVar::new(&a, &ka), &TypeVar::new(&b, &kb)))
+        Err(LubError::and(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
     }
 }
 
 impl Lub for CTyp {
-    type Context = Ctx<Tid, Kind>;
-    fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    type Context = Ctx<Tid, CKind>;
+    fn lub_equ(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             (CTyp::Base(a), CTyp::Base(b)) =>
@@ -503,7 +507,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_add(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_add(a, b, ctx)
@@ -576,7 +580,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_sub(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_sub(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_sub(a, b, ctx)
@@ -649,7 +653,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_mul(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_mul(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_mul(a, b, ctx)
@@ -716,7 +720,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_pair(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_pair(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_pair(a, b, ctx)
@@ -737,7 +741,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_div(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_div(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) => {
                 Ok(CTyp::Base(Tid::lub_div(a, b, ctx)
@@ -784,7 +788,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_rem(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_rem(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) =>
                 Ok(CTyp::Base(Tid::lub_rem(a, b, ctx)
@@ -813,7 +817,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_pow(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_pow(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Fin(a), CTyp::Fin(b)) =>
                 Ok(CTyp::Fin(Range::lub_pow(a, b, &Nothing)
@@ -850,7 +854,7 @@ impl Lub for CTyp {
         }
     }
     
-    fn lub_dot(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_dot(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             // Vec<A> . Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) =>
@@ -918,7 +922,7 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, Kind>) -> Result<Self, LubError> {
+    fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             // Bool && Bool = Bool
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),

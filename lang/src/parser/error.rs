@@ -6,7 +6,7 @@ use crate::id::{Vid, Tid};
 use crate::ast::sig::USig;
 use crate::ast::arg::UArgs;
 use crate::parser::Rule;
-use crate::typ::{Size, Kind, EvalError, TypeVars};
+use crate::typ::{Size, UKind, EvalError, UTypeVars};
 use crate::typ::range::RangeError;
 use share::Set;
 
@@ -31,13 +31,13 @@ pub enum InputError<'pest> {
     #[error("KindError: Type variable not found {0}")]
     KindNotFound(Tid),
     #[error("KindError: Pairing<{0},{1}> requires {2}: {3} to be a Group")]
-    PairingGroup(Tid, Tid, Tid, Kind),
+    PairingGroup(Tid, Tid, Tid, UKind),
     #[error("KindError: Scalar<{0}> requires {0}: {1} to be a Group")]
-    ScalarGroup(Set<Tid>, Kind),
+    ScalarGroup(Set<Tid>, UKind),
     #[error("ReservedType: Bool is a reserved type")]
     ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
-    EmptyDecl(Vid, TypeVars, UArgs)
+    EmptyDecl(Vid, UTypeVars, UArgs)
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {

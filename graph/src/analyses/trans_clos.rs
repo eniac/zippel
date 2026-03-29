@@ -1,6 +1,7 @@
 #[cfg(test)]
 use log::debug;
-use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis};
+use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis, mk};
+use backend::op::HasOpFactory;
 use petgraph::graph::NodeIndex;
 use std::fmt;
 use lang::typ::{Distribution, Qualifier};
@@ -15,7 +16,7 @@ pub struct TransClos<C: ArkConfig> {
     pub args: Vec<PRef>,
 }
 
-impl<C: ArkConfig> TransClos<C> {
+impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let start = dag.input_node();
         Self::new(&dag, start)
@@ -80,23 +81,24 @@ impl<C: ArkConfig> TransClos<C> {
     fn trans_clos_op(&mut self, dag: &DQDag<C>, op: GOp<C>) -> GOp<C> {
         match op {
             Op::Ref(r, _) => self.trans_clos_ref(dag, r),
-            Op::Bin(op, box a, box b, typ) => {
-                let oa = self.trans_clos_op(dag, a);
-                let ob = self.trans_clos_op(dag, b);
+            Op::Bin(op, a, b, typ) => {
+                let oa = self.trans_clos_op(dag, a.get().clone());
+                let ob = self.trans_clos_op(dag, b.get().clone());
                 Op::bin(op, oa, ob, typ.clone())
             },
-            Op::Ram(box a, box b) => {
-                let oa = self.trans_clos_op(dag, a);
-                let ob = self.trans_clos_op(dag, b);
-                Op::Ram(Box::new(oa), Box::new(ob))
+            Op::Ram(a, b) => {
+                let oa = self.trans_clos_op(dag, a.get().clone());
+                let ob = self.trans_clos_op(dag, b.get().clone());
+                Op::Ram(mk::<C>(oa), mk::<C>(ob))
             },
             Op::Value(v) => Op::Value(v),
             Op::Vec(vs) =>
-                Op::Vec(vs.into_iter().map(|v| self.trans_clos_op(dag, v))
+                Op::Vec(vs.into_iter().map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone())))
                     .collect::<Vec<_>>()),
-            Op::Check(box op) => self.trans_clos_op(dag, op),
-            Op::Ifft(box v) => Op::Ifft(Box::new(self.trans_clos_op(dag, v))),
-            Op::Fft(box v) => Op::Fft(Box::new(self.trans_clos_op(dag, v))),
+            Op::Check(op) => self.trans_clos_op(dag, op.get().clone()),
+            Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            Op::Reduce(op, v) => Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             op => op
         }
     }
@@ -133,15 +135,17 @@ impl<C: ArkConfig> TransClos<C> {
         }
         // Otherwise add it
         match &dag[r.node()] {
-            Node::Op(op @ (Op::Challenge(_, _) | Op::Random(_, _)), (qualifier, distribution))
-            | Node::Transcr(op @ (Op::Challenge(_, _) | Op::Random(_, _)), (qualifier, distribution)) => {
-                let pref = PRef::from_ref(r.clone(), op.typ(), *qualifier, *distribution);
-                self.insert(pref, op.clone());
-                Op::Ref(r, op.typ())
+            Node::Op(op, (qualifier, distribution))
+            | Node::Transcr(op, (qualifier, distribution))
+              if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) => {
+                let inner = op.get();
+                let pref = PRef::from_ref(r.clone(), inner.typ(), *qualifier, *distribution);
+                self.insert(pref, inner.clone());
+                Op::Ref(r, inner.typ())
             },
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution)) => {
-                let obin = self.trans_clos_op(dag, op.clone());
+                let obin = self.trans_clos_op(dag, op.get().clone());
                 self.insert(PRef::from_ref(r, op.typ(), *qualifier, *distribution), obin.clone())
             },
             Node::Inp(_, args) | Node::Rel(_, args) =>
@@ -165,7 +169,7 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
     }
 }
 
-impl<C: ArkConfig> StaticAnalysis<C, (Qualifier, Distribution)> for TransClos<C> {
+impl<C: ArkConfig + HasOpFactory> StaticAnalysis<C, (Qualifier, Distribution)> for TransClos<C> {
     type Args = ();
     type Output = Self;
 
@@ -193,7 +197,7 @@ fn trans_clos_simple() {
             b <- r * s';
             verify(a == b);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
@@ -207,8 +211,8 @@ fn trans_clos_simple() {
     let tc = TransClos::from_input(&g);
 
     for (_, op) in tc.clos.iter() {
-        assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
-        assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
+        assert!(! matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
+        assert!(! matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 
     // Check that inlining works
@@ -249,7 +253,7 @@ fn trans_clos_many() {
             b <- r * s';
             verify(a == b);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
@@ -264,7 +268,7 @@ fn trans_clos_many() {
 
     debug!("{}", tc);
     for (_, op) in tc.clos.iter() {
-        assert!(! matches!(op, Op::Bin(_, box Op::Bin(_, _, _, _), _, _)));
-        assert!(! matches!(op, Op::Bin(_, _, box Op::Bin(_, _, _, _), _)));
+        assert!(! matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
+        assert!(! matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 }

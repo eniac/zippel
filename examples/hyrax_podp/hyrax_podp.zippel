@@ -1,5 +1,5 @@
 // Helper function for Pedersen vector commitment: h*r + reduce(+, g_vec * x_vec)
-fn Com_Vec<G: Group, F: Scalar<G>, N: 4>(public g_vec: [G; N], public h: G, public x_vec: [F; N], public r: F) -> G {
+fn Com_Vec<G: Group, F: Scalar<G>, S: Size, N: S>(public g_vec: [G; N], public h: G, public x_vec: [F; N], public r: F) -> G {
   let gx = g_vec * x_vec;
   let term_sum = reduce(+, gx); // Assumes element-wise G*F multiplication then reduce
   h*r + term_sum
@@ -15,7 +15,7 @@ fn Com_Scal<G: Group, F: Scalar<G>>(public g: G, public h: G, public y: F, publi
 // from Hyrax Figure 6.
 // Proves y = <x_vec, a_vec> where xi commits x_vec and tau commits y.
 
-proto proof_of_dot_product<G: Group, F: Scalar<G>, N: 4>(
+proto proof_of_dot_product<G: Group, F: Scalar<G>, S: Size, N: S>(
     // Private witness known only to the prover:
     private x_vec: [F; N],    // Vector committed in xi
     private r_xi: F,         // Randomness for xi commitment

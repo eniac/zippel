@@ -14,21 +14,21 @@ pub trait Traversal<A, B=A> {
 /// Acess the traversal for free type parameters (1, 2, 3)
 pub trait ToTraversal1<A>: Sized {
     type Output<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
-    fn map1<Z>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+    fn map1<Z: Clone>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
         self.traverse1::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
     }
 }
 pub trait ToTraversal2<A>: Sized {
     type Output<Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
-    fn map2<Z>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
+    fn traverse2<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+    fn map2<Z: Clone>(self, f: &mut dyn FnMut(A) -> Z) -> Self::Output<Z> {
         self.traverse2::<Z, ()>(&mut |x| Ok(f(x))).unwrap()
     }
 }
 pub trait ToTraversal3<A> {
     type Output<Z>;
-    fn traverse3<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
+    fn traverse3<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E>;
 }
 
 /// How to traverse vectors
@@ -50,7 +50,7 @@ impl<A, B> Traversal<A, B> for VecTraversal<A> {
 
 impl<A> ToTraversal1<A> for Vec<A> {
     type Output<Z> = Vec<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         VecTraversal::traverse(self, f)
     }
 }
@@ -105,7 +105,7 @@ impl<A, B> Traversal<A, B> for OptionTraversal<A> {
 
 impl<A> ToTraversal1<A> for Option<A> {
     type Output<Z> = Option<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         OptionTraversal::traverse(self, f)
     }
 }
@@ -125,7 +125,7 @@ impl<A, B> Traversal<A, B> for BoxTraversal<A> {
 
 impl<A> ToTraversal1<A> for Box<A> {
     type Output<Z> = Box<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(A) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         BoxTraversal::traverse(self, f)
     }
 }

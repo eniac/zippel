@@ -99,59 +99,59 @@ impl<T, N> FromIterator<Arg<T, N>> for Args<T, N> {
     }
 }
 
-impl<N> TidSubst for GArg<N> {
+impl<N: Clone> TidSubst for GArg<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.typ.tid_subst(from, to)
     }
 }
 
-impl<N> TidSubst for GArgs<N> {
+impl<N: Clone> TidSubst for GArgs<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.0.iter_mut().for_each(|arg| arg.tid_subst(from, to))
     }
 }
 
 /// How to traverse the first type parameter [T] of [Arg<T, N>]
-impl<T, N> ToTraversal1<T> for Arg<T, N> {
+impl<T: Clone, N: Clone> ToTraversal1<T> for Arg<T, N> {
     type Output<Z> = Arg<Z, N>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         let Arg { qualifier, distribution, id, typ } = self;
         Ok(Arg { qualifier, distribution, id, typ: typ.traverse1(f)? })
     }
 }
 
 /// How to traverse the second type parameter [N] of [Arg<T, N>]
-impl<T, N> ToTraversal2<N> for Arg<T, N> {
+impl<T: Clone, N: Clone> ToTraversal2<N> for Arg<T, N> {
     type Output<Z> = Arg<T, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse2<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         let Arg { qualifier, distribution, id, typ } = self;
         Ok(Arg { qualifier, distribution, id, typ: typ.traverse2(f)? })
     }
 }
 
 /// How to traverse the second type parameter [N] of [Args<T, N>]
-impl<T, N> ToTraversal1<T> for Args<T, N> {
+impl<T: Clone, N: Clone> ToTraversal1<T> for Args<T, N> {
     type Output<Z> = Args<Z, N>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Args(self.0.traverse1(&mut |x| x.traverse1(f))?))
     }
 }
 
 /// How to traverse the second type parameter [N] of [Args<T, N>]
-impl<T, N> ToTraversal2<N> for Args<T, N> {
+impl<T: Clone, N: Clone> ToTraversal2<N> for Args<T, N> {
     type Output<Z> = Args<T, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse2<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Args(self.0.traverse1(&mut |x| x.traverse2(f))?))
     }
 }
 
-impl<T, N> RangeTraversal<N> for Arg<T, N> {
+impl<T: Clone, N: Clone> RangeTraversal<N> for Arg<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Arg { qualifier: self.qualifier, distribution: self.distribution, id: self.id, typ: self.typ.range_traverse(f)? })
     }
 }
 
-impl<T, N> RangeTraversal<N> for Args<T, N> {
+impl<T: Clone, N: Clone> RangeTraversal<N> for Args<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Args(self.0.into_iter().map(|arg| arg.range_traverse(f)).collect::<Result<_, _>>()?))
     }

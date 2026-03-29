@@ -2,8 +2,9 @@ use itertools::Itertools;
 
 use share::{Ctx, Set};
 use crate::id::{Tid, TidSubst};
-use crate::typ::{Kind, TypeVars};
+use crate::typ::{Kind, UTypeVars};
 use crate::typ::range::Range;
+use share::traversal::ToTraversal1;
 
 /// Represents a possible valuation of sized type variables
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -30,16 +31,16 @@ impl<T> Substs<T> {
     }
 }
 
-impl<T> IntoIterator for Substs<T> {
+impl<T: Clone> IntoIterator for Substs<T> {
     type Item = (Tid, T);
-    type IntoIter = std::collections::btree_map::IntoIter<Tid, T>;
+    type IntoIter = share::CtxConsumingIter<(Tid, T)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<T> FromIterator<(Tid, T)> for Substs<T> {
+impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
     fn from_iter<I: IntoIterator<Item = (Tid, T)>>(iter: I) -> Self {
         Substs(Ctx::from_iter(iter))
     }
@@ -50,13 +51,16 @@ impl SizeSubsts {
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
     // and take all possible combinations of sizes
     // Warning: exponential, the idea is the are few sizes (or even 1)
-    pub fn from_typevars(tv: &TypeVars) -> Set<Self> {
+    pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Set<Self> {
         let typevar_ranges: Vec<(Tid, Range<usize>)> =
             tv.clone()
                 .into_iter()
                 .filter_map(|tv|
                     match tv.kind {
-                        Kind::Range(r) => Some((tv.id.clone(), r.clone())),
+                        Kind::Range(r) => {
+                            let cr = r.traverse1(&mut |s| s.eval(sizes)).ok()?;
+                            Some((tv.id.clone(), cr))
+                        },
                         _ => None
                     }).collect();
 
@@ -146,7 +150,7 @@ impl AliasSubsts {
 
 }
 
-impl<T> From<Vec<(Tid, T)>> for Substs<T> {
+impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
     fn from(v: Vec<(Tid, T)>) -> Self {
         Substs(Ctx::from(v))
     }
@@ -156,7 +160,7 @@ impl<T> From<Vec<(Tid, T)>> for Substs<T> {
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars),
+    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),

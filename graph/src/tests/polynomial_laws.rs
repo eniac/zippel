@@ -1,5 +1,5 @@
 /// Tests for polynomial ring laws and algebraic properties end-to-end through graph operations
-use crate::Op;
+use crate::{Op, mk};
 use backend::{ArkBn254, Value, PolyVariant, ATyp, VirtualPolynomial};
 use ark_poly::{
     univariate::DensePolynomial,
@@ -29,21 +29,21 @@ fn test_addition_commutative() {
 
     let op1 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
 
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p2.clone())),
-        Box::new(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Addition should be commutative");
 }
@@ -57,34 +57,34 @@ fn test_addition_associative() {
     // (p1 + p2) + p3
     let inner1 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(inner1),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(inner1),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
 
     // p1 + (p2 + p3)
     let inner2 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p2.clone())),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(inner2),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(inner2),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Addition should be associative");
 }
@@ -96,13 +96,13 @@ fn test_addition_identity() {
 
     let op = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p.clone())),
-        Box::new(Op::Value(zero)),
+        mk::<ArkBn254>(Op::Value(p.clone())),
+        mk::<ArkBn254>(Op::Value(zero)),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result = eval_op(&op, &env).unwrap();
+    let result = eval_op(&mk::<ArkBn254>(op), &env).unwrap();
 
     assert_eq!(result, p, "Adding zero should be identity");
 }
@@ -114,21 +114,21 @@ fn test_multiplication_commutative() {
 
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
 
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p2.clone())),
-        Box::new(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Multiplication should be commutative");
 }
@@ -142,34 +142,34 @@ fn test_multiplication_associative() {
     // (p1 * p2) * p3
     let inner1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(inner1),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(inner1),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
 
     // p1 * (p2 * p3)
     let inner2 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p2.clone())),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(inner2),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(inner2),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Multiplication should be associative");
 }
@@ -181,13 +181,13 @@ fn test_multiplication_identity() {
 
     let op = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p.clone())),
-        Box::new(Op::Value(one)),
+        mk::<ArkBn254>(Op::Value(p.clone())),
+        mk::<ArkBn254>(Op::Value(one)),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result = eval_op(&op, &env).unwrap();
+    let result = eval_op(&mk::<ArkBn254>(op), &env).unwrap();
 
     assert_eq!(result, p, "Multiplying by one should be identity");
 }
@@ -201,40 +201,40 @@ fn test_distributivity() {
     // p1 * (p2 + p3)
     let inner_add = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p2.clone())),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(inner_add),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(inner_add),
         ATyp::Uni(10)
     );
 
     // (p1 * p2) + (p1 * p3)
     let mul1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
     let mul2 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p3.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p3.clone())),
         ATyp::Uni(10)
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(mul1),
-        Box::new(mul2),
+        mk::<ArkBn254>(mul1),
+        mk::<ArkBn254>(mul2),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Multiplication should distribute over addition");
 }
@@ -248,34 +248,34 @@ fn test_scalar_multiplication_compatibility() {
     // (s1 * s2) * p
     let scalar_mul = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(s1.clone())),
-        Box::new(Op::Value(s2.clone())),
+        mk::<ArkBn254>(Op::Value(s1.clone())),
+        mk::<ArkBn254>(Op::Value(s2.clone())),
         ATyp::Uni(10)
     );
     let op1 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(scalar_mul),
-        Box::new(Op::Value(p.clone())),
+        mk::<ArkBn254>(scalar_mul),
+        mk::<ArkBn254>(Op::Value(p.clone())),
         ATyp::Uni(10)
     );
 
     // s1 * (s2 * p)
     let inner_mul = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(s2.clone())),
-        Box::new(Op::Value(p.clone())),
+        mk::<ArkBn254>(Op::Value(s2.clone())),
+        mk::<ArkBn254>(Op::Value(p.clone())),
         ATyp::Uni(10)
     );
     let op2 = Op::Bin(
         lang::ast::BinOp::Mul,
-        Box::new(Op::Value(s1.clone())),
-        Box::new(inner_mul),
+        mk::<ArkBn254>(Op::Value(s1.clone())),
+        mk::<ArkBn254>(inner_mul),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&op1, &env).unwrap();
-    let result2 = eval_op(&op2, &env).unwrap();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
 
     assert_eq!(result1, result2, "Scalar multiplication should be compatible");
 }
@@ -288,8 +288,8 @@ fn test_subtraction_as_addition_of_negation() {
     // p1 - p2
     let sub_op = Op::Bin(
         lang::ast::BinOp::Sub,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
 
@@ -297,20 +297,20 @@ fn test_subtraction_as_addition_of_negation() {
     // In field arithmetic, -p2 is just negation
     let neg_p2 = Op::Bin(
         lang::ast::BinOp::Sub,
-        Box::new(Op::Value(make_scalar(0))),
-        Box::new(Op::Value(p2.clone())),
+        mk::<ArkBn254>(Op::Value(make_scalar(0))),
+        mk::<ArkBn254>(Op::Value(p2.clone())),
         ATyp::Uni(10)
     );
     let add_op = Op::Bin(
         lang::ast::BinOp::Add,
-        Box::new(Op::Value(p1.clone())),
-        Box::new(neg_p2),
+        mk::<ArkBn254>(Op::Value(p1.clone())),
+        mk::<ArkBn254>(neg_p2),
         ATyp::Uni(10)
     );
 
     let env = HashMap::new();
-    let result_sub = eval_op(&sub_op, &env).unwrap();
-    let result_add = eval_op(&add_op, &env).unwrap();
+    let result_sub = eval_op(&mk::<ArkBn254>(sub_op), &env).unwrap();
+    let result_add = eval_op(&mk::<ArkBn254>(add_op), &env).unwrap();
 
     assert_eq!(result_sub, result_add, "Subtraction should equal addition of negation");
 }

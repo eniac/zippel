@@ -14,6 +14,7 @@ use crate::pref::PRef;
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig, ArkScalarOps};
+use backend::op::HasOpFactory;
 use std::fmt;
 use ark_ff::{One, Zero};
 
@@ -30,7 +31,7 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     pub args: Set<PRef>,
 }
 
-impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
+impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     pub fn new() -> Self {
         Self {
             basis: GroebnerBasis::empty(0),
@@ -40,26 +41,8 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    pub fn add_input(&mut self, g: &DQDag<C>) {
-        let tc = TransClos::from_input(g);
-        self.add_tc(tc);
-    }
-
-    pub fn add_relation(&mut self, g: &DQDag<C>) {
-        let tc = TransClos::from_relation(g);
-        self.add_tc(tc);
-    }
-
     pub fn vars(&self) -> Set<PRef> {
         self.np.keys().union(self.pl.keys())
-    }
-
-    fn add_tc(&mut self, tc: TransClos<C>) {
-        self.args.append(tc.args.clone().into_iter());
-
-        for (i, op) in tc.clos.into_iter() {
-            self.add_op(i, op);
-        }
     }
 
     pub fn find_ref(&self, r: &Ref) -> PRef {
@@ -164,47 +147,92 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
             Op::Value(v) => self.to_poly_value(v),
             Op::Vec(v) =>
                 v.into_iter().flat_map(|v| self.to_poly(v)).collect(),
-            Op::Ram(box Op::Ref(n, _), box Op::Value(v)) => {
-                let pf = self.find_ref(&n);
-                match v {
-                    Value::Index(i) => 
-                        vec![SparsePolynomial::var(&pf.with_index(*i))],
-                    _ => vec![SparsePolynomial::var(&pf)],
+            Op::Ram(a, b) => {
+                match (a.get(), b.get()) {
+                    (Op::Ref(n, _), Op::Value(v)) => {
+                        let pf = self.find_ref(&n);
+                        match v {
+                            Value::Index(i) =>
+                                vec![SparsePolynomial::var(&pf.with_index(*i))],
+                            _ => vec![SparsePolynomial::var(&pf)],
+                        }
+                    },
+                    // Dynamic indexing, overapproximate
+                    (a, _) => self.to_poly(a),
                 }
             },
-            // Dynamic indexing, overapproximate
-            Op::Ram(box a, _) => self.to_poly(a),
-            Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
+            Op::Bin(BinOp::Add | BinOp::And, a, b, _) =>
                 self.to_poly(a).into_iter()
                 .zip(self.to_poly(b).into_iter())
                 .map(|(a, b)| a + b)
                 .collect(),
-            Op::Bin(BinOp::Sub, box a, box b, _) =>
+            Op::Bin(BinOp::Sub, a, b, _) =>
                 self.to_poly(a).into_iter()
                 .zip(self.to_poly(b).into_iter())
                 .map(|(a, b)| a - b)
                 .collect(),
-            Op::Bin(BinOp::Mul, box a, box b, _) =>
+            Op::Bin(BinOp::Mul, a, b, _) =>
                 self.to_poly(a).into_iter()
                 .zip(self.to_poly(b).into_iter())
                 .map(|(a, b)| a * b)
                 .collect(),
-            Op::Bin(BinOp::Dot, box a, box b, _) => {
+            Op::Bin(BinOp::Dot, a, b, _) => {
                 vec![self.to_poly(a).into_iter()
                     .zip(self.to_poly(b).into_iter())
                     .map(|(a, b)| a * b)
                     .sum()
                 ]
             },
+            Op::Reduce(BinOp::Add, v) => {
+                vec![self.to_poly(v).into_iter().sum()]
+            },
+            Op::Reduce(BinOp::Mul, v) => {
+                let polys = self.to_poly(v);
+                let mut iter = polys.into_iter();
+                if let Some(first) = iter.next() {
+                    vec![iter.fold(first, |acc, p| acc * p)]
+                } else {
+                    vec![]
+                }
+            },
             _ => vec![]
+        }
+    }
+}
+
+impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
+    pub fn add_input(&mut self, g: &DQDag<C>) {
+        let tc = TransClos::from_input(g);
+        self.add_tc(tc);
+    }
+
+    pub fn add_relation(&mut self, g: &DQDag<C>) {
+        let tc = TransClos::from_relation(g);
+        self.add_tc(tc);
+    }
+
+    fn add_tc(&mut self, tc: TransClos<C>) {
+        self.args.append(tc.args.clone().into_iter());
+
+        for (i, op) in tc.clos.into_iter() {
+            self.add_op(i, op);
         }
     }
 
     /// Convert an operation to a polynomial and add it to the context
     fn add_op(&mut self, pr: PRef, op: GOp<C>) {
+        let op_for_div = op.clone(); // needed for Div arm which references the whole op
         match op {
+            Op::Ref(r, typ) => {
+                let ref_poly = self.to_poly(&Op::Ref(r, typ));
+                for (i, p) in ref_poly.into_iter().enumerate() {
+                    let pf = pr.clone().with_index(i);
+                    self.pl.insert(&pf, &p);
+                    self.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
             // Polynomial operations
-            Op::Bin(BinOp::Add | BinOp::And, box a, box b, _) =>
+            Op::Bin(BinOp::Add | BinOp::And, a, b, _) =>
                 self.to_poly(&a).into_iter()
                     .zip(self.to_poly(&b).into_iter())
                     .enumerate()
@@ -213,7 +241,7 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                         self.pl.insert(&pf, &(&a + &b));
                         self.basis.push(a + b - SparsePolynomial::var(&pf));
                     }),
-            Op::Bin(BinOp::Sub, box a, box b, _) =>
+            Op::Bin(BinOp::Sub, a, b, _) =>
                 self.to_poly(&a).into_iter()
                     .zip(self.to_poly(&b).into_iter())
                     .enumerate()
@@ -222,7 +250,7 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                         self.pl.insert(&pf, &(&a - &b));
                         self.basis.push(a - b - SparsePolynomial::var(&pf));
                     }),
-            Op::Bin(BinOp::Mul, box a, box b, _) =>
+            Op::Bin(BinOp::Mul, a, b, _) =>
                 self.to_poly(&a).into_iter()
                     .zip(self.to_poly(&b).into_iter())
                     .enumerate()
@@ -231,7 +259,7 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                         self.pl.insert(&pf, &(&a * &b));
                         self.basis.push(a * b - SparsePolynomial::var(&pf));
                     }),
-            Op::Bin(BinOp::Dot, box a, box b, _) => {
+            Op::Bin(BinOp::Dot, a, b, _) => {
                 let sum = self.to_poly(&a).into_iter()
                     .zip(self.to_poly(&b).into_iter())
                     .map(|(a, b)| a * b)
@@ -239,16 +267,16 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                 self.pl.insert(&pr, &sum);
                 self.basis.push(sum - SparsePolynomial::var(&pr))
             },
-            Op::Bin(BinOp::Div, box ref a, box ref b, _) =>
-                self.to_poly(&a).into_iter()
-                    .zip(self.to_poly(&b).into_iter())
+            Op::Bin(BinOp::Div, ref a, ref b, _) =>
+                self.to_poly(a).into_iter()
+                    .zip(self.to_poly(b).into_iter())
                     .enumerate()
                     .for_each(|(i, (a, b))| {
                         let pf = pr.clone().with_index(i);
-                        self.np.insert(&pf, &Op::ram(op.clone(), Op::index(i)));
+                        self.np.insert(&pf, &Op::ram(op_for_div.clone(), Op::index(i)));
                         self.basis.push(a - b * SparsePolynomial::var(&pf));
                     }),
-            Op::Bin(BinOp::Equ, box a, box b, _) =>
+            Op::Bin(BinOp::Equ, a, b, _) =>
                 self.to_poly(&a).into_iter()
                     .zip(self.to_poly(&b).into_iter())
                     .for_each(|(a, b)| {
@@ -257,15 +285,15 @@ impl<C: ArkConfig, T: Monomial> GroebnerBuilder<C, T> {
                         self.basis.push(a - b);
                         self.basis.push(SparsePolynomial::var(&pr));
                     }),
-            Op::Check(box a) => self.add_op(pr, a),
-            Op::Challenge(_, _) => { self.np.insert(&pr, &op); },
-            Op::Random(_, _) => { self.np.insert(&pr, &op); },
-            Op::Ifft(_) => { self.np.insert(&pr, &op); },
-            Op::Fft(_) => { self.np.insert(&pr, &op); },
+            Op::Check(a) => self.add_op(pr, a.get().clone()),
+            Op::Challenge(t, b) => { let op = Op::Challenge(t, b); self.np.insert(&pr, &op); },
+            Op::Random(t, b) => { let op = Op::Random(t, b); self.np.insert(&pr, &op); },
+            Op::Ifft(a) => { let op = Op::Ifft(a); self.np.insert(&pr, &op); },
+            Op::Fft(a) => { let op = Op::Fft(a); self.np.insert(&pr, &op); },
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {
                     let pf = pr.with_index(i);
-                    self.add_op(pf, v);
+                    self.add_op(pf, v.get().clone());
                 }
             },
             op => { self.np.insert(&pr, &op); },
@@ -326,7 +354,7 @@ impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerBuilder<C, T> {
 mod tests {
     use super::*;
     use backend::ArkBls12_381;
-    use ark_ff::Zero;
+    use backend::op::mk;
 
     #[test]
     fn test_groebner_builder_new() {
@@ -434,8 +462,8 @@ mod tests {
         use ark_bls12_381::Fr;
         
         let ops = vec![
-            Op::Value(Value::Scalar(Fr::from(1u64))),
-            Op::Value(Value::Scalar(Fr::from(2u64))),
+            mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(1u64)))),
+            mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(2u64)))),
         ];
         let result = builder.to_poly(&Op::Vec(ops));
         assert_eq!(result.len(), 2);

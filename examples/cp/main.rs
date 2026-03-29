@@ -6,9 +6,9 @@ use share::Ctx;
 
 fn main() {
     println!("=== Chaum-Pedersen (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/cp.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/cp/cp.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile();
+    handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

@@ -40,9 +40,9 @@ impl<F: Field, T: Monomial> Neg for SparsePolynomial<F, T> {
 
     fn neg(self) -> Self {
         let mut result = self.clone();
-        for (_, coeff) in result.terms.iter_mut() {
+        result.terms.modify(|_, coeff| {
             *coeff = (*coeff).neg();
-        }
+        });
         result
     }
 }

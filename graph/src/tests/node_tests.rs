@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod node_tests {
-    use crate::{Node, Op, Ref};
+    use crate::{Node, Op, Ref, mk};
     use backend::{ArkBls12_381 as C, ATyp};
     use crate::tests::test_helpers::*;
     use lang::id::Vid;
@@ -12,7 +12,7 @@ mod node_tests {
     #[test]
     fn test_node_is_op_true() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         assert!(node.is_op());
     }
     
@@ -31,7 +31,7 @@ mod node_tests {
     #[test]
     fn test_node_is_input_false() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         assert!(!node.is_input());
     }
     
@@ -44,7 +44,7 @@ mod node_tests {
     #[test]
     fn test_node_is_relation_false() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         assert!(!node.is_relation());
     }
     
@@ -53,21 +53,21 @@ mod node_tests {
         let op = Op::<C, Ref>::check(Op::value(&scalar::<C>(1)));
         let _node = Node::<C, Nothing>::Rel(Vid::from("check"), vec![]);
         // Note: is_verifier_check requires Op node with Check op
-        let check_node = Node::Op(op, Nothing);
+        let check_node = Node::Op(mk::<C>(op), Nothing);
         assert!(check_node.is_verifier_check());
     }
     
     #[test]
     fn test_node_is_transcript_false_default() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         assert!(!node.is_transcript());
     }
     
     #[test]
     fn test_node_set_and_query_transcript() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let mut node = Node::Op(op, Nothing);
+        let mut node = Node::Op(mk::<C>(op), Nothing);
         
         assert!(!node.is_transcript());
         node.set_transcript();
@@ -77,10 +77,10 @@ mod node_tests {
     #[test]
     fn test_node_into_op_success() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op.clone(), Nothing);
+        let node = Node::Op(mk::<C>(op.clone()), Nothing);
         
         let extracted = node.into_op();
-        match extracted {
+        match &*extracted {
             Op::Value(_) => (), // Success
             _ => panic!("Should extract Op successfully"),
         }
@@ -104,7 +104,7 @@ mod node_tests {
             ATyp::scalar(),
         );
         
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         let refs = node.references();
         
         assert_eq!(refs.len(), 2);
@@ -123,7 +123,7 @@ mod node_tests {
     fn test_node_map_node_indices() {
         let ref1 = Ref::Node(NodeIndex::new(1));
         let op = Op::<C, Ref>::reference(ref1, ATyp::scalar());
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         
         let mapped = node.map_node_indices(&|idx| NodeIndex::new(idx.index() + 10));
         
@@ -145,7 +145,7 @@ mod node_tests {
     #[test]
     fn test_node_name_without_vid() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         
         let name = node.name();
         assert_eq!(name, None);
@@ -154,7 +154,7 @@ mod node_tests {
     #[test]
     fn test_node_add_annotation() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, Nothing);
+        let node = Node::Op(mk::<C>(op), Nothing);
         
         let annotated = node.add_annotation(String::from("new_annotation"));
         match annotated {
@@ -166,7 +166,7 @@ mod node_tests {
     #[test]
     fn test_node_drop_annotation() {
         let op = Op::<C, Ref>::value(&scalar::<C>(42));
-        let node = Node::Op(op, String::from("my_annotation"));
+        let node = Node::Op(mk::<C>(op), String::from("my_annotation"));
         
         let dropped = node.drop_annotation();
         match dropped {

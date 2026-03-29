@@ -2,14 +2,16 @@ use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkConfig, ArkSecp256k1, Value, ATyp};
 use ark_ff::{One, Zero};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 
 fn main() {
     println!("=== Zerocheck (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zerocheck.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    handler.compile();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &2);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
@@ -37,7 +39,7 @@ fn main() {
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
-    // Keep this in sync with `N:2` in `examples/zerocheck.zippel`.
+    // Keep this in sync with `N:2` in `examples/zerocheck/zerocheck.zippel`.
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
 

@@ -1,4 +1,4 @@
-use crate::typ::{Size, Kind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal};
+use crate::typ::{Size, CKind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
 use crate::ast::{GArg, GArgs};
@@ -20,7 +20,7 @@ pub enum SigError {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Sig<N> {
     pub name: Vid,
-    pub typevars: TypeVars,
+    pub typevars: TypeVars<N>,
     pub args: GArgs<N>,
     pub ret: GTyp<N>
 }
@@ -32,7 +32,7 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, Kind>) -> Result<(CSig, AliasSubsts), SigError> {
+    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, CKind>) -> Result<(CSig, AliasSubsts), SigError> {
         // Check arity first
         if self.args.len() != typs.len() {
             return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
@@ -66,15 +66,15 @@ impl CSig {
 }
 
 /// Traversable1 instance for Sig (N)
-impl<N> ToTraversal1<N> for Sig<N> {
+impl<N: Clone> ToTraversal1<N> for Sig<N> {
     type Output<Z> = Sig<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
         let Sig { name, typevars, args, ret } = self;
-        Ok(Sig { name, typevars, args: args.traverse2(f)?, ret: ret.traverse2(f)? })
+        Ok(Sig { name, typevars: typevars.traverse1(f)?, args: args.traverse2(f)?, ret: ret.traverse2(f)? })
     }
 }
 
-impl<N> TidSubst for Sig<N> {
+impl<N: Clone> TidSubst for Sig<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.typevars.tid_subst(from, to);
         self.args.tid_subst(from, to);
@@ -82,9 +82,9 @@ impl<N> TidSubst for Sig<N> {
     }
 }
 
-impl<N> RangeTraversal<N> for Sig<N> {
+impl<N: Clone> RangeTraversal<N> for Sig<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(Sig { name: self.name, typevars: self.typevars, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
+        Ok(Sig { name: self.name, typevars: self.typevars.range_traverse(f)?, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
     }
 }
 

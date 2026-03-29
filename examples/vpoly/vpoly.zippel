@@ -1,4 +1,4 @@
-proto vpoly_product_check<F: Field, N:2>(
+proto vpoly_product_check<F: Field, S: Size, N: S>(
     public a: Mle<F, N>,
     public b: Mle<F, N>
 ) where a == a {

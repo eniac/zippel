@@ -1,14 +1,16 @@
 use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkSecp256k1, Value, ATyp};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 
 fn main() {
     println!("=== IPA Optimized (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/ipa_optimized.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/ipa_optimized/ipa_optimized.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
-    handler.compile();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &5usize);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

@@ -1,14 +1,16 @@
 use zippel::*;
 use std::{path::PathBuf, time::Instant};
 use backend::{ArkField17, Value, ATyp};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use share::Ctx;
 
 fn main() {
     println!("=== IPA Field (ArkField17) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/ipa-field.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/ipa_field/ipa_field.zippel"));
     let mut handler: zippel::ZippelHandler<ArkField17> = ZippelHandler::new(args);
-    handler.compile();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &2usize);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();

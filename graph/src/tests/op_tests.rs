@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod op_construction {
     use crate::tests::test_helpers::*;
-    use crate::Op;
+    use crate::{Op, GOp};
     use backend::{ATyp, Value};
     use lang::ast::BinOp;
 
@@ -19,7 +19,7 @@ mod op_construction {
     #[test]
     fn test_op_value_scalar() {
         let val = scalar::<C>(42);
-        let op: Op<C, ()> = Op::Value(val.clone());
+        let op: GOp<C> = Op::Value(val.clone());
         
         match op {
             Op::Value(v) => assert!(values_equal(&v, &val)),
@@ -30,7 +30,7 @@ mod op_construction {
     #[test]
     fn test_op_value_zero() {
         let zero = zero_scalar::<C>();
-        let op: Op<C, ()> = Op::Value(zero.clone());
+        let op: GOp<C> = Op::Value(zero.clone());
         
         match &op {
             Op::Value(v) => assert!(values_equal(v, &zero)),
@@ -41,7 +41,7 @@ mod op_construction {
     #[test]
     fn test_op_value_one() {
         let one = one_scalar::<C>();
-        let op: Op<C, ()> = Op::Value(one.clone());
+        let op: GOp<C> = Op::Value(one.clone());
         
         match &op {
             Op::Value(v) => assert!(values_equal(v, &one)),
@@ -59,7 +59,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::add(
+        let op: GOp<C> = Op::add(
             Op::Value(zero),
             Op::Value(v.clone()),
             ATyp::scalar(),
@@ -77,7 +77,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::add(
+        let op: GOp<C> = Op::add(
             Op::Value(v.clone()),
             Op::Value(zero),
             ATyp::scalar(),
@@ -96,7 +96,7 @@ mod op_construction {
         let v2 = scalar::<C>(4);
         let expected = scalar::<C>(7);
         
-        let op: Op<C, ()> = Op::add(
+        let op: GOp<C> = Op::add(
             Op::Value(v1),
             Op::Value(v2),
             ATyp::scalar(),
@@ -118,7 +118,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::sub(
+        let op: GOp<C> = Op::sub(
             Op::Value(v.clone()),
             Op::Value(zero),
             ATyp::scalar(),
@@ -137,7 +137,7 @@ mod op_construction {
         let v2 = scalar::<C>(3);
         let expected = scalar::<C>(7);
         
-        let op: Op<C, ()> = Op::sub(
+        let op: GOp<C> = Op::sub(
             Op::Value(v1),
             Op::Value(v2),
             ATyp::scalar(),
@@ -159,7 +159,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::mul(
+        let op: GOp<C> = Op::mul(
             Op::Value(zero.clone()),
             Op::Value(v),
             ATyp::scalar(),
@@ -177,7 +177,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::mul(
+        let op: GOp<C> = Op::mul(
             Op::Value(v),
             Op::Value(zero.clone()),
             ATyp::scalar(),
@@ -195,7 +195,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
         
-        let op: Op<C, ()> = Op::mul(
+        let op: GOp<C> = Op::mul(
             Op::Value(one),
             Op::Value(v.clone()),
             ATyp::scalar(),
@@ -213,7 +213,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
         
-        let op: Op<C, ()> = Op::mul(
+        let op: GOp<C> = Op::mul(
             Op::Value(v.clone()),
             Op::Value(one),
             ATyp::scalar(),
@@ -232,7 +232,7 @@ mod op_construction {
         let v2 = scalar::<C>(4);
         let expected = scalar::<C>(12);
         
-        let op: Op<C, ()> = Op::mul(
+        let op: GOp<C> = Op::mul(
             Op::Value(v1),
             Op::Value(v2),
             ATyp::scalar(),
@@ -254,7 +254,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let op: Op<C, ()> = Op::div(
+        let op: GOp<C> = Op::div(
             Op::Value(zero.clone()),
             Op::Value(v),
             ATyp::scalar(),
@@ -272,7 +272,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
         
-        let op: Op<C, ()> = Op::div(
+        let op: GOp<C> = Op::div(
             Op::Value(v.clone()),
             Op::Value(one),
             ATyp::scalar(),
@@ -291,7 +291,7 @@ mod op_construction {
         let v2 = scalar::<C>(3);
         let expected = scalar::<C>(4);
         
-        let op: Op<C, ()> = Op::div(
+        let op: GOp<C> = Op::div(
             Op::Value(v1),
             Op::Value(v2),
             ATyp::scalar(),
@@ -309,7 +309,7 @@ mod op_construction {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
         
-        let _op: Op<C, ()> = Op::div(
+        let _op: GOp<C> = Op::div(
             Op::Value(v),
             Op::Value(zero),
             ATyp::scalar(),
@@ -326,7 +326,7 @@ mod op_construction {
         let v2 = scalar::<C>(2);
         let v3 = scalar::<C>(3);
         
-        let op: Op<C, ()> = Op::Vec(vec![
+        let op: GOp<C> = Op::vec(vec![
             Op::Value(v1),
             Op::Value(v2),
             Op::Value(v3),
@@ -340,25 +340,25 @@ mod op_construction {
 
     #[test]
     fn test_op_vec_add() {
-        let vec1 = Op::Vec(vec![
+        let vec1 = Op::vec(vec![
             Op::Value(scalar::<C>(1)),
             Op::Value(scalar::<C>(2)),
         ]);
         
-        let vec2 = Op::Vec(vec![
+        let vec2 = Op::vec(vec![
             Op::Value(scalar::<C>(3)),
             Op::Value(scalar::<C>(4)),
         ]);
         
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let op: Op<C, ()> = Op::add(vec1, vec2, vec_typ);
+        let op: GOp<C> = Op::add(vec1, vec2, vec_typ);
         
         match op {
             Op::Vec(elements) => {
                 assert_eq!(elements.len(), 2);
                 // Each element should be an addition
                 for elem in &elements {
-                    match elem {
+                    match &**elem {
                         Op::Bin(BinOp::Add, _, _, _) | Op::Value(_) => {}
                         _ => panic!("Expected addition or value in vector elements"),
                     }
@@ -371,13 +371,13 @@ mod op_construction {
     #[test]
     fn test_op_vec_scalar_mul() {
         let scalar_val = Op::Value(scalar::<C>(2));
-        let vec = Op::Vec(vec![
+        let vec = Op::vec(vec![
             Op::Value(scalar::<C>(3)),
             Op::Value(scalar::<C>(4)),
         ]);
         
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let op: Op<C, ()> = Op::mul(scalar_val, vec, vec_typ);
+        let op: GOp<C> = Op::mul(scalar_val, vec, vec_typ);
         
         match op {
             Op::Vec(elements) => {
@@ -393,18 +393,18 @@ mod op_construction {
 
     #[test]
     fn test_op_concat_vectors() {
-        let vec1 = Op::Vec(vec![
+        let vec1 = Op::vec(vec![
             Op::Value(scalar::<C>(1)),
             Op::Value(scalar::<C>(2)),
         ]);
         
-        let vec2 = Op::Vec(vec![
+        let vec2 = Op::vec(vec![
             Op::Value(scalar::<C>(3)),
             Op::Value(scalar::<C>(4)),
         ]);
         
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 4);
-        let op: Op<C, ()> = Op::concat(vec1, vec2, vec_typ);
+        let op: GOp<C> = Op::concat(vec1, vec2, vec_typ);
         
         match op {
             Op::Vec(elements) => {
@@ -420,7 +420,7 @@ mod op_construction {
 
     #[test]
     fn test_op_ram_construction() {
-        let vec = Op::Vec(vec![
+        let vec = Op::vec(vec![
             Op::Value(scalar::<C>(10)),
             Op::Value(scalar::<C>(20)),
             Op::Value(scalar::<C>(30)),
@@ -428,7 +428,7 @@ mod op_construction {
         ]);
         let idx = Op::Value(Value::Index(2));
         
-        let op: Op<C, ()> = Op::ram(vec, idx);
+        let op: GOp<C> = Op::ram(vec, idx);
         
         // RAM operation should be created (may be simplified)
         // Just verify it doesn't panic
@@ -518,7 +518,7 @@ mod op_integration {
         let mul_ref = builder.add_op(mul_result);
         
         // Create a vector with both results
-        let vec_result = Op::Vec(vec![
+        let vec_result = Op::vec(vec![
             Op::Ref(add_ref, ATyp::scalar()),
             Op::Ref(mul_ref, ATyp::scalar()),
         ]);
@@ -606,7 +606,7 @@ mod op_integration {
         let c = builder.add_input("c", ATyp::scalar());
         
         // Create vector [a, b]
-        let vec1 = Op::Vec(vec![
+        let vec1 = Op::vec(vec![
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
         ]);

@@ -21,7 +21,7 @@ fn sumcheck_round<F: Field>(
 }
 
 // Recursive case: V ≥ 2
-fn sumcheck_round<F: Field, V: 2..10>(
+fn sumcheck_round<F: Field, S: Size, V: 2..S>(
     public claimed_sum: F,
     public p: Poly<F, V, DEGREE>,
     public current_poly: Mle<F, V>,
@@ -38,7 +38,7 @@ fn sumcheck_round<F: Field, V: 2..10>(
     sumcheck_round(next_claim, next_poly, round_claims[2..2*V])
 }
 
-fn inner_poly<F: Field, NUM_VARS: 1..10>(a: Mle<F, NUM_VARS>, b: Mle<F, NUM_VARS>, c: Poly<F, NUM_VARS, 2>) \
+fn inner_poly<F: Field, S: Size, NUM_VARS: 1..S>(a: Mle<F, NUM_VARS>, b: Mle<F, NUM_VARS>, c: Poly<F, NUM_VARS, 2>) \
    -> Poly<F, NUM_VARS, 6> {
    5*a*b + 10*c^3 - a*c
 }
@@ -54,7 +54,7 @@ fn sum_check_spec(a: Mle<F, NUM_VARS_CONST>, b: Mle<F, NUM_VARS_CONST>, c: Mle<F
 
 // Entry point: claimed sum, multilinear polynomial, and prover messages.
 // Prove: \sum_{i=0}^n a_i * b_i = s
-proto sumcheck<F: Field, NUM_VARS_CONST, DEGREE>(
+proto sumcheck<F: Field, S: Size, NUM_VARS_CONST, DEGREE>(
     public claimed_sum: F,
     public a: Mle<F, NUM_VARS_CONST>,
     public b: Mle<F, NUM_VARS_CONST>,

@@ -4,7 +4,7 @@ use lang::ast::BinOp;
 use lang::typ::CRange;
 
 use backend::{ABase, ATyp, ArkConfig};
-use crate::Op;
+use crate::{Op, GOp, Ref};
 use crate::scheduler::{Cost, CostModel};
 use ark_ff::{Field, PrimeField};
 use std::marker::PhantomData;
@@ -32,7 +32,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (ABase::G1, ABase::G1) => Self::G_ADD,
             (ABase::G2, ABase::G2) => Self::G_ADD,
             (ABase::GT, ABase::GT) => Self::G_ADD,
-            (ABase::Fin(_), ABase::Scalar) => {
+            (ABase::Fin(_), ABase::Scalar) | (ABase::Scalar, ABase::Fin(_)) => {
                 2.0
             }
             (_, _) => unreachable!(),
@@ -132,11 +132,11 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     }
 }
 
-impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
-    fn cost(&self, op: &Op<C, R>, nthreads: usize) -> Cost {
+impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
+    fn cost(&self, op: &GOp<C>, nthreads: usize) -> Cost {
         let mut cost = 0.0;
         match op {
-            Op::Bin(op, box l, box r, _) => {
+            Op::Bin(op, l, r, _) => {
                 cost += self.cost(l, nthreads).0;
                 cost += self.cost(r, nthreads).0;
                 match (op, l.typ(), r.typ()) {
@@ -150,7 +150,7 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
                     _ => unreachable!(),
                 }
             },
-            Op::Pair(box l, box r, _) => {
+            Op::Pair(l, r, _) => {
                 cost += self.cost(l, nthreads).0;
                 cost += self.cost(r, nthreads).0;
                 cost += Self::cost_pair(&l.typ(), &r.typ(), nthreads);
@@ -158,23 +158,27 @@ impl<C: ArkConfig, R> CostModel<C, R> for AsymptoticCost<C> {
             Op::Value(_)
             | Op::Ref(_, _)
             | Op::Random(_, _) => cost += 1.0,
-            Op::Ram(box l, box r) =>
+            Op::Ram(l, r) =>
                 cost += self.cost(l, nthreads).0 + self.cost(r, nthreads).0,
             Op::Vec(vs) =>
                 cost += vs.iter().fold(0.0, |acc, v| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
             Op::Record(fields) =>
                 cost += fields.iter().fold(0.0, |acc, (_, v)| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
             Op::Challenge(t, _) => cost += Self::SCALAR_ADD * t.size() as f64,
-            Op::Ifft(box op) | Op::Fft(box op) => {
+            Op::Ifft(op) | Op::Fft(op) => {
                 let n = op.typ().size() as f64;
                 cost += self.cost(op, nthreads).0 +
                     (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
             },
-            Op::Check(box op) => cost += self.cost(op, nthreads).0,
-            Op::Poly(box _op) => cost += 1.0,
-            Op::Mle(box _op) => cost += 1.0,
-            Op::Eval(box _p, box _x) => cost += 1.0,
-            Op::Coef(box _op) => cost += 1.0,
+            Op::Check(op) => cost += self.cost(op, nthreads).0,
+            Op::Poly(_op) => cost += 1.0,
+            Op::Mle(_op) => cost += 1.0,
+            Op::Eval(_p, _x) => cost += 1.0,
+            Op::Coef(_op) => cost += 1.0,
+            Op::Reduce(_, v) => {
+                let (_, n) = v.typ().into_vec();
+                cost += self.cost(v, nthreads).0 + (n as f64 - 1.0) * Self::SCALAR_MUL;
+            },
         };
         cost.into()
     }

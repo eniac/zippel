@@ -13,11 +13,11 @@ pub mod subst;
 
 use crate::id::{Tid, TidSubst, Vid};
 
-pub use kind::Kind;
+pub use kind::{Kind, UKind, CKind};
 pub use size::{Size, EvalError};
 pub use qualifier::Qualifier;
 pub use distribution::Distribution;
-pub use typevar::{TypeVar, TypeVars};
+pub use typevar::{TypeVar, TypeVars, UTypeVar, CTypeVar, UTypeVars, CTypeVars};
 pub use nothing::Nothing;
 pub use subst::{SizeSubsts, AliasSubsts};
 pub use range::{Range, CRange, RangeError, RangeTraversal};
@@ -66,16 +66,16 @@ pub type UTyps = Typ<Tid, Size>;
 pub type CTyp = Typ<Tid, usize>;
 pub type CTyps = Typs<Tid, usize>;
 
-impl<N> TidSubst for GTyp<N> {
+impl<N: Clone> TidSubst for GTyp<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         match self {
             Typ::Poly(b, _, _)
             | Typ::Base(b) if b == from => *b = to.clone(),
             Typ::Vec(b, _) => b.tid_subst(from, to),
             Typ::Record(fields) => {
-                for (_, field_typ) in fields.iter_mut() {
+                fields.modify(|_, field_typ| {
                     field_typ.tid_subst(from, to);
-                }
+                });
             },
             Typ::Fin(_) | Typ::Bool | Typ::Base(_)
             | Typ::Poly(_, _, _) => {}
@@ -98,7 +98,7 @@ impl<T, N> FromIterator<Typ<T, N>> for Typs<T, N> {
     }
 }
 
-impl<N> TidSubst for GTyps<N> {
+impl<N: Clone> TidSubst for GTyps<N> {
     fn tid_subst(&mut self, from: &Tid, to: &Tid) {
         self.0.iter_mut().for_each(|t| t.tid_subst(from, to))
     }
@@ -142,7 +142,7 @@ impl<N> GTyp<N> {
         Typ::Poly(b.clone(), m, N::from(1))
     }
 
-    pub fn to_scalar(&self, ctx: &Ctx<Tid, Kind>) -> Option<Tid> {
+    pub fn to_scalar<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<Tid> {
         match self {
             Typ::Base(b) => {
                 let k = ctx.get(b)?;
@@ -160,7 +160,7 @@ impl<N> GTyp<N> {
         }
     }
 
-    pub fn to_scalar_vec(&self, ctx: &Ctx<Tid, Kind>) -> Option<(Tid, N)> where N: Clone {
+    pub fn to_scalar_vec<M>(&self, ctx: &Ctx<Tid, Kind<M>>) -> Option<(Tid, N)> where N: Clone {
         match self {
             Typ::Vec(box t, n) => {
                 let s = t.to_scalar(ctx)?;
@@ -205,9 +205,9 @@ impl<T, N> Typs<T, N> {
     }
 }
 
-impl<T, N> ToTraversal1<T> for Typ<T, N> {
+impl<T: Clone, N: Clone> ToTraversal1<T> for Typ<T, N> {
     type Output<Z> = Typ<Z, N>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
             Typ::Poly(b, m, n) => Ok(Typ::Poly(f(b)?, m, n)),
             Typ::Base(b) => Ok(Typ::Base(f(b)?)),
@@ -225,9 +225,9 @@ impl<T, N> ToTraversal1<T> for Typ<T, N> {
     }
 }
 
-impl<T, N> ToTraversal2<N> for Typ<T, N> {
+impl<T: Clone, N: Clone> ToTraversal2<N> for Typ<T, N> {
     type Output<Z> = Typ<T, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse2<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         match self {
             Typ::Poly(b, m, n) => Ok(Typ::Poly(b, f(m)?, f(n)?)),
             Typ::Base(b) => Ok(Typ::Base(b)),
@@ -245,7 +245,7 @@ impl<T, N> ToTraversal2<N> for Typ<T, N> {
     }
 }
 
-impl<T, N> RangeTraversal<N> for Typ<T, N> {
+impl<T: Clone, N: Clone> RangeTraversal<N> for Typ<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             Typ::Fin(r) => Ok(Typ::Fin(f(r)?)),
@@ -261,21 +261,21 @@ impl<T, N> RangeTraversal<N> for Typ<T, N> {
     }
 }
 
-impl<T, N> ToTraversal1<T> for Typs<T, N> {
+impl<T: Clone, N: Clone> ToTraversal1<T> for Typs<T, N> {
     type Output<Z> = Typs<Z, N>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(T) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Typs(self.0.into_iter().map(|t| t.traverse1(f)).collect::<Result<Vec<_>, _>>()?))
     }
 }
 
-impl<T, N> ToTraversal2<N> for Typs<T, N> {
+impl<T: Clone, N: Clone> ToTraversal2<N> for Typs<T, N> {
     type Output<Z> = Typs<T, Z>;
-    fn traverse2<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
+    fn traverse2<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Self::Output<Z>, E> {
         Ok(Typs(self.0.into_iter().map(|t| t.traverse2(f)).collect::<Result<Vec<_>, _>>()?))
     }
 }
 
-impl<T, N> RangeTraversal<N> for Typs<T, N> {
+impl<T: Clone, N: Clone> RangeTraversal<N> for Typs<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Typs(self.0.into_iter().map(|t| t.range_traverse(f)).collect::<Result<Vec<_>, _>>()?))
     }
@@ -285,7 +285,7 @@ impl<T, N> RangeTraversal<N> for Typs<T, N> {
 impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
 where
     D: DocAllocator<'a, A>,
-    T: Pretty<'a, D, A>,
+    T: Pretty<'a, D, A> + Clone,
     N: Pretty<'a, D, A> + Clone,
     D::Doc: Clone,
     A: 'a + Clone,
@@ -340,7 +340,7 @@ where
 impl<'a, D, A, T, N> Pretty<'a, D, A> for Typs<T, N>
 where
     D: DocAllocator<'a, A>,
-    T: Pretty<'a, D, A>,
+    T: Pretty<'a, D, A> + Clone,
     N: Pretty<'a, D, A> + Clone,
     D::Doc: Clone,
     A: 'a + Clone,
