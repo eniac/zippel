@@ -3,6 +3,7 @@ use backend::op::HasOpFactory;
 use log::{warn};
 #[cfg(test)]
 use log::debug;
+#[cfg(test)] use crate::WritePdf;
 use crate::{DQDag, PRef};
 use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder};
 
@@ -201,7 +202,6 @@ fn groebner_baz() {
     assert!(kz.run());
 }
 
-#[cfg(test)] use crate::WritePdf;
 /// This example is somewhat contrived. Here is how we leak s = s'.
 /// 1. We have two private inputs s and s'.
 /// 2. a - b = s - s'

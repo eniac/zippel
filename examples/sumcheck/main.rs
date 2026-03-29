@@ -12,7 +12,7 @@ const NUM_VARS: usize = 1;
 
 fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &10);

@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== MLE (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/mle_test.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/mle_example/mle_example.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 

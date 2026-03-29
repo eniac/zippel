@@ -7,7 +7,7 @@ use share::Ctx;
 fn main() {
     env_logger::init();
     println!("=== Dory Evaluation Proof (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/dory.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     println!("Compiling Zippel files...");
     const LOG_N: usize = 8;

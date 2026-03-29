@@ -7,7 +7,7 @@ use ark_std::UniformRand;
 
 fn main() {
     println!("=== Schnorr (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/schnorr.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 

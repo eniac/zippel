@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== IPA Field (ArkField17) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/ipa-field.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/ipa_field/ipa_field.zippel"));
     let mut handler: zippel::ZippelHandler<ArkField17> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2usize);

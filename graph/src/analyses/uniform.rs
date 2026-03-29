@@ -236,7 +236,6 @@ mod tests {
     use super::*;
     use lang::ast::UModule;
     use backend::ArkBls12_381;
-    use backend::op::HasOpFactory;
     use crate::analyses::QualifierPropagation;
     use crate::{UDags, Node, mk};
     use share::unwrap;

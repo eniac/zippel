@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== IPA (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/ipa.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &6usize);

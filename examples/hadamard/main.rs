@@ -7,7 +7,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== Hadamard (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hadamard.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/hadamard/hadamard.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &5);

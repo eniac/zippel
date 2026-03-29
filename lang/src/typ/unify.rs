@@ -67,8 +67,9 @@ impl Unify for Tid {
                 subs.add_equ(k2, k4);
                 Ok(subs.add_equ(&a, &b))
             },
-            // Ranges in kinds should be concretized already, if not its a bug
+            // Ranges and SizeVars should be concretized already, if not its a bug
             (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(UnifyError::kind_mismatch(&a, &ka, &b, &kb))
         }
     }

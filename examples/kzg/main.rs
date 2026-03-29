@@ -8,7 +8,7 @@ use ark_ff::fields::Field;
 
 fn main() {
     println!("=== KZG (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/kzg_test.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2);

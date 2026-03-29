@@ -3,7 +3,6 @@ use backend::op::HasOpFactory;
 use log::debug;
 use crate::DQDag;
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
-#[cfg(test)] use crate::WritePdf;
 
 
 /// Perform a completeness analysis using Groebner bases.

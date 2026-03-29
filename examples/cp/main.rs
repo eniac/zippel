@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== Chaum-Pedersen (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/cp.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/cp/cp.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 

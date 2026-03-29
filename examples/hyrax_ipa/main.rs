@@ -7,7 +7,7 @@ use ark_std::UniformRand;
 
 fn main() {
     println!("=== Hyrax Log of Dot Product (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa/hyrax_ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &6usize);

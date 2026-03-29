@@ -283,7 +283,7 @@ impl Lub for Tid {
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(LubError::equ(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
@@ -302,7 +302,7 @@ impl Lub for Tid {
             (Kind::Scalar(g1), Kind::Scalar(g2)) if g1 == g2 => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(LubError::add(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
@@ -321,7 +321,7 @@ impl Lub for Tid {
             (Kind::Group, Kind::Group) if a == b => Ok(a.clone()),
             (Kind::Pairing(g1, g2), Kind::Pairing(h1, h2)) if a == b && g1 == h1 && g2 == h2 => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(LubError::sub(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
@@ -344,7 +344,7 @@ impl Lub for Tid {
             (Kind::Pairing(g1, g2), Kind::Scalar(g)) if g.contains(g1) || g.contains(g2) => Ok(a.clone()),
             (Kind::Scalar(g), Kind::Pairing(g1, g2)) if g.contains(g1) || g.contains(g2) => Ok(b.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(LubError::mul(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }
@@ -387,7 +387,7 @@ impl Lub for Tid {
             },
             (Kind::Group, Kind::Scalar(g)) if g.contains(a) => Ok(a.clone()),
             // Range kinds should be substituted at this point
-            (Kind::Range(_), _) | (_, Kind::Range(_)) => unreachable!(),
+            (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => unreachable!(),
             (_, _) => Err(LubError::div(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)))
         }
     }

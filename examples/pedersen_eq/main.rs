@@ -8,7 +8,7 @@ use std::ops::Mul;
 
 fn main() {
     println!("=== Pedersen Equality (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 

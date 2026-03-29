@@ -7,7 +7,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== Zerocheck (ArkSecp256k1) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/zerocheck.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2);
@@ -39,7 +39,7 @@ fn main() {
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
 
-    // Keep this in sync with `N:2` in `examples/zerocheck.zippel`.
+    // Keep this in sync with `N:2` in `examples/zerocheck/zerocheck.zippel`.
     let zero = <ArkSecp256k1 as ArkConfig>::F::zero();
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
 

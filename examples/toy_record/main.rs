@@ -6,7 +6,7 @@ use share::Ctx;
 
 fn main() {
     println!("=== Toy Record (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/toy_record.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/toy_record/toy_record.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 

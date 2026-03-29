@@ -11,7 +11,7 @@ const NUM_VARS: usize = 2;
 
 fn main() {
     println!("=== VPoly Product Check (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/vpoly.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/vpoly/vpoly.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2);
