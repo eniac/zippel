@@ -95,7 +95,7 @@ impl QualifierPropagation {
         Dag { graph: dag.graph.map(
             |i, node|
                 node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Private).clone()),
-            |_, e| e.clone()), vctx: Ctx::new(), transcript_vars: Ctx::new() }
+            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }
 

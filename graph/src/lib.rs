@@ -219,12 +219,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     pub(crate) fn add_edges(&mut self, edge_type: DepType, sink: NodeIndex, source: GOp<C>) {
         source.references().into_iter().for_each(|refer| {
-            match refer {
-                Ref::Node(n) =>  // Add edge from [n] to [sink]
-                    self.add_edge(n, sink, Dep::new(edge_type, None)),
-                Ref::Var(v, i) => // Add edge from [i] to [sink]
-                    self.add_edge(i, sink, Dep::new(edge_type, Some(v))),
-            }
+            self.add_edge(refer.node(), sink, Dep(edge_type));
         });
     }
 
@@ -254,33 +249,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.graph[it]
     }
 
-    /// Find the variable name associated with a transcript node.
-    /// Checks incoming transcript edges (which carry the variable name).
-    /// Find the variable name associated with a transcript node.
-    /// Checks incoming transcript edges first, then falls back to searching
-    /// for ref-holder nodes (for transcript nodes logged under multiple names).
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        self.graph.edges_directed(node, Direction::Incoming)
-            .find_map(|e| {
-                let dep = e.weight();
-                if dep.0 == DepType::Transcript {
-                    dep.1.clone()
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                // Fallback: search for ref-holder nodes that reference this node
-                self.node_indices().find_map(|n| {
-                    self[n].references().into_iter().find_map(|r| {
-                        if r.node() == node {
-                            r.var()
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
+        self.vctx.get(&node).cloned()
     }
 
     pub fn find_ref(&self, node: NodeIndex) -> Ref {
@@ -470,17 +440,45 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
-        Dag { graph: combined_graph, vctx: Ctx::new(), transcript_vars: Ctx::new() }
+        // Merge vctx and transcript_vars with remapped keys
+        let mut combined_vctx = Ctx::new();
+        for (k, v) in self.vctx.iter() {
+            if let Some(new_k) = node_map_self.get(k) {
+                combined_vctx.insert(new_k, v);
+            }
+        }
+        for (k, v) in other.vctx.iter() {
+            if let Some(new_k) = node_map_other.get(k) {
+                combined_vctx.insert(new_k, v);
+            }
+        }
+        let mut combined_transcript_vars = Ctx::new();
+        for (k, v) in self.transcript_vars.iter() {
+            if let Some(new_k) = node_map_self.get(k) {
+                combined_transcript_vars.insert(new_k, v);
+            }
+        }
+        for (k, v) in other.transcript_vars.iter() {
+            if let Some(new_k) = node_map_other.get(k) {
+                combined_transcript_vars.insert(new_k, v);
+            }
+        }
+
+        Dag { graph: combined_graph, vctx: combined_vctx, transcript_vars: combined_transcript_vars }
     }
 }
 
 /// Methods requiring hash-consing (HasOpFactory)
 impl<C: HasOpFactory, A> Dag<C, A> {
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag { graph: self.graph.map(
-            |_, node| node.map_node_indices(f),
-            |_, e| e.clone()
-        ), vctx: Ctx::new(), transcript_vars: Ctx::new() }
+        Dag {
+            graph: self.graph.map(
+                |_, node| node.map_node_indices(f),
+                |_, e| e.clone()
+            ),
+            vctx: self.vctx.clone(),
+            transcript_vars: self.transcript_vars.clone(),
+        }
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
@@ -502,7 +500,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // Add node to prover graph
             let new_node = prover.add_node(self[n].clone());
             if let Some(v) = self.find_var(n) {
-                node_map.insert(n, Ref::Var(v, new_node));
+                node_map.insert(n, Ref::Var(v.clone(), new_node));
+                prover.vctx.insert(&new_node, &v);
             } else {
                 node_map.insert(n, Ref::Node(new_node));
             }
@@ -511,6 +510,13 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             for e in self.graph.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 worklist.push(e.source());
+            }
+        }
+
+        // Copy transcript_vars for mapped nodes
+        for (k, v) in self.transcript_vars.iter() {
+            if let Some(r) = node_map.get(k) {
+                prover.transcript_vars.insert(&r.node(), v);
             }
         }
 
@@ -572,6 +578,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 g_relation.add_edge(*new_source_idx, *new_target_idx, weight);
             }
         }
+        // Copy vctx and transcript_vars for mapped nodes
+        for (k, v) in self.vctx.iter() {
+            if let Some(new_k) = node_map_rel.get(k) {
+                g_relation.vctx.insert(new_k, v);
+            }
+        }
+        for (k, v) in self.transcript_vars.iter() {
+            if let Some(new_k) = node_map_rel.get(k) {
+                g_relation.transcript_vars.insert(new_k, v);
+            }
+        }
         let remapped = g_relation.map_node_indices(&|n| node_map_rel[&n]);
         Ok((remapped, node_map_rel))
     }
@@ -599,7 +616,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 _ => node.clone(),
             },
         |_, e| e.clone()
-        ), vctx: Ctx::new(), transcript_vars: Ctx::new() }
+        ), vctx: self.vctx.clone(), transcript_vars: self.transcript_vars.clone() }
     }
 
     /// Get the verifier graph, by reachability analysis starting from the verifier assertion
@@ -716,6 +733,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
             {
                 verifier.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+        // Copy vctx and transcript_vars for mapped nodes
+        for (k, v) in self.vctx.iter() {
+            if let Some(new_k) = node_map_self.get(k) {
+                verifier.vctx.insert(new_k, v);
+            }
+        }
+        for (k, v) in self.transcript_vars.iter() {
+            if let Some(new_k) = node_map_self.get(k) {
+                verifier.transcript_vars.insert(new_k, v);
             }
         }
         Ok(verifier.map_node_indices(&|n| node_map_self[&n]))
@@ -1353,6 +1381,11 @@ impl<C: HasOpFactory> UDag<C> {
                 let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                 // Add left-hand side as node
                 let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                // Register in vctx if the result references a node
+                if let Some(node_ref) = nl.references().first() {
+                    self.vctx.insert(&node_ref.node(), &id);
+                    self.transcript_vars.insert(&node_ref.node(), &false);
+                }
                 // Add [id] to the variable context (clone-on-write)
                 vctx.insert(&id, &tl);
                 vars.insert(&id, &nl);
@@ -1370,19 +1403,17 @@ impl<C: HasOpFactory> UDag<C> {
                 // Infer the type of [l]
                 let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                 // Save the current transcript pointer before add_exp may advance it
-                let prev_transcr = *transcr;
+                let _prev_transcr = *transcr;
                 // Add left-hand side as node
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Record transcript interaction
                 let transcr_op = match &ol {
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) if self[*n].is_transcript() => {
                         // Node is already a transcript node (e.g., challenge).
-                        // Create a ref-holder so find_var resolves correctly when
-                        // the same transcript node is logged under multiple names.
-                        let ref_to_n = GOp::Ref(Ref::Var(id.clone(), *n), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_n));
-                        self.add_edges(DepType::Data, ref_node, ref_to_n.clone());
-                        ref_to_n
+                        // Register in vctx instead of creating ref-holder.
+                        self.vctx.insert(n, &id);
+                        self.transcript_vars.insert(n, &true);
+                        GOp::Ref(Ref::Var(id.clone(), *n), ol.typ())
                     },
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
                         // Reuse: create a wrapper transcript node.
@@ -1395,8 +1426,10 @@ impl<C: HasOpFactory> UDag<C> {
                             ol.typ(),
                         )));
                         self.add_edges(DepType::Data, nl, ol.clone());
-                        self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
+                        self.add_edge(*transcr, nl, Dep::transcript());
                         self.graph.node_weight_mut(nl).unwrap().set_transcript();
+                        self.vctx.insert(&nl, &id);
+                        self.transcript_vars.insert(&nl, &true);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     },
@@ -1404,8 +1437,10 @@ impl<C: HasOpFactory> UDag<C> {
                         // Add new transcript node
                         let nl = self.add_node(Node::transcr(&ol));
                         self.add_edges(DepType::Data, nl, ol.clone());
-                        self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
+                        self.add_edge(*transcr, nl, Dep::transcript());
                         self.graph.node_weight_mut(nl).unwrap().set_transcript();
+                        self.vctx.insert(&nl, &id);
+                        self.transcript_vars.insert(&nl, &true);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }

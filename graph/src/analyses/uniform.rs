@@ -221,7 +221,7 @@ impl UniformityPropagation {
         Dag { graph: dag.graph.map(
             |i, node|
                 node.add_annotation(self.find_distribution(i)),
-            |_, e| e.clone()), vctx: Ctx::new(), transcript_vars: Ctx::new() }
+            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }
 
