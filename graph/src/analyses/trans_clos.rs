@@ -272,3 +272,4 @@ fn trans_clos_many() {
         assert!(! matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 }
+

@@ -170,10 +170,18 @@ impl UniformityPropagation {
 
     pub fn from_dag<C: ArkConfig>(&mut self, dag: &QDag<C>) -> DQDag<C> {
         // Collect the ancestors of each node
-        let ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
+        let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
             dag.node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))
             .collect();
+
+        // Challenge nodes are modeled as random oracle outputs —
+        // they are independent of their DAG ancestors.
+        for n in dag.node_indices() {
+            if dag[n].is_challenge() {
+                ancestors.insert(&n, &Set::from([n]));
+            }
+        }
 
         self.ancestors = ancestors;
 

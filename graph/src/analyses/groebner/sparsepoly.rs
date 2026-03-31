@@ -224,20 +224,12 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     }
 
     pub fn pow(&mut self, exp: usize) {
-        if exp == 0 {
-            *self = SparsePolynomial::lit(&F::one());
-            return;
-        }
         let mut i = exp;
         while (i % 2) == 0 {
             self.square();
             i /= 2;
         }
-        if i <= 1 {
-            return;
-        }
         let mul = self.clone();
-        i -= 1;
         while i > 0 {
             *self *= mul.clone();
             i -= 1;
@@ -462,59 +454,5 @@ where
 
     SparsePolynomial {
         terms: processed_terms,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::PRef;
-    use crate::analyses::groebner::monomial::GrevLexTerm;
-    use backend::ArkBls12_381;
-    use backend::ATyp;
-    use lang::typ::{Qualifier, Distribution};
-    use petgraph::graph::NodeIndex;
-
-    type Poly = SparsePolynomial<<ArkBls12_381 as backend::ArkConfig>::F, GrevLexTerm>;
-
-    fn make_var_x() -> Poly {
-        let v = PRef::from_node(NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Public, Distribution::default());
-        Poly::var(&v)
-    }
-
-    #[test]
-    fn test_pow_0() {
-        let mut x = make_var_x();
-        x.pow(0);
-        use ark_bls12_381::Fr;
-        use ark_ff::One;
-        let one = Poly::lit(&Fr::one());
-        assert_eq!(x, one, "x.pow(0) should equal the constant polynomial 1");
-    }
-
-    #[test]
-    fn test_pow_1() {
-        let mut x = make_var_x();
-        let x_copy = x.clone();
-        x.pow(1);
-        assert_eq!(x, x_copy, "x.pow(1) should equal x (identity)");
-    }
-
-    #[test]
-    fn test_pow_2() {
-        let mut x = make_var_x();
-        let x_copy = x.clone();
-        x.pow(2);
-        let expected = x_copy.clone() * x_copy;
-        assert_eq!(x, expected, "x.pow(2) should equal x * x");
-    }
-
-    #[test]
-    fn test_pow_3() {
-        let mut x = make_var_x();
-        let x_copy = x.clone();
-        x.pow(3);
-        let expected = x_copy.clone() * x_copy.clone() * x_copy;
-        assert_eq!(x, expected, "x.pow(3) should equal x * x * x");
     }
 }

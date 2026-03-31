@@ -250,17 +250,33 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.0[it]
     }
 
-    /// Slow, look around to find a var for a node
+    /// Find the variable name associated with a transcript node.
+    /// Checks incoming transcript edges (which carry the variable name).
+    /// Find the variable name associated with a transcript node.
+    /// Checks incoming transcript edges first, then falls back to searching
+    /// for ref-holder nodes (for transcript nodes logged under multiple names).
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        self.node_indices().find_map(|n| {
-            self[n].references().into_iter().find_map(|r| {
-                if r.node() == node {
-                    r.var()
+        self.0.edges_directed(node, Direction::Incoming)
+            .find_map(|e| {
+                let dep = e.weight();
+                if dep.0 == DepType::Transcript {
+                    dep.1.clone()
                 } else {
                     None
                 }
             })
-        })
+            .or_else(|| {
+                // Fallback: search for ref-holder nodes that reference this node
+                self.node_indices().find_map(|n| {
+                    self[n].references().into_iter().find_map(|r| {
+                        if r.node() == node {
+                            r.var()
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
     }
 
     pub fn find_ref(&self, node: NodeIndex) -> Ref {
@@ -517,7 +533,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     }
 
     /// Get the relation graph, by reachability analysis starting from the relation node
-    pub fn get_relation(&self) -> Result<Dag<C, A>, GraphError> where A: Clone {
+    pub fn get_relation(&self) -> Result<(Dag<C, A>, HashMap<NodeIndex, NodeIndex>), GraphError> where A: Clone {
         let mut g_relation = Dag::new();
         let relation_node =
             self.relation_node().ok_or(GraphError::RelationNotFound(self.name()))?;
@@ -552,7 +568,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 g_relation.add_edge(*new_source_idx, *new_target_idx, weight);
             }
         }
-        Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
+        let remapped = g_relation.map_node_indices(&|n| node_map_rel[&n]);
+        Ok((remapped, node_map_rel))
     }
 
     pub fn rename_inner_nodes(&mut self) -> Dag<C, A> where A: Clone {
@@ -1348,21 +1365,23 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Log(id, box l, box r) => {
                 // Infer the type of [l]
                 let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
+                // Save the current transcript pointer before add_exp may advance it
+                let prev_transcr = *transcr;
                 // Add left-hand side as node
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Record transcript interaction
                 let transcr_op = match &ol {
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) if self[*n].is_transcript() => {
                         // Node is already a transcript node (e.g., challenge).
-                        // Don't wrap it again; just add ref-holder for find_var.
+                        // Create a ref-holder so find_var resolves correctly when
+                        // the same transcript node is logged under multiple names.
                         let ref_to_n = GOp::Ref(Ref::Var(id.clone(), *n), ol.typ());
                         let ref_node = self.add_node(Node::ret(&ref_to_n));
                         self.add_edges(DepType::Data, ref_node, ref_to_n.clone());
                         ref_to_n
                     },
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
-                        // Reuse: create a wrapper transcript node (value from n) and a ref-holder
-                        // node that has Ref::Var(id, nl) so find_var(nl) resolves without fallback.
+                        // Reuse: create a wrapper transcript node.
                         let wrapper_ref = match &ol {
                             GOp::Ref(Ref::Var(v, n), _) => Ref::Var(v.clone(), *n),
                             _ => Ref::Node(*n),
@@ -1374,21 +1393,15 @@ impl<C: HasOpFactory> UDag<C> {
                         self.add_edges(DepType::Data, nl, ol.clone());
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(nl).unwrap().set_transcript();
-                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
-                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     },
                     _ => {
-                        // Add new node
+                        // Add new transcript node
                         let nl = self.add_node(Node::transcr(&ol));
-                        self.add_edges(DepType::Data, nl, ol.clone()); // Connect dependencies
+                        self.add_edges(DepType::Data, nl, ol.clone());
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(nl).unwrap().set_transcript();
-                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
-                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }

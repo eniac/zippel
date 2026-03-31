@@ -1,5 +1,6 @@
 [env]
 SYMBOLICA_HIDE_BANNER = "1"
+RUST_MIN_STACK = "33554432"
 
 [alias]
 # Make 'cargo test' default to testing the entire workspace

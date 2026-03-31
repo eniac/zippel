@@ -54,7 +54,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     }
 
     pub fn contains(&self, other: &Self) -> bool {
-        other.basis.iter().any(|p| self.contains_poly(p))
+        other.basis.iter().all(|p| self.contains_poly(p))
     }
 
     pub fn is_empty(&self) -> bool {

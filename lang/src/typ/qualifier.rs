@@ -9,6 +9,7 @@ use crate::parser::*;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Qualifier {
     Private,
+    Local,
     Public
 }
 
@@ -16,34 +17,39 @@ impl Qualifier {
     pub fn is_private(&self) -> bool {
         matches!(self, Qualifier::Private)
     }
+    pub fn is_local(&self) -> bool {
+        matches!(self, Qualifier::Local)
+    }
     pub fn is_public(&self) -> bool {
         matches!(self, Qualifier::Public)
     }
     pub fn join(&self, other: &Self) -> Self {
         match (self, other) {
-            (Qualifier::Private, Qualifier::Private) => Qualifier::Private,
-            (Qualifier::Private, Qualifier::Public) => Qualifier::Private,
-            (Qualifier::Public, Qualifier::Private) => Qualifier::Private,
+            // Local is absorbing: anything joined with Local stays Local
+            (Qualifier::Local, _) | (_, Qualifier::Local) => Qualifier::Local,
+            (Qualifier::Private, _) | (_, Qualifier::Private) => Qualifier::Private,
             (Qualifier::Public, Qualifier::Public) => Qualifier::Public,
         }
     }
 }
 
-/// Secret <= Private <= Public
+/// Private <= Local <= Public
 impl PartialOrd for Qualifier {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        match (self, other) {
-            (Qualifier::Private, Qualifier::Private) => Some(Ordering::Equal),
-            (Qualifier::Private, Qualifier::Public) => Some(Ordering::Less),
-            (Qualifier::Public, Qualifier::Private) => Some(Ordering::Greater),
-            (Qualifier::Public, Qualifier::Public) => Some(Ordering::Equal),
-        }
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Qualifier {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        let rank = |q: &Qualifier| -> u8 {
+            match q {
+                Qualifier::Private => 0,
+                Qualifier::Local => 1,
+                Qualifier::Public => 2,
+            }
+        };
+        rank(self).cmp(&rank(other))
     }
 }
 
@@ -59,6 +65,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             Qualifier::Private => allocator.text("private "),
+            Qualifier::Local => allocator.text("local "),
             Qualifier::Public => allocator.text("public "),
         }
     }

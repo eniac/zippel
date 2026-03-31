@@ -3,6 +3,7 @@ pub mod groebner;
 pub mod uniform;
 pub mod qualifier;
 pub mod completeness;
+pub mod error;
 
 pub mod knowledge;
 
@@ -12,6 +13,7 @@ pub use qualifier::QualifierPropagation;
 pub use uniform::UniformityPropagation;
 pub use completeness::CompletenessAnalysis;
 pub use knowledge::KnowledgeAnalysis;
+pub use error::AnalysisError;
 
 use backend::ArkConfig;
 use crate::Dag;

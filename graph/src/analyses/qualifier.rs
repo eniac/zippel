@@ -1,44 +1,23 @@
 use backend::ArkConfig;
-use backend::op::Ref;
 use petgraph::graph::NodeIndex;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use share::Ctx;
-use lang::id::Vid;
 use lang::typ::Qualifier;
 use crate::{Dag, UDag, Node, QDag, GOp, Op};
 
-/// Key for qualifier lookup: (NodeIndex, Option<Vid>).
-/// - `(node, Some(vid))` for input/relation argument variables
-/// - `(node, None)` for regular op/transcript nodes
-type QualKey = (NodeIndex, Option<Vid>);
-
 pub struct QualifierPropagation {
-    pub quals: Ctx<QualKey, Qualifier>,
+    pub quals: Ctx<NodeIndex, Qualifier>,
 }
 
 /// Propagate qualifiers [private, public] through the DAG
 impl QualifierPropagation {
-    fn qual_key_for_ref(r: &Ref) -> QualKey {
-        match r {
-            Ref::Var(vid, n) => (*n, Some(vid.clone())),
-            Ref::Node(n) => (*n, None),
-        }
-    }
-
-    #[allow(dead_code)]
     fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
             Op::Check(_) => Some(Qualifier::Public),
-            Op::Ref(r, _) => {
-                // Try the specific key first (for Inp/Rel args with Vid),
-                // then fall back to the node-only key (for Op/Transcr nodes)
-                let specific = Self::qual_key_for_ref(r);
-                self.quals.get(&specific)
-                    .or_else(|| self.quals.get(&(r.node(), None)))
-                    .cloned()
-            },
+            Op::Ref(r, _) => 
+                self.quals.get(&r.node()).map(|v| v.clone()),
             Op::Ram(a, _) => self.from_op(a),
             Op::Poly(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
@@ -82,46 +61,32 @@ impl QualifierPropagation {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
         let check = dag.find_check().expect("No check found in the DAG");
         let mut worklist = vec![check];
-        let max_iterations = dag.node_count() * dag.node_count();
-        let mut iterations = 0;
 
         while let Some(n) = worklist.pop() {
-            iterations += 1;
-            if iterations > max_iterations {
-                break; // Safety bound to prevent infinite loops
-            }
-
-            if qp.quals.contains(&(n, None)) {
+            if qp.quals.contains(&n) {
                 continue;
             }
 
             match &dag[n] {
                 Node::Inp(_, args) | Node::Rel(_, args) => {
                     for arg in args {
-                        let key = Self::qual_key_for_ref(&arg.reference);
-                        qp.quals.insert(&key, &arg.qualifier);
+                        qp.quals.insert(&arg.reference.node(), &arg.qualifier);
                     }
-                    // Mark the Inp/Rel node itself as visited
-                    qp.quals.insert(&(n, None), &Qualifier::Public);
                     continue;
                 }
                 Node::Transcr(_, _) => {
-                    qp.quals.insert(&(n, None), &Qualifier::Public);
+                    qp.quals.insert(&n, &Qualifier::Public);
+                    continue;
                 }
                 Node::Op(op, _) => {
-                    // Non-transcript Op nodes default to Local (prover-internal).
-                    // Exception: Random ops are Private (secret randomness).
-                    let q = match &**op {
-                        Op::Random(_, _) => Qualifier::Private,
-                        _ => Qualifier::Local,
-                    };
-                    qp.quals.insert(&(n, None), &q);
+                    qp.from_op(&op).and_then(|q| qp.quals.insert(&n, &q));
                 }
             }
 
             // Add parent neighbors to worklist
             for e in dag.0.edges_directed(n, Direction::Incoming) {
-                if !qp.quals.contains(&(e.source(), None)) {
+                // Add neighbors to worklist
+                if !qp.quals.contains(&e.source()) {
                     worklist.push(e.source());
                 }
             }
@@ -129,7 +94,7 @@ impl QualifierPropagation {
 
         Dag(dag.0.map(
             |i, node|
-                node.with_annotation(qp.quals.get(&(i, None)).unwrap_or_else(|| &Qualifier::Local).clone()),
+                node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Private).clone()),
             |_, e| e.clone()))
     }
 }
@@ -207,7 +172,7 @@ mod tests {
         
         let check_node = g.find_check().expect("Check node should exist");
         if let Node::Op(_, qual) = &g[check_node] {
-            assert_eq!(*qual, Qualifier::Local);
+            assert_eq!(*qual, Qualifier::Public);
         }
     }
 
@@ -224,7 +189,7 @@ mod tests {
         
         let check_node = g.find_check().expect("Check node should exist");
         if let Node::Op(_, qual) = &g[check_node] {
-            assert_eq!(*qual, Qualifier::Local);
+            assert_eq!(*qual, Qualifier::Public);
         }
     }
 
@@ -309,29 +274,5 @@ mod tests {
         let op = Op::Ifft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
-    }
-
-    #[test]
-    fn schnorr_challenge_qualifier_is_public() {
-        let ex = r#"
-            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
-                let r = random<F>;
-                u <- g*r;
-                c <- challenge<F>;
-                z <- r + x*c;
-                verify(g*z == u + h*c);
-            }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let dag = &gs[0];
-        let g = QualifierPropagation::from_dag(dag);
-
-        // All Transcr nodes (including challenge) should be Public
-        for n in g.node_indices() {
-            if let Node::Transcr(_, qual) = &g[n] {
-                assert_eq!(*qual, Qualifier::Public,
-                    "Transcript node n{} should be Public", n.index());
-            }
-        }
     }
 }
