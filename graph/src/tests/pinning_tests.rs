@@ -487,11 +487,7 @@ fn pin_log_node_ref() {
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected.add_edges(DepType::Data, transcr, bin_add_ref.clone());
     expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
-    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), ATyp::scalar());
-    let ret = expected.add_node(Node::ret(&ref_to_transcr));
-    expected.add_edges(DepType::Data, ret, ref_to_transcr.clone());
-
-    // `a` resolves to Var("a", bin_add), `s` to Var("s", inp)
+    // `a` resolves to Var("a", transcr), `s` to Var("s", inp)
     // a == s → Bin(Equ)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
@@ -538,11 +534,6 @@ fn pin_log_new_transcr() {
     expected[transcr].set_transcript();
     // transcript edge from inp to transcr
     expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
-    // ref-holder ret node for Ref::Var(a, transcr)
-    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), lit_op.typ());
-    let ret = expected.add_node(Node::ret(&ref_to_transcr));
-    expected.add_edges(DepType::Data, ret, ref_to_transcr);
-
     // verify(s == s): Bin(Equ) + Check
     let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
     let equ_body = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()));
@@ -1246,10 +1237,6 @@ fn pin_log_var_ref() {
     expected[transcr].set_transcript();
     expected.add_edges(DepType::Data, transcr, transcr_op.clone());
     expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
-    let ref_to_transcr = GOp::<B>::Ref(Ref::Var(a_vid.clone(), transcr), ATyp::scalar());
-    let ret = expected.add_node(Node::ret(&ref_to_transcr));
-    expected.add_edges(DepType::Data, ret, ref_to_transcr.clone());
-
     // `a` resolves to the transcr_op from Log: Ref(Var(x, bin_add), scalar)
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = Ref(Var(x, bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
@@ -1483,7 +1470,7 @@ fn pin_get_relation_basic() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let relation = dag.get_relation().unwrap();
+    let (relation, _) = dag.get_relation().unwrap();
 
     // Relation should have the Rel node
     assert!(relation.relation_node().is_some());
@@ -1575,17 +1562,18 @@ fn pin_op_nodes_filter() {
 #[test]
 fn pin_find_var_find_ref() {
     let src = r#"
-        fn f<F: Field>(public a: F, public b: F) -> F {
-            let c = a + b;
-            c
+        proto foo<F: Field>(private a: F, private b: F) where a == b {
+            c <- a + b;
+            verify(c == a)
         }
     "#;
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    // The let-bound variable `c` names the Add node
+    // find_var now uses transcript_var edges instead of ref-holder nodes.
+    // `c <- a + b` creates a transcript node with a transcript_var("c") edge.
     let op_nodes = dag.op_nodes();
-    // The add node should be findable as variable `c`
+    // The transcript node should be findable as variable `c`
     let has_c = op_nodes.iter().any(|n| dag.find_var(*n) == Some(Vid::new("c")));
     assert!(has_c, "Expected to find variable 'c' on an op node");
 }
