@@ -34,6 +34,27 @@ fn main() {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
     }
+
+    // Static analysis (completeness & ZK)
+    println!("\n--- Static Analysis ---");
+    let analysis_result = std::panic::catch_unwind(|| {
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/hyrax_ipa/hyrax_ipa.zippel"));
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        analysis_handler.minimal_analysis()
+    });
+    match analysis_result {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    }
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
