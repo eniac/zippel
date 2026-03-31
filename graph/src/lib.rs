@@ -585,7 +585,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     pub fn rename_inner_nodes(&mut self) -> Dag<C, A> where A: Clone {
         let arg_names: Vec<String> = self.args().iter().map(|arg| arg.var().unwrap().0).collect();
         debug!("args_name: {:?}", arg_names);
-        self.map_ops(&|op| op.map_refs(&|r|
+        let mut result = self.map_ops(&|op| op.map_refs(&|r|
             match r {
                 Ref::Var(Vid(s), n) =>
                     if arg_names.contains(&s) {
@@ -594,7 +594,18 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                         Ref::Var(Vid(s + &format!("_{:?}", n)), n)
                     },
                 _ => r,
-            }))
+            }));
+        // Also rename vctx entries for non-argument variables
+        let mut new_vctx = Ctx::new();
+        for (k, v) in result.vctx.iter() {
+            if arg_names.contains(&v.0) {
+                new_vctx.insert(k, v);
+            } else {
+                new_vctx.insert(k, &Vid(v.0.clone() + &format!("_{:?}", k)));
+            }
+        }
+        result.vctx = new_vctx;
+        result
     }
 
     pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A> where A: Clone {
