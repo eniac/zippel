@@ -39,7 +39,11 @@ use std::collections::{HashMap, HashSet};
 /// It is parameterized by types `A` representing a
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
-pub struct Dag<C: ArkConfig, A>(Graph<Node<C, A>, Dep>);
+pub struct Dag<C: ArkConfig, A> {
+    pub(crate) graph: Graph<Node<C, A>, Dep>,
+    pub(crate) vctx: Ctx<NodeIndex, Vid>,
+    pub(crate) transcript_vars: Ctx<NodeIndex, bool>,
+}
 
 /// Dag with no annotations
 pub type UDag<C> = Dag<C, Nothing>;
@@ -147,8 +151,8 @@ fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
 impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
     fn eq(&self, other: &Self) -> bool {
         petgraph::algo::is_isomorphic_matching(
-            &self.0,
-            &other.0,
+            &self.graph,
+            &other.graph,
             |a, b| nodes_isomorphic_eq(a, b),
             |a, b| a == b,
         )
@@ -158,12 +162,12 @@ impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
 impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn new() -> Self {
-        Dag(Graph::new())
+        Dag { graph: Graph::new(), vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 
     /// Print all edges in the graph
     pub fn print_edges(&self) {
-        for edge in self.0.edge_references() {
+        for edge in self.graph.edge_references() {
             let source = edge.source();
             let target = edge.target();
             debug!("Edge from {:?} to {:?}", source, target);
@@ -172,29 +176,29 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Get the number of nodes in the graph
     pub fn node_count(&self) -> usize {
-        self.0.node_count()
+        self.graph.node_count()
     }
 
     pub fn nodes_indices(&self) -> Vec<NodeIndex> {
-        self.0.node_indices().collect()
+        self.graph.node_indices().collect()
     }
 
     /// Get the number of edges in the graph
     pub fn edge_count(&self) -> usize {
-        self.0.edge_count()
+        self.graph.edge_count()
     }
 
     pub fn input_node(&self) -> NodeIndex {
-        self.0.node_indices().find(|n| self.0[*n].is_input())
+        self.graph.node_indices().find(|n| self.graph[*n].is_input())
             .expect("No input node found, DAG uninitialized")
     }
 
     pub fn relation_node(&self) -> Option<NodeIndex> {
-        self.0.node_indices().find(|n| self.0[*n].is_relation())
+        self.graph.node_indices().find(|n| self.graph[*n].is_relation())
     }
 
     pub fn op_nodes(&self) -> Vec<NodeIndex> {
-        self.0.node_indices().filter(|n| self[*n].is_op()).collect()
+        self.graph.node_indices().filter(|n| self[*n].is_op()).collect()
     }
 
     pub fn args(&self) -> Vec<PRef> {
@@ -209,7 +213,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     pub(crate) fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         // If the edge is not a self-loop add it
         if source != sink {
-            self.0.add_edge(source, sink, edge);
+            self.graph.add_edge(source, sink, edge);
         }
     }
 
@@ -234,7 +238,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 continue;
             }
             closure.insert(n);
-            for neighbor in self.0.neighbors_directed(n, direction) {
+            for neighbor in self.graph.neighbors_directed(n, direction) {
                 worklist.push(neighbor);
             }
         }
@@ -243,11 +247,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Add a node to the graph (no deduplication)
     pub fn add_node(&mut self, node: Node<C, A>) -> NodeIndex {
-        self.0.add_node(node)
+        self.graph.add_node(node)
     }
 
     pub fn get_node(&mut self, it: NodeIndex) -> &mut Node<C, A> {
-        &mut self.0[it]
+        &mut self.graph[it]
     }
 
     /// Find the variable name associated with a transcript node.
@@ -256,7 +260,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Checks incoming transcript edges first, then falls back to searching
     /// for ref-holder nodes (for transcript nodes logged under multiple names).
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        self.0.edges_directed(node, Direction::Incoming)
+        self.graph.edges_directed(node, Direction::Incoming)
             .find_map(|e| {
                 let dep = e.weight();
                 if dep.0 == DepType::Transcript {
@@ -288,17 +292,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     pub fn node_indices(&self) -> NodeIndices {
-        self.0.node_indices()
+        self.graph.node_indices()
     }
 
     /// Get reference to internal graph (for testing)
     #[cfg(test)]
     pub(crate) fn inner_graph(&self) -> &Graph<Node<C, A>, Dep> {
-        &self.0
+        &self.graph
     }
 
     pub fn max_node(&self) -> NodeIndex {
-        self.0.node_indices().last().unwrap()
+        self.graph.node_indices().last().unwrap()
     }
 
     pub fn name(&self) -> Vid {
@@ -308,7 +312,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
     /// Annotate the graph using function [f]
     pub fn map_annotations<B, F: Fn(&GOp<C>, &A) -> B>(&self, f: &F) -> Dag<C, B> {
-        Dag(self.0.map(
+        Dag { graph: self.graph.map(
             |_, node|
                 match node {
                     Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
@@ -317,21 +321,21 @@ impl<C: ArkConfig, A> Dag<C, A> {
                     Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
                 },
                 |_, e| e.clone()
-        ))
+        ), vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 
     pub fn neighbors_directed(&self, node_index: NodeIndex, direction: Direction) -> Neighbors<'_, Dep, u32> {
-        self.0.neighbors_directed(node_index, direction)
+        self.graph.neighbors_directed(node_index, direction)
     }
 
     pub fn transcript_edge<'a>(&'a self, n: NodeIndex, dir: Direction) -> Option<EdgeReference<'a, Dep>> {
-        self.0.edges_directed(n, dir)
+        self.graph.edges_directed(n, dir)
             .find(|edge| edge.weight().is_transcript())
     }
 
     /// Get all transcript node from the graph (challenges and proof nodes)
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
-        let transcript_nodes_list: Vec<NodeIndex> = self.0.node_indices()
+        let transcript_nodes_list: Vec<NodeIndex> = self.graph.node_indices()
             .filter(|n| self[*n].is_transcript())
             .collect();
         
@@ -342,7 +346,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
             let mut has_parent_in_list = HashSet::new();
             
             for &node in &transcript_nodes_list {
-                for parent in self.0.neighbors_directed(node, petgraph::Direction::Incoming) {
+                for parent in self.graph.neighbors_directed(node, petgraph::Direction::Incoming) {
                     if transcript_nodes_list.contains(&parent) {
                         parent_map.insert(node, parent);
                         has_parent_in_list.insert(node);
@@ -392,15 +396,15 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
-        self.0.neighbors_directed(n, Direction::Outgoing)
+        self.graph.neighbors_directed(n, Direction::Outgoing)
     }
 
     pub fn nodes_to(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
-        self.0.neighbors_directed(n, Direction::Incoming)
+        self.graph.neighbors_directed(n, Direction::Incoming)
     }
 
     pub fn erase_ann(self) -> UDag<C> {
-        Dag(self.0.map(
+        Dag { graph: self.graph.map(
             |_, node|
                 match node {
                     Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
@@ -408,7 +412,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                     Node::Op(op, _) => Node::Op(op.clone(), Nothing),
                     Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
                 },
-            |_, e| e.clone()))
+            |_, e| e.clone()), vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 
     /// Join two DAGs into one
@@ -426,7 +430,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
         // Add nodes from self and populate node_map_self
         for old_node_idx in self.node_indices() {
-            if let Some(weight) = self.0.node_weight(old_node_idx) {
+            if let Some(weight) = self.graph.node_weight(old_node_idx) {
                 let new_node_idx = combined_graph.add_node(weight.clone());
                 node_map_self.insert(old_node_idx, new_node_idx);
             }
@@ -434,14 +438,14 @@ impl<C: ArkConfig, A> Dag<C, A> {
 
         // Add nodes from other and populate node_map_other
         for old_node_idx in other.node_indices() {
-            if let Some(weight) = other.0.node_weight(old_node_idx) {
+            if let Some(weight) = other.graph.node_weight(old_node_idx) {
                 let new_node_idx = combined_graph.add_node(weight.clone());
                 node_map_other.insert(old_node_idx, new_node_idx);
             }
         }
 
         // Add edges from self using the mapped node indices
-        for edge_ref in self.0.edge_references() {
+        for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
@@ -454,7 +458,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
 
         // Add edges from other using the mapped node indices
-        for edge_ref in other.0.edge_references() {
+        for edge_ref in other.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
@@ -466,17 +470,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
 
-        Dag(combined_graph)
+        Dag { graph: combined_graph, vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 }
 
 /// Methods requiring hash-consing (HasOpFactory)
 impl<C: HasOpFactory, A> Dag<C, A> {
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag(self.0.map(
+        Dag { graph: self.graph.map(
             |_, node| node.map_node_indices(f),
             |_, e| e.clone()
-        ))
+        ), vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
@@ -504,14 +508,14 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
 
             // Add previous neighbors to worklist
-            for e in self.0.edges_directed(n, Direction::Incoming) {
+            for e in self.graph.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 worklist.push(e.source());
             }
         }
 
         // Add edges to prover graph using the mapped node indices
-        for edge_ref in self.0.edge_references() {
+        for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
@@ -547,17 +551,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
             let new_node = g_relation.add_node(self[n].clone());
             node_map_rel.insert(n, new_node);
-            for e in self.0.edges_directed(n, Direction::Outgoing) {
+            for e in self.graph.edges_directed(n, Direction::Outgoing) {
                 worklist.push(e.target());
             }
 
-            for e in self.0.edges_directed(n, Direction::Outgoing) {
+            for e in self.graph.edges_directed(n, Direction::Outgoing) {
                 worklist.push(e.target());
             }
         }
 
         // Add edges to relation graph using the mapped node indices
-        for edge_ref in self.0.edge_references() {
+        for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
@@ -588,14 +592,14 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     }
 
     pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag(self.0.map(|_, node|
+        Dag { graph: self.graph.map(|_, node|
             match node {
                 Node::Op(op, ann) => Node::Op(mk::<C>(f(op)), ann.clone()),
                 Node::Transcr(op, ann) => Node::Transcr(mk::<C>(f(op)), ann.clone()),
                 _ => node.clone(),
             },
         |_, e| e.clone()
-        ))
+        ), vctx: Ctx::new(), transcript_vars: Ctx::new() }
     }
 
     /// Get the verifier graph, by reachability analysis starting from the verifier assertion
@@ -685,7 +689,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             node_map_self.insert(n, new_node);
 
             // Add parent neighbors to worklist
-            for e in self.0.edges_directed(n, Direction::Incoming) {
+            for e in self.graph.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 if !node_map_self.contains_key(&e.source()) {
                     debug!("Adding parent {} of {} to worklist", self[e.source()].drop_annotation(), self[n].drop_annotation());
@@ -695,7 +699,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         }
 
         // Add edges to prover graph using the mapped node indices
-        for edge_ref in self.0.edge_references() {
+        for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = edge_ref.weight().clone();
@@ -729,7 +733,7 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
 
         // Create graphviz object
         let graphviz =  Dot::with_attr_getters(
-                &self.0,
+                &self.graph,
                 &[],
                 &|_, e|
                         match e.weight().0 {
@@ -1392,7 +1396,7 @@ impl<C: HasOpFactory> UDag<C> {
                         )));
                         self.add_edges(DepType::Data, nl, ol.clone());
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
-                        self.0.node_weight_mut(nl).unwrap().set_transcript();
+                        self.graph.node_weight_mut(nl).unwrap().set_transcript();
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     },
@@ -1401,7 +1405,7 @@ impl<C: HasOpFactory> UDag<C> {
                         let nl = self.add_node(Node::transcr(&ol));
                         self.add_edges(DepType::Data, nl, ol.clone());
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
-                        self.0.node_weight_mut(nl).unwrap().set_transcript();
+                        self.graph.node_weight_mut(nl).unwrap().set_transcript();
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }
@@ -1591,13 +1595,13 @@ impl<C: HasOpFactory> UDag<C> {
 impl<C: ArkConfig, A> Index<NodeIndex> for Dag<C, A> {
     type Output = Node<C, A>;
     fn index(&self, index: NodeIndex) -> &Self::Output {
-        &self.0[index]
+        &self.graph[index]
     }
 }
 
 impl<C: ArkConfig, A> std::ops::IndexMut<NodeIndex> for Dag<C, A> {
     fn index_mut(&mut self, index: NodeIndex) -> &mut Self::Output {
-        &mut self.0[index]
+        &mut self.graph[index]
     }
 }
 
