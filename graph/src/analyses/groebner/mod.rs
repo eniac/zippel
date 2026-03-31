@@ -73,6 +73,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         self.np.retain(|p, _| vars.contains(p));
     }
 
+    #[allow(dead_code)]
     pub fn inline<F: Fn(&PRef) -> bool>(&mut self, f: F) {
         for p in self.basis.iter_mut() {
             *p = p.clone().flat_map_vars(&|v|

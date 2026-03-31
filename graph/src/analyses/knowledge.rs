@@ -5,68 +5,109 @@ use log::{warn};
 use log::debug;
 #[cfg(test)] use crate::WritePdf;
 use crate::{DQDag, PRef};
-use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder};
+use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder, GroebnerBasis};
+use crate::analyses::error::AnalysisError;
 
 
 /// Perform a knowledge analysis using Groebner bases.
-pub struct KnowledgeAnalysis<C: ArkConfig>(GroebnerBuilder<C, ElimTerm>);
+pub struct KnowledgeAnalysis<C: ArkConfig> {
+    builder: GroebnerBuilder<C, ElimTerm>,
+    /// Gröbner basis of the relation (precondition) alone, used to filter
+    /// polynomials that are derivable from the precondition (not real leaks).
+    relation_basis: Option<GroebnerBasis<C::F, ElimTerm>>,
+}
 
 impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     pub fn new(gb: GroebnerBuilder<C, ElimTerm>) -> Self {
-        Self(gb)
+        Self { builder: gb, relation_basis: None }
     }
 
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
         gb.add_input(dag);
-        Self(gb)
+
+        // Include the relation (where clause) in the main basis so Buchberger
+        // can use it for substitution (e.g., g*x → h). Build a separate
+        // relation-only basis to later identify and skip precondition polys.
+        let relation_basis = if dag.relation_node().is_some() {
+            gb.add_relation(dag);
+            let mut rel_gb = GroebnerBuilder::new();
+            rel_gb.add_relation(dag);
+            rel_gb.run();
+            Some(rel_gb.basis)
+        } else {
+            None
+        };
+
+        Self { builder: gb, relation_basis }
     }
 
+    #[cfg(test)]
     pub fn from_relation(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
         gb.add_relation(dag);
-        Self(gb)
+        Self { builder: gb, relation_basis: None }
     }
 
     fn is_leak(p: &SparsePolynomial<C::F, ElimTerm>) -> bool {
         let vars = p.vars();
-        // A leak occurs when public and private variables appear together in a polynomial
-        vars.iter().any(|v| v.is_public())
-        && vars.iter().any(|v| v.is_private())
+        let has_public = vars.iter().any(|v| v.is_public());
+        let has_private = vars.iter().any(|v| v.is_private());
+
+        if !has_public || !has_private {
+            return false;
+        }
+
+        // A polynomial with a private uniform variable appearing at degree 1
+        // alone in its own term is safe — it acts as a one-time pad mask.
+        // E.g., r + c*x - z where r is private uniform.
+        let has_uniform_mask = p.terms.iter().any(|(term, _coeff)| {
+            let term_vars: Vec<_> = term.iter().collect();
+            term_vars.len() == 1
+                && *term_vars[0].1 == 1
+                && term_vars[0].0.is_private()
+                && (term_vars[0].0.is_uniform() || term_vars[0].0.is_uniform_nz())
+        });
+
+        !has_uniform_mask
     }
 
     pub fn private(&self) -> Vec<PRef> {
-        self.0.vars()
+        self.builder.vars()
         .into_iter()
         .filter(|v| v.is_private())
         .collect()
     }
 
     pub fn public(&self) -> Vec<PRef> {
-        self.0.vars()
+        self.builder.vars()
         .into_iter()
         .filter(|v| v.is_public())
         .collect()
     }
 
     pub fn eliminate_var(&mut self){
-        // Only remove polynomials where ALL variables are private uniform
-        // Keep polynomials that mix uniform vars with public/other private vars
-        self.0.basis.basis.retain(|p| {
+        self.builder.basis.basis.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
                 return true;
             }
-            // Only remove polynomials where ALL variables are private uniform
+            // Remove polynomials where ALL variables are private uniform
             let all_private_uniform = vars.iter().all(|v| 
                 v.is_private() && v.is_uniform()
             );
-            !all_private_uniform
+            if all_private_uniform {
+                return false;
+            }
+            // Remove polynomials containing Local variables — these are
+            // prover-internal computations that the verifier cannot observe
+            let has_local = vars.iter().any(|v| v.is_local());
+            !has_local
         });
     }
 
     pub fn eliminate_groups(&mut self) {
-        self.0.eliminate_monomial(&|t| {
+        self.builder.eliminate_monomial(&|t| {
             let mono_sum = t.iter()
             .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
             .sum::<usize>();
@@ -74,30 +115,30 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         });
     }
 
-    pub fn run(&mut self) -> bool {
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
-        self.0.run();
+        self.builder.run();
 
         // Delete varieties with elimination variables
         self.eliminate_var();
 
-        // Inline all polynomials except for public variables
-        // COMMENTED OUT: Inlining removes private variables, making leak detection impossible
-        // self.0.inline(|p| p.is_public());
-
         // Delete varieties where group elements are multiplied
         self.eliminate_groups();
 
-        if self.0.basis.iter().any(Self::is_leak) {
-            warn!("Leak found");
-            for p in self.0.basis.iter() {
-                if Self::is_leak(p) {
-                    warn!("{}", p);
+        for p in self.builder.basis.iter() {
+            if Self::is_leak(p) {
+                // Skip polynomials derivable from the relation (precondition).
+                // The verifier already knows these — they're not new leaks.
+                if let Some(ref rel_basis) = self.relation_basis {
+                    if rel_basis.contains_poly(p) {
+                        continue;
+                    }
                 }
+                warn!("Leak found: {}", p);
+                return Err(AnalysisError::KnowledgeLeak(p.clone()));
             }
-            return true;
         }
-        false
+        Ok(())
     }
 }
 
@@ -138,7 +179,7 @@ fn knowledge_foo() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner bases
-    assert!(kz.run());
+    assert!(kz.run().is_err());
 }
 
 #[test]
@@ -169,7 +210,7 @@ fn groebner_bar() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run());
+    assert!(kz.run().is_err());
 }
 
 #[test]
@@ -199,7 +240,7 @@ fn groebner_baz() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run());
+    assert!(kz.run().is_err());
 }
 
 /// This example is somewhat contrived. Here is how we leak s = s'.
@@ -235,5 +276,26 @@ fn groebner_ex3() {
     // Create an object computing the Groebner basis
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
-    assert!(kz.run());
+    assert!(kz.run().is_err());
 }
+
+#[test]
+fn schnorr_zk() {
+    let ex = r#"
+        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + h*c);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_ok(), "Schnorr protocol should be zero-knowledge");
+}
+
