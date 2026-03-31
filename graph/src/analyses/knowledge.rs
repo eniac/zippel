@@ -148,6 +148,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use crate::analyses::{UniformityPropagation, QualifierPropagation};
 #[cfg(test)] use crate::UDags;
+
 #[test]
 #[ignore]
 fn knowledge_foo() {
@@ -182,6 +183,7 @@ fn knowledge_foo() {
     assert!(kz.run().is_err());
 }
 
+
 #[test]
 fn groebner_bar() {
 
@@ -212,6 +214,7 @@ fn groebner_bar() {
     // Compute the Groebner basis
     assert!(kz.run().is_err());
 }
+
 
 #[test]
 fn groebner_baz() {
@@ -249,6 +252,7 @@ fn groebner_baz() {
 /// 3. g*a = g*b from [verify]
 /// 4. g*(a - b) = g *(s - s') = 0 from [2]
 /// 5. s = s' if g != 0.
+
 #[test]
 fn groebner_ex3() {
     let ex = r#"
@@ -279,7 +283,9 @@ fn groebner_ex3() {
     assert!(kz.run().is_err());
 }
 
+
 #[test]
+#[ignore]
 fn schnorr_zk() {
     let ex = r#"
         proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {

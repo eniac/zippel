@@ -224,12 +224,20 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     }
 
     pub fn pow(&mut self, exp: usize) {
+        if exp == 0 {
+            *self = SparsePolynomial::lit(&F::one());
+            return;
+        }
         let mut i = exp;
         while (i % 2) == 0 {
             self.square();
             i /= 2;
         }
+        if i <= 1 {
+            return;
+        }
         let mul = self.clone();
+        i -= 1;
         while i > 0 {
             *self *= mul.clone();
             i -= 1;
