@@ -7,13 +7,15 @@ use ark_poly::DenseMultilinearExtension;
 use lang::id::{Vid, Tid};
 use share::Ctx;
 use ark_ff::Zero;
+use ark_std::UniformRand;
 
 const NUM_VARS: usize = 4;
-const DEGREE: usize = 1;
+const DEGREE: usize = 3;
 
 fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck.zippel"))
+        .with_pdf(PathBuf::from("target/sumcheck_graphs.pdf"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &10);
@@ -32,7 +34,7 @@ fn main() {
     let verifier_start = Instant::now();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
+    let result = check_verification(verifier_result.clone());
     println!("Verifier time:  {verifier_elapsed:.2?}");
     if result.passed {
         println!("Verification:   ✓ PASSED");
@@ -64,15 +66,15 @@ fn main() {
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+    type F = <ArkBls12_381 as ArkConfig>::F;
     let eval_count = 1usize << NUM_VARS;
-    // Use the zero polynomial so each round polynomial is identically zero.
-    // This makes round checks deterministic and independent of random challenges.
-    let g_evals: Vec<_> = vec![<ArkBls12_381 as ArkConfig>::F::zero(); eval_count];
+    let mut rng = rand::rngs::OsRng;
+    // Multilinear polynomial on {0,1}^NUM_VARS: random evaluations (almost surely nonzero).
+    let g_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
 
-    let claimed_sum = g_evals.iter()
-        .fold(<ArkBls12_381 as ArkConfig>::F::zero(), |acc, val| acc + val);
+    let claimed_sum: F = g_evals.iter().fold(F::zero(), |acc, val| acc + val);
 
-    let g_poly = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, g_evals.clone());
+    let g_poly = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, g_evals);
     let poly = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(g_poly)));
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
@@ -80,7 +82,8 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("poly".to_string()), poly),
         (Vid("num_variables".to_string()), Value::Index(NUM_VARS)),
         (Vid("max_degree".to_string()), Value::Index(DEGREE)),
-        (Vid("rounds".to_string()), Value::VecIndex(vec![0, 0, 0, 0])),
+        // One entry per variable: round index for `marginalize` (0 .. NUM_VARS-1).
+        (Vid("rounds".to_string()), Value::VecIndex(vec![0, 1, 2, 3])),
     ])
 }
 

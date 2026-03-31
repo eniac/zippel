@@ -2,8 +2,9 @@ use log::debug;
 use petgraph::graph::NodeIndex;
 use spongefish::{ProverState, DuplexSpongeInterface};
 use std::sync::{Arc, Mutex};
-use backend::{ArkConfig, Value, value_to_bytes};
+use backend::{ArkConfig, Value, value_to_bytes, ArkScalarOps};
 use backend::values::marginalize as backend_marginalize;
+use backend::values::round_univariate_from_marginalize_evals as backend_round_univariate_from_marginalize_evals;
 use graph::{Dag, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
@@ -236,13 +237,31 @@ impl<C: ArkConfig> MutexGraph<C> {
                         _ => panic!("marginalize: 'round' must be an index"),
                     })
                     .unwrap_or(0usize);
-                let (evals, next_poly) = backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
+                let (evals, next_poly) =
+                    backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
 
                 let mut out_fields = Ctx::new();
                 out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
                 out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
 
                 return Value::Record(out_fields);
+            }
+
+            Op::Interpolate0dEval(box evals) => {
+                let inputs_evals_clone = Arc::clone(&inputs);
+                let evals_val: Value<C> = self.handle_op(evals, inputs_evals_clone);
+
+                let evals: Vec<C::F> = match evals_val {
+                    Value::VecScalar(v) => v,
+                    Value::VecIndex(v) => v
+                        .iter()
+                        .map(|i| C::FOps::from_usize(*i))
+                        .collect(),
+                    _ => panic!("interpolate0d expects a vector of field evaluations"),
+                };
+
+                let poly = backend_round_univariate_from_marginalize_evals::<C::F>(&evals);
+                return Value::Poly(poly);
             }
             Op::Proj(box record_op, field_name, _) => {
                 let inputs_rec = Arc::clone(&inputs);
@@ -374,6 +393,16 @@ impl<C: ArkConfig> MutexGraph<C> {
 
                 if finished {
                     remove_from_running.push(node_index);
+                    if let Node::Op(op, annotation) = &g.mutex_graph[node_index] {
+                        if matches!(op, GOp::Check(_)) {
+                            let return_val_guard = annotation.return_value.lock().unwrap();
+                            if let Some(return_val) = return_val_guard.as_ref() {
+                                if matches!(return_val, Value::Bool(_)) {
+                                    final_return.push(return_val.clone());
+                                }
+                            }
+                        }
+                    }
                     match &g.mutex_graph[node_index] {
                         Node::Op(_, annotation) => {
                             active_threads -= annotation.thread_num;

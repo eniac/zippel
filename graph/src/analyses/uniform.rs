@@ -57,6 +57,7 @@ impl UniformityPropagation {
             GOp::Fft(box op) => self.op_ancestors(op),
             GOp::Mle(box op) => self.op_ancestors(op),
             GOp::Marginalize(box op) => self.op_ancestors(op),
+            GOp::Interpolate0dEval(box evals) => self.op_ancestors(evals),
             GOp::Proj(box op, _, _) => self.op_ancestors(op),
             GOp::Random(_, _) => Set::new(),
             GOp::Challenge(_, _) => Set::new(),
@@ -99,6 +100,10 @@ impl UniformityPropagation {
             GOp::Fft(box a) => self.from_op(a),
             GOp::Mle(box a) => self.from_op(a),
             GOp::Marginalize(box a) => self.from_op(a),
+            GOp::Interpolate0dEval(box evals) => {
+                let _dist_evals = self.from_op(evals)?;
+                Some(Distribution::Nonuniform)
+            },
             GOp::Proj(box a, _, _) => self.from_op(a),
             GOp::Bin(BinOp::Add, box a, box b, _) 
             | GOp::Bin(BinOp::Concat, box a, box b, _) => {

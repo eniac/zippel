@@ -67,6 +67,10 @@ pub enum Op<C: ArkConfig, R> {
     /// Sum-check marginalization helper
     Marginalize(Box<Op<C, R>>),
 
+    /// Interpolate univariate polynomial g over points 0..(n-1) from its
+    /// evaluation vector `evals` (i.e. return g as a univariate polynomial).
+    Interpolate0dEval(Box<Op<C, R>>),
+
     /// Project a field from a record value (runtime projection)
     Proj(Box<Op<C, R>>, String, ATyp),
 
@@ -153,7 +157,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Mle(_) => 24,
             Op::Reduce(_, _) => 25,
             Op::Marginalize(_) => 25,
-            Op::Proj(_, _, _) => 26,
+            Op::Interpolate0dEval(_) => 27,
+            Op::Proj(_, _, _) => 28,
         }
     }
 
@@ -213,6 +218,12 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Coef(box op) => op.typ(),
             Op::Mle(box op) => op.typ(),
             Op::Marginalize(box op) => op.typ(),
+            Op::Interpolate0dEval(box evals) => {
+                match evals.typ() {
+                    ATyp::Vec(_, n) => ATyp::uni(n.saturating_sub(1)),
+                    _ => panic!("interpolate0d expects a vector argument"),
+                }
+            },
             Op::Proj(_, _, typ) => typ.clone(),
         }
     }
@@ -741,6 +752,8 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Pair(box a, box b, typ) =>
                 Op::Pair(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f)), typ.clone()),
             Op::Eval(box a, box b) => Op::Eval(Box::new(a.map_node_indices(f)), Box::new(b.map_node_indices(f))),
+            Op::Interpolate0dEval(box a) =>
+                Op::Interpolate0dEval(Box::new(a.map_node_indices(f))),
             Op::Poly(box op) => Op::Poly(Box::new(op.map_node_indices(f))),
             Op::Coef(box op) => Op::Coef(Box::new(op.map_node_indices(f))),
             Op::Check(box op) => Op::Check(Box::new(op.map_node_indices(f))),
@@ -756,17 +769,19 @@ impl<C: HasOpFactory> GOp<C> {
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
         match self {
             Op::Ref(r, typ) => Op::Ref(f(r.clone()), typ.clone()),
-            Op::Bin(op, a, b, typ) =>
-                Op::Bin(*op, mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone()),
-            Op::Ram(a, b) =>
-                Op::Ram(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f))),
-            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| mk::<C>(v.map_refs(f))).collect()),
-            Op::Record(fields) => Op::Record(fields.iter().map(|(k, v)| (k.clone(), mk::<C>(v.map_refs(f)))).collect()),
-            Op::Pair(a, b, typ) =>
-                Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone()),
-            Op::Check(op) => Op::Check(mk::<C>(op.map_refs(f))),
-            Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_refs(f))),
-            Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
+            Op::Bin(op, box a, box b, typ) =>
+                Op::Bin(*op, Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
+            Op::Ram(box a, box b) =>
+                Op::Ram(Box::new(a.map_refs(f)), Box::new(b.map_refs(f))),
+            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| v.map_refs(f)).collect()),
+            Op::Record(fields) => Op::Record(fields.iter().map(|(k, v)| (k.clone(), v.map_refs(f))).collect()),
+            Op::Pair(box a, box b, typ) =>
+                Op::Pair(Box::new(a.map_refs(f)), Box::new(b.map_refs(f)), typ.clone()),
+            Op::Interpolate0dEval(box a) =>
+                Op::Interpolate0dEval(Box::new(a.map_refs(f))),
+            Op::Check(box op) => Op::Check(Box::new(op.map_refs(f))),
+            Op::Ifft(box op) => Op::Ifft(Box::new(op.map_refs(f))),
+            Op::Fft(box op) => Op::Fft(Box::new(op.map_refs(f))),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => self.clone(),
@@ -1049,6 +1064,11 @@ where
             Op::Marginalize(box v) => allocator.concat([
                 allocator.text("(marginalize "),
                 v.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Interpolate0dEval(box evals) => allocator.concat([
+                allocator.text("(interpolate0d "),
+                evals.pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Proj(box v, field, _) => allocator.concat([

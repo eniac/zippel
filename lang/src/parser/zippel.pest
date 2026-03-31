@@ -67,6 +67,7 @@ exp_term  = _{
          | fft_exp
          | poly_exp
          | eval_exp
+         | interpolate0d_exp
          | dot_exp
          | coef_exp
          | challenge_exp
@@ -98,6 +99,7 @@ exp_term  = _{
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     marginalize_exp = { "marginalize" ~ "(" ~ exp ~ ")" }             // Sum-check round marginalization helper
+    interpolate0d_exp = { "interpolate0d" ~ "(" ~ exp ~ ")" }         // Interpolate univariate poly over points 0..d
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension

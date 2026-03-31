@@ -1896,6 +1896,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn eval(self, other: &mut Self) {
         match (&self, &other) {
             (Value::Poly(poly), Value::VecIndex(b)) => {
+                let n_points = b.len();
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
                 let result_poly = if poly.is_univariate() {
@@ -1908,7 +1909,11 @@ impl<C: ArkConfig> Value<C> {
 
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
-                    Value::Scalar(scalar)
+                    if n_points == 1 {
+                        Value::VecScalar(vec![scalar])
+                    } else {
+                        Value::Scalar(scalar)
+                    }
                 } else if let Some(vec) = result_poly.to_vec() {
                     Value::VecScalar(vec)
                 } else {
@@ -1916,6 +1921,7 @@ impl<C: ArkConfig> Value<C> {
                 };
             },
             (Value::Poly(poly), Value::VecScalar(v)) => {
+                let n_points = v.len();
                 let result_poly = if poly.is_univariate() {
                     poly.evaluate_vec(v)
                 } else if let Ok(scalar) = poly.evaluate_mv(v) {
@@ -1926,7 +1932,11 @@ impl<C: ArkConfig> Value<C> {
 
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
-                    Value::Scalar(scalar)
+                    if n_points == 1 {
+                        Value::VecScalar(vec![scalar])
+                    } else {
+                        Value::Scalar(scalar)
+                    }
                 } else if let Some(vec) = result_poly.to_vec() {
                     Value::VecScalar(vec)
                 } else {
@@ -2626,6 +2636,62 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
+pub fn round_univariate_from_marginalize_evals<F: PrimeField>(evals: &[F]) -> VirtualPolynomial<F> {
+    let n = evals.len();
+    assert!(n > 0, "marginalize evaluations must be non-empty");
+    if n == 1 {
+        return VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
+            vec![evals[0]],
+        )));
+    }
+    let mut aug: Vec<Vec<F>> = (0..n)
+        .map(|i| {
+            let xi = F::from(i as u64);
+            let mut row = Vec::with_capacity(n + 1);
+            let mut pow = F::one();
+            for _ in 0..n {
+                row.push(pow);
+                pow *= xi;
+            }
+            row.push(evals[i]);
+            row
+        })
+        .collect();
+    for col in 0..n {
+        let mut pivot = None;
+        for row in col..n {
+            if !aug[row][col].is_zero() {
+                pivot = Some(row);
+                break;
+            }
+        }
+        let pr = pivot.expect("singular Vandermonde in round_univariate interpolation");
+        aug.swap(col, pr);
+        let inv = aug[col][col].inverse().unwrap();
+        for j in col..=n {
+            aug[col][j] *= inv;
+        }
+        for row in 0..n {
+            if row != col {
+                let factor = aug[row][col];
+                if !factor.is_zero() {
+                    let pivot_row: Vec<F> = aug[col][col..=n].to_vec();
+                    for j in col..=n {
+                        aug[row][j] -= factor * pivot_row[j - col];
+                    }
+                }
+            }
+        }
+    }
+    let coeffs: Vec<F> = (0..n).map(|i| aug[i][n]).collect();
+    VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs)))
+}
+
+pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
+    let g = round_univariate_from_marginalize_evals::<F>(evals);
+    g.evaluate_uv(&x)
+}
+
 pub fn marginalize<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     num_variables: usize,
@@ -2639,10 +2705,15 @@ pub fn marginalize<C: ArkConfig>(
     }
 
     if let Some(n) = poly.num_vars() {
-        if n != num_variables {
+        let expected_current_vars = if round == 0 {
+            num_variables
+        } else {
+            num_variables.saturating_sub(round - 1)
+        };
+        if n != expected_current_vars {
             panic!(
-                "marginalize: num_variables mismatch: polynomial has {}, argument is {}",
-                n, num_variables
+                "marginalize: num_variables mismatch: polynomial has {}, expected {} (num_variables={}, round={})",
+                n, expected_current_vars, num_variables, round
             );
         }
     }
@@ -2674,7 +2745,7 @@ pub fn marginalize<C: ArkConfig>(
     let expected_mle_vars = num_variables.saturating_sub(round);
 
     let all_mle = next_poly.flattened_polys.iter().all(|p| p.as_mle_evaluations().is_some());
-    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
+    let mle_tables: Option<Vec<&[C::F]>> = if false && all_mle && !next_poly.flattened_polys.is_empty() {
         let tables: Vec<&[C::F]> = next_poly
             .flattened_polys
             .iter()

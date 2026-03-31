@@ -182,6 +182,12 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             },
             Op::Marginalize(box op) => cost += self.cost(op, nthreads).0,
             Op::Proj(box op, _, _) => cost += self.cost(op, nthreads).0,
+            Op::Eval(box _p, box _x) => cost += 1.0,
+            Op::Interpolate0dEval(box evals) => {
+                cost += self.cost(evals, nthreads).0;
+                cost += 1.0;
+            },
+            Op::Coef(box _op) => cost += 1.0,
         };
         cost.into()
     }

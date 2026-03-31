@@ -739,12 +739,12 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 impl<C: ArkConfig> WritePdf for Dag<C, String> {
     /// Write graph to PDF
     fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
-        // Write graphviz file
         let fdot: String = format!("{}.dot", filename.to_string());
         // Remove old file if there
         std::fs::remove_file(&fdot).ok();
 
         // Create graphviz object
+<<<<<<< HEAD
         let graphviz =  Dot::with_attr_getters(
                 &self.graph,
                 &[],
@@ -761,6 +761,27 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
                             _ => "shape = \"ellipse\"".to_string(),
                         }.to_string()
             );
+=======
+        let graphviz = Dot::with_attr_getters(
+            &self.0,
+            &[],
+            &|_, e| {
+                match e.weight().0 {
+                    DepType::Data => "color = \"black\"",
+                    DepType::Transcript => "color = \"red\"",
+                }
+                .to_string()
+            },
+            &|_, n| {
+                match n.1 {
+                    Node::Inp(_, _) => "shape = \"box\"".to_string(),
+                    Node::Rel(_, _) => "shape = \"note\"".to_string(),
+                    Node::Transcr(_, _) => "color = \"red\"".to_string(),
+                    _ => "shape = \"ellipse\"".to_string(),
+                }
+            },
+        );
+>>>>>>> a92c894 (sumcheck working)
 
         // Write to file
         std::fs::write(fdot.clone(), graphviz.to_string())?;
@@ -1168,6 +1189,12 @@ impl<C: HasOpFactory> UDag<C> {
                 })?))
             },
 
+            CExp::Interpolate0dEval(box evals) => {
+                // Interpolate g from evals on points 0..(n-1) (i.e. 0..d), returning g as a univariate polynomial.
+                let ve = self.add_exp(evals, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                Ok(GOp::Interpolate0dEval(Box::new(ve)))
+            },
+
             // Billinear pairing
             CExp::Pair(box a, box b) => {
                 a.infer(kctx, &fctx.keys(), &vctx)?;
@@ -1339,20 +1366,22 @@ impl<C: HasOpFactory> UDag<C> {
                         continue;
                     },
                     _ => {
-                        // It is a function. Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx.iter().filter_map(|(sig, body)|
-                            // If the function name matches
-                            if sig.name == fid {
-                                    // The argument types must match the parameter types
-                                    let (sig, subs) = sig.clone()
-                                        .unify(&param_types, &kctx)
-                                        .ok()?;
-                                    // Return new signature
-                                    Some((sig, body, subs))
-                                } else {
-                                    None
-                                }
-                        ).collect::<Vec<_>>();
+                        let mut matching_sigs: Vec<_> = fctx.iter().filter_map(|(sig, body)| {
+                            if sig.name != fid {
+                                return None;
+                            }
+                            let (sig, subs) = sig.clone()
+                                .unify(&param_types, &kctx)
+                                .ok()?;
+                            Some((sig, body, subs))
+                        }).collect();
+
+                        if matching_sigs.len() > 1 {
+                            matching_sigs.retain(|(sig, _, _)| {
+                                sig.args.iter().zip(param_types.0.iter())
+                                    .all(|(a, t)| a.typ == *t)
+                            });
+                        }
 
                         // Only one function shoud match (enforced by the type system)
                         assert_eq!(matching_sigs.len(), 1);

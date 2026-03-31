@@ -283,16 +283,17 @@ impl Typeable for CExp {
                         let _i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         Ok(CTyp::Vec(b, len_vec))
                     }
-                    (CTyp::Poly(_i, n, 1), CTyp::Vec(b, len_vec)) => {
+                    // Multivariate polynomial (MLE, virtual, etc.): any variable count > 1 and
+                    // any tracked max degree. Backend evaluates at a point or fixes leading vars.
+                    (CTyp::Poly(_i, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
                         let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         if len_vec == n {
-                           return Ok(*b); 
+                           return Ok(*b);
                         }
                         if len_vec < n {
-                            return Ok(CTyp::Poly(i, n - len_vec, 1));
+                            return Ok(CTyp::Poly(i, n - len_vec, d));
                         }
                         return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
-                        
                     },
                     _ => Err(TypeError::eval(kctx, &vctx, p, x))
                 }
@@ -354,6 +355,24 @@ impl Typeable for CExp {
                 out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, d));
 
                 Ok(CTyp::Record(out_fields))
+            },
+
+            CExp::Interpolate0dEval(box evals) => {
+                let tevals = evals
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match tevals {
+                    CTyp::Vec(box inner, n) => {
+                        if let CTyp::Base(e_tid) = inner {
+                            let d = n.saturating_sub(1);
+                            Ok(CTyp::Poly(e_tid, 1, d))
+                        } else {
+                            Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&inner, n)))
+                        }
+                    }
+                    _ => Err(TypeError::interp(kctx, vctx, &evals, &tevals)),
+                }
             },
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
@@ -710,19 +729,24 @@ impl Typeable for CExp {
                     _ => {
                         // It is a function
                         // Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx.iter().filter_map(|sig| {
-                            // If the function name matches
-                            if &sig.name == id {
-                                // The argument types must match the parameter types
-                                let (vs, _) = sig.clone()
-                                    .unify(&param_types, &kctx)
-                                    .ok()?;
-                                // Return new signature
-                                Some(vs)
-                            } else {
-                                None
+                        let mut matching_sigs: Vec<_> = fctx.iter().filter_map(|sig| {
+                            if &sig.name != id {
+                                return None;
                             }
-                        }).collect::<Vec<_>>();
+                            let (vs, _) = sig.clone()
+                                .unify(&param_types, &kctx)
+                                .ok()?;
+                            Some(vs)
+                        }).collect();
+                        // [CTyp::unify] uses max() on univariate degree so many overloads
+                        // Poly<F,1,d> all unify with Poly<F,1,1>. When ambiguous, keep only
+                        // signatures whose parameters match argument types exactly (no widening).
+                        if matching_sigs.len() > 1 {
+                            matching_sigs.retain(|vs| {
+                                vs.args.iter().zip(param_types.0.iter())
+                                    .all(|(a, t)| a.typ == *t)
+                            });
+                        }
 
                         // Only one function shoud match
                         if matching_sigs.len() != 1 {

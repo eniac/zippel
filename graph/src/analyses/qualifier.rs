@@ -28,10 +28,11 @@ impl QualifierPropagation {
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            Op::Ifft(a) => self.from_op(a),
-            Op::Fft(a) => self.from_op(a),
-            Op::Bin(_, a, b, _) 
-            | Op::Pair(a, b, _) => {
+            GOp::Interpolate0dEval(box evals) => self.from_op(evals),
+            GOp::Ifft(box a) => self.from_op(a),
+            GOp::Fft(box a) => self.from_op(a),
+            GOp::Bin(_, box a, box b, _) 
+            | GOp::Pair(box a, box b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
                 Some(qual_a.join(&qual_b))
