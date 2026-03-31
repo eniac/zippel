@@ -84,7 +84,7 @@ impl QualifierPropagation {
             }
 
             // Add parent neighbors to worklist
-            for e in dag.0.edges_directed(n, Direction::Incoming) {
+            for e in dag.graph.edges_directed(n, Direction::Incoming) {
                 // Add neighbors to worklist
                 if !qp.quals.contains(&e.source()) {
                     worklist.push(e.source());
@@ -92,10 +92,10 @@ impl QualifierPropagation {
             }
         }
 
-        Dag(dag.0.map(
+        Dag { graph: dag.graph.map(
             |i, node|
-                node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Private).clone()),
-            |_, e| e.clone()))
+                node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Local).clone()),
+            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }
 

@@ -51,9 +51,9 @@ impl LocalScheduler {
 
 impl Scheduler for LocalScheduler {
     fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C> {
-        Dag(dag.0.map(
+        Dag { graph: dag.graph.map(
             |a, n| n.with_annotation(ThreadAlloc(self.cost_map[&a])),
             |_, e| e.clone(),
-        ))
+        ), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }

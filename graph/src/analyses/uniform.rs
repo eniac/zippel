@@ -212,16 +212,16 @@ impl UniformityPropagation {
             }
 
             // Add parent neighbors to worklist
-            for e in dag.0.edges_directed(n, Direction::Outgoing) {
+            for e in dag.graph.edges_directed(n, Direction::Outgoing) {
                 // Add neighbors to worklist
                 worklist.push(e.target());
             }
         }
 
-        Dag(dag.0.map(
+        Dag { graph: dag.graph.map(
             |i, node|
                 node.add_annotation(self.find_distribution(i)),
-            |_, e| e.clone()))
+            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }
 

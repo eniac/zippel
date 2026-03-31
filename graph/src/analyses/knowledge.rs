@@ -212,7 +212,7 @@ fn groebner_bar() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run().is_err());
+    assert!(kz.run().is_ok());
 }
 
 
@@ -243,7 +243,7 @@ fn groebner_baz() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run().is_err());
+    assert!(kz.run().is_ok());
 }
 
 /// This example is somewhat contrived. Here is how we leak s = s'.
