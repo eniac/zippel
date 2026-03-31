@@ -1379,8 +1379,12 @@ impl<C: HasOpFactory> UDag<C> {
                 let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Record transcript interaction
                 let transcr_op = match &ol {
-                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) if self[*n].is_transcript() => {
-                        // Node is already a transcript node (e.g., challenge).
+                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _)
+                        if self[*n].is_transcript()
+                        && !self.vctx.get(n).map(|v| v != &id).unwrap_or(false) =>
+                    {
+                        // Node is already a transcript node and either has no name
+                        // or the same name — register directly.
                         self.vctx.insert(n, &id);
                         self.transcript_vars.insert(n, &true);
                         GOp::Ref(Ref::Var(id.clone(), *n), ol.typ())
