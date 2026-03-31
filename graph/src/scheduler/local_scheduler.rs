@@ -1,7 +1,6 @@
 use crate::{Dag, UDag, Ref, Node};
 use crate::scheduler::{TDag, CostModel, Scheduler, ThreadAlloc};
 use backend::ArkConfig;
-use share::Ctx;
 use std::collections::HashMap;
 use petgraph::graph::NodeIndex;
 pub struct LocalScheduler {
@@ -20,7 +19,7 @@ impl LocalScheduler {
         let nodes = dag.nodes_indices();
         let mut cost_map: HashMap<NodeIndex, usize> = HashMap::new();
         for node in nodes {
-            match &dag.graph[node] {
+            match &dag[node] {
                 Node::Inp(_, _) | Node::Rel(_, _) => {
                     for _ in 0..1 {
                         cost_map.insert(node, 1); 
@@ -52,11 +51,9 @@ impl LocalScheduler {
 
 impl Scheduler for LocalScheduler {
     fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C> {
-        Dag { graph:
-            dag.graph.map(
-                |a, n| n.with_annotation(ThreadAlloc(self.cost_map[&a])),
-                |_, e| e.clone(),
-            ), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone()
-        }
+        Dag(dag.0.map(
+            |a, n| n.with_annotation(ThreadAlloc(self.cost_map[&a])),
+            |_, e| e.clone(),
+        ))
     }
 }

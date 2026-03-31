@@ -1470,7 +1470,7 @@ fn pin_get_relation_basic() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    let (relation, _) = dag.get_relation().unwrap();
+    let relation = dag.get_relation().unwrap();
 
     // Relation should have the Rel node
     assert!(relation.relation_node().is_some());
