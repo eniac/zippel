@@ -486,7 +486,7 @@ fn pin_log_node_ref() {
     let transcr_op = GOp::<B>::Ref(Ref::Node(bin_add), ATyp::scalar());
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected.add_edges(DepType::Data, transcr, bin_add_ref.clone());
-    expected.add_edge(inp, transcr, Dep::transcript());
+    expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
     // `a` resolves to Var("a", transcr), `s` to Var("s", inp)
     // a == s → Bin(Equ)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
@@ -533,7 +533,7 @@ fn pin_log_new_transcr() {
     let transcr = expected.add_node(Node::transcr(&lit_op));
     expected[transcr].set_transcript();
     // transcript edge from inp to transcr
-    expected.add_edge(inp, transcr, Dep::transcript());
+    expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
     // verify(s == s): Bin(Equ) + Check
     let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
     let equ_body = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()));
@@ -1236,7 +1236,7 @@ fn pin_log_var_ref() {
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected[transcr].set_transcript();
     expected.add_edges(DepType::Data, transcr, transcr_op.clone());
-    expected.add_edge(inp, transcr, Dep::transcript());
+    expected.add_edge(inp, transcr, Dep::transcript_var(a_vid.clone()));
     // `a` resolves to the transcr_op from Log: Ref(Var(x, bin_add), scalar)
     // because Log's first arm uses `ol.clone()` which is op_from_var(x) = Ref(Var(x, bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());

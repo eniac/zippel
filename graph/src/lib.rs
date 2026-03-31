@@ -1354,15 +1354,12 @@ impl<C: HasOpFactory> UDag<C> {
                 let transcr_op = match &ol {
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) if self[*n].is_transcript() => {
                         // Node is already a transcript node (e.g., challenge).
-                        // Don't wrap it again; just add ref-holder for find_var.
-                        let ref_to_n = GOp::Ref(Ref::Var(id.clone(), *n), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_n));
-                        self.add_edges(DepType::Data, ref_node, ref_to_n.clone());
-                        ref_to_n
+                        // Variable name is carried via the Ref::Var in the returned op.
+                        GOp::Ref(Ref::Var(id.clone(), *n), ol.typ())
                     },
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
-                        // Reuse: create a wrapper transcript node (value from n) and a ref-holder
-                        // node that has Ref::Var(id, nl) so find_var(nl) resolves without fallback.
+                        // Reuse: create a wrapper transcript node (value from n).
+                        // Variable name is carried via Dep::transcript_var edge.
                         let wrapper_ref = match &ol {
                             GOp::Ref(Ref::Var(v, n), _) => Ref::Var(v.clone(), *n),
                             _ => Ref::Node(*n),
@@ -1374,9 +1371,6 @@ impl<C: HasOpFactory> UDag<C> {
                         self.add_edges(DepType::Data, nl, ol.clone());
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(nl).unwrap().set_transcript();
-                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
-                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     },
@@ -1386,9 +1380,6 @@ impl<C: HasOpFactory> UDag<C> {
                         self.add_edges(DepType::Data, nl, ol.clone()); // Connect dependencies
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
                         self.0.node_weight_mut(nl).unwrap().set_transcript();
-                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
-                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
-                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
                         GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }
