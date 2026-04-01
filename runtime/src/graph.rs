@@ -197,46 +197,52 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return v_val.value_reduce(*op);
             }
             Op::Marginalize(box a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let cfg_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let (poly_val, challenge_val, round_val) = match a {
+                    Op::Record(fields) => {
+                        let poly_op = fields
+                            .get(&"poly".to_string())
+                            .expect("marginalize: missing field 'poly'");
+                        let challenge_op = fields
+                            .get(&"challenge".to_string())
+                            .expect("marginalize: missing field 'challenge'");
+                        let round_op = fields.get(&"round".to_string());
 
-                let record = match cfg_val {
-                    Value::Record(r) => r,
-                    _ => panic!("marginalize expects a record argument"),
+                        let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
+                        let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
+                        let round_val = round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                        (poly_val, challenge_val, round_val)
+                    }
+                    _ => {
+                        let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
+                        let Value::Record(record) = cfg_val else { unreachable!() };
+                        let poly_val = record
+                            .get(&"poly".to_string())
+                            .cloned()
+                            .unwrap();
+                        let challenge_val = record
+                            .get(&"challenge".to_string())
+                            .cloned()
+                            .unwrap();
+                        let round_val = record.get(&"round".to_string()).cloned();
+                        (poly_val, challenge_val, round_val)
+                    }
                 };
 
-                let poly_val = record.get(&"poly".to_string()).expect("marginalize: missing field 'poly'");
-                let num_vars_val = record.get(&"num_variables".to_string()).expect("marginalize: missing field 'num_variables'");
-                let max_deg_val = record.get(&"max_degree".to_string()).expect("marginalize: missing field 'max_degree'");
-                let challenge_val = record.get(&"challenge".to_string()).expect("marginalize: missing field 'challenge'");
+                let poly = poly_val.into_poly().clone();
+                let challenge = Some(challenge_val.into_scalar());
+                let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
 
-                let poly = match poly_val {
-                    Value::Poly(p) => p.clone(),
-                    _ => panic!("marginalize: 'poly' must be a polynomial"),
+                let current_poly_vars = poly
+                    .num_vars()
+                    .unwrap();
+
+                let num_variables = if round == 0 {
+                    current_poly_vars
+                } else {
+                    current_poly_vars + (round - 1)
                 };
 
-                let num_variables = match num_vars_val {
-                    Value::Index(i) => *i,
-                    _ => panic!("marginalize: 'num_variables' must be an index"),
-                };
-
-                let max_degree = match max_deg_val {
-                    Value::Index(i) => *i,
-                    _ => panic!("marginalize: 'max_degree' must be an index"),
-                };
-
-                let challenge = match challenge_val {
-                    Value::Scalar(f) => Some(*f),
-                    _ => panic!("marginalize: 'challenge' must be a scalar"),
-                };
-
-                let round = record
-                    .get(&"round".to_string())
-                    .map(|v| match v {
-                        Value::Index(i) => *i,
-                        _ => panic!("marginalize: 'round' must be an index"),
-                    })
-                    .unwrap_or(0usize);
+                let max_degree = poly.degree();
                 let (evals, next_poly) =
                     backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
 
@@ -253,11 +259,11 @@ impl<C: ArkConfig> MutexGraph<C> {
 
                 let evals: Vec<C::F> = match evals_val {
                     Value::VecScalar(v) => v,
-                    Value::VecIndex(v) => v
+                    v => v
+                        .into_vec_index()
                         .iter()
                         .map(|i| C::FOps::from_usize(*i))
                         .collect(),
-                    _ => panic!("interpolate0d expects a vector of field evaluations"),
                 };
 
                 let poly = backend_round_univariate_from_marginalize_evals::<C::F>(&evals);
@@ -266,10 +272,8 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Proj(box record_op, field_name, _) => {
                 let inputs_rec = Arc::clone(&inputs);
                 let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);
-                match rec_val {
-                    Value::Record(r) => r.get(&field_name).cloned().expect("Proj: missing field"),
-                    _ => panic!("Proj expects a record value"),
-                }
+                let Value::Record(r) = rec_val else { unreachable!() };
+                r.get(&field_name).cloned().unwrap()
             }
         }
     }

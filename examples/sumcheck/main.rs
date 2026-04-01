@@ -10,7 +10,6 @@ use ark_ff::Zero;
 use ark_std::UniformRand;
 
 const NUM_VARS: usize = 4;
-const DEGREE: usize = 3;
 
 fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");
@@ -80,10 +79,6 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
         (Vid("poly".to_string()), poly),
-        (Vid("num_variables".to_string()), Value::Index(NUM_VARS)),
-        (Vid("max_degree".to_string()), Value::Index(DEGREE)),
-        // One entry per variable: round index for `marginalize` (0 .. NUM_VARS-1).
-        (Vid("rounds".to_string()), Value::VecIndex(vec![0, 1, 2, 3])),
     ])
 }
 

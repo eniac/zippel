@@ -1,16 +1,12 @@
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
 // `challenge` is the verifier coin for this round; we draw the next one only before recursing.
-// For now we use `evaluations` instead of `round_poly` (assumes degree-1, i.e. max_degree = 1).
 fn sumcheck_round<F: Field, V: 2..5, MAX_DEGREE_CONST: 1..4>(
     public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
-    public num_variables: Fin<32>,
-    public max_degree: Fin<32>,
-    public rounds_left: [Fin<32>; V],
     public prev_eval: F,
-    public challenge: F
+    public challenge: F,
+    public curr_round: F
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: num_variables, max_degree: max_degree,
-                 round: rounds_left[0], challenge: challenge |};
+    let cfg = {| poly: curr_poly, round: curr_round, challenge: challenge |};
     let out = marginalize(cfg);
     let pi = out.next_poly;
 
@@ -18,45 +14,39 @@ fn sumcheck_round<F: Field, V: 2..5, MAX_DEGREE_CONST: 1..4>(
 
     let round_ok = prev_eval == evs[0] + evs[1];
 
-    // Next seed is g(r_next), where g is the unique polynomial with g(i)=evs[i] over points 0..d.
     let g = interpolate0d(evs);
     r_next <- challenge<F>;
     let next_prev_vec = eval(g, [r_next]);
     let next_prev = next_prev_vec[0];
-
-    let tail_ok = sumcheck_round(pi, num_variables, max_degree, rounds_left[1..V], next_prev, r_next);
+    
+    let tail_ok = sumcheck_round(pi, next_prev, r_next, curr_round + 1);
     round_ok && tail_ok
 }
 
 // Same round as above when [curr_poly] is univariate; no recursive call.
 fn sumcheck_round<F: Field, MAX_DEGREE_CONST: 1..4>(
     public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
-    public num_variables: Fin<32>,
-    public max_degree: Fin<32>,
-    public rounds_left: [Fin<32>; 1],
     public prev_eval: F,
-    public challenge: F
+    public challenge: F,
+    public curr_round: F
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: num_variables, max_degree: max_degree,
-                 round: rounds_left[0], challenge: challenge |};
+    let cfg = {| poly: curr_poly, round: curr_round, challenge: challenge |};
     let out = marginalize(cfg);
     evs <- out.evaluations;
     prev_eval == evs[0] + evs[1]
 }
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
-// Zippel limitation: well-typed for NUM_VARS >= 3. For NUM_VARS == 2, round 1 leaves Poly<F,1> and
-// the tail would need [sumcheck_round] (Poly<F,1>) only—no [if] in proto to branch; use another entry if needed.
 proto sumcheck<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 3>(
     public claimed_sum: F,
-    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    public num_variables: Fin<32>,
-    public max_degree: Fin<32>,
-    public rounds: [Fin<32>; NUM_VARS_CONST]
-) where true {
+    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+) where let zero = claimed_sum - claimed_sum;
+        let cfg0 = {| poly: poly, round: 0, challenge: zero |};
+        let out0 = marginalize(cfg0);
+        let evs0 = out0.evaluations;
+        claimed_sum == evs0[0] + evs0[1] {
     let zero = claimed_sum - claimed_sum;
-    let cfg0 = {| poly: poly, num_variables: num_variables, max_degree: max_degree,
-                  round: rounds[0], challenge: zero |};
+    let cfg0 = {| poly: poly, round: 0, challenge: zero |};
     let out0 = marginalize(cfg0);
     evs0 <- out0.evaluations;
     let round1_ok = claimed_sum == evs0[0] + evs0[1];
@@ -64,5 +54,5 @@ proto sumcheck<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 3>(
     let g = interpolate0d(evs0);
     let prev_vec = eval(g, [r1]);
     let prev = prev_vec[0];
-    verify(round1_ok && sumcheck_round(out0.next_poly, num_variables, max_degree, rounds[1..NUM_VARS_CONST], prev, r1))
+    verify(round1_ok && sumcheck_round(out0.next_poly, prev, r1, 1))
 }

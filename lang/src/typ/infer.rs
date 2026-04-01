@@ -333,20 +333,10 @@ impl Typeable for CExp {
 
                 let poly_typ = fields.get(&"poly".to_string())
                     .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "poly", &fields))?;
-                let num_vars_typ = fields.get(&"num_variables".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields))?;
-                let max_deg_typ = fields.get(&"max_degree".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields))?;
-
                 let (field_tid, n, d) = match poly_typ {
                     CTyp::Poly(tid, n, d) => (tid.clone(), *n, *d),
                     _ => return Err(TypeError::poly(kctx, vctx, self)),
                 };
-
-                match (num_vars_typ, max_deg_typ) {
-                    (CTyp::Fin(_rn), CTyp::Fin(_rd)) => { /* use n, d from poly */ }
-                    _ => return Err(TypeError::ark(kctx, vctx, self, &rec_typ)),
-                }
 
                 let mut out_fields = Ctx::new();
                 let f_typ = CTyp::Base(field_tid.clone());
