@@ -73,6 +73,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         self.np.retain(|p, _| vars.contains(p));
     }
 
+    #[allow(dead_code)]
     pub fn inline<F: Fn(&PRef) -> bool>(&mut self, f: F) {
         for p in self.basis.iter_mut() {
             *p = p.clone().flat_map_vars(&|v|
@@ -89,6 +90,43 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     pub fn run(&mut self) {
         // Compute the Groebner basis using Buchberger algorithm
         self.basis = self.basis.clone().buchberger_and_reduce();
+    }
+
+    /// Remap all PRef variables in the basis, pl, np, and args using a mapping function.
+    /// Used when combining Gröbner bases from different subgraphs that have
+    /// different node index namespaces.
+    pub fn remap_vars<F: Fn(&PRef) -> PRef>(&mut self, f: &F) {
+        // Remap basis polynomials
+        self.basis.basis = self.basis.basis.iter().map(|p|
+            p.clone().flat_map_vars(&|v| SparsePolynomial::var(&f(&v)))
+        ).collect();
+
+        // Remap pl context
+        self.pl = self.pl.iter().map(|(k, v)| {
+            let new_k = f(k);
+            let new_v = v.clone().flat_map_vars(&|v| SparsePolynomial::var(&f(&v)));
+            (new_k, new_v)
+        }).collect();
+
+        // Remap np context
+        self.np = self.np.iter().map(|(k, v)| (f(k), v.clone())).collect();
+
+        // Remap args
+        self.args = self.args.iter().map(f).collect();
+    }
+
+    /// Merge another builder's basis, polynomial definitions, and non-polynomial
+    /// definitions into this builder.
+    pub fn merge(&mut self, other: &Self) {
+        for p in other.basis.iter() {
+            self.basis.push(p.clone());
+        }
+        for (k, v) in other.pl.iter() {
+            self.pl.insert(k, v);
+        }
+        for (k, v) in other.np.iter() {
+            self.np.insert(k, v);
+        }
     }
 
     fn to_poly_value(&mut self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
@@ -474,5 +512,95 @@ mod tests {
         let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let s = format!("{}", builder);
         assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn test_remap_vars_identity() {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use backend::ATyp;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = PRef::from_node(NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+        let pref_b = PRef::from_node(NodeIndex::new(1), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+
+        // a + b - 0
+        let poly = SparsePolynomial::var(&pref_a) + SparsePolynomial::var(&pref_b);
+        builder.basis.push(poly.clone());
+        builder.args.insert(pref_a.clone());
+        builder.args.insert(pref_b.clone());
+
+        // Identity remap should be a no-op
+        builder.remap_vars(&|p| p.clone());
+        assert_eq!(builder.basis.basis.len(), 1);
+        assert_eq!(builder.basis.basis[0], poly);
+    }
+
+    #[test]
+    fn test_remap_vars_rename() {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use backend::ATyp;
+        use petgraph::graph::NodeIndex;
+        use lang::id::Vid;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_n0 = PRef::from_node(NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+        let pref_n1 = PRef::from_node(NodeIndex::new(1), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+        let pref_x = PRef::from_var(Vid("x".into()), NodeIndex::new(10), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+        let pref_y = PRef::from_var(Vid("y".into()), NodeIndex::new(11), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+
+        // poly: n0 + n1
+        let poly = SparsePolynomial::var(&pref_n0) + SparsePolynomial::var(&pref_n1);
+        builder.basis.push(poly);
+        builder.pl.insert(&pref_n0, &SparsePolynomial::var(&pref_n0));
+        builder.args.insert(pref_n0.clone());
+        builder.args.insert(pref_n1.clone());
+
+        // Remap n0→x, n1→y
+        builder.remap_vars(&|p| {
+            if p.node() == NodeIndex::new(0) { pref_x.clone() }
+            else if p.node() == NodeIndex::new(1) { pref_y.clone() }
+            else { p.clone() }
+        });
+
+        // Basis should now use x + y
+        let expected = SparsePolynomial::var(&pref_x) + SparsePolynomial::var(&pref_y);
+        assert_eq!(builder.basis.basis[0], expected);
+        // pl should be remapped
+        assert!(builder.pl.contains(&pref_x));
+        assert!(!builder.pl.contains(&pref_n0));
+        // args should be remapped
+        assert!(builder.args.contains(&pref_x));
+        assert!(builder.args.contains(&pref_y));
+    }
+
+    #[test]
+    fn test_remap_vars_preserves_polynomial_count() {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use backend::ATyp;
+        use petgraph::graph::NodeIndex;
+        use lang::id::Vid;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = PRef::from_node(NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+        let pref_b = PRef::from_node(NodeIndex::new(1), ATyp::scalar(), 0, Qualifier::Private, Distribution::default());
+
+        builder.basis.push(SparsePolynomial::var(&pref_a) + SparsePolynomial::var(&pref_b));
+        builder.basis.push(SparsePolynomial::var(&pref_a) * SparsePolynomial::var(&pref_b));
+
+        let pref_c = PRef::from_var(Vid("c".into()), NodeIndex::new(5), ATyp::scalar(), 0, Qualifier::Public, Distribution::default());
+
+        builder.remap_vars(&|p| {
+            if p.node() == NodeIndex::new(0) { pref_c.clone() } else { p.clone() }
+        });
+
+        assert_eq!(builder.basis.basis.len(), 2);
+        // First poly: c + b, second: c * b
+        assert!(builder.basis.basis[0].contains(&pref_c));
+        assert!(builder.basis.basis[1].contains(&pref_c));
+        assert!(!builder.basis.basis[0].contains(&pref_a));
     }
 }

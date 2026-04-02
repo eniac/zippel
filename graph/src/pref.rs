@@ -43,6 +43,9 @@ impl PRef {
     pub fn is_private(&self) -> bool {
         self.qualifier.is_private()
     }
+    pub fn is_local(&self) -> bool {
+        self.qualifier.is_local()
+    }
     pub fn is_uniform(&self) -> bool {
         match self.distribution {
             Distribution::Uniform

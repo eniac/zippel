@@ -1,30 +1,62 @@
+use std::collections::HashMap;
 use backend::ArkConfig;
-use backend::op::HasOpFactory;
+use backend::op::{HasOpFactory, Ref};
+
 use log::debug;
-use crate::DQDag;
+use petgraph::graph::NodeIndex;
+use crate::{DQDag, PRef};
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
+use crate::analyses::error::AnalysisError;
 
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
-/// The relation is the pre-image of the verifier, and the implementation is the pre-image of the prover.
-/// We check if the relation is included in the implementation, which means that the implementation is complete.
-/// This is done by checking if the Groebner basis of the relation is included in the Groebner basis of the implementation.
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerBuilder<C, GrevLexTerm>,
     pub verifier: GroebnerBuilder<C, GrevLexTerm>
 }
 
+/// Invert a node_map (old_dag_idx → new_subgraph_Ref) to build a PRef remapping closure.
+fn make_remap_fn(
+    node_map: &HashMap<NodeIndex, Ref>,
+) -> impl Fn(&PRef) -> PRef + '_ {
+    let inverse: HashMap<NodeIndex, (NodeIndex, Ref)> = node_map.iter()
+        .map(|(old_idx, new_ref)| (new_ref.node(), (*old_idx, new_ref.clone())))
+        .collect();
+
+    move |pref: &PRef| {
+        if let Some((old_idx, original_ref)) = inverse.get(&pref.node()) {
+            let new_ref = match (original_ref, &pref.reference) {
+                (Ref::Var(v, _), _) => Ref::Var(v.clone(), *old_idx),
+                (Ref::Node(_), Ref::Var(v, _)) => Ref::Var(v.clone(), *old_idx),
+                (Ref::Node(_), Ref::Node(_)) => Ref::Node(*old_idx),
+            };
+            PRef { reference: new_ref, ..pref.clone() }
+        } else {
+            pref.clone()
+        }
+    }
+}
+
+/// Build a remap closure from a NodeIndex→NodeIndex map with an override.
+
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
-        let spec = dag.get_relation().unwrap();
-        let (prover, _node_map) = dag.get_prover();
+        let (prover, prover_node_map) = dag.get_prover();
 
-        // To show completeness, we need to show
-        // R_pre \cup R_prover \subseteq R_impl
-        let mut g_ps= GroebnerBuilder::new();
-        g_ps.add_input(&prover);
-        g_ps.add_relation(&spec);
+        // Build prover basis from prover subgraph, then remap to full-DAG namespace
+        let mut g_prover = GroebnerBuilder::new();
+        g_prover.add_input(&prover);
+        let prover_remap = make_remap_fn(&prover_node_map);
+        g_prover.remap_vars(&prover_remap);
+
+        // Build relation basis directly from full DAG (shared namespace)
+        let mut g_rel = GroebnerBuilder::new();
+        g_rel.add_relation(dag);
+
+        // Combine: prover + relation
+        let mut g_ps = g_prover;
+        g_ps.merge(&g_rel);
 
         let mut g_impl = GroebnerBuilder::new();
         g_impl.add_input(&dag);
@@ -32,14 +64,25 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         Self { prover: g_ps, verifier: g_impl }
     }
 
-    pub fn run(&mut self) -> bool {
-        // Compute the Groebner bases
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
         self.prover.run();
         self.verifier.run();
         debug!("Prover:\n{}", self.prover);
         debug!("Impl:\n{}", self.verifier);
 
-        self.prover.basis.contains(&self.verifier.basis)
+        // Only check verifier polynomials whose variables are all in the prover's
+        // vocabulary. Internal verifier nodes are irrelevant for completeness.
+        let prover_vars = self.prover.vars();
+        for p in self.verifier.basis.iter() {
+            let poly_vars = p.vars();
+            if poly_vars.iter().all(|v| prover_vars.contains(v)) {
+                let remainder = self.prover.basis.reduce(p.clone());
+                if !remainder.is_zero() {
+                    return Err(AnalysisError::Incomplete(remainder));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -47,7 +90,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 mod tests {
     use super::*;
     use lang::ast::UModule;
+    use lang::id::Vid;
     use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
+    use crate::analyses::groebner::{SparsePolynomial, GroebnerBasis};
     use share::unwrap;
     use share::Ctx;
     use backend::ArkBls12_381;
@@ -72,16 +117,18 @@ mod tests {
         let g = up.from_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        let complete = ca.run();
-        assert!(complete);
+        assert!(ca.run().is_ok());
     }
 
     #[test]
-    fn test_completeness_analysis_construction() {
+    fn schnorr_completeness() {
         let ex = r#"
-            proto simple<F: Field>(private x: F) where true {
-                a <- x;
-                verify(a == x);
+            proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+                let r = random<F>;
+                u <- g*r;
+                c <- challenge<F>;
+                z <- r + x*c;
+                verify(g*z == u + h*c);
             }"#;
 
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
@@ -90,17 +137,21 @@ mod tests {
         let mut up = UniformityPropagation::new();
         let g = up.from_dag(&g);
 
-        let ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
-        assert!(ca.prover.basis.len() >= 0);
-        assert!(ca.verifier.basis.len() >= 0);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
     }
 
+    /// Regression: completeness relation basis must share the same variable
+    /// namespace as the prover/verifier basis. If the relation is built from
+    /// a subgraph with fresh indices, reduction won't work.
     #[test]
-    fn test_completeness_analysis_simple_protocol() {
+    fn completeness_relation_namespace() {
         let ex = r#"
-            proto identity<F: Field>(private x: F) where true {
-                a <- x;
-                verify(a == x);
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y);
             }"#;
 
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
@@ -109,45 +160,42 @@ mod tests {
         let mut up = UniformityPropagation::new();
         let g = up.from_dag(&g);
 
-        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
-        let _result = ca.run();
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        // This only passes if the relation `a == b` is in the same namespace
+        // as the prover/verifier polynomials.
+        assert!(ca.run().is_ok(), "eq_proof should be complete (relation namespace must match)");
     }
 
     #[test]
-    fn test_completeness_prover_verifier_separate_builders() {
-        let ex = r#"
-            proto test<F: Field>(private a: F, private b: F) where a == b {
-                x <- a + b;
-                verify(x == a + b);
-            }"#;
+    fn test_buchberger_spoly_produces_ux_hr() {
+        use lang::typ::{Qualifier, Distribution};
+        use backend::ATyp;
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let mk_var = |name: &str, idx: usize| -> PRef {
+            PRef::from_var(Vid(name.to_string()), NodeIndex::new(idx), ATyp::scalar(), 0, Qualifier::Public, Distribution::default())
+        };
+        let g_var = mk_var("g", 0);
+        let x_var = mk_var("x", 1);
+        let h_var = mk_var("h", 2);
+        let r_var = mk_var("r", 3);
+        let u_var = mk_var("u", 4);
 
-        let ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
-        
-        assert!(ca.prover.basis.len() >= 0);
-        assert!(ca.verifier.basis.len() >= 0);
-    }
+        type Poly = SparsePolynomial<<ArkBls12_381 as backend::ArkConfig>::F, GrevLexTerm>;
+        let var = |p: &PRef| -> Poly { SparsePolynomial::var(p) };
 
-    #[test]
-    fn test_completeness_run_executes() {
-        let ex = r#"
-            proto mult<F: Field>(private x: F) where true {
-                y <- x * x;
-                verify(y == x * x);
-            }"#;
+        let p1 = var(&g_var) * var(&x_var) - var(&h_var);
+        let p2 = var(&g_var) * var(&r_var) - var(&u_var);
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let spoly = p1.s_poly(&p2);
+        let expected_positive = var(&u_var) * var(&x_var) - var(&h_var) * var(&r_var);
+        let expected_negative = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
+        assert!(spoly == expected_positive || spoly == expected_negative);
 
-        let mut ca = CompletenessAnalysis::<ArkBls12_381>::from_input(&g);
-        let _result = ca.run();
+        let basis = GroebnerBasis::new(5, vec![p1, p2]);
+        let gb = basis.buchberger_and_reduce();
+
+        let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
+        let rem = gb.reduce(target);
+        assert!(rem.is_zero(), "h*r - u*x should reduce to 0 given g*x = h and g*r = u");
     }
 }

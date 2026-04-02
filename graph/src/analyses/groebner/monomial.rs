@@ -207,10 +207,12 @@ impl ElimTerm {
         ElimTerm(MonoTerm(vars))
     }
 
-    /// Returns true if the variable is private and has a uniform distribution,
-    /// which means it must be eliminated in the KnowledgeAnalysis.
+    /// Returns true if the variable should be eliminated in the KnowledgeAnalysis.
+    /// Local variables (prover-internal computations) and private uniform variables
+    /// (random masks) are eliminated.
     pub fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier == Qualifier::Private && v.distribution.is_uniform()
+        v.qualifier == Qualifier::Local
+        || (v.qualifier == Qualifier::Private && v.distribution.is_uniform())
     }
 
     pub fn eliminate(&self) -> bool {

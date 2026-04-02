@@ -170,10 +170,18 @@ impl UniformityPropagation {
 
     pub fn from_dag<C: ArkConfig>(&mut self, dag: &QDag<C>) -> DQDag<C> {
         // Collect the ancestors of each node
-        let ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
+        let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
             dag.node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))
             .collect();
+
+        // Challenge nodes are modeled as random oracle outputs —
+        // they are independent of their DAG ancestors.
+        for n in dag.node_indices() {
+            if dag[n].is_challenge() {
+                ancestors.insert(&n, &Set::from([n]));
+            }
+        }
 
         self.ancestors = ancestors;
 
@@ -204,16 +212,16 @@ impl UniformityPropagation {
             }
 
             // Add parent neighbors to worklist
-            for e in dag.0.edges_directed(n, Direction::Outgoing) {
+            for e in dag.graph.edges_directed(n, Direction::Outgoing) {
                 // Add neighbors to worklist
                 worklist.push(e.target());
             }
         }
 
-        Dag(dag.0.map(
+        Dag { graph: dag.graph.map(
             |i, node|
                 node.add_annotation(self.find_distribution(i)),
-            |_, e| e.clone()))
+            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }
 

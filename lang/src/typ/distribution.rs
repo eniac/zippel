@@ -46,15 +46,42 @@ impl Distribution {
         }
     }
 
-    // Assumes independence, multiplying two distributions
+    // Assumes independence, multiplying two distributions.
+    //
+    // Cryptographic reasoning:
+    //
+    // - UniformNonZero * Nonuniform = Nonuniform:
+    //   A non-zero uniform field element perfectly masks any value (every
+    //   output is equally likely conditioned on the mask). The result may
+    //   include zero when the nonuniform factor is zero, hence Uniform
+    //   rather than UniformNonZero.
+    //
+    // - Uniform * Nonuniform = Nonuniform:
+    //   A uniform element that CAN be zero introduces bias — Pr[0] is
+    //   elevated because the product is zero whenever either factor is zero.
+    //   This breaks the masking property, so the result is Nonuniform.
+    //
+    // - Uniform * Uniform = Nonuniform:
+    //   Both factors may be zero, compounding the bias. Pr[0] ≈ 2/|F|
+    //   instead of 1/|F|, so the product is not uniformly distributed.
     pub fn mul(&self, other: &Distribution) -> Distribution {
         match (self, other) {
+            // UniformNZ * UniformNZ = UniformNZ (product of non-zero uniform values is non-zero uniform)
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::UniformNonZero,
+            // Uniform * UniformNZ or vice versa = Uniform (zero possible from the Uniform factor)
             (Distribution::Uniform, Distribution::UniformNonZero) 
             | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::Uniform,
+            // UniformNZ * Nonuniform = Nonuniform (Nonuniform may always be zero,
+            // which would produce a biased result even with a non-zero mask)
+            (Distribution::UniformNonZero, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::UniformNonZero) => Distribution::Nonuniform,
+            // Uniform * Uniform = Nonuniform (zero-biased: Pr[0] = 2/|F| - 1/|F|^2)
             (Distribution::Uniform, Distribution::Uniform) => Distribution::Nonuniform,
-            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::UniformNonZero,
-            (_, Distribution::Nonuniform)
-            | (Distribution::Nonuniform, _) => Distribution::Nonuniform,
+            // Uniform * Nonuniform = Nonuniform (zero bias from Uniform factor breaks masking)
+            (Distribution::Uniform, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Nonuniform,
+            // Nonuniform * Nonuniform = Nonuniform
+            (Distribution::Nonuniform, Distribution::Nonuniform) => Distribution::Nonuniform,
         }
     }
 
@@ -244,8 +271,10 @@ mod tests {
 
     #[test]
     fn test_mul_with_nonuniform() {
+        // Uniform * Nonuniform = Nonuniform (zero bias breaks masking)
         assert_eq!(Distribution::Uniform.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
         assert_eq!(Distribution::Nonuniform.mul(&Distribution::Uniform), Distribution::Nonuniform);
+        // UniformNonZero * Nonuniform = Nonuniform (Nonuniform may be always-zero)
         assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
         assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
     }
@@ -293,6 +322,15 @@ mod tests {
         assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Uniform));
         assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::UniformNonZero));
         assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Nonuniform));
+    }
+
+    /// Regression: UniformNonZero * Nonuniform must be Nonuniform, not Uniform.
+    /// Nonuniform includes always-zero values; multiplying by a non-zero mask
+    /// does not produce a uniform distribution when the other factor is always 0.
+    #[test]
+    fn test_mul_uniform_nz_nonuniform_is_nonuniform() {
+        assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
     }
 }
 

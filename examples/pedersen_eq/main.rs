@@ -33,6 +33,20 @@ fn main() {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
     }
+
+    // Static analysis (completeness & ZK)
+    println!("\n--- Static Analysis ---");
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
+    let analysis = analysis_handler.minimal_analysis();
+    match &analysis.completeness {
+        Ok(()) => println!("Completeness:   ✓"),
+        Err(e) => println!("Completeness:   ✗ {}", e),
+    }
+    match &analysis.zk {
+        Ok(()) => println!("ZK:             ✓"),
+        Err(e) => println!("ZK:             ✗ {}", e),
+    }
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {

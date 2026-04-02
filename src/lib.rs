@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::process;
 use std::fs;
-use lang::typ::{Qualifier, Distribution};
+use lang::typ::{Qualifier, Distribution, Kind, Size};
+use lang::typ::range::Range;
 use graph::Dag;
 use graph::{analyses::KnowledgeAnalysis, WritePdf};
 use lang::id::{Tid, Vid};
@@ -12,7 +13,7 @@ use share::{Ctx, unwrap};
 use graph::{
     UDags,
     UDag,
-    analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis}
+    analyses::{UniformityPropagation, QualifierPropagation, CompletenessAnalysis, AnalysisError}
 };
 use log::{error, debug, info};
 use graph::domain_seperator::ZippelDomainSeparator;
@@ -23,6 +24,7 @@ use runtime::MutexGraph;
 use std::sync::Arc;
 use graph::Ref;
 use graph::PRef;
+use share::traversal::ToTraversal1;
 
 /// Arguments for the Zippel handler
 #[derive(Debug, Clone)]
@@ -246,22 +248,111 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         result
     }
     
-   pub fn analyze_completeness(&self) {
+   pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-        if completeness.run() {
-            info!("Complete protocol: {}", g_analyze.name());
-        } else {
-            info!("Incomplete protocol: {}", g_analyze.name());
+        let result = completeness.run();
+        match &result {
+            Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
+            Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),
+        }
+        result
+    }
+
+    pub fn analyze_knowledge(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
+        let g_analyze = self.analyze_graph.as_ref().unwrap();
+        let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
+        let result = knowledge.run();
+        match &result {
+            Ok(()) => info!("ZK protocol: {}", g_analyze.name()),
+            Err(e) => info!("Knowledge leak in {}: {}", g_analyze.name(), e),
+        }
+        result
+    }
+
+    /// Run completeness and knowledge analysis with automatically computed minimal sizes.
+    ///
+    /// For each `S: Size` parameter, brute-forces `S = 1..10` to find the smallest
+    /// value where all dependent ranges are non-empty, keeping the analysis graph small.
+    pub fn minimal_analysis(&mut self) -> AnalysisResult<C> {
+        self.parse();
+        let module = self.sized_module.as_ref().unwrap();
+        let sizes = find_minimal_sizes(module);
+        info!("Minimal analysis sizes: {:?}", sizes);
+        self.compile(&sizes);
+        AnalysisResult {
+            completeness: self.analyze_completeness(),
+            zk: self.analyze_knowledge(),
+        }
+    }
+}
+
+/// Result of running completeness and knowledge (ZK) analyses.
+pub struct AnalysisResult<C: ArkConfig> {
+    pub completeness: Result<(), AnalysisError<C>>,
+    pub zk: Result<(), AnalysisError<C>>,
+}
+
+/// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module
+/// such that all dependent `Kind::Range` expressions have at least one element.
+pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
+    // Pass 1: Collect all SizeVar params
+    let mut size_vars: Vec<Tid> = Vec::new();
+    for (sig, _body) in module.iter() {
+        for tv in sig.typevars.0.iter() {
+            if let Kind::SizeVar = &tv.kind {
+                if !size_vars.contains(&tv.id) {
+                    size_vars.push(tv.id.clone());
+                }
+            }
         }
     }
 
-    pub fn analyze_knowledge(&self) {
-        let g_analyze = self.analyze_graph.as_ref().unwrap();
-        let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
-        let leaks = knowledge.run();
-        info!("Leaks: {:?}", leaks);
+    // Pass 2: Collect all Range params that depend on SizeVars
+    let mut ranges: Vec<Range<Size>> = Vec::new();
+    for (sig, _body) in module.iter() {
+        for tv in sig.typevars.0.iter() {
+            if let Kind::Range(r) = &tv.kind {
+                let fvs = r.start.free_vars().union(r.end.free_vars());
+                if fvs.iter().any(|v| size_vars.contains(v)) {
+                    ranges.push(r.clone());
+                }
+            }
+        }
     }
+
+    // For each SizeVar, brute-force S=1..=10 to find the smallest value
+    // where all dependent ranges have at least one element (start < end)
+    let mut sizes = Ctx::new();
+    for sv in &size_vars {
+        let mut found = false;
+        for candidate in 1..=10usize {
+            let mut ctx = sizes.clone();
+            ctx.insert(sv, &candidate);
+
+            let all_ok = ranges.iter().all(|r| {
+                let fvs = r.start.free_vars().union(r.end.free_vars());
+                if !fvs.contains(sv) {
+                    return true; // Not dependent on this SizeVar
+                }
+                match r.clone().traverse1(&mut |s| s.eval(&ctx)) {
+                    Ok(cr) => cr.start < cr.end, // Non-empty range
+                    Err(_) => false, // Evaluation failed (e.g., underflow)
+                }
+            });
+
+            if all_ok {
+                sizes.insert(sv, &candidate);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            // Fallback: use 3 if brute-force fails
+            sizes.insert(sv, &3);
+        }
+    }
+    sizes
 }
 
 /// Result of verifying a proof
@@ -286,4 +377,30 @@ pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
         .filter_map(|v| value_to_bytes(v).ok())
         .map(|b| b.len())
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: find_minimal_sizes must collect all SizeVars before
+    /// collecting ranges, so ranges that appear before their SizeVar
+    /// in typevars are still found.
+    #[test]
+    fn test_find_minimal_sizes_ordering() {
+        // Protocol where N: 1..S appears before S: Size in a different declaration
+        let src = r#"
+            fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
+            proto bar<F: Field, S: Size, M: 2..S+1>(public x: F) where x == x {
+                verify(x == x);
+            }
+        "#;
+        let module = UModule::from_str(src).unwrap();
+        let sizes = find_minimal_sizes(&module);
+        // S should be found and have a value ≥ 2 (so N: 1..S and M: 2..S+1 are non-empty)
+        assert!(sizes.get(&Tid::new("S")).is_some(),
+            "SizeVar S should be found even when Range appears first");
+        let s_val = *sizes.get(&Tid::new("S")).unwrap();
+        assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
+    }
 }

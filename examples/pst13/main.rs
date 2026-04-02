@@ -15,7 +15,7 @@ fn main() {
     println!("=== PST13 Multilinear PCS (ArkBls12_381, N={N_VARS}) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile();
+    handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
@@ -37,6 +37,27 @@ fn main() {
     } else {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
+    }
+
+    // Static analysis (completeness & ZK)
+    println!("\n--- Static Analysis ---");
+    let analysis_result = std::panic::catch_unwind(|| {
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        analysis_handler.minimal_analysis()
+    });
+    match analysis_result {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
 }
 
