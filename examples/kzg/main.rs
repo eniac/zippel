@@ -28,8 +28,9 @@ fn main() {
     println!("Prover time:    {prover_elapsed:.2?}");
     println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
 
+    let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    verifier_handler.compile();
+    verifier_handler.compile(&sizes);
     verifier_handler.set_public_inputs(public_inputs);
     let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
