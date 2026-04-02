@@ -1481,6 +1481,24 @@ fn pin_get_relation_basic() {
     assert!(relation.op_nodes().len() > 0);
 }
 
+/// Regression: get_relation had a duplicate outgoing-edge loop that doubled
+/// the number of nodes explored. Verify edge count is reasonable.
+#[test]
+fn pin_get_relation_no_duplicate_edges() {
+    let src = r#"
+        proto foo<F: Field>(private s: F, public v: F) where s == v {
+            verify(s == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let relation = dag.get_relation().unwrap();
+    // A simple `s == v` relation should have ≤ 4 edges (Rel→Equ, Equ←s, Equ←v)
+    assert!(relation.edge_count() <= 4,
+        "get_relation has {} edges, expected ≤ 4 (duplicate loop bug?)", relation.edge_count());
+}
+
 /// get_verifier returns error when verifier body references a private input directly.
 /// Tests: GraphError::PrivateNodeInVerifier.
 #[test]

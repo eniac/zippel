@@ -113,3 +113,21 @@ fn qualifier_parser() {
     assert_eq!(qual, Qualifier::Public);
 }
 
+/// Regression: join must be a proper meet (min) on Private ≤ Local ≤ Public.
+/// Bug: join(Local, Private) was returning Local instead of Private.
+#[test]
+fn qualifier_join_lattice_consistency() {
+    use Qualifier::*;
+    let all = [Private, Local, Public];
+    for &a in &all {
+        for &b in &all {
+            let j = a.join(&b);
+            // join(a,b) == min(a,b) in the ordering
+            assert_eq!(j, a.min(b),
+                "join({:?}, {:?}) = {:?}, expected {:?}", a, b, j, a.min(b));
+            // Commutativity
+            assert_eq!(a.join(&b), b.join(&a),
+                "join is not commutative for {:?}, {:?}", a, b);
+        }
+    }
+}

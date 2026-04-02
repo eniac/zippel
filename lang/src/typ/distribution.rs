@@ -323,5 +323,14 @@ mod tests {
         assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::UniformNonZero));
         assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Nonuniform));
     }
+
+    /// Regression: UniformNonZero * Nonuniform must be Nonuniform, not Uniform.
+    /// Nonuniform includes always-zero values; multiplying by a non-zero mask
+    /// does not produce a uniform distribution when the other factor is always 0.
+    #[test]
+    fn test_mul_uniform_nz_nonuniform_is_nonuniform() {
+        assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
+    }
 }
 

@@ -369,3 +369,29 @@ pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
         .map(|b| b.len())
         .sum()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: find_minimal_sizes must collect all SizeVars before
+    /// collecting ranges, so ranges that appear before their SizeVar
+    /// in typevars are still found.
+    #[test]
+    fn test_find_minimal_sizes_ordering() {
+        // Protocol where N: 1..S appears before S: Size in a different declaration
+        let src = r#"
+            fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
+            proto bar<F: Field, S: Size, M: 2..S+1>(public x: F) where x == x {
+                verify(x == x);
+            }
+        "#;
+        let module = UModule::from_str(src).unwrap();
+        let sizes = find_minimal_sizes(&module);
+        // S should be found and have a value ≥ 2 (so N: 1..S and M: 2..S+1 are non-empty)
+        assert!(sizes.get(&Tid::new("S")).is_some(),
+            "SizeVar S should be found even when Range appears first");
+        let s_val = *sizes.get(&Tid::new("S")).unwrap();
+        assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
+    }
+}

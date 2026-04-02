@@ -141,6 +141,31 @@ mod tests {
         assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
     }
 
+    /// Regression: completeness relation basis must share the same variable
+    /// namespace as the prover/verifier basis. If the relation is built from
+    /// a subgraph with fresh indices, reduction won't work.
+    #[test]
+    fn completeness_relation_namespace() {
+        let ex = r#"
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y);
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        // This only passes if the relation `a == b` is in the same namespace
+        // as the prover/verifier polynomials.
+        assert!(ca.run().is_ok(), "eq_proof should be complete (relation namespace must match)");
+    }
+
     #[test]
     fn test_buchberger_spoly_produces_ux_hr() {
         use lang::typ::{Qualifier, Distribution};
