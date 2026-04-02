@@ -36,7 +36,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
 }
 
 // RECURSIVE STEP (n > 1)
-fn bullet_reduce<G: Group, F: Scalar<G>, N: 1..13>(
+fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     public Upsilon: G,
     public a_vec: [F; 2^N],
     public g_vec: [G; 2^N],
@@ -109,7 +109,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>, N: 1..13>(
 }
 
 // Corrected Figure 7 protocol wrapper
-proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, N_CONST: 64>(
+proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
     // Public Inputs
     public xi: G,
     public tau: G,

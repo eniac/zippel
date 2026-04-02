@@ -1,4 +1,4 @@
-proto univariate_zero_check<F: Field, N:2>(
+proto univariate_zero_check<F: Field, S: Size, N: S>(
     public p: Uni<F, N>,
     public v: Uni<F, N>
 ) where p == p {

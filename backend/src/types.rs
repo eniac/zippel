@@ -1,11 +1,11 @@
-use lang::typ::{Nothing, CTyp, Kind};
+use lang::typ::{Nothing, CTyp, CKind};
 pub use lang::typ::lub::{Lub, LubError};
 use lang::typ::range::CRange;
 use lang::id::Tid;
 use share::{Ctx, Pretty, DocAllocator, DocBuilder};
 use std::fmt;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ABase {
     G1,
     G2,
@@ -15,7 +15,7 @@ pub enum ABase {
     Fin(CRange),
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ATyp {
     /// Base type
     Base(ABase),
@@ -142,13 +142,13 @@ impl ATyp {
     }
 
     // Convert from Generic types to arkworks types
-    pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, Kind>) -> Option<Self> {
+    pub fn from_ctyp(typ: &CTyp, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         match typ {
             CTyp::Base(b) => {
                 let k = kctx.get(b)?;
                 match k {
-                    Kind::Field => Some(ATyp::scalar()),
-                    Kind::Group => {
+                    CKind::Field => Some(ATyp::scalar()),
+                    CKind::Group => {
                         if let Some((x, _y)) = kctx.find_map(|_t, k| k.get_pairing_of(b)) {
                             // If this is a pairing assign the right pairing types
                             if &x == b {
@@ -161,10 +161,10 @@ impl ATyp {
                             Some(ATyp::g1())
                         }
                     },
-                    Kind::Pairing(_, _) => Some(ATyp::gt()),
-                    Kind::Scalar(_) => Some(ATyp::scalar()),
+                    CKind::Pairing(_, _) => Some(ATyp::gt()),
+                    CKind::Scalar(_) => Some(ATyp::scalar()),
                     // ATyp have no Range kinds, post [concretize]
-                    Kind::Range(_) => unreachable!()
+                    CKind::Range(_) | CKind::SizeVar => unreachable!()
                 }
             },
             CTyp::Vec(box t, n) =>
@@ -709,10 +709,10 @@ mod tests {
     #[test]
     fn from_ctyp_preserves_poly_params() {
         use lang::id::Tid;
-        use lang::typ::{Kind, CTyp};
+        use lang::typ::{CKind, CTyp};
 
         let mut kctx = Ctx::new();
-        kctx.insert(&Tid::from("F"), &Kind::Field);
+        kctx.insert(&Tid::from("F"), &CKind::Field);
 
         let ctyp = CTyp::Poly(Tid::from("F"), 3, 5);
         let atyp = ATyp::from_ctyp(&ctyp, &kctx).unwrap();

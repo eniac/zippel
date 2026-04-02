@@ -1,15 +1,17 @@
 use crate::id::Tid;
 use share::{Pretty, DocAllocator, Set, DocBuilder, BoxAllocator};
+use share::traversal::ToTraversal1;
 use std::fmt;
 
-use crate::typ::range::Range;
+use crate::typ::range::{Range, RangeTraversal};
+use crate::typ::Size;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 
-/// The kinds of type variables
+/// The kinds of type variables, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub enum Kind {
+pub enum Kind<N> {
     /// Unconstrained finite field type variable
     Field,
     /// Unconstrained group type variable
@@ -19,11 +21,18 @@ pub enum Kind {
     /// Pairing-friendly groups
     Pairing(Tid, Tid),
     /// Range of numbers
-    Range(Range<usize>),
-
+    Range(Range<N>),
+    /// Externally-provided size parameter (value provided during concretize)
+    SizeVar,
 }
 
-impl Kind {
+/// Symbolically-sized kind (used during parsing)
+pub type UKind = Kind<Size>;
+
+/// Concretely-sized kind (used after size resolution)
+pub type CKind = Kind<usize>;
+
+impl<N> Kind<N> {
     pub fn scalar1<'a>(a: &'a str) -> Self {
         Kind::Scalar(Set::singleton(Tid::new(a)))
     }
@@ -33,7 +42,7 @@ impl Kind {
     pub fn pairing<'a>(a: &'a str, b: &'a str) -> Self {
         Kind::Pairing(Tid::new(a), Tid::new(b))
     }
-    pub fn range(start: usize, step: usize, end: usize) -> Self {
+    pub fn range(start: N, step: N, end: N) -> Self {
         Kind::Range(Range { start, step, end })
     }
     pub fn is_scalar(&self) -> bool {
@@ -65,11 +74,37 @@ impl Kind {
     }
 }
 
+/// Traversal over the size parameter N
+impl<N> ToTraversal1<N> for Kind<N> {
+    type Output<Z> = Kind<Z>;
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Kind<Z>, E> {
+        match self {
+            Kind::Field => Ok(Kind::Field),
+            Kind::Group => Ok(Kind::Group),
+            Kind::Scalar(s) => Ok(Kind::Scalar(s)),
+            Kind::Pairing(a, b) => Ok(Kind::Pairing(a, b)),
+            Kind::Range(r) => Ok(Kind::Range(r.traverse1(f)?)),
+            Kind::SizeVar => Ok(Kind::SizeVar),
+        }
+    }
+}
 
-impl<'a, D, A> Pretty<'a, D, A> for Kind
+/// Range traversal for Kind
+impl<N: Clone> RangeTraversal<N> for Kind<N> {
+    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+        match self {
+            Kind::Range(r) => Ok(Kind::Range(f(r)?)),
+            _ => Ok(self),
+        }
+    }
+}
+
+
+impl<'a, D, A, N> Pretty<'a, D, A> for Kind<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
+    N: Pretty<'a, D, A> + Clone,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
@@ -83,16 +118,8 @@ where
                     allocator.text(">"),
                 ]),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1, g2)),
-            Kind::Range(r) => allocator.concat([
-                r.start.pretty(allocator),
-                if r.step == 1 {
-                    allocator.nil()
-                } else {
-                    allocator.text(", ").append(r.step.pretty(allocator))
-                },
-                allocator.text(".."),
-                r.end.pretty(allocator),
-            ]),
+            Kind::Range(r) => r.pretty(allocator),
+            Kind::SizeVar => allocator.text("Size"),
         }
     }
 
@@ -101,15 +128,15 @@ where
     }
 }
 
-impl fmt::Display for Kind {
+impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Kind<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Kind as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Kind<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
 }
 
-impl<'pest> FromPest<'pest> for Kind {
+impl<'pest> FromPest<'pest> for UKind {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
 
@@ -118,7 +145,7 @@ impl<'pest> FromPest<'pest> for Kind {
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         let pair = pest.next().ok_or(ConversionError::NoMatch)?;
         match pair.as_rule() {
-            Rule::kind_ty => Kind::from_pest(&mut pair.into_inner()),
+            Rule::kind_ty => UKind::from_pest(&mut pair.into_inner()),
             Rule::field_ty => Ok(Kind::Field),
             Rule::group_ty => Ok(Kind::Group),
             Rule::scalar_ty => {
@@ -148,7 +175,23 @@ impl<'pest> FromPest<'pest> for Kind {
                 Ok(Kind::Pairing(g1, g2))
             },
             Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
-            Rule::positive => Ok(Kind::Range(Range::singleton(pair.as_str().parse().unwrap()))),
+            Rule::positive => {
+                let n: u32 = pair.as_str().parse().unwrap();
+                Ok(Kind::Range(Range {
+                    start: Size::Lit(n),
+                    step: Size::one(),
+                    end: Size::Lit(n + 1),
+                }))
+            },
+            Rule::size_var_ty => Ok(Kind::SizeVar),
+            Rule::size_ref_ty => {
+                let size = Size::from_pest(&mut pair.into_inner())?;
+                Ok(Kind::Range(Range {
+                    start: size.clone(),
+                    step: Size::one(),
+                    end: size + Size::one(),
+                }))
+            },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }

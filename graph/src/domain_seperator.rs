@@ -10,6 +10,7 @@ use std::marker::PhantomData;
 #[cfg(test)] use backend::ArkBls12_381;
 #[cfg(test)] use lang::ast::UModule;
 #[cfg(test)] use share::unwrap;
+#[cfg(test)] use share::Ctx;
 #[cfg(test)] use crate::UDags;
 
 /// Wrapper to make Vec<u8> implement Encoding for use as domain separator instance
@@ -88,7 +89,7 @@ fn test_domain_separator() {
         verify(g*z == u + h*c);
     }
 "#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let domain_seperator = ZippelDomainSeparator::new(
         "test_domain_separator",

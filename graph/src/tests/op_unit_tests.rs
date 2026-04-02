@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod op_construction_tests {
-    use crate::Op;
+    use crate::{Op, GOp};
     use crate::tests::test_helpers::*;
     use backend::{ATyp, Value};
     use lang::typ::CRange;
@@ -14,12 +14,12 @@ mod op_construction_tests {
     
     #[test]
     fn test_poly_construction() {
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let poly_op = Op::poly(val);
         
         match poly_op {
             Op::Poly(inner) => {
-                match *inner {
+                match &*inner {
                     Op::Value(_) => (),
                     _ => panic!("Expected Value inside Poly"),
                 }
@@ -30,12 +30,12 @@ mod op_construction_tests {
     
     #[test]
     fn test_coef_construction() {
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let coef_op = Op::coef(val);
         
         match coef_op {
             Op::Coef(inner) => {
-                match *inner {
+                match &*inner {
                     Op::Value(_) => (),
                     _ => panic!("Expected Value inside Coef"),
                 }
@@ -46,12 +46,12 @@ mod op_construction_tests {
     
     #[test]
     fn test_mle_construction() {
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let mle_op = Op::mle(val);
         
         match mle_op {
             Op::Mle(inner) => {
-                match *inner {
+                match &*inner {
                     Op::Value(_) => (),
                     _ => panic!("Expected Value inside Mle"),
                 }
@@ -62,12 +62,12 @@ mod op_construction_tests {
     
     #[test]
     fn test_fft_construction() {
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let fft_op = Op::fft(val);
         
         match fft_op {
             Op::Fft(inner) => {
-                match *inner {
+                match &*inner {
                     Op::Value(_) => (),
                     _ => panic!("Expected Value inside Fft"),
                 }
@@ -78,12 +78,12 @@ mod op_construction_tests {
     
     #[test]
     fn test_ifft_construction() {
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let ifft_op = Op::ifft(val);
         
         match ifft_op {
             Op::Ifft(inner) => {
-                match *inner {
+                match &*inner {
                     Op::Value(_) => (),
                     _ => panic!("Expected Value inside Ifft"),
                 }
@@ -95,7 +95,7 @@ mod op_construction_tests {
     #[test]
     fn test_fft_ifft_cancellation() {
         // ifft(fft(x)) should return x
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let fft_op = Op::fft(val.clone());
         let result = Op::ifft(fft_op);
         
@@ -109,7 +109,7 @@ mod op_construction_tests {
     #[test]
     fn test_ifft_fft_cancellation() {
         // fft(ifft(x)) should return x
-        let val = Op::<C, ()>::value(&scalar::<C>(42));
+        let val = GOp::<C>::value(&scalar::<C>(42));
         let ifft_op = Op::ifft(val.clone());
         let result = Op::fft(ifft_op);
         
@@ -123,7 +123,7 @@ mod op_construction_tests {
     #[test]
     fn test_range_construction() {
         let range = CRange::new(0, 5);
-        let range_op = Op::<C, ()>::range(range);
+        let range_op = GOp::<C>::range(range);
         
         match range_op {
             Op::Value(Value::VecIndex(v)) => {
@@ -136,7 +136,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_zero_scalar() {
-        let zero_op = Op::<C, ()>::zero(&ATyp::scalar());
+        let zero_op = GOp::<C>::zero(&ATyp::scalar());
         match zero_op {
             Op::Value(v) => {
                 assert_eq!(v, Value::zero(&ATyp::scalar()));
@@ -147,7 +147,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_zero_g1() {
-        let zero_op = Op::<C, ()>::zero(&ATyp::g1());
+        let zero_op = GOp::<C>::zero(&ATyp::g1());
         match zero_op {
             Op::Value(v) => {
                 assert_eq!(v, Value::zero(&ATyp::g1()));
@@ -158,7 +158,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_pad_zeroes_no_padding_needed() {
-        let vec_val = Op::<C, ()>::vec(vec![
+        let vec_val = GOp::<C>::vec(vec![
             Op::value(&scalar::<C>(1)),
             Op::value(&scalar::<C>(2)),
             Op::value(&scalar::<C>(3)),
@@ -176,8 +176,8 @@ mod op_construction_tests {
     
     #[test]
     fn test_equ_both_values() {
-        let v1 = Op::<C, ()>::value(&scalar::<C>(42));
-        let v2 = Op::<C, ()>::value(&scalar::<C>(42));
+        let v1 = GOp::<C>::value(&scalar::<C>(42));
+        let v2 = GOp::<C>::value(&scalar::<C>(42));
         
         let result = Op::equ(v1, v2);
         
@@ -190,8 +190,8 @@ mod op_construction_tests {
     
     #[test]
     fn test_equ_different_values() {
-        let v1 = Op::<C, ()>::value(&scalar::<C>(42));
-        let v2 = Op::<C, ()>::value(&scalar::<C>(17));
+        let v1 = GOp::<C>::value(&scalar::<C>(42));
+        let v2 = GOp::<C>::value(&scalar::<C>(17));
         
         let result = Op::equ(v1, v2);
         
@@ -204,8 +204,8 @@ mod op_construction_tests {
     
     #[test]
     fn test_and_both_values() {
-        let v1 = Op::<C, ()>::value(&Value::Bool(true));
-        let v2 = Op::<C, ()>::value(&Value::Bool(true));
+        let v1 = GOp::<C>::value(&Value::Bool(true));
+        let v2 = GOp::<C>::value(&Value::Bool(true));
         
         let result = Op::and(v1, v2);
         
@@ -217,8 +217,8 @@ mod op_construction_tests {
     
     #[test]
     fn test_and_false_shortcircuit_left() {
-        let v1 = Op::<C, ()>::value(&Value::Bool(false));
-        let v2 = Op::<C, ()>::value(&Value::Bool(true));
+        let v1 = GOp::<C>::value(&Value::Bool(false));
+        let v2 = GOp::<C>::value(&Value::Bool(true));
         
         let result = Op::and(v1, v2);
         
@@ -230,8 +230,8 @@ mod op_construction_tests {
     
     #[test]
     fn test_and_false_shortcircuit_right() {
-        let v1 = Op::<C, ()>::value(&Value::Bool(true));
-        let v2 = Op::<C, ()>::value(&Value::Bool(false));
+        let v1 = GOp::<C>::value(&Value::Bool(true));
+        let v2 = GOp::<C>::value(&Value::Bool(false));
         
         let result = Op::and(v1, v2);
         
@@ -243,7 +243,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_btrue() {
-        let result = Op::<C, ()>::btrue();
+        let result = GOp::<C>::btrue();
         match result {
             Op::Value(Value::Bool(true)) => (),
             _ => panic!("Expected Bool(true)"),
@@ -252,7 +252,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_bfalse() {
-        let result = Op::<C, ()>::bfalse();
+        let result = GOp::<C>::bfalse();
         match result {
             Op::Value(Value::Bool(false)) => (),
             _ => panic!("Expected Bool(false)"),
@@ -262,7 +262,7 @@ mod op_construction_tests {
     #[test]
     fn test_vec_construction() {
         let ops = vec![
-            Op::<C, ()>::value(&scalar::<C>(1)),
+            GOp::<C>::value(&scalar::<C>(1)),
             Op::value(&scalar::<C>(2)),
         ];
         
@@ -276,7 +276,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_challenge_construction() {
-        let challenge = Op::<C, ()>::challenge(ATyp::scalar());
+        let challenge = GOp::<C>::challenge(ATyp::scalar());
         match challenge {
             Op::Challenge(typ, false) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Challenge"),
@@ -285,7 +285,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_random_construction() {
-        let random = Op::<C, ()>::random(ATyp::scalar());
+        let random = GOp::<C>::random(ATyp::scalar());
         match random {
             Op::Random(typ, false) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Random"),
@@ -294,7 +294,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_challenge_nz_construction() {
-        let challenge = Op::<C, ()>::challenge_nz(ATyp::scalar());
+        let challenge = GOp::<C>::challenge_nz(ATyp::scalar());
         match challenge {
             Op::Challenge(typ, true) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Challenge with nonzero flag"),
@@ -303,7 +303,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_random_nz_construction() {
-        let random = Op::<C, ()>::random_nz(ATyp::scalar());
+        let random = GOp::<C>::random_nz(ATyp::scalar());
         match random {
             Op::Random(typ, true) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Random with nonzero flag"),
@@ -312,7 +312,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_check_construction() {
-        let val = Op::<C, ()>::value(&Value::Bool(true));
+        let val = GOp::<C>::value(&Value::Bool(true));
         let check = Op::check(val);
         
         match check {
@@ -323,7 +323,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_eval_construction() {
-        let p = Op::<C, ()>::value(&scalar::<C>(42));
+        let p = GOp::<C>::value(&scalar::<C>(42));
         let x = Op::value(&scalar::<C>(3));
         
         let eval_op = Op::eval(p, x);
@@ -336,7 +336,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_index_construction() {
-        let index_op = Op::<C, ()>::index(42);
+        let index_op = GOp::<C>::index(42);
         match index_op {
             Op::Value(Value::Index(42)) => (),
             _ => panic!("Expected Index value"),
@@ -345,7 +345,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_pow_construction() {
-        let base = Op::<C, ()>::value(&scalar::<C>(2));
+        let base = GOp::<C>::value(&scalar::<C>(2));
         let exp = Op::value(&scalar::<C>(3));
         
         let pow_op = Op::pow(base, exp, ATyp::scalar());
@@ -358,7 +358,7 @@ mod op_construction_tests {
     
     #[test]
     fn test_dot_construction() {
-        let v1 = Op::<C, ()>::vec(vec![Op::value(&scalar::<C>(1))]);
+        let v1 = GOp::<C>::vec(vec![Op::value(&scalar::<C>(1))]);
         let v2 = Op::vec(vec![Op::value(&scalar::<C>(2))]);
         
         let dot_op = Op::dot(v1, v2, ATyp::scalar());
@@ -452,7 +452,7 @@ mod ref_tests {
 
 #[cfg(test)]
 mod op_additional_tests {
-    use crate::Op;
+    use crate::{Op, GOp, mk};
     use crate::tests::test_helpers::*;
     use backend::{ATyp, Value, ABase};
     use lang::typ::CRange;
@@ -463,7 +463,7 @@ mod op_additional_tests {
     #[test]
     fn test_op_one_scalar() {
         let typ = ATyp::scalar();
-        let one = Op::<C, ()>::one(&typ);
+        let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::Scalar(_)) => (),
             _ => panic!("Expected scalar one"),
@@ -473,7 +473,7 @@ mod op_additional_tests {
     #[test]
     fn test_op_one_vec_scalar() {
         let typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let one = Op::<C, ()>::one(&typ);
+        let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::VecScalar(v)) => assert_eq!(v.len(), 3),
             _ => panic!("Expected vector of scalar ones"),
@@ -484,7 +484,7 @@ mod op_additional_tests {
     fn test_op_one_fin() {
         let r = CRange::new(0, 5);
         let typ = ATyp::Base(ABase::Fin(r));
-        let one = Op::<C, ()>::one(&typ);
+        let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::Index(1)) => (),
             _ => panic!("Expected index one"),
@@ -495,7 +495,7 @@ mod op_additional_tests {
     fn test_op_one_vec_fin() {
         let r = CRange::new(0, 5);
         let typ = ATyp::Vec(Box::new(ATyp::Base(ABase::Fin(r))), 2);
-        let one = Op::<C, ()>::one(&typ);
+        let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::VecIndex(v)) => {
                 assert_eq!(v.len(), 2);
@@ -509,7 +509,7 @@ mod op_additional_tests {
     #[test]
     fn test_op_one_uni() {
         let typ = ATyp::Uni(3);
-        let one = Op::<C, ()>::one(&typ);
+        let one = GOp::<C>::one(&typ);
         match one {
             Op::Value(Value::VecIndex(v)) => {
                 assert_eq!(v.len(), 3);
@@ -523,8 +523,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_pow_zero_exponent() {
-        let base = Op::<C, ()>::value(&scalar::<C>(42));
-        let exp = Op::<C, ()>::Value(Value::Index(0));
+        let base = GOp::<C>::value(&scalar::<C>(42));
+        let exp = GOp::<C>::Value(Value::Index(0));
         let typ = ATyp::scalar();
         let result = Op::pow(base, exp, typ.clone());
         
@@ -536,8 +536,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_pow_one_exponent() {
-        let base = Op::<C, ()>::value(&scalar::<C>(42));
-        let exp = Op::<C, ()>::Value(Value::Index(1));
+        let base = GOp::<C>::value(&scalar::<C>(42));
+        let exp = GOp::<C>::Value(Value::Index(1));
         let typ = ATyp::scalar();
         let result = Op::pow(base.clone(), exp, typ);
         
@@ -546,8 +546,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_pow_general() {
-        let base = Op::<C, ()>::value(&scalar::<C>(2));
-        let exp = Op::<C, ()>::value(&scalar::<C>(3));
+        let base = GOp::<C>::value(&scalar::<C>(2));
+        let exp = GOp::<C>::value(&scalar::<C>(3));
         let typ = ATyp::scalar();
         let result = Op::pow(base, exp, typ.clone());
         
@@ -560,8 +560,8 @@ mod op_additional_tests {
     #[test]
     fn test_op_dot_values() {
         use ark_bls12_381::Fr;
-        let a = Op::<C, ()>::Value(Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]));
-        let b = Op::<C, ()>::Value(Value::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]));
+        let a = GOp::<C>::Value(Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64)]));
+        let b = GOp::<C>::Value(Value::VecScalar(vec![Fr::from(3u64), Fr::from(4u64)]));
         let typ = ATyp::scalar();
         let result = Op::dot(a, b, typ);
         
@@ -573,8 +573,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_dot_non_values() {
-        let a = Op::<C, ()>::Random(ATyp::scalar(), false);
-        let b = Op::<C, ()>::Random(ATyp::scalar(), false);
+        let a = GOp::<C>::Random(ATyp::scalar(), false);
+        let b = GOp::<C>::Random(ATyp::scalar(), false);
         let typ = ATyp::scalar();
         let result = Op::dot(a, b, typ);
         
@@ -586,11 +586,11 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_concat_vecs() {
-        let v1 = Op::<C, ()>::Vec(vec![
+        let v1 = GOp::<C>::vec(vec![
             Op::value(&scalar::<C>(1)),
             Op::value(&scalar::<C>(2)),
         ]);
-        let v2 = Op::<C, ()>::Vec(vec![
+        let v2 = GOp::<C>::vec(vec![
             Op::value(&scalar::<C>(3)),
         ]);
         let typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
@@ -604,8 +604,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_concat_vec_and_element() {
-        let v = Op::<C, ()>::Vec(vec![Op::value(&scalar::<C>(1))]);
-        let e = Op::<C, ()>::value(&scalar::<C>(2));
+        let v = GOp::<C>::vec(vec![Op::value(&scalar::<C>(1))]);
+        let e = GOp::<C>::value(&scalar::<C>(2));
         let typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let result = Op::concat(v, e, typ);
         
@@ -617,8 +617,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_div_by_zero_panics() {
-        let a = Op::<C, ()>::value(&scalar::<C>(42));
-        let zero = Op::<C, ()>::zero(&ATyp::scalar());
+        let a = GOp::<C>::value(&scalar::<C>(42));
+        let zero = GOp::<C>::zero(&ATyp::scalar());
         let typ = ATyp::scalar();
         
         let result = std::panic::catch_unwind(|| {
@@ -630,8 +630,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_div_zero_numerator() {
-        let zero = Op::<C, ()>::zero(&ATyp::scalar());
-        let b = Op::<C, ()>::value(&scalar::<C>(5));
+        let zero = GOp::<C>::zero(&ATyp::scalar());
+        let b = GOp::<C>::value(&scalar::<C>(5));
         let typ = ATyp::scalar();
         let result = Op::div(zero, b, typ.clone());
         
@@ -640,8 +640,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_div_by_one() {
-        let a = Op::<C, ()>::value(&scalar::<C>(42));
-        let one = Op::<C, ()>::one(&ATyp::scalar());
+        let a = GOp::<C>::value(&scalar::<C>(42));
+        let one = GOp::<C>::one(&ATyp::scalar());
         let typ = ATyp::scalar();
         let result = Op::div(a.clone(), one, typ);
         
@@ -650,8 +650,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_rem_indices() {
-        let a = Op::<C, ()>::Value(Value::Index(10));
-        let b = Op::<C, ()>::Value(Value::Index(3));
+        let a = GOp::<C>::Value(Value::Index(10));
+        let b = GOp::<C>::Value(Value::Index(3));
         let r = CRange::new(0, 20);
         let typ = ATyp::Base(ABase::Fin(r));
         let result = Op::rem(a, b, typ);
@@ -664,8 +664,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_mul_by_zero() {
-        let a = Op::<C, ()>::value(&scalar::<C>(42));
-        let zero = Op::<C, ()>::zero(&ATyp::scalar());
+        let a = GOp::<C>::value(&scalar::<C>(42));
+        let zero = GOp::<C>::zero(&ATyp::scalar());
         let typ = ATyp::scalar();
         let result = Op::mul(a, zero, typ.clone());
         
@@ -674,8 +674,8 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_mul_by_one() {
-        let a = Op::<C, ()>::value(&scalar::<C>(42));
-        let one = Op::<C, ()>::one(&ATyp::scalar());
+        let a = GOp::<C>::value(&scalar::<C>(42));
+        let one = GOp::<C>::one(&ATyp::scalar());
         let typ = ATyp::scalar();
         let result = Op::mul(a.clone(), one, typ);
         
@@ -684,10 +684,10 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_add_commutative_fft() {
-        let a = Op::<C, ()>::value(&scalar::<C>(1));
-        let b = Op::<C, ()>::value(&scalar::<C>(2));
-        let fft_a = Op::Fft(Box::new(a));
-        let fft_b = Op::Fft(Box::new(b));
+        let a = GOp::<C>::value(&scalar::<C>(1));
+        let b = GOp::<C>::value(&scalar::<C>(2));
+        let fft_a = Op::Fft(mk::<C>(a));
+        let fft_b = Op::Fft(mk::<C>(b));
         let typ = ATyp::scalar();
         let result = Op::add(fft_a, fft_b, typ);
         
@@ -699,10 +699,10 @@ mod op_additional_tests {
     
     #[test]
     fn test_op_sub_commutative_ifft() {
-        let a = Op::<C, ()>::value(&scalar::<C>(5));
-        let b = Op::<C, ()>::value(&scalar::<C>(2));
-        let ifft_a = Op::Ifft(Box::new(a));
-        let ifft_b = Op::Ifft(Box::new(b));
+        let a = GOp::<C>::value(&scalar::<C>(5));
+        let b = GOp::<C>::value(&scalar::<C>(2));
+        let ifft_a = Op::Ifft(mk::<C>(a));
+        let ifft_b = Op::Ifft(mk::<C>(b));
         let typ = ATyp::scalar();
         let result = Op::sub(ifft_a, ifft_b, typ);
         

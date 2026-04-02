@@ -4,7 +4,7 @@ use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use share::Ctx;
 use lang::typ::Qualifier;
-use crate::{Dag, UDag, Node, QDag, GOp};
+use crate::{Dag, UDag, Node, QDag, GOp, Op};
 
 pub struct QualifierPropagation {
     pub quals: Ctx<NodeIndex, Qualifier>,
@@ -14,28 +14,29 @@ pub struct QualifierPropagation {
 impl QualifierPropagation {
     fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
         match op {
-            GOp::Value(_) => Some(Qualifier::Public),
-            GOp::Check(_) => Some(Qualifier::Public),
-            GOp::Ref(r, _) => 
+            Op::Value(_) => Some(Qualifier::Public),
+            Op::Check(_) => Some(Qualifier::Public),
+            Op::Ref(r, _) => 
                 self.quals.get(&r.node()).map(|v| v.clone()),
-            GOp::Ram(box a, _) => self.from_op(a),
-            GOp::Poly(box a) => self.from_op(a),
-            GOp::Mle(box a) => self.from_op(a),
-            GOp::Coef(box a) => self.from_op(a),
-            GOp::Eval(box p, box x) => {
+            Op::Ram(a, _) => self.from_op(a),
+            Op::Poly(a) => self.from_op(a),
+            Op::Mle(a) => self.from_op(a),
+            Op::Coef(a) => self.from_op(a),
+            Op::Reduce(_, v) => self.from_op(v),
+            Op::Eval(p, x) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            GOp::Ifft(box a) => self.from_op(a),
-            GOp::Fft(box a) => self.from_op(a),
-            GOp::Bin(_, box a, box b, _) 
-            | GOp::Pair(box a, box b, _) => {
+            Op::Ifft(a) => self.from_op(a),
+            Op::Fft(a) => self.from_op(a),
+            Op::Bin(_, a, b, _) 
+            | Op::Pair(a, b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
                 Some(qual_a.join(&qual_b))
             },
-            GOp::Vec(vs) => {
+            Op::Vec(vs) => {
                 let mut qual = Qualifier::Public;
                 for v in vs {
                     let q = self.from_op(v)?;
@@ -43,7 +44,7 @@ impl QualifierPropagation {
                 }
                 Some(qual)
             }
-            GOp::Record(fields) => {
+            Op::Record(fields) => {
                 let mut qual = Qualifier::Public;
                 for (_, v) in fields.iter() {
                     let q = self.from_op(v)?;
@@ -51,8 +52,8 @@ impl QualifierPropagation {
                 }
                 Some(qual)
             }
-            GOp::Random(_, _) => Some(Qualifier::Private),
-            GOp::Challenge(_, _) => Some(Qualifier::Public),
+            Op::Random(_, _) => Some(Qualifier::Private),
+            Op::Challenge(_, _) => Some(Qualifier::Public),
         }
     }
 
@@ -103,6 +104,7 @@ mod tests {
     use super::*;
     use lang::ast::UModule;
     use backend::ArkBls12_381;
+    use backend::op::mk;
     use crate::{UDags, Node};
     use share::unwrap;
     use lang::typ::Qualifier;
@@ -117,7 +119,7 @@ mod tests {
                 b <- r * s';
                 verify(a == b);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -152,7 +154,7 @@ mod tests {
     fn test_qualifier_from_op_check() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Check(Box::new(inner));
+        let op = Op::Check(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -164,7 +166,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -181,7 +183,7 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -198,7 +200,7 @@ mod tests {
                 z <- x * y;
                 verify(z == x * y);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -211,7 +213,7 @@ mod tests {
             proto simple<F: Field>(private x: F) where true {
                 verify(x == x);
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
@@ -224,7 +226,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let val1 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let val2 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
-        let op = GOp::<ArkBls12_381>::Vec(vec![val1, val2]);
+        let op = Op::Vec(vec![mk::<ArkBls12_381>(val1), mk::<ArkBls12_381>(val2)]);
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -233,7 +235,7 @@ mod tests {
     fn test_qualifier_poly_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Poly(Box::new(inner));
+        let op = Op::Poly(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -242,7 +244,7 @@ mod tests {
     fn test_qualifier_mle_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Mle(Box::new(inner));
+        let op = Op::Mle(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -251,7 +253,7 @@ mod tests {
     fn test_qualifier_coef_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Coef(Box::new(inner));
+        let op = Op::Coef(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -260,7 +262,7 @@ mod tests {
     fn test_qualifier_fft_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Fft(Box::new(inner));
+        let op = Op::Fft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
@@ -269,7 +271,7 @@ mod tests {
     fn test_qualifier_ifft_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = GOp::<ArkBls12_381>::Ifft(Box::new(inner));
+        let op = Op::Ifft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }

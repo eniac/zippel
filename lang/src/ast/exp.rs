@@ -299,9 +299,9 @@ pub type CExp = Exp<usize>;
 pub type CExps = Exps<usize>;
 
 /// How to traverse the first type parameter [N] for Exp<N>
-impl<N> ToTraversal1<N> for Exp<N> {
+impl<N: Clone> ToTraversal1<N> for Exp<N> {
     type Output<Z> = Exp<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exp<Z>, E> {
         match self {
             Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
             Exp::Bool(b) => Ok(Exp::Bool(b)),
@@ -366,9 +366,9 @@ impl<N> ToTraversal1<N> for Exp<N> {
 }
 
 /// How to traverse the first type parameter [N] for Exps<N>
-impl<N> ToTraversal1<N> for Exps<N> {
+impl<N: Clone> ToTraversal1<N> for Exps<N> {
     type Output<Z> = Exps<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exps<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exps<Z>, E> {
         Ok(Exps(self.0.into_iter().map(|x| x.traverse1(f)).collect::<Result<_, _>>()?))
     }
 }
@@ -401,9 +401,9 @@ impl TidSubst for CExp {
             },
             Exp::Fun(_, box body) => body.tid_subst(from, to),
             Exp::Record(fields) => {
-                for (_, field_exp) in fields.iter_mut() {
+                fields.modify(|_, field_exp| {
                     field_exp.tid_subst(from, to);
-                }
+                });
             },
             Exp::Proj(box exp, _) => exp.tid_subst(from, to),
             Exp::SetRecord(box record, _, box value) => {
@@ -468,7 +468,7 @@ impl FreeVars for CExps {
 }
 
 /// How to traverse [Range] inside an [Exp]
-impl<N> RangeTraversal<N> for Exp<N> {
+impl<N: Clone> RangeTraversal<N> for Exp<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
@@ -515,7 +515,7 @@ impl<N> RangeTraversal<N> for Exp<N> {
     }
 }
 
-impl<N> RangeTraversal<N> for Exps<N> {
+impl<N: Clone> RangeTraversal<N> for Exps<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Exps(self.0.traverse1(&mut |x| x.range_traverse(f))?))
     }
@@ -779,7 +779,7 @@ impl<'a, D, A, N> Pretty<'a, D, A> for Exp<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
-    N: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A> + Clone,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
@@ -959,7 +959,7 @@ impl<'a, D, A, N> Pretty<'a, D, A> for Exps<N>
 where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
-    N: Pretty<'a, D, A>,
+    N: Pretty<'a, D, A> + Clone,
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {

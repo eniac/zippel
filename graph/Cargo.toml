@@ -25,6 +25,7 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", branch = "
 ] }
 
 itertools = "0.14.0"
+hashconsing = "1.6"
 
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }

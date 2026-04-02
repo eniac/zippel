@@ -9,7 +9,6 @@ use rand::rngs::ThreadRng;
 use lang::ast::BinOp;
 use std::collections::HashSet;
 use lang::id::Vid;
-use graph::Ref;
 use share::Ctx;
 
 pub struct RuntimeInformation<C: ArkConfig> {
@@ -70,7 +69,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
-    pub fn handle_op(&self, operation: &Op<C, Ref>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C>{
+    pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C>{
         match operation {
             Op::Value(val) => {
                 return val.clone();
@@ -79,35 +78,35 @@ impl<C: ArkConfig> MutexGraph<C> {
                return self.get_value(r.clone(), inputs);
             },
             Op::Vec(vec) => {
-                let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
+                let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&*op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
                 return  Value::value_vec(value_vector);
             },
             Op::Record(fields) => {
                 let mut record_values = share::Ctx::new();
                 for (name, op) in fields.iter() {
-                    let field_value = self.handle_op(op, Arc::clone(&inputs));
+                    let field_value = self.handle_op(&*op, Arc::clone(&inputs));
                     record_values.insert(name, &field_value);
                 }
                 return Value::Record(record_values);
             },
-            Op::Ram(box v, box index_val) => {
+            Op::Ram(v, index_val) => {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let inputs_index_val_clone = Arc::clone(&inputs);
-                let v_val: Value<C> = self.handle_op(v, inputs_v_clone);
-                let index_val_value: Value<C> = self.handle_op(index_val, inputs_index_val_clone);
+                let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
+                let index_val_value: Value<C> = self.handle_op(&*index_val, inputs_index_val_clone);
                 return v_val.ram(index_val_value);
             }
-            Op::Check(box a) => {
+            Op::Check(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
 
                 return a_val;
             }
-            Op::Bin(op, box a, box b, _typ) => {
+            Op::Bin(op, a, b, _typ) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
+                let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
                 match op {
                     BinOp::Add => {
                         return a_val + b_val;
@@ -151,44 +150,49 @@ impl<C: ArkConfig> MutexGraph<C> {
                 //TODO: Implement challenge
                 return Value::random(&mut rng, typ);
             },
-            Op::Eval(box p, box x) => {
+            Op::Eval(p, x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
-                let p_val: Value<C> = self.handle_op(p, inputs_p_clone);
-                let x_val: Value<C> = self.handle_op(x, inputs_x_clone);
+                let p_val: Value<C> = self.handle_op(&*p, inputs_p_clone);
+                let x_val: Value<C> = self.handle_op(&*x, inputs_x_clone);
                 return p_val.value_eval(x_val);
             }
-            Op::Coef(box a) => {
+            Op::Coef(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_coef();
             }
-            Op::Pair(box a, box b, _) => {
+            Op::Pair(a, b, _) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
-                let b_val: Value<C> = self.handle_op(b, inputs_b_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
+                let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
                 return a_val.pair(b_val);
             },
-            Op::Poly(box a) => {
+            Op::Poly(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_poly();
             }
-            Op::Ifft(box a) => {
+            Op::Ifft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_ifft();
             }
-            Op::Fft(box a)  => {
+            Op::Fft(a)  => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_fft();
             }
-            Op::Mle(box a) => {
+            Op::Mle(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(a, inputs_a_clone);
+                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_mle();
+            }
+            Op::Reduce(op, v) => {
+                let inputs_v_clone = Arc::clone(&inputs);
+                let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
+                return v_val.value_reduce(*op);
             }
         }
     }
@@ -199,12 +203,12 @@ impl<C: ArkConfig> MutexGraph<C> {
 
         match node {
             Node::Op(operation, annotation) => {
-                let return_val = self.handle_op(operation, inputs);
+                let return_val = self.handle_op(&**operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             },
             Node::Transcr(operation, annotation)  => {
-                let return_val = self.handle_op(operation, inputs);
+                let return_val = self.handle_op(&**operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             },
@@ -260,16 +264,13 @@ impl<C: ArkConfig> MutexGraph<C> {
                     let node = &g.mutex_graph[node_index];
                     match node {
                         Node::Op(op, annotation) | Node::Transcr(op, annotation) => {
-                            match op {
-                                GOp::Challenge(_c_typ, _) => {
+                            if matches!(&**op, Op::Challenge(_, _)) {
                                     let return_val = Value::<C>::challenge(prover_state);
                                     let mut return_value_lock = annotation.return_value.lock().unwrap();
                                     *return_value_lock = Some(return_val);
                                     challenge_node = true;
                                     let mut is_challenge_lock = annotation.is_challenge.lock().unwrap();
                                     *is_challenge_lock = true;
-                                }
-                                _ => {}
                             }
                         },
                         Node::Inp(_c, prefs) => {

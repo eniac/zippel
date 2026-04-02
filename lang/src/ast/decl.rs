@@ -5,7 +5,7 @@ use pest::Parser;
 use bumpalo::Bump;
 use thiserror::Error;
 
-use share::{Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
@@ -90,13 +90,13 @@ impl FreeVars for CBody {
 
 /// Useful constructors
 impl<N> Decl<N> {
-    pub fn proto(name: Vid, typevars: TypeVars, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
+    pub fn proto(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret: GTyp::bool() };
         let body = Body::Proto { relation, body };
         Decl { sig, body }
     }
 
-    pub fn func(name: Vid, typevars: TypeVars, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
+    pub fn func(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
@@ -135,8 +135,8 @@ impl UDecl {
 
     /// Each declaration has typevariables that can be concretized to different sizes.
     /// This method returns all possible size substitutions for the declaration
-    pub fn get_size_substitutions(&'_ self) -> Result<Set<SizeSubsts>, DeclError> {
-        Ok(SizeSubsts::from_typevars(&self.sig.typevars))
+    pub fn get_size_substitutions(&'_ self, sizes: &Ctx<Tid, usize>) -> Result<Set<SizeSubsts>, DeclError> {
+        Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes))
     }
 
     /// Concretize a declaration with a given size substitution
@@ -227,9 +227,9 @@ impl CBody {
 }
 
 /// Traversable1 instance for Body (N)
-impl<N> ToTraversal1<N> for Body<N> {
+impl<N: Clone> ToTraversal1<N> for Body<N> {
     type Output<Z> = Body<Z>;
-    fn traverse1<Z, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
+    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
         match self {
             Body::Proto { relation, body } =>
                 Ok(Body::Proto {
@@ -256,7 +256,7 @@ impl TidSubst for CBody {
     }
 }
 
-impl<N> RangeTraversal<N> for Body<N> {
+impl<N: Clone> RangeTraversal<N> for Body<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         match self {
             Body::Proto { relation, body } =>
@@ -533,7 +533,7 @@ fn fn_parser1() {
         Vid::from("test"),
         TypeVars(vec![
             TypeVar::new_str("F", Kind::Field),
-            TypeVar::new_str("N", Kind::Range(Range { start: 0, step: 1, end: 10 }))
+            TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) }))
         ]),
         GArgs::from([GArg::private("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
         GTyp::varstr("F"),
@@ -592,7 +592,7 @@ fn decls_parser() {
             Vid::from("test"),
             TypeVars(vec![
                 TypeVar::new_str("F", Kind::Field),
-                TypeVar::new_str("N", Kind::Range(Range { start:0, step:1, end: 10 })),
+                TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) })),
             ]),
             GArgs::from([GArg::public("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
             GTyp::varstr("F"),

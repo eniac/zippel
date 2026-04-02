@@ -6,12 +6,12 @@ use crate::typ::unify::UnifyError;
 use crate::typ::lub::{Lub, LubError};
 use crate::ast::sig::CSig;
 use crate::typ::range::{Range, RangeError};
-use crate::typ::{CTyp, CTyps, Kind};
+use crate::typ::{CTyp, CTyps, CKind};
 use thiserror::Error;
 
 pub trait Typeable {
     type Context;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError>;
+    fn infer(&self, kctx: &Ctx<Tid, CKind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError>;
 }
 
 #[derive(Error, PartialEq, Debug)]
@@ -26,64 +26,64 @@ pub enum TypeError {
     NotPureRel(CExp),
 
     #[error("TypeError: Cannot find an Arkworks type for {0}, {1} |- {2} : {3}")]
-    Ark(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Ark(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error("TypeError: In expression {0}, {1} |- {2}")]
-    CExp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    CExp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("VecEmptyError: Cannot infer the type of the empty vector {0}, {1} |- []")]
-    VecEmpty(Ctx<Tid, Kind>, Ctx<Vid, CTyp>),
+    VecEmpty(Ctx<Tid, CKind>, Ctx<Vid, CTyp>),
 
     #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- {2} != {3} \n\n\t{4}")]
-    Vec(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
+    Vec(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
 
     #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
-    Ifft(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    Ifft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
-    Poly(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("EvalError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
-    Eval(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
+    Eval(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
     #[error("EvalMleTooManyArgumentsError: Arguments to [eval] for a multilinear extension had too many arguments:\n\t{0}, {1} |- evalMle {2} {3}")]
-    EvalMleTooManyArguments(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CExp),
+    EvalMleTooManyArguments(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
     #[error("CoefError: Arguments to [coef] must be a polynomial:\n\t{0}, {1} |- coef {2}")]
-    Coef(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    Coef(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("MleError: Arguments to [mle] must be a vector type with size a power of 2:\n\t{0}, {1} |- mle {2}")]
-    Mle(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    Mle(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("MleError: Must apply MLE to a scalar or vector of scalars:\n\t{0}, {1} |- {2} ( {3} : {4} )")]
-    MleApp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+    MleApp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
     #[error("MapError: Arguments to [for] must be a vector type:\n\t{0}, {1} |- [{2} for {3} in {4}]")]
-    Map(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CExp),
+    Map(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Vid, CExp),
 
     #[error("ReduceError: Arguments to [reduce] must be a vector type:\n\t{0}, {1} |- reduce ({2}, {3} : {4})")]
-    Reduce(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
+    Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
 
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
-    Uni(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
+    Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
     #[error("ChallengeError: Only challenges returning field elements are allowed:\n\t {0}, {1} |- challenge< {2} : {3} >")]
-    Challenge(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Tid, Kind),
+    Challenge(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Tid, CKind),
 
     #[error("VarError: Variable {0} not found in context {1}")]
     VarNotFound(Vid, Ctx<Vid, CTyp>),
 
     #[error("RangeError: Not a valid range expression:\n\t{0}, {1} |- {2}\n\n{3}")]
-    Range(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, Range<usize>, RangeError),
+    Range(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Range<usize>, RangeError),
 
     #[error("InterpolateError: Expects a field vector:\n\t{0}, {1} |- interpolate ( {2}: {3})")]
-    Interp(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Interp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error("FftError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- fft ( {2}: {3})")]
-    Fft(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    Fft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
-    Ram(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+    Ram(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
     #[error("AppMultipleError: Function has multiple matching definitions in context\n\t{0} |- {1} ( {2} )")]
     AppMultiple(Set<CSig>, Vid, CTyps),
@@ -92,19 +92,19 @@ pub enum TypeError {
     FuncNotFound(Set<CSig>, Vid, CTyps),
 
     #[error("BoolError: Expected boolean expression:\n\t{0}, {1} |- {2}")]
-    Bool(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp),
+    Bool(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("FuncRetError: The return type of function {3} must be {4} but is found:\n\t{0}, {1} |- {2} : {5}")]
-    FuncRet(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
+    FuncRet(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
 
     #[error("PairError: Expected group pairing between two pairing-friendly curves:\n\t{0}, {1} |- pair({2}: {3}, {4} : {5})")]
-    Pair(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+    Pair(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
     #[error("RecordError: Field {3} not found in record:\n\t{0}, {1} |- {2}.{3}")]
-    FieldNotFound(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, String),
+    FieldNotFound(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String),
 
     #[error("RecordError: Expression is not a record type:\n\t{0}, {1} |- {2} : {3}")]
-    NotARecord(Ctx<Tid, Kind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    NotARecord(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error(transparent)]
     Unify(#[from] UnifyError),
@@ -129,67 +129,67 @@ impl<'a> TypeError {
     pub fn lub(a: Self, l: LubError) -> Self {
         TypeError::next(a, TypeError::from(l))
     }
-    pub fn ark(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
+    pub fn ark(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
         TypeError::Ark(kctx.clone(), vctx.clone(), e.clone(), t.clone())
     }
-    pub fn exp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn exp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::CExp(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn vec_empty(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>) -> Self {
+    pub fn vec_empty(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>) -> Self {
         TypeError::VecEmpty(kctx.clone(), vctx.clone())
     }
-    pub fn vec(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CTyp, t: &CTyp, r: TypeError) -> Self {
+    pub fn vec(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CTyp, t: &CTyp, r: TypeError) -> Self {
         TypeError::Vec(kctx.clone(), vctx.clone(), e.clone(), t.clone(), Box::new(r))
     }
-    pub fn ifft(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn ifft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn poly(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn coef(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn coef(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Coef(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn eval(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+    pub fn eval(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::Eval(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
-    pub fn eval_mle_too_many_arguments(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+    pub fn eval_mle_too_many_arguments(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::EvalMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
-    pub fn mle(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn mle(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn mle_app(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, t: &CTyps) -> Self {
+    pub fn mle_app(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, t: &CTyps) -> Self {
         TypeError::MleApp(kctx.clone(), vctx.clone(), id.clone(), e.clone(), t.clone())
     }
-    pub fn map(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: Vid, r: CExp) -> Self {
+    pub fn map(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: CExp, id: Vid, r: CExp) -> Self {
         TypeError::Map(kctx.clone(), vctx.clone(), e, id, r)
     }
-    pub fn reduce(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, op: BinOp, e: &CExp, t: &CTyp) -> Self {
+    pub fn reduce(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, op: BinOp, e: &CExp, t: &CTyp) -> Self {
         TypeError::Reduce(kctx.clone(), vctx.clone(), op, e.clone(), t.clone())
     }
-    pub fn uni(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, ts: &CTyps) -> Self {
+    pub fn uni(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, id: &Vid, e: &CExps, ts: &CTyps) -> Self {
         TypeError::Uni(kctx.clone(), vctx.clone(), id.clone(), e.clone(), ts.clone())
     }
-    pub fn challenge(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, k: &Kind) -> Self {
+    pub fn challenge(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, t: &Tid, k: &CKind) -> Self {
         TypeError::Challenge(kctx.clone(), vctx.clone(), t.clone(), k.clone())
     }
     pub fn var_not_found(id: &Vid, vctx: &Ctx<Vid, CTyp>) -> Self {
         TypeError::VarNotFound(id.clone(), vctx.clone())
     }
-    pub fn range(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, r: &Range<usize>, e: RangeError) -> Self {
+    pub fn range(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, r: &Range<usize>, e: RangeError) -> Self {
         TypeError::Range(kctx.clone(), vctx.clone(), r.clone(), e)
     }
-    pub fn interp(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+    pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
-    pub fn fft(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
+    pub fn fft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Fft(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
-    pub fn ram(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
+    pub fn ram(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: CTyp, b: &CExp, tb: CTyp) -> Self {
         TypeError::Ram(kctx.clone(), vctx.clone(), a.clone(), ta, b.clone(), tb)
     }
-    pub fn bool(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+    pub fn bool(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Bool(kctx.clone(), vctx.clone(), e.clone())
     }
     pub fn app_multiple(fctx: &Set<CSig>, id: &Vid, params: CTyps) -> Self {
@@ -198,16 +198,16 @@ impl<'a> TypeError {
     pub fn func_not_found(fctx: &Set<CSig>, id: &Vid, params: CTyps) -> Self {
         TypeError::FuncNotFound(fctx.clone(), id.clone(), params)
     }
-    pub fn func_ret(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Vid, t: &CTyp, r: &CTyp) -> Self {
+    pub fn func_ret(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, id: &Vid, t: &CTyp, r: &CTyp) -> Self {
         TypeError::FuncRet(kctx.clone(), vctx.clone(), e.clone(), id.clone(), t.clone(), r.clone())
     }
-    pub fn pair(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, t: &CExp, ta: &CTyp, e: &CExp, te: &CTyp) -> Self {
+    pub fn pair(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, t: &CExp, ta: &CTyp, e: &CExp, te: &CTyp) -> Self {
         TypeError::Pair(kctx.clone(), vctx.clone(), t.clone(), ta.clone(), e.clone(), te.clone())
     }
-    pub fn field_not_found(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, field: &str, _fields: &Ctx<String, CTyp>) -> Self {
+    pub fn field_not_found(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, field: &str, _fields: &Ctx<String, CTyp>) -> Self {
         TypeError::FieldNotFound(kctx.clone(), vctx.clone(), e.clone(), field.to_string())
     }
-    pub fn not_a_record(kctx: &Ctx<Tid, Kind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
+    pub fn not_a_record(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
         TypeError::NotARecord(kctx.clone(), vctx.clone(), e.clone(), t.clone())
     }
 }
@@ -215,7 +215,7 @@ impl<'a> TypeError {
 /// Type inference for [CExp]
 impl Typeable for CExp {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
+    fn infer(&self, kctx: &Ctx<Tid, CKind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
         match self {
             // Infer the type of a literal [n] as a Fin<n> type
             CExp::Lit(n) => Ok(CTyp::fin(Range::singleton(*n))),
@@ -839,7 +839,7 @@ impl Typeable for CExp {
 /// Type inference for [Body]
 impl Typeable for CBody {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(&self, kctx: &Ctx<Tid, Kind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
+    fn infer(&self, kctx: &Ctx<Tid, CKind>, fctx: &Set<CSig>, vctx: &Self::Context) -> Result<CTyp, TypeError> {
         // Type inference for each statement in the Body
         match self {
             CBody::Proto { relation, body } => {
@@ -876,7 +876,7 @@ mod tests {
     use lazy_static::lazy_static;
 
     lazy_static! {
-        static ref KIND_CTX: Ctx<Tid, Kind> = {
+        static ref KIND_CTX: Ctx<Tid, CKind> = {
             let mut kctx = Ctx::new();
             // Add field type "F"
             kctx.insert(&Tid::from("F"), &Kind::Field);

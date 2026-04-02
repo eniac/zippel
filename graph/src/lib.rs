@@ -2,7 +2,6 @@
 #![feature(trait_alias)]
 mod node;
 mod dep;
-mod op;
 pub mod analyses;
 pub mod scheduler;
 pub mod pref;
@@ -13,7 +12,7 @@ pub mod eval;
 mod tests;
 
 use log::debug;
-pub use op::{Ref, Op, GOp};
+pub use backend::op::{Ref, Op, GOp, HOp, HasOpFactory, mk};
 pub use node::Node;
 pub use dep::{DepType, Dep};
 pub use pref::PRef;
@@ -23,7 +22,7 @@ use backend::{ArkConfig, Value, ATyp, PolyVariant, VirtualPolynomial};
 use share::{traversal::ToTraversal1, Set, Ctx};
 use lang::ast::{CModule, BinOp, CExp, Arg, CSig, CBody};
 use lang::id::{Tid, Vid};
-use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, Kind};
+use lang::typ::{Qualifier, Distribution, Nothing, CTyp, CTyps, CKind};
 use lang::typ::range::CRange;
 use lang::typ::infer::{Typeable, TypeError};
 use ark_poly::{univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial};
@@ -99,6 +98,63 @@ impl GraphError {
     }
 }
 
+/// Compare two `Ref` values for isomorphism-compatible equality,
+/// ignoring `NodeIndex` (which differs between isomorphic graphs).
+fn refs_isomorphic_eq(a: &Ref, b: &Ref) -> bool {
+    match (a, b) {
+        (Ref::Node(_), Ref::Node(_)) => true,
+        (Ref::Var(v1, _), Ref::Var(v2, _)) => v1 == v2,
+        _ => false,
+    }
+}
+
+/// Compare two `PRef` slices for isomorphism-compatible equality.
+fn prefs_isomorphic_eq(a: &[PRef], b: &[PRef]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(x, y)| {
+                refs_isomorphic_eq(&x.reference, &y.reference)
+                    && x.index == y.index
+                    && x.typ == y.typ
+                    && x.qualifier == y.qualifier
+                    && x.distribution == y.distribution
+                    && x.from_transcript == y.from_transcript
+            })
+}
+
+/// Compare two `Node` values for isomorphism-compatible equality.
+/// Erases `NodeIndex` inside `GOp` and `PRef` so that structurally
+/// identical nodes from different graphs compare as equal.
+fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
+    a: &Node<C, A>,
+    b: &Node<C, A>,
+) -> bool {
+    let erase = |_: NodeIndex| NodeIndex::new(0);
+    match (a, b) {
+        (Node::Inp(v1, p1), Node::Inp(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
+        (Node::Rel(v1, p1), Node::Rel(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
+        (Node::Op(op1, ann1), Node::Op(op2, ann2)) => {
+            op1.map_node_indices(&erase) == op2.map_node_indices(&erase) && ann1 == ann2
+        }
+        (Node::Transcr(op1, ann1), Node::Transcr(op2, ann2)) => {
+            op1.map_node_indices(&erase) == op2.map_node_indices(&erase) && ann1 == ann2
+        }
+        _ => false,
+    }
+}
+
+impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
+    fn eq(&self, other: &Self) -> bool {
+        petgraph::algo::is_isomorphic_matching(
+            &self.0,
+            &other.0,
+            |a, b| nodes_isomorphic_eq(a, b),
+            |a, b| a == b,
+        )
+    }
+}
+
 impl<C: ArkConfig, A> Dag<C, A> {
 
     pub fn new() -> Self {
@@ -149,15 +205,8 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
     }
 
-    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag(self.0.map(
-            |_, node| node.map_node_indices(f),
-            |_, e| e.clone()
-        ))
-    }
-
     /// Dep deduplication
-    fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
+    pub(crate) fn add_edge(&mut self, source: NodeIndex, sink: NodeIndex, edge: Dep) {
         // If the edge is not a self-loop add it
         if source != sink {
             self.0.add_edge(source, sink, edge);
@@ -316,6 +365,104 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
+    /// Get the verifier assertion, a check node with no outgoing edges
+    pub fn find_check(&self) -> Option<NodeIndex> {
+        self.node_indices()
+            .find_map(|n| match &self[n] {
+                Node::Op(op, _) | Node::Transcr(op, _)
+                    if matches!(&**op, Op::Check(_)) && self.nodes_from(n).count() == 0 => Some(n),
+                _ => None
+            })
+    }
+
+    pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
+        self.0.neighbors_directed(n, Direction::Outgoing)
+    }
+
+    pub fn nodes_to(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
+        self.0.neighbors_directed(n, Direction::Incoming)
+    }
+
+    pub fn erase_ann(self) -> UDag<C> {
+        Dag(self.0.map(
+            |_, node|
+                match node {
+                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
+                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
+                    Node::Op(op, _) => Node::Op(op.clone(), Nothing),
+                    Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
+                },
+            |_, e| e.clone()))
+    }
+
+    /// Join two DAGs into one
+    /// WARNING: This function does not remap Refs, so it is not safe to use in general.
+    pub fn combine_dag(&self, other: &Self) -> Self where A: Clone {
+        let mut combined_graph = Graph::with_capacity(
+            self.node_count() + other.node_count(),
+            self.edge_count() + other.edge_count(),
+        );
+
+        // To map old NodeIndex values from self to new NodeIndex values in combined_graph
+        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
+        // To map old NodeIndex values from other to new NodeIndex values in combined_graph
+        let mut node_map_other = HashMap::<NodeIndex, NodeIndex>::new();
+
+        // Add nodes from self and populate node_map_self
+        for old_node_idx in self.node_indices() {
+            if let Some(weight) = self.0.node_weight(old_node_idx) {
+                let new_node_idx = combined_graph.add_node(weight.clone());
+                node_map_self.insert(old_node_idx, new_node_idx);
+            }
+        }
+
+        // Add nodes from other and populate node_map_other
+        for old_node_idx in other.node_indices() {
+            if let Some(weight) = other.0.node_weight(old_node_idx) {
+                let new_node_idx = combined_graph.add_node(weight.clone());
+                node_map_other.insert(old_node_idx, new_node_idx);
+            }
+        }
+
+        // Add edges from self using the mapped node indices
+        for edge_ref in self.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
+            {
+                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+
+        // Add edges from other using the mapped node indices
+        for edge_ref in other.0.edge_references() {
+            let old_source_idx = edge_ref.source();
+            let old_target_idx = edge_ref.target();
+            let weight = edge_ref.weight().clone();
+
+            if let (Some(new_source_idx), Some(new_target_idx)) =
+                (node_map_other.get(&old_source_idx), node_map_other.get(&old_target_idx))
+            {
+                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
+            }
+        }
+
+        Dag(combined_graph)
+    }
+}
+
+/// Methods requiring hash-consing (HasOpFactory)
+impl<C: HasOpFactory, A> Dag<C, A> {
+    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Dag<C, A> where A: Clone {
+        Dag(self.0.map(
+            |_, node| node.map_node_indices(f),
+            |_, e| e.clone()
+        ))
+    }
+
     /// Get the prover graph, by reachability analysis starting from the transcript nodes
     pub fn get_prover(&self) -> (Dag<C, A>, HashMap<NodeIndex, Ref>) where A: Clone {
         let mut prover = Dag::new();
@@ -408,10 +555,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Ok(g_relation.map_node_indices(&|n| node_map_rel[&n]))
     }
 
-    pub fn rename_inner_nodes(&mut self)  -> Dag<C, A> where A: Clone {
+    pub fn rename_inner_nodes(&mut self) -> Dag<C, A> where A: Clone {
         let arg_names: Vec<String> = self.args().iter().map(|arg| arg.var().unwrap().0).collect();
         debug!("args_name: {:?}", arg_names);
-        self.map_ops(&|op| op.map_refs(&|r| 
+        self.map_ops(&|op| op.map_refs(&|r|
             match r {
                 Ref::Var(Vid(s), n) =>
                     if arg_names.contains(&s) {
@@ -424,10 +571,10 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     pub fn map_ops<F: Fn(&GOp<C>) -> GOp<C>>(&mut self, f: &F) -> Dag<C, A> where A: Clone {
-        Dag(self.0.map(|_, node| 
+        Dag(self.0.map(|_, node|
             match node {
-                Node::Op(op, ann) => Node::Op(f(op), ann.clone()),
-                Node::Transcr(op, ann) => Node::Transcr(f(op), ann.clone()),
+                Node::Op(op, ann) => Node::Op(mk::<C>(f(op)), ann.clone()),
+                Node::Transcr(op, ann) => Node::Transcr(mk::<C>(f(op)), ann.clone()),
                 _ => node.clone(),
             },
         |_, e| e.clone()
@@ -480,7 +627,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 let typ = node.op().expect("Transcript node must have op").typ();
                 let mut new_node = node.clone();
                 if let Node::Transcr(op, _) = &mut new_node {
-                    *op = GOp::var(&transcript_var, n_input, typ);
+                    *op = mk::<C>(GOp::var(&transcript_var, n_input, typ));
                 }
                 let new_idx = verifier.add_node(new_node);
                 verifier.add_edge(n_input, new_idx, Dep::data());
@@ -551,94 +698,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
             }
         }
         Ok(verifier.map_node_indices(&|n| node_map_self[&n]))
-    }
-
-    /// Get the verifier assertion, a check node with no outgoing edges
-    pub fn find_check(&self) -> Option<NodeIndex> {
-        self.node_indices()
-            .find_map(|n| match self[n] {
-                Node::Op(Op::Check(_), _)
-                | Node::Transcr(Op::Check(_), _) if self.nodes_from(n).count() == 0 => Some(n),
-                _ => None
-            })
-    }
-
-    pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
-        self.0.neighbors_directed(n, Direction::Outgoing)
-    }
-
-    pub fn nodes_to(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
-        self.0.neighbors_directed(n, Direction::Incoming)
-    }
-
-    pub fn erase_ann(self) -> UDag<C> {
-        Dag(self.0.map(
-            |_, node|
-                match node {
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
-                    Node::Op(op, _) => Node::Op(op.clone(), Nothing),
-                    Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
-                },
-            |_, e| e.clone()))
-    }
-
-    /// Join two DAGs into one
-    /// WARNING: This function does not remap Refs, so it is not safe to use in general.
-    pub fn combine_dag(&self, other: &Self) -> Self where A: Clone {
-        let mut combined_graph = Graph::with_capacity(
-            self.node_count() + other.node_count(),
-            self.edge_count() + other.edge_count(),
-        );
-
-        // To map old NodeIndex values from self to new NodeIndex values in combined_graph
-        let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
-        // To map old NodeIndex values from other to new NodeIndex values in combined_graph
-        let mut node_map_other = HashMap::<NodeIndex, NodeIndex>::new();
-
-        // Add nodes from self and populate node_map_self
-        for old_node_idx in self.node_indices() {
-            if let Some(weight) = self.0.node_weight(old_node_idx) {
-                let new_node_idx = combined_graph.add_node(weight.clone());
-                node_map_self.insert(old_node_idx, new_node_idx);
-            }
-        }
-
-        // Add nodes from other and populate node_map_other
-        for old_node_idx in other.node_indices() {
-            if let Some(weight) = other.0.node_weight(old_node_idx) {
-                let new_node_idx = combined_graph.add_node(weight.clone());
-                node_map_other.insert(old_node_idx, new_node_idx);
-            }
-        }
-
-        // Add edges from self using the mapped node indices
-        for edge_ref in self.0.edge_references() {
-            let old_source_idx = edge_ref.source();
-            let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
-
-            if let (Some(new_source_idx), Some(new_target_idx)) =
-                (node_map_self.get(&old_source_idx), node_map_self.get(&old_target_idx))
-            {
-                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
-            }
-        }
-
-        // Add edges from other using the mapped node indices
-        for edge_ref in other.0.edge_references() {
-            let old_source_idx = edge_ref.source();
-            let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
-
-            if let (Some(new_source_idx), Some(new_target_idx)) =
-                (node_map_other.get(&old_source_idx), node_map_other.get(&old_target_idx))
-            {
-                combined_graph.add_edge(*new_source_idx, *new_target_idx, weight);
-            }
-        }
-
-        Dag(combined_graph)
     }
 }
 
@@ -778,7 +837,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
 }
 
 /// A collection of DAGs without annotations
-impl<C: ArkConfig> UDags<C> {
+impl<C: HasOpFactory> UDags<C> {
     /// Create a collection of Dags from a module
     pub fn from_module(m: CModule) -> Result<Self, GraphError> {
         let mut gs = UDags::new();
@@ -799,10 +858,10 @@ impl<C: ArkConfig> UDags<C> {
 }
 
 /// Constructors for graphs
-impl<C: ArkConfig> UDag<C> {
+impl<C: HasOpFactory> UDag<C> {
     /// Add a new top-level expression to the graph
     fn add_top_exp(&mut self, exp: CExp, start: &mut NodeIndex,
-        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
+        kctx: &Ctx<Tid, CKind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
         let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
@@ -940,62 +999,65 @@ impl<C: ArkConfig> UDag<C> {
 
     /// Add an expression [exp] to the graph
     fn add_exp(&mut self,
-        exp: CExp,
+        initial_exp: CExp,
         transcr: &mut NodeIndex,
         edge_type: DepType,
-        kctx: &Ctx<Tid, Kind>, fctx: &Ctx<CSig, CBody>,
+        kctx: &Ctx<Tid, CKind>, fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
-        debug!("Adding expressions: {:?}", exp);
+        // Own mutable copies for trampoline loop
+        let mut exp = initial_exp;
+        let mut vctx = vctx.clone();
+        let mut vars = vars.clone();
+        loop {
         // Type inference for [self]
-        let typ = exp.infer(kctx, &fctx.keys(), vctx)?;
-        debug!("Type of expression: {:?}", typ);
+        let typ = exp.infer(kctx, &fctx.keys(), &vctx)?;
         // Convert [CExp] to [Op] while creating the graph
         match exp.clone() {
             // Literals get appended to the last node [self.it]
             CExp::Lit(n) =>
-                Ok(GOp::Value(Value::Index(n))),
+                return Ok(GOp::Value(Value::Index(n))),
 
             CExp::Bool(b) =>
-                Ok(GOp::Value(Value::Bool(b))),
+                return Ok(GOp::Value(Value::Bool(b))),
 
             // Variables are edges, no new nodes are added
-            CExp::Var(id) => Self::op_from_var(&id, vars),
+            CExp::Var(id) => return Self::op_from_var(&id, &vars),
 
             CExp::Eval(box p, box x) => {
-                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let eval_op = GOp::eval(vp, vx);
                 
-                Ok(eval_op)
+                return Ok(eval_op)
             },
 
             CExp::Poly(box v) => {
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let npoly = self.add_node(Node::poly(&child));
 
                 self.add_edges(edge_type, npoly, child);
 
-                Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                return Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ)
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ)
                     )
                 })?))
             },
 
             CExp::Coef(box v) => {
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let npoly = self.add_node(Node::coef(&child));
 
                 self.add_edges(edge_type, npoly, child);
 
-                Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                return Ok(GOp::underscore(npoly, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ)
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ)
                     )
                 })?))
             },
@@ -1003,117 +1065,117 @@ impl<C: ArkConfig> UDag<C> {
             // Create a new [ifft], [fft] or [mle] node
             CExp::Ifft(box v) => {
                 // Add child first
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Add new node
                 let nifft = self.add_node(Node::ifft(&child));
 
                 // Add edge from [nifft] to [child]
                 self.add_edges(edge_type, nifft, child);
 
-                Ok(GOp::underscore(nifft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                return Ok(GOp::underscore(nifft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ)
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ)
                     )
                 })?))
             },
             CExp::Fft(box v) => {
                 // Add child first
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Add new node
                 let nfft = self.add_node(Node::fft(&child));
 
                 // Add edge from [nifft] to [child]
                 self.add_edges(edge_type, nfft, child);
 
-                Ok(GOp::underscore(nfft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                return Ok(GOp::underscore(nfft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ)
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ)
                     )
                 })?))
             },
 
             // Create a new [vec] value
             CExp::Vec(vs) =>
-                Ok(GOp::vec(vs.0.traverse1(&mut |v|
-                            self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars))?)),
+                return Ok(GOp::vec(vs.0.traverse1(&mut |v|
+                            self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars))?)),
 
 
             // MLE is a noop?
-            // CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, vctx, vars),
+            // CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
             CExp::Mle(box v) => {
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let nmle = self.add_node(Node::mle(&child));
 
                 self.add_edges(edge_type, nmle, child);
 
-                Ok(GOp::underscore(nmle, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
+                return Ok(GOp::underscore(nmle, ATyp::from_ctyp(&typ, kctx).ok_or_else( || {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ)
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ)
                     )
                 })?))
             },
 
             // Billinear pairing
             CExp::Pair(box a, box b) => {
-                a.infer(kctx, &fctx.keys(), vctx)?;
-                b.infer(kctx, &fctx.keys(), vctx)?;
+                a.infer(kctx, &fctx.keys(), &vctx)?;
+                b.infer(kctx, &fctx.keys(), &vctx)?;
 
-                let va = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?;
 
-                Ok(GOp::pair(va, vb, atyp))
+                return Ok(GOp::pair(va, vb, atyp))
             },
             // Create a new [bin] node
             CExp::Bin(op, box a, box b) => {
-                a.infer(kctx, &fctx.keys(), vctx)?;
-                b.infer(kctx, &fctx.keys(), vctx)?;
+                a.infer(kctx, &fctx.keys(), &vctx)?;
+                b.infer(kctx, &fctx.keys(), &vctx)?;
 
                 // Add children first
-                let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 // Convert type [typ] to [ATyp]
                 let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?;
 
                 let bop = GOp::bin(op, vl.clone(), vr.clone(), atyp.clone());
 
                 // Maybe there will be no node
-                if let GOp::Bin(op, box vl, box vr, atyp) = bop {
+                if let GOp::Bin(op, vl, vr, atyp) = bop {
                     // Add new node
                     let nbin = self.add_node(Node::bin(op, &vl, &vr, &atyp));
 
                     // Add edges from [nbin] to [vl] and [vr]
-                    self.add_edges(edge_type, nbin, vl);
-                    self.add_edges(edge_type, nbin, vr);
-                    Ok(GOp::underscore(nbin, atyp))
+                    self.add_edges(edge_type, nbin, (*vl).clone());
+                    self.add_edges(edge_type, nbin, (*vr).clone());
+                    return Ok(GOp::underscore(nbin, atyp))
                 } else {
-                    Ok(bop)
+                    return Ok(bop)
                 }
             },
 
             // Create a [range] value, no new nodes added
-            CExp::Range(r) => Ok(GOp::range(r)),
+            CExp::Range(r) => return Ok(GOp::range(r)),
 
             CExp::Map(box l, x, box e) => {
                 // Type of [e]
-                let te = e.infer(kctx, &fctx.keys(), vctx)?;
+                let te = e.infer(kctx, &fctx.keys(), &vctx)?;
 
                 // Op for [e]
-                let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 // Get the size [n] from type [te]
                 let (ie, n) = te.into_vec();
@@ -1122,47 +1184,33 @@ impl<C: ArkConfig> UDag<C> {
                 let mut res = Vec::with_capacity(n);
                 // Create operations
                 for i in 0..n {
-                    // Add oe[i] to vars and vctx
-                    let mut vars = vars.clone();
-                    let mut vctx = vctx.clone();
-                    vars.insert(&x, &GOp::ram(oe.clone(), GOp::index(i)));
-                    vctx.insert(&x, &ie);
+                    // Add oe[i] to local vars and vctx
+                    let mut local_vars = vars.clone();
+                    let mut local_vctx = vctx.clone();
+                    local_vars.insert(&x, &GOp::ram(oe.clone(), GOp::index(i)));
+                    local_vctx.insert(&x, &ie);
                     // Add subexpression
-                    let ol = self.add_exp(l.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ol = self.add_exp(l.clone(), transcr, edge_type, kctx, fctx, &local_vctx, &local_vars)?;
                     res.push(ol);
                 }
-                Ok(GOp::vec(res))
+                return Ok(GOp::vec(res))
             },
 
             CExp::Reduce(op, box v) => {
-                // Type of [v]
-                let tv = v.infer(kctx, &fctx.keys(), vctx)?;
-                let atv = ATyp::from_ctyp(&tv, kctx).ok_or_else(|| {
-                    TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &tv))
-                })?;
-
-                // Get the size [n] from type [tv]
-                let (_, n) = atv.into_vec();
-
-                let mut redexp = CExp::ram(v.clone(), CExp::lit(0));
-                for i in 1..n {
-                    redexp = CExp::bin(op, redexp, CExp::ram(v.clone(), CExp::lit(i)));
-                }
-                self.add_exp(redexp, transcr, edge_type, kctx, fctx, vctx, vars)
+                let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                return Ok(GOp::reduce(op, ov))
             },
             CExp::Ram(box a, box b) => {
                 // Add children
-                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                Ok(GOp::ram(oa, ob))
+                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                return Ok(GOp::ram(oa, ob))
             },
             CExp::Challenge(_, non_zero) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?;
                 let nchallenge = self.add_node(Node::challenge(&at, non_zero));
                 // Add transcript edge to [nchallenge]
@@ -1171,25 +1219,25 @@ impl<C: ArkConfig> UDag<C> {
                 *transcr = nchallenge;
 
                 // If the challenge is non-zero, add a prover assertion
-                Ok(GOp::underscore(nchallenge, at))
+                return Ok(GOp::underscore(nchallenge, at))
             },
             CExp::Random(_, non_zero) => {
                 let at = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?;
                 let nrand = self.add_node(Node::random(&at, non_zero));
-                Ok(GOp::underscore(nrand, at))
+                return Ok(GOp::underscore(nrand, at))
             },
             CExp::App(fid, params) => {
                 // type inference for each parameter
                 let param_types: CTyps = params.iter()
-                        .map(|p| p.infer(kctx, &fctx.keys(), vctx))
+                        .map(|p| p.infer(kctx, &fctx.keys(), &vctx))
                         .collect::<Result<_, _>>()?;
 
                 // Is it a polynomial, MLE, or a function?
-                match vctx.get(&fid) {
+                match &vctx.get(&fid) {
                     Some(CTyp::Poly(tbase, 1, n)) => {
                         // It is a univariate polynomial
                         let k = kctx.get(&tbase).unwrap();
@@ -1206,7 +1254,9 @@ impl<C: ArkConfig> UDag<C> {
                         // Polynomial evaluation by dot-product of ifft with [x_pow]
                         let dot_exp =
                             CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
-                        self.add_exp(dot_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                        // Trampoline
+                        exp = dot_exp;
+                        continue;
                     },
                     Some(CTyp::Poly(tbase, n, 1)) => {
                         // It is a multilinear extension
@@ -1235,7 +1285,9 @@ impl<C: ArkConfig> UDag<C> {
                             )
                         );
 
-                        self.add_exp(fold, transcr, edge_type, kctx, fctx, vctx, vars)
+                        // Trampoline
+                        exp = fold;
+                        continue;
                     },
                     _ => {
                         // It is a function. Find all matching functions in function context [fctx]
@@ -1263,85 +1315,112 @@ impl<C: ArkConfig> UDag<C> {
 
                         // First add the arguments to the graph
                         let oparams: Vec<GOp<C>> = params.into_iter()
-                           .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, vctx, vars))
+                           .map(|p| self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars))
                            .collect::<Result<_, _>>()?;
 
-                        // Create a new context
-                        let vctx = sig.args.to_ctx();
-                        let vars =
-                            sig.args.iter().zip(oparams.iter())
+                        // Trampoline: replace context and continue with body
+                        vctx = sig.args.to_ctx();
+                        vars = sig.args.iter().zip(oparams.iter())
                             .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
-
-                        // Add the body to the graph
-                        self.add_exp(body.body(), transcr, edge_type, kctx, fctx, &vctx, &vars)
+                        exp = body.body();
+                        continue;
                     }
                 }
             },
             CExp::Let(Some(id), box l, box r) => {
                 // Infer the type of [l]
-                let tl = l.infer(kctx, &fctx.keys(), vctx)?;
+                let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                 // Add left-hand side as node
-                let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                // Add [id] to the variable context
-                let mut vctx = vctx.clone();
+                let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                // Add [id] to the variable context (clone-on-write)
                 vctx.insert(&id, &tl);
-                let mut vars = vars.clone();
                 vars.insert(&id, &nl);
-                // Add right-hand side as Node
-                self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
+                // Trampoline: continue loop with r
+                exp = r;
+                continue;
             },
             CExp::Let(None, box l, box r) => {
-                self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
-                self.add_exp(r, transcr, edge_type, kctx, fctx, vctx, vars)
+                self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                // Trampoline: continue loop with r
+                exp = r;
+                continue;
             },
             CExp::Log(id, box l, box r) => {
                 // Infer the type of [l]
-                let tl = l.infer(kctx, &fctx.keys(), vctx)?;
+                let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                 // Add left-hand side as node
-                let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Record transcript interaction
-                match ol {
+                let transcr_op = match &ol {
+                    GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) if self[*n].is_transcript() => {
+                        // Node is already a transcript node (e.g., challenge).
+                        // Don't wrap it again; just add ref-holder for find_var.
+                        let ref_to_n = GOp::Ref(Ref::Var(id.clone(), *n), ol.typ());
+                        let ref_node = self.add_node(Node::ret(&ref_to_n));
+                        self.add_edges(DepType::Data, ref_node, ref_to_n.clone());
+                        ref_to_n
+                    },
                     GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
-                        self.add_edge(*transcr, n, Dep::transcript_var(id.clone()));
-                        self.0.node_weight_mut(n).unwrap().set_transcript();
-                        *transcr = n;
+                        // Reuse: create a wrapper transcript node (value from n) and a ref-holder
+                        // node that has Ref::Var(id, nl) so find_var(nl) resolves without fallback.
+                        let wrapper_ref = match &ol {
+                            GOp::Ref(Ref::Var(v, n), _) => Ref::Var(v.clone(), *n),
+                            _ => Ref::Node(*n),
+                        };
+                        let nl = self.add_node(Node::transcr(&GOp::Ref(
+                            wrapper_ref,
+                            ol.typ(),
+                        )));
+                        self.add_edges(DepType::Data, nl, ol.clone());
+                        self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
+                        self.0.node_weight_mut(nl).unwrap().set_transcript();
+                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
+                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
+                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
+                        *transcr = nl;
+                        GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     },
                     _ => {
                         // Add new node
                         let nl = self.add_node(Node::transcr(&ol));
+                        self.add_edges(DepType::Data, nl, ol.clone()); // Connect dependencies
                         self.add_edge(*transcr, nl, Dep::transcript_var(id.clone()));
+                        self.0.node_weight_mut(nl).unwrap().set_transcript();
+                        let ref_to_nl = GOp::Ref(Ref::Var(id.clone(), nl), ol.typ());
+                        let ref_node = self.add_node(Node::ret(&ref_to_nl));
+                        self.add_edges(DepType::Data, ref_node, ref_to_nl);
                         *transcr = nl;
+                        GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
                     }
-                }
-                // Add [id] to the variable context
-                let mut vctx = vctx.clone();
+                };
+                // Add [id] to the variable context (clone-on-write)
                 vctx.insert(&id, &tl);
-                let mut vars = vars.clone();
-                vars.insert(&id, &ol);
-                // Add right-hand side as Node
-                self.add_exp(r, transcr, edge_type, kctx, fctx, &vctx, &vars)
+                vars.insert(&id, &transcr_op);
+                // Trampoline: continue loop with r
+                exp = r;
+                continue;
             },
             CExp::Assert(box a) => {
-                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Add new node
                 let nassert = self.add_node(Node::check(&oa));
                 // Add edges
                 self.add_edges(edge_type, nassert, oa);
-                Ok(GOp::underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                return Ok(GOp::underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?))
             },
             CExp::Verify(box a) => {
-                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, vctx, vars)?;
+                let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Add new node
                 let nverify = self.add_node(Node::check(&oa));
                 self.add_edges(edge_type, nverify, oa);
-                Ok(GOp::underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                return Ok(GOp::underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
-                        TypeError::exp(kctx, vctx, &exp),
-                        TypeError::ark(kctx, vctx, &exp, &typ))
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ))
                 })?))
             },
             CExp::Fun(fun_vars, box body) => {
@@ -1356,55 +1435,56 @@ impl<C: ArkConfig> UDag<C> {
                 // Create a Value::Poly from the PolyVariant wrapped in VirtualPolynomial
                 let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
                 
-                Ok(GOp::Value(poly_value))
+                return Ok(GOp::Value(poly_value))
             },
             CExp::Record(fields) => {
                 // For records, we add each field to the graph and create a Record operation
-                let mut field_ops = Ctx::new();
+                let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
                 
                 for (field_name, field_exp) in fields.iter() {
-                    let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)?;
-                    field_ops.insert(field_name, &field_op);
+                    let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let hop = mk::<C>(field_op);
+                    field_ops.insert(field_name, &hop);
                 }
                 
                 // Return a Record operation with named fields
-                Ok(GOp::Record(field_ops))
+                return Ok(GOp::Record(field_ops))
             },
             CExp::Proj(box record_exp, field_name) => {
                 // For projection, we need to extract the field from the record
                 // Check if the record expression is a Record literal
-                match record_exp {
+                return match record_exp {
                     CExp::Record(fields) => {
                         let field_exp = fields.get(&field_name)
                             .ok_or_else(|| {
                                 let mut field_types = Ctx::new();
                                 for (name, exp) in fields.iter() {
-                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), vctx) {
+                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), &vctx) {
                                         field_types.insert(name, &typ);
                                     }
                                 }
                                 GraphError::Type(TypeError::field_not_found(
-                                    kctx, vctx, &CExp::Record(fields.clone()), field_name.as_str(), &field_types
+                                    kctx, &vctx, &CExp::Record(fields.clone()), field_name.as_str(), &field_types
                                 ))
                             })?;
                         
                         // Add the field expression to the graph
-                        self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, vctx, vars)
+                        self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)
                     },
                     CExp::Var(id) => {
                         let id_clone = id.clone();
-                        let record_op = vars.get(&id_clone)
-                            .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, vctx, &CExp::Var(id_clone.clone()))))?;
+                        let record_op = &vars.get(&id_clone)
+                            .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, &vctx, &CExp::Var(id_clone.clone()))))?;
                         
                         // Try to infer the record type to verify the field exists
-                        let record_typ = CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), vctx)?;
+                        let record_typ = CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), &vctx)?;
                         
                         match &record_typ {
                             CTyp::Record(fields) => {
                                 // Verify the field exists and get its type
                                 let field_typ_ctyp = fields.get(&field_name)
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
-                                        kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
+                                        kctx, &vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                     )))?;
                                 
                                 // Extract the field from the record operation
@@ -1413,55 +1493,55 @@ impl<C: ArkConfig> UDag<C> {
                                         // Direct field access from Record operation
                                         record_fields.get(&field_name)
                                             .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
-                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
+                                                kctx, &vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                             )))
-                                            .map(|op| op.clone())
+                                            .map(|op| (**op).clone())
                                     },
                                     GOp::Ref(Ref::Var(vid, node), _op_typ) => {
                                         let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
                                             .ok_or_else(|| GraphError::Type(TypeError::ark(
-                                                kctx, vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
+                                                kctx, &vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
                                             )))?;
                                         
                                         // The field is accessed via projection, so we return a Ref with the field type
-                                        Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
+                                        return Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
                                     },
                                     _ => {
                                         Err(GraphError::Type(TypeError::not_a_record(
-                                            kctx, vctx, &CExp::Var(id_clone.clone()), &record_typ
+                                            kctx, &vctx, &CExp::Var(id_clone.clone()), &record_typ
                                         )))
                                     }
                                 }
                             }
                             _ => {
                                 Err(GraphError::Type(TypeError::not_a_record(
-                                    kctx, vctx, &CExp::Var(id_clone.clone()), &record_typ
+                                    kctx, &vctx, &CExp::Var(id_clone.clone()), &record_typ
                                 )))
                             }
                         }
                     },
                     _ => {
                         // For other expressions, try to infer the record type
-                        let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                        let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
                         
                         match record_typ {
                             CTyp::Record(fields) => {
                                 // Get the field type
                                 let _field_typ = fields.get(&field_name)
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
-                                        kctx, vctx, &record_exp, field_name.as_str(), &fields
+                                        kctx, &vctx, &record_exp, field_name.as_str(), &fields
                                     )))?;
                                 
                                 // For complex expressions, we'd need to evaluate them first
                                 // For now, return an error indicating this isn't fully supported
                                 Err(GraphError::Type(TypeError::next(
-                                    TypeError::exp(kctx, vctx, &exp),
-                                    TypeError::ark(kctx, vctx, &exp, &typ)
+                                    TypeError::exp(kctx, &vctx, &exp),
+                                    TypeError::ark(kctx, &vctx, &exp, &typ)
                                 )))
                             },
                             _ => {
                                 Err(GraphError::Type(TypeError::not_a_record(
-                                    kctx, vctx, &record_exp, &record_typ
+                                    kctx, &vctx, &record_exp, &record_typ
                                 )))
                             }
                         }
@@ -1470,10 +1550,10 @@ impl<C: ArkConfig> UDag<C> {
             },
             CExp::SetRecord(box record_exp, field_name, box value_exp) => {
                 // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
-                let record_typ = record_exp.infer(kctx, &fctx.keys(), vctx)?;
+                let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
                 let CTyp::Record(typ_fields) = &record_typ else {
                     return Err(GraphError::Type(TypeError::not_a_record(
-                        kctx, vctx, &record_exp, &record_typ
+                        kctx, &vctx, &record_exp, &record_typ
                     )));
                 };
                 let mut new_record_fields = Ctx::new();
@@ -1486,9 +1566,12 @@ impl<C: ArkConfig> UDag<C> {
                     new_record_fields.insert(fname, &field_exp);
                 }
                 let new_record_exp = CExp::Record(new_record_fields);
-                self.add_exp(new_record_exp, transcr, edge_type, kctx, fctx, vctx, vars)
+                // Trampoline
+                exp = new_record_exp;
+                continue;
             }
         }
+        } // end loop
     }
 }
 
@@ -1525,7 +1608,7 @@ fn graph_sum() {
         fn sum<F: Field>(public a: [F; 1]) -> F {
            a[0]
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     assert_eq!(m.len(), 4);
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -1545,7 +1628,7 @@ fn graph_foo() {
             x <- v[1..5];
             verify(a * s == b * x[3]);
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     // Output graph
@@ -1562,7 +1645,7 @@ fn graph_poly() {
             let p = a * b;
             verify(p(r) == (a(r) * b(r)));
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_poly").unwrap_or_else(|e| {
@@ -1576,7 +1659,7 @@ fn graph_reduce() {
         fn reduction_foo<F: Field>(public a: [F; 10]) -> F {
             reduce(+, a)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     gs.write_pdf("graph_reduce").unwrap_or_else(|e| {

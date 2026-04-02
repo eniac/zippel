@@ -4,7 +4,8 @@ use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
 use petgraph::graph::NodeIndex;
-use crate::{Ref, PRef, GOp};
+use backend::op::{Ref, Op, GOp, HOp, mk, HasOpFactory};
+use crate::PRef;
 use backend::{ATyp, ArkConfig};
 use std::fmt;
 
@@ -16,9 +17,9 @@ pub enum Node<C: ArkConfig, A> {
     /// Specification relation, annotated with a function or protocol signature
     Rel(Vid, Vec<PRef>),
     /// A transcript transaction
-    Transcr(GOp<C>, A),
+    Transcr(HOp<C>, A),
     /// Operation node
-    Op(GOp<C>, A),
+    Op(HOp<C>, A),
 }
 
 impl<C: ArkConfig, N> Node<C, N> {
@@ -39,7 +40,7 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
-    pub fn op(&self) -> Option<&GOp<C>> {
+    pub fn op(&self) -> Option<&HOp<C>> {
         match self {
             Node::Op(op, _) => Some(op),
             Node::Transcr(op, _) => Some(op),
@@ -49,8 +50,7 @@ impl<C: ArkConfig, N> Node<C, N> {
 
     pub fn is_verifier_check(&self) -> bool {
         match self {
-            Node::Op(GOp::Check(_), _) => true,
-            Node::Transcr(GOp::Check(_), _) => true,
+            Node::Op(op, _) | Node::Transcr(op, _) => matches!(&**op, Op::Check(_)),
             _ => false,
         }
     }
@@ -77,7 +77,10 @@ impl<C: ArkConfig, N> Node<C, N> {
     }
 
     pub fn is_challenge(&self) -> bool {
-        matches!(self, Node::Transcr(GOp::Challenge(_, _), _))
+        match self {
+            Node::Transcr(op, _) => matches!(&**op, Op::Challenge(_, _)),
+            _ => false,
+        }
     }
 
     pub fn is_proof(&self) -> bool {
@@ -91,7 +94,7 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
-    pub fn into_op(self) -> GOp<C> {
+    pub fn into_op(self) -> HOp<C> {
         match self {
             Node::Op(op, _) => op,
             Node::Transcr(op, _) => op,
@@ -133,10 +136,21 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
+    pub fn typ(&self) -> Option<ATyp> {
+        match self {
+            Node::Op(op, _) => Some(op.typ()),
+            Node::Transcr(op, _) => Some(op.typ()),
+            _ => None,
+        }
+    }
+}
+
+/// Methods requiring `HasOpFactory` (for creating new hash-consed operations)
+impl<C: HasOpFactory, N> Node<C, N> {
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Node<C, N> where N: Clone {
         match self {
-            Node::Op(op, ann) => Node::Op(op.map_node_indices(f), ann.clone()),
-            Node::Transcr(op, ann) => Node::Transcr(op.map_node_indices(f), ann.clone()),
+            Node::Op(op, ann) => Node::Op(mk::<C>(op.map_node_indices(f)), ann.clone()),
+            Node::Transcr(op, ann) => Node::Transcr(mk::<C>(op.map_node_indices(f)), ann.clone()),
             Node::Inp(fid, sig) => Node::Inp(fid.clone(), sig.clone()),
             Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
         }
@@ -144,17 +158,9 @@ impl<C: ArkConfig, N> Node<C, N> {
 
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Node<C, N> where N: Clone {
         match self {
-            Node::Op(op, ann) => Node::Op(op.map_refs(f), ann.clone()),
-            Node::Transcr(op, ann) => Node::Transcr(op.map_refs(f), ann.clone()),
+            Node::Op(op, ann) => Node::Op(mk::<C>(op.map_refs(f)), ann.clone()),
+            Node::Transcr(op, ann) => Node::Transcr(mk::<C>(op.map_refs(f)), ann.clone()),
             _ => self.clone(),
-        }
-    }
-    
-    pub fn typ(&self) -> Option<ATyp> {
-        match self {
-            Node::Op(op, _) => Some(op.typ()),
-            Node::Transcr(op, _) => Some(op.typ()),
-            _ => None,
         }
     }
 }
@@ -166,39 +172,6 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn rel(f: Vid, sig: Vec<PRef>) -> Self {
         Node::Rel(f, sig)
     }
-    pub fn poly(op: &GOp<C>) -> Self {
-        Node::Op(GOp::poly(op.clone()), Nothing)
-    }
-    pub fn coef(op: &GOp<C>) -> Self {
-        Node::Op(GOp::coef(op.clone()), Nothing)
-    }
-    pub fn ifft(op: &GOp<C>) -> Self {
-        Node::Op(GOp::ifft(op.clone()), Nothing)
-    }
-    pub fn fft(op: &GOp<C>) -> Self {
-        Node::Op(GOp::fft(op.clone()), Nothing)
-    }
-    pub fn mle(op: &GOp<C>) -> Self {
-        Node::Op(GOp::mle(op.clone()), Nothing)
-    }
-    pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
-        Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
-    }
-    pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Transcr(GOp::Challenge(typ.clone(), non_zero), Nothing)
-    }
-    pub fn random(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Op(GOp::Random(typ.clone(), non_zero), Nothing)
-    }
-    pub fn transcr(op: &GOp<C>) -> Self {
-        Node::Transcr(op.clone(), Nothing)
-    }
-    pub fn check(op: &GOp<C>) -> Self {
-        Node::Op(GOp::check(op.clone()), Nothing)
-    }
-    pub fn ret(op: &GOp<C>) -> Self {
-        Node::Op(op.clone(), Nothing)
-    }
 
     pub fn with_annotation<M>(&self, ann: M) -> Node<C, M> {
         match self {
@@ -208,9 +181,49 @@ impl<C: ArkConfig> Node<C, Nothing> {
             Node::Rel(fid, sig) => Node::Rel(fid.clone(), sig.clone()),
         }
     }
+}
+
+/// Constructors requiring `HasOpFactory` (for creating new hash-consed operations)
+impl<C: HasOpFactory> Node<C, Nothing> {
+    pub fn poly(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::poly(op.clone())), Nothing)
+    }
+    pub fn coef(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::coef(op.clone())), Nothing)
+    }
+    pub fn ifft(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::ifft(op.clone())), Nothing)
+    }
+    pub fn fft(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::fft(op.clone())), Nothing)
+    }
+    pub fn mle(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::mle(op.clone())), Nothing)
+    }
+    pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
+        Node::Op(mk::<C>(GOp::bin(op, a.clone(), b.clone(), typ.clone())), Nothing)
+    }
+    pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
+        Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), non_zero)), Nothing)
+    }
+    pub fn random(typ: &ATyp, non_zero: bool) -> Self {
+        Node::Op(mk::<C>(Op::Random(typ.clone(), non_zero)), Nothing)
+    }
+    pub fn transcr(op: &GOp<C>) -> Self {
+        Node::Transcr(mk::<C>(op.clone()), Nothing)
+    }
+    pub fn check(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::check(op.clone())), Nothing)
+    }
+    pub fn ret(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(op.clone()), Nothing)
+    }
 
     pub fn is_var(&self) -> bool {
-        matches!(self, Node::Op(GOp::Ref(Ref::Var(_, _), _), _))
+        match self {
+            Node::Op(op, _) => matches!(&**op, Op::Ref(Ref::Var(_, _), _)),
+            _ => false,
+        }
     }
 
 }
@@ -240,9 +253,9 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
             | Node::Transcr(op, ann) => {
                 let ann = ann.to_string();
                 if ann.is_empty() {
-                    return write!(f, "{}", op);
+                    return write!(f, "{}", &**op);
                 } else {
-                    return write!(f, "{} @ {}", op, ann);
+                    return write!(f, "{} @ {}", &**op, ann);
                 }
             },
         }

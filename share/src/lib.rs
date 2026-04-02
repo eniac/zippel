@@ -4,8 +4,11 @@ pub mod traversal;
 pub mod macros;
 
 pub use pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
-pub use context::{Ctx, Set};
+pub use context::{Ctx, CtxValueTraversal, Set};
 pub use traversal::Traversal;
+
+/// Re-export im::ordmap iterator types for downstream crates
+pub use im::ordmap::ConsumingIter as CtxConsumingIter;
 
 /// Logarithm with "remainder"
 /// ex: log2(12) = (2, 3)    [means 2^2 * 3]

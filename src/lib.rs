@@ -4,8 +4,9 @@ use std::fs;
 use lang::typ::{Qualifier, Distribution};
 use graph::Dag;
 use graph::{analyses::KnowledgeAnalysis, WritePdf};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use backend::{ArkConfig, Value, value_to_bytes};
+use backend::op::HasOpFactory;
 use lang::ast::{UModule, CModule};
 use share::{Ctx, unwrap};
 use graph::{
@@ -70,7 +71,7 @@ pub struct ZippelHandler<C:ArkConfig> {
     pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
-impl<C:ArkConfig> ZippelHandler<C> {
+impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn new(args: ZippelArgs) -> Self {
         // Enable detailed error messages from pest parser
         // This provides more comprehensive error messages for debugging parser errors
@@ -127,11 +128,11 @@ impl<C:ArkConfig> ZippelHandler<C> {
         }
     }
     // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
-    pub fn compile(&mut self) {
+    pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
         self.parse();
 
         debug!("Concretizing module type variables");
-        self.concrete_module = Some(self.sized_module.as_ref().unwrap().concretize().unwrap());
+        self.concrete_module = Some(self.sized_module.as_ref().unwrap().concretize(sizes).unwrap());
 
         debug!("Creating graphs from module");
         let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));

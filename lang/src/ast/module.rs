@@ -1,5 +1,6 @@
 use crate::ast::{Sig, Body, CSig};
 use crate::ast::decl::{UDecls, UDecl, DeclError};
+use crate::id::Tid;
 
 use std::fmt;
 use thiserror::Error;
@@ -12,8 +13,31 @@ use crate::typ::Size;
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
 pub struct Module<N>(pub Ctx<Sig<N>, Body<N>>);
+
+impl<N: Clone> Clone for Module<N> where Sig<N>: Clone, Body<N>: Clone {
+    fn clone(&self) -> Self { Module(self.0.clone()) }
+}
+
+impl<N: Ord + Clone> PartialEq for Module<N> where Sig<N>: Ord + PartialEq, Body<N>: PartialEq + Clone {
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+
+impl<N: Ord + Clone> Eq for Module<N> where Sig<N>: Ord + Eq, Body<N>: Eq + Clone {}
+
+impl<N: Ord + Clone> PartialOrd for Module<N> where Sig<N>: Ord + PartialOrd + Clone, Body<N>: PartialOrd + Clone {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { self.0.partial_cmp(&other.0) }
+}
+
+impl<N: Ord + Clone> Ord for Module<N> where Sig<N>: Ord + Clone, Body<N>: Ord + Clone {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering { self.0.cmp(&other.0) }
+}
+
+impl<N: Ord + Clone> fmt::Debug for Module<N> where Sig<N>: Ord + fmt::Debug, Body<N>: fmt::Debug + Clone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Module").field(&self.0).finish()
+    }
+}
 
 
 #[derive(Error, PartialEq, Debug)]
@@ -32,11 +56,11 @@ pub type UModule = Module<Size>;
 /// Polymorphic module with concrete sizes
 pub type CModule = Module<usize>;
 
-impl<N> Module<N> {
+impl<N: Ord> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, Sig<N>, Body<N>> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Sig<N>, &Body<N>)> + DoubleEndedIterator {
         self.0.iter()
     }
     pub fn get_names<'a>(&'a self) -> impl Iterator<Item = &'a str> {
@@ -73,12 +97,17 @@ impl UModule {
     }
 
     /// Concretize sizes in all declarations to generate a CModule
-    pub fn concretize(&self) -> Result<CModule, ModuleError> {
+    pub fn concretize(&self, sizes: &Ctx<Tid, usize>) -> Result<CModule, ModuleError> {
         let mut ctx = Ctx::new();
 
         for decl in self.iter_decls() {
-             let all_substs = decl.get_size_substitutions()?;
-             for substs in all_substs.into_iter() {
+             let all_substs = decl.get_size_substitutions(sizes)?;
+             for mut substs in all_substs.into_iter() {
+                // Merge externally-provided size values (e.g. S: Size) into the
+                // substitution context so that concretize can resolve all Size::Var references
+                for (k, v) in sizes.iter() {
+                    substs.0.insert(k, v);
+                }
                 let cdecl = decl.concretize(&substs)?;
                  ctx.insert_with(cdecl.sig, cdecl.body,
                      &|sig, _, _| Err(ModuleError::OverlapDeclaration(sig.clone())))?;
@@ -90,15 +119,15 @@ impl UModule {
 
 }
 
-impl<N: Ord> IntoIterator for Module<N> {
+impl<N: Ord + Clone> IntoIterator for Module<N> where Sig<N>: Ord + Clone, Body<N>: Clone {
     type Item = (Sig<N>, Body<N>);
-    type IntoIter = std::collections::btree_map::IntoIter<Sig<N>, Body<N>>;
+    type IntoIter = share::CtxConsumingIter<(Sig<N>, Body<N>)>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
-impl<N: Ord> FromIterator<(Sig<N>, Body<N>)> for Module<N> {
+impl<N: Ord + Clone> FromIterator<(Sig<N>, Body<N>)> for Module<N> where Sig<N>: Ord + Clone, Body<N>: Clone {
     fn from_iter<I: IntoIterator<Item = (Sig<N>, Body<N>)>>(iter: I) -> Self {
         Module(iter.into_iter().collect())
     }
@@ -153,7 +182,7 @@ fn from_decl_subst1() {
         "}");
     let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 2);
-    let cmod = umod.concretize().unwrap();
+    let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 4);
 }
 
@@ -166,7 +195,7 @@ fn from_decl_duplicate() {
         "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
         "   a[0]\n",
         "}");
-    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize(&Ctx::new()).is_err());
 }
 
 #[test]
@@ -175,7 +204,7 @@ fn from_decl_underflow() {
         "fn sum<N: 0..3, F: Field>(public a: [F; N]) -> F {\n",
         "    sum(a[0..2^(N-1)]) + sum(a[2^(N-1)..2^N])\n",
         "}");
-    assert!(UModule::from_str(ex).unwrap().concretize().is_err());
+    assert!(UModule::from_str(ex).unwrap().concretize(&Ctx::new()).is_err());
 }
 
 #[test]
@@ -192,6 +221,6 @@ fn from_decl_subst2() {
         "}\n");
     let umod = UModule::from_str(ex).unwrap();
     assert_eq!(umod.len(), 3);
-    let cmod = umod.concretize().unwrap();
+    let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 16);
 }

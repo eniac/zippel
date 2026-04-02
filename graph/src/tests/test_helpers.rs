@@ -3,7 +3,8 @@
 /// This module provides utilities for creating and executing graphs
 /// to test algebraic properties and semantic correctness.
 
-use crate::{UDag, Node, Op, GOp, Ref, PRef};
+use crate::{UDag, Node, Op, GOp, Ref, PRef, mk};
+use backend::op::HasOpFactory;
 use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
 use lang::id::Vid;
 use lang::typ::{Nothing, Qualifier, Distribution};
@@ -21,7 +22,7 @@ pub struct GraphBuilder<C: ArkConfig> {
     input_node: NodeIndex,
 }
 
-impl<C: ArkConfig> GraphBuilder<C> {
+impl<C: HasOpFactory> GraphBuilder<C> {
     /// Create a new graph builder with an input node
     pub fn new() -> Self {
         let mut dag = UDag::new();
@@ -52,7 +53,8 @@ impl<C: ArkConfig> GraphBuilder<C> {
     /// Add an operation node to the graph
     pub fn add_op(&mut self, op: GOp<C>) -> Ref {
         use crate::DepType;
-        let node = self.dag.add_node(Node::Op(op.clone(), Nothing));
+        let hop = mk::<C>(op.clone());
+        let node = self.dag.add_node(Node::Op(hop, Nothing));
         // Add edges from dependencies to this node
         self.dag.add_edges(DepType::Data, node, op);
         Ref::Node(node)
@@ -66,7 +68,7 @@ impl<C: ArkConfig> GraphBuilder<C> {
 
 /// Execute a graph with given inputs and return the result
 /// This is a simplified executor for testing purposes
-pub fn execute_graph<C: ArkConfig>(
+pub fn execute_graph<C: HasOpFactory>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
 ) -> Option<Value<C>> {
@@ -86,7 +88,7 @@ pub fn execute_graph<C: ArkConfig>(
                 // Skip input nodes
             }
             Node::Op(op, _) | Node::Transcr(op, _) => {
-                let value = evaluate_op(op, &computed, &inputs_arc);
+                let value = evaluate_op(&**op, &computed, &inputs_arc);
                 computed.insert(node_idx, value.clone());
                 last_op_value = Some(value);
             }
@@ -97,7 +99,7 @@ pub fn execute_graph<C: ArkConfig>(
 }
 
 /// Evaluate an operation recursively
-fn evaluate_op<C: ArkConfig>(
+fn evaluate_op<C: HasOpFactory>(
     op: &GOp<C>,
     computed: &HashMap<NodeIndex, Value<C>>,
     inputs: &Arc<Ctx<Vid, Value<C>>>,
@@ -108,7 +110,7 @@ fn evaluate_op<C: ArkConfig>(
             Ref::Node(n) => computed.get(n).expect("Node should be computed").clone(),
             Ref::Var(vid, _) => inputs.get(vid).expect("Variable should exist").clone(),
         },
-        Op::Bin(binop, box a, box b, _typ) => {
+        Op::Bin(binop, a, b, _typ) => {
             let a_val = evaluate_op(a, computed, inputs);
             let b_val = evaluate_op(b, computed, inputs);
             use lang::ast::BinOp;
@@ -131,18 +133,18 @@ fn evaluate_op<C: ArkConfig>(
                 .collect();
             Value::value_vec(values)
         }
-        Op::Ram(box v, box idx) => {
+        Op::Ram(v, idx) => {
             let v_val = evaluate_op(v, computed, inputs);
             let idx_val = evaluate_op(idx, computed, inputs);
             v_val.ram(idx_val)
         }
-        Op::Pair(box a, box b, _) => {
+        Op::Pair(a, b, _) => {
             let a_val = evaluate_op(a, computed, inputs);
             let mut b_val = evaluate_op(b, computed, inputs);
             a_val.value_pair(&mut b_val);
             b_val
         }
-        Op::Check(box a) => evaluate_op(a, computed, inputs),
+        Op::Check(a) => evaluate_op(a, computed, inputs),
         Op::Random(typ, _) => {
             use rand::rngs::ThreadRng;
             let mut rng = ThreadRng::default();
@@ -162,6 +164,10 @@ fn evaluate_op<C: ArkConfig>(
         Op::Ifft(_) | Op::Fft(_) | Op::Poly(_) | Op::Mle(_) | 
         Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
+        }
+        Op::Reduce(binop, v) => {
+            let v_val = evaluate_op(v, computed, inputs);
+            v_val.value_reduce(*binop)
         }
     }
 }

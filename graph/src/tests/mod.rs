@@ -6,3 +6,5 @@ pub mod cross_type_properties;
 pub mod op_unit_tests;
 pub mod node_tests;
 pub mod polynomial_laws;
+pub mod isomorphism_tests;
+pub mod pinning_tests;

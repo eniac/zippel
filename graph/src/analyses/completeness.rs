@@ -1,8 +1,8 @@
 use backend::ArkConfig;
+use backend::op::HasOpFactory;
 use log::debug;
 use crate::DQDag;
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
-#[cfg(test)] use crate::WritePdf;
 
 
 /// Perform a completeness analysis using Groebner bases.
@@ -15,7 +15,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub verifier: GroebnerBuilder<C, GrevLexTerm>
 }
 
-impl<C: ArkConfig> CompletenessAnalysis<C> {
+impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let spec = dag.get_relation().unwrap();
         let (prover, _node_map) = dag.get_prover();
@@ -49,6 +49,7 @@ mod tests {
     use lang::ast::UModule;
     use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
     use share::unwrap;
+    use share::Ctx;
     use backend::ArkBls12_381;
 
     #[test]
@@ -63,7 +64,7 @@ mod tests {
             }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -83,7 +84,7 @@ mod tests {
                 verify(a == x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -102,7 +103,7 @@ mod tests {
                 verify(a == x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -120,7 +121,7 @@ mod tests {
                 verify(x == a + b);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -140,7 +141,7 @@ mod tests {
                 verify(y == x * x);
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
