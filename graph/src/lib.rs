@@ -561,10 +561,6 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             for e in self.graph.edges_directed(n, Direction::Outgoing) {
                 worklist.push(e.target());
             }
-
-            for e in self.graph.edges_directed(n, Direction::Outgoing) {
-                worklist.push(e.target());
-            }
         }
 
         // Add edges to relation graph using the mapped node indices

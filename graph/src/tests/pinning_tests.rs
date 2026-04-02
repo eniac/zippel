@@ -1573,8 +1573,8 @@ fn pin_find_var_find_ref() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    // find_var now uses transcript_var edges instead of ref-holder nodes.
-    // `c <- a + b` creates a transcript node with a transcript_var("c") edge.
+    // find_var now uses the vctx dictionary (Ctx<NodeIndex, Vid>) on the Dag.
+    // `c <- a + b` creates a transcript node and registers it in vctx.
     let op_nodes = dag.op_nodes();
     // The transcript node should be findable as variable `c`
     let has_c = op_nodes.iter().any(|n| dag.find_var(*n) == Some(Vid::new("c")));

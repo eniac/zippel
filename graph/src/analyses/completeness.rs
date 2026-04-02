@@ -39,36 +39,9 @@ fn make_remap_fn(
 }
 
 /// Build a remap closure from a NodeIndex→NodeIndex map with an override.
-#[allow(dead_code)]
-fn make_remap_fn_idx_with_override(
-    node_map: &HashMap<NodeIndex, NodeIndex>,
-    override_from: NodeIndex,
-    override_to: NodeIndex,
-) -> impl Fn(&PRef) -> PRef + '_ {
-    let mut inverse: HashMap<NodeIndex, NodeIndex> = node_map.iter()
-        .map(|(old_idx, new_idx)| (*new_idx, *old_idx))
-        .collect();
-
-    if let Some(&subgraph_node) = node_map.get(&override_from) {
-        inverse.insert(subgraph_node, override_to);
-    }
-
-    move |pref: &PRef| {
-        if let Some(&old_idx) = inverse.get(&pref.node()) {
-            let new_ref = match &pref.reference {
-                Ref::Node(_) => Ref::Node(old_idx),
-                Ref::Var(v, _) => Ref::Var(v.clone(), old_idx),
-            };
-            PRef { reference: new_ref, ..pref.clone() }
-        } else {
-            pref.clone()
-        }
-    }
-}
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
-        let spec = dag.get_relation().unwrap();
         let (prover, prover_node_map) = dag.get_prover();
 
         // Build prover basis from prover subgraph, then remap to full-DAG namespace
@@ -77,9 +50,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let prover_remap = make_remap_fn(&prover_node_map);
         g_prover.remap_vars(&prover_remap);
 
-        // Build relation basis from relation subgraph, then remap to full-DAG namespace
+        // Build relation basis directly from full DAG (shared namespace)
         let mut g_rel = GroebnerBuilder::new();
-        g_rel.add_relation(&spec);
+        g_rel.add_relation(dag);
 
         // Combine: prover + relation
         let mut g_ps = g_prover;

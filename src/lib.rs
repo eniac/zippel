@@ -287,26 +287,27 @@ pub struct AnalysisResult<C: ArkConfig> {
 /// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module
 /// such that all dependent `Kind::Range` expressions have at least one element.
 pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
-    // Collect all SizeVar params and all Range params across all declarations
+    // Pass 1: Collect all SizeVar params
     let mut size_vars: Vec<Tid> = Vec::new();
-    let mut ranges: Vec<Range<Size>> = Vec::new();
-
     for (sig, _body) in module.iter() {
         for tv in sig.typevars.0.iter() {
-            match &tv.kind {
-                Kind::SizeVar => {
-                    if !size_vars.contains(&tv.id) {
-                        size_vars.push(tv.id.clone());
-                    }
+            if let Kind::SizeVar = &tv.kind {
+                if !size_vars.contains(&tv.id) {
+                    size_vars.push(tv.id.clone());
                 }
-                Kind::Range(r) => {
-                    // Only collect ranges whose bounds reference a SizeVar
-                    let fvs = r.start.free_vars().union(r.end.free_vars());
-                    if fvs.iter().any(|v| size_vars.contains(v)) {
-                        ranges.push(r.clone());
-                    }
+            }
+        }
+    }
+
+    // Pass 2: Collect all Range params that depend on SizeVars
+    let mut ranges: Vec<Range<Size>> = Vec::new();
+    for (sig, _body) in module.iter() {
+        for tv in sig.typevars.0.iter() {
+            if let Kind::Range(r) = &tv.kind {
+                let fvs = r.start.free_vars().union(r.end.free_vars());
+                if fvs.iter().any(|v| size_vars.contains(v)) {
+                    ranges.push(r.clone());
                 }
-                _ => {}
             }
         }
     }

@@ -25,9 +25,9 @@ impl Qualifier {
     }
     pub fn join(&self, other: &Self) -> Self {
         match (self, other) {
-            // Local is absorbing: anything joined with Local stays Local
-            (Qualifier::Local, _) | (_, Qualifier::Local) => Qualifier::Local,
+            // Private ≤ Local ≤ Public (join = min in the lattice)
             (Qualifier::Private, _) | (_, Qualifier::Private) => Qualifier::Private,
+            (Qualifier::Local, _) | (_, Qualifier::Local) => Qualifier::Local,
             (Qualifier::Public, Qualifier::Public) => Qualifier::Public,
         }
     }
