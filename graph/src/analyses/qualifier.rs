@@ -94,7 +94,14 @@ impl QualifierPropagation {
 
         Dag { graph: dag.graph.map(
             |i, node|
-                node.with_annotation(qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Local).clone()),
+                node.with_annotation(
+                    if node.is_transcript() {
+                        // Transcript nodes are always Public (verifier-observable)
+                        Qualifier::Public
+                    } else {
+                        qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Local).clone()
+                    }
+                ),
             |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
     }
 }

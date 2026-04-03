@@ -305,3 +305,29 @@ fn schnorr_zk() {
     assert!(kz.run().is_ok(), "Schnorr protocol should be zero-knowledge");
 }
 
+
+#[test]
+fn zk_regression_direct_secret_leak() {
+    let ex = r#"
+        proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            let r = random<F>;
+            u <- g*r;
+            d <- x;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + h*c);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    let result = kz.run();
+    if let Err(ref e) = result {
+        eprintln!("Leak detected: {}", e);
+    }
+    assert!(result.is_err(), "d <- x directly leaks private x to transcript");
+}
+
