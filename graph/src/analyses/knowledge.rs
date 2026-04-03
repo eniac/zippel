@@ -331,3 +331,83 @@ fn zk_regression_direct_secret_leak() {
     assert!(result.is_err(), "d <- x directly leaks private x to transcript");
 }
 
+/// Leak: transcript contains x + public_val (no blinding).
+/// Verifier computes x = d - y.
+#[test]
+fn zk_leak_unblinded_linear_combination() {
+    let ex = r#"
+        proto leak<F: Field>(private x: F, public y: F) where x == x {
+            d <- x + y;
+            verify(d == d);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_err(), "d <- x + y leaks x (verifier knows y and d)");
+}
+
+/// Leak: Schnorr-like protocol without random blinding.
+/// Response z = x*c is sent to verifier, who knows c and computes x = z/c.
+#[test]
+fn zk_leak_no_random_blinding() {
+    let ex = r#"
+        proto leak<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            c <- challenge<F*>;
+            z <- x * c;
+            verify(g*z == h*c);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_err(), "z <- x*c without random blinding leaks x");
+}
+
+/// Leak: two transcripts that differ only by the secret.
+/// Verifier sees a and b, computes a - b = s - s'.
+#[test]
+fn zk_leak_secret_difference_on_transcript() {
+    let ex = r#"
+        proto leak<F: Field>(private s: F, private t: F, public y: F) where y == y {
+            a <- s + y;
+            b <- t + y;
+            verify(a == b);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_err(), "a - b = s - t leaks relationship between secrets");
+}
+
+/// NOT a leak: proper Schnorr with random blinding.
+/// Verifier cannot recover x from z = r + x*c (r is uniform mask).
+#[test]
+fn zk_safe_schnorr_with_blinding() {
+    let ex = r#"
+        proto safe<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+            let r = random<F>;
+            u <- g*r;
+            c <- challenge<F*>;
+            z <- r + x*c;
+            verify(g*z == u + h*c);
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_ok(), "Schnorr with proper blinding should be ZK");
+}
