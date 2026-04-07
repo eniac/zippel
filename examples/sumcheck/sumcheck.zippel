@@ -1,6 +1,6 @@
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
 // `challenge` is the verifier coin for this round; we draw the next one only before recursing.
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, V: 2..5, MAX_DEGREE_CONST: 2..3>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, V: 2..5, MAX_DEGREE_CONST: 12>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
     public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public challenges: [F; NUM_VARS_CONST - V],
@@ -25,7 +25,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, V: 2..5, MAX_DEGREE_CONST: 2..3>(
     round_ok && tail_ok
 }
 
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 3>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 12>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
     public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
     public challenges: [F; NUM_VARS_CONST - 1],
@@ -49,7 +49,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 3>(
 }
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
-proto sumcheck<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 3>(
+proto sumcheck<F: Field, NUM_VARS_CONST: 4, MAX_DEGREE_CONST: 12>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let zero = claimed_sum - claimed_sum;

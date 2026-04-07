@@ -2745,7 +2745,7 @@ pub fn marginalize<C: ArkConfig>(
     let expected_mle_vars = num_variables.saturating_sub(round);
 
     let all_mle = next_poly.flattened_polys.iter().all(|p| p.as_mle_evaluations().is_some());
-    let mle_tables: Option<Vec<&[C::F]>> = if false && all_mle && !next_poly.flattened_polys.is_empty() {
+    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
         let tables: Vec<&[C::F]> = next_poly
             .flattened_polys
             .iter()
@@ -2765,7 +2765,6 @@ pub fn marginalize<C: ArkConfig>(
     let mut evaluations = vec![C::F::zero(); max_degree + 1];
 
     if let Some(tables) = mle_tables {
-        let half = 1usize << num_remaining_vars;
         let mut products_sum = vec![C::F::zero(); max_degree + 1];
 
         for (coefficient, products) in &next_poly.products {
@@ -2781,11 +2780,11 @@ pub fn marginalize<C: ArkConfig>(
                 .map(|b| {
                     let v0: Vec<C::F> = product_tables
                         .iter()
-                        .map(|tab| tab[b])
+                        .map(|tab| tab[2 * b])
                         .collect();
                     let v1: Vec<C::F> = product_tables
                         .iter()
-                        .map(|tab| tab[half + b])
+                        .map(|tab| tab[2 * b + 1])
                         .collect();
                     // P(t) = prod_i ((1-t)*v0_i + t*v1_i); compute coeffs of P (degree k).
                     let mut coeffs = vec![C::F::zero(); k + 1];

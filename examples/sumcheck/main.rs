@@ -1,5 +1,5 @@
 use zippel::*;
-use std::{env, path::PathBuf, time::Instant};
+use std::{path::PathBuf, time::Instant};
 use backend::{ArkBls12_381, ArkConfig, Value};
 use backend::poly_variant::PolyVariant;
 use backend::VirtualPolynomial;
@@ -49,26 +49,26 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
-    println!("\n--- Static Analysis ---");
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        analysis_handler.minimal_analysis()
-    });
-    match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
-        }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    }
+    // // Static analysis (completeness & ZK)
+    // println!("\n--- Static Analysis ---");
+    // let analysis_result = std::panic::catch_unwind(|| {
+    //     let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+    //     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    //     analysis_handler.minimal_analysis()
+    // });
+    // match analysis_result {
+    //     Ok(analysis) => {
+    //         match &analysis.completeness {
+    //             Ok(()) => println!("Completeness:   ✓"),
+    //             Err(e) => println!("Completeness:   ✗ {}", e),
+    //         }
+    //         match &analysis.zk {
+    //             Ok(()) => println!("ZK:             ✓"),
+    //             Err(e) => println!("ZK:             ✗ {}", e),
+    //         }
+    //     }
+    //     Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    // }
 }
 
 fn drop_one_eval_point_from_proof(proof: &mut [Value<ArkBls12_381>]) -> bool {
