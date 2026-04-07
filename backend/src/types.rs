@@ -169,7 +169,7 @@ impl ATyp {
             },
             CTyp::Vec(box t, n) =>
                 Some(ATyp::Vec(Box::new(ATyp::from_ctyp(&t, kctx)?), *n)),
-            CTyp::Poly(_, _m, _n) => Some(ATyp::virtual_poly()),
+            CTyp::Poly(_, m, n) => Some(ATyp::vpoly(*m, *n)),
             CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
             CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {

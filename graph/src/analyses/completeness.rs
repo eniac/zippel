@@ -109,11 +109,7 @@ mod tests {
             }"#;
 
         debug!("Parsing example: {}", ex);
-<<<<<<< HEAD
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
-=======
-        let m = UModule::from_str(ex).unwrap().concretize().unwrap();
->>>>>>> 9327b6c (Cleanup)
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);

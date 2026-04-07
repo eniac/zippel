@@ -9,7 +9,7 @@ use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError};
+use crate::typ::{GTyp, CTyp, CKind, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError};
 use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
 
@@ -145,8 +145,10 @@ impl UDecl {
         let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
-        // Remove typevars substituted
-        csig.typevars = csig.typevars.into_iter().filter(|tv| !substs.contains(&tv.id)).collect();
+        csig.typevars = csig.typevars
+            .into_iter()
+            .filter(|tv| !matches!(tv.kind, CKind::SizeVar))
+            .collect();
 
         // Check the ranges
         Ok(CDecl {
@@ -194,7 +196,14 @@ impl CBody {
         // Kind context
         let kctx = sig.typevars.to_ctx();
         // Add arguments to [vctx] and [vars]
-        let vctx = sig.args.to_ctx();
+        let mut vctx = sig.args.to_ctx();
+        for (tid, kind) in kctx.iter() {
+            if let CKind::Range(r) = kind {
+                if r.step == 1 && r.end == r.start + 1 {
+                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
+                }
+            }
+        }
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be pure (no side-effects)

@@ -172,48 +172,6 @@ impl<C: ArkConfig> Node<C, Nothing> {
     pub fn rel(f: Vid, sig: Vec<PRef>) -> Self {
         Node::Rel(f, sig)
     }
-<<<<<<< HEAD
-=======
-    pub fn poly(op: &GOp<C>) -> Self {
-        Node::Op(GOp::poly(op.clone()), Nothing)
-    }
-    pub fn coef(op: &GOp<C>) -> Self {
-        Node::Op(GOp::coef(op.clone()), Nothing)
-    }
-    pub fn ifft(op: &GOp<C>) -> Self {
-        Node::Op(GOp::ifft(op.clone()), Nothing)
-    }
-    pub fn fft(op: &GOp<C>) -> Self {
-        Node::Op(GOp::fft(op.clone()), Nothing)
-    }
-    pub fn mle(op: &GOp<C>) -> Self {
-        Node::Op(GOp::mle(op.clone()), Nothing)
-    }
-    pub fn marginalize(op: &GOp<C>) -> Self {
-        Node::Op(GOp::marginalize(op.clone()), Nothing)
-    }
-    pub fn proj(record_op: &GOp<C>, field_name: &str, field_typ: &ATyp) -> Self {
-        Node::Op(GOp::proj(record_op.clone(), field_name.to_string(), field_typ.clone()), Nothing)
-    }
-    pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
-        Node::Op(GOp::bin(op, a.clone(), b.clone(), typ.clone()), Nothing)
-    }
-    pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Transcr(GOp::Challenge(typ.clone(), non_zero), Nothing)
-    }
-    pub fn random(typ: &ATyp, non_zero: bool) -> Self {
-        Node::Op(GOp::Random(typ.clone(), non_zero), Nothing)
-    }
-    pub fn transcr(op: &GOp<C>) -> Self {
-        Node::Transcr(op.clone(), Nothing)
-    }
-    pub fn check(op: &GOp<C>) -> Self {
-        Node::Op(GOp::check(op.clone()), Nothing)
-    }
-    pub fn ret(op: &GOp<C>) -> Self {
-        Node::Op(op.clone(), Nothing)
-    }
->>>>>>> 2cb2aac (starting)
 
     pub fn with_annotation<M>(&self, ann: M) -> Node<C, M> {
         match self {
@@ -241,6 +199,12 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     }
     pub fn mle(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::mle(op.clone())), Nothing)
+    }
+    pub fn marginalize(op: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::marginalize(op.clone())), Nothing)
+    }
+    pub fn proj(op: &GOp<C>, field: &str, typ: &ATyp) -> Self {
+        Node::Op(mk::<C>(GOp::proj(op.clone(), field.to_string(), typ.clone())), Nothing)
     }
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(mk::<C>(GOp::bin(op, a.clone(), b.clone(), typ.clone())), Nothing)

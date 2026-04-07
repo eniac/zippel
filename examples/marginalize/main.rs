@@ -1,6 +1,5 @@
 use zippel::*;
 use std::path::PathBuf;
-<<<<<<< HEAD
 use backend::ArkBls12_381;
 <<<<<<< HEAD
 use share::Ctx;
@@ -25,12 +24,6 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
-=======
-=======
-use backend::{ArkField17, Value, ATyp};
-use lang::id::Vid;
-use share::Ctx;
->>>>>>> d5d8205 (fixing marginalize)
 
 fn main() {
     println!("Starting marginalize example");
@@ -44,27 +37,8 @@ fn main() {
 
     println!("Compiling...");
     handler.compile();
-<<<<<<< HEAD
     println!("Compilation:    ✓ OK");
 >>>>>>> 9327b6c (Cleanup)
-=======
-    println!("Compiled and wrote PDF");
-
-    let inputs = create_inputs();
-    let prover_scheduled = handler.default_schedule_prover();
-
-    println!("Running prover...");
-    let proof = handler.run_prover(prover_scheduled, inputs);
-    println!("Ran prover");
-
-    let verifier_scheduled = handler.default_schedule_verifier();
-
-    println!("Running verifier...");
-    let verifier_result = handler.run_verifier(verifier_scheduled, proof);
-    println!("Verifier result: {:?}", verifier_result);
-
-    println!("Finished marginalize example");
->>>>>>> d5d8205 (fixing marginalize)
 }
 
 fn create_inputs() -> Ctx<Vid, Value<ArkField17>> {

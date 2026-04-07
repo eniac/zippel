@@ -347,21 +347,30 @@ impl Typeable for CExp {
                 Ok(CTyp::Record(out_fields))
             },
 
-            CExp::Interpolate0dEval(box evals) => {
+            CExp::Interpolate0dEval(box evals, box d) => {
                 let tevals = evals
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let td = d
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                match tevals {
-                    CTyp::Vec(box inner, n) => {
+                match (tevals, td) {
+                    (CTyp::Vec(box inner, n), CTyp::Fin(r)) => {
                         if let CTyp::Base(e_tid) = inner {
-                            let d = n.saturating_sub(1);
-                            Ok(CTyp::Poly(e_tid, 1, d))
+                            if !(r.step == 1 && r.end == r.start + 1) {
+                                return Err(TypeError::interp(kctx, vctx, &d, &CTyp::Fin(r)));
+                            }
+                            let degree = r.start;
+                            if n < degree + 1 {
+                                return Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&CTyp::Base(e_tid), n)));
+                            }
+                            Ok(CTyp::Poly(e_tid, 1, degree))
                         } else {
                             Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&inner, n)))
                         }
                     }
-                    _ => Err(TypeError::interp(kctx, vctx, &evals, &tevals)),
+                    (tevals, _) => Err(TypeError::interp(kctx, vctx, &evals, &tevals)),
                 }
             },
 

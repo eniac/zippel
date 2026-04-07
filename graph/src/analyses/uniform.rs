@@ -47,24 +47,16 @@ impl UniformityPropagation {
             Op::Ifft(op) => self.op_ancestors(op),
             Op::Fft(op) => self.op_ancestors(op),
             Op::Mle(op) => self.op_ancestors(op),
+            Op::Marginalize(op) => self.op_ancestors(op),
+            Op::Interpolate0dEval(op, d) =>
+                self.op_ancestors(op).union(self.op_ancestors(d)),
+            Op::Proj(op, _, _) => self.op_ancestors(op),
             Op::Random(_, _) => Set::new(),
             Op::Challenge(_, _) => Set::new(),
             Op::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| self.op_ancestors(v)).collect(),
-            Op::Pair(a, b, _) 
+            Op::Pair(a, b, _)
             | Op::Bin(_, a, b, _) => {
-            GOp::Ifft(box op) => self.op_ancestors(op),
-            GOp::Fft(box op) => self.op_ancestors(op),
-            GOp::Mle(box op) => self.op_ancestors(op),
-            GOp::Marginalize(box op) => self.op_ancestors(op),
-            GOp::Interpolate0dEval(box evals) => self.op_ancestors(evals),
-            GOp::Proj(box op, _, _) => self.op_ancestors(op),
-            GOp::Random(_, _) => Set::new(),
-            GOp::Challenge(_, _) => Set::new(),
-            GOp::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
-            GOp::Record(fields) => fields.iter().flat_map(|(_, v)| self.op_ancestors(v)).collect(),
-            GOp::Pair(box a, box b, _) 
-            | GOp::Bin(_, box a, box b, _) => {
                 let a_ancestors = self.op_ancestors(a);
                 let b_ancestors = self.op_ancestors(b);
                 a_ancestors.union(b_ancestors)
@@ -94,19 +86,14 @@ impl UniformityPropagation {
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
-            Op::Bin(BinOp::Add, a, b, _) 
-            | Op::Bin(BinOp::Concat, a, b, _) => {
-            GOp::Ifft(box a) => self.from_op(a),
-            GOp::Fft(box a) => self.from_op(a),
-            GOp::Mle(box a) => self.from_op(a),
-            GOp::Marginalize(box a) => self.from_op(a),
-            GOp::Interpolate0dEval(box evals) => {
-                let _dist_evals = self.from_op(evals)?;
-                Some(Distribution::Nonuniform)
+            Op::Marginalize(a) => self.from_op(a),
+            Op::Interpolate0dEval(a, d) => {
+                let _ = self.from_op(d)?;
+                self.from_op(a)
             },
-            GOp::Proj(box a, _, _) => self.from_op(a),
-            GOp::Bin(BinOp::Add, box a, box b, _) 
-            | GOp::Bin(BinOp::Concat, box a, box b, _) => {
+            Op::Proj(a, _, _) => self.from_op(a),
+            Op::Bin(BinOp::Add, a, b, _)
+            | Op::Bin(BinOp::Concat, a, b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
                 if self.is_independent(a, b) {

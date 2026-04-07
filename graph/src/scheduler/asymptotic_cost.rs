@@ -180,14 +180,13 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
                 let (_, n) = v.typ().into_vec();
                 cost += self.cost(v, nthreads).0 + (n as f64 - 1.0) * Self::SCALAR_MUL;
             },
-            Op::Marginalize(box op) => cost += self.cost(op, nthreads).0,
-            Op::Proj(box op, _, _) => cost += self.cost(op, nthreads).0,
-            Op::Eval(box _p, box _x) => cost += 1.0,
-            Op::Interpolate0dEval(box evals) => {
+            Op::Marginalize(op) => cost += self.cost(op, nthreads).0,
+            Op::Proj(op, _, _) => cost += self.cost(op, nthreads).0,
+            Op::Interpolate0dEval(evals, d) => {
                 cost += self.cost(evals, nthreads).0;
+                cost += self.cost(d, nthreads).0;
                 cost += 1.0;
             },
-            Op::Coef(box _op) => cost += 1.0,
         };
         cost.into()
     }
