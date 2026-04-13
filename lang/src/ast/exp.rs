@@ -1251,13 +1251,19 @@ impl<'pest> FromPest<'pest> for UExp {
                 },
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::assert(UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?))
+                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    match inner.next() {
+                        Some(rest) => Ok(Exp::seq(Exp::assert(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        None => Ok(Exp::assert(cond)),
+                    }
                 },
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::verify(
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
+                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    match inner.next() {
+                        Some(rest) => Ok(Exp::seq(Exp::verify(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        None => Ok(Exp::verify(cond)),
+                    }
                 },
                 Rule::let_exp => {
                     let mut inner = pair.into_inner();
