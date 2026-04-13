@@ -19,8 +19,6 @@ fn main() {
         Err(e) => {
             if let Some(msg) = e.downcast_ref::<String>() {
                 println!("Compilation:    ✗ {}", msg);
-            } else {
-                println!("Compilation:    ✗ (recursive fn definitions overlap)");
             }
         }
     }

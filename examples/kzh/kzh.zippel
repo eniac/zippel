@@ -13,9 +13,10 @@ fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, 
 ) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
     let a = x[K-1];
-    let prev: [F; 2^(K-1)] = eq_weights(x_lo);
+    let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }
+
 proto kzh<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, NX: 1..16, NY: 1..16>(
     // Witness polynomial over (X || Y)
     private f_xy: Mle<F, NX + NY>,
@@ -34,27 +35,27 @@ proto kzh<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, NX: 
     public V_x: [G2; 2^NX]
 ) where z0 == f_xy(x0 ++ y0) {
     // 1) Commitment: C = <fft(f_xy), H_xy>
-    let f_all: [F; 2^(NX + NY)] = fft(f_xy);
+    let f_all = fft(f_xy);
     C <- dot(f_all, H_xy); // G1
 
     // 2) Row polynomial f*(Y) = f(x0, Y)
     let f_row = f_xy(x0);                  // Mle<F, NY>
-    let pi_vals: [F; 2^NY] = fft(f_row);   // evaluations over {0,1}^NY
+    let pi_vals = fft(f_row);   // evaluations over {0,1}^NY
 
     // 3) Prover exposes opening proof and value
     pi <- pi_vals;
 
     // 4) Verify pairing relation tying C to D_x via SRS (Figure 2, Check 1)
     //    pair(C, V') == sum_x pair(D_x[x], V_x[x])
-    let lhs1: GT = pair(C, V_prime);
-    let rhs1: GT = reduce(+, pair(D_x, V_x));
+    let lhs1 = pair(C, V_prime);
+    let rhs1 = reduce(+, pair(D_x, V_x));
     verify(lhs1 == rhs1);
 
     // 5) Verify MSM relation for the opened row (Figure 2, Check 2)
     //    sum_y f*(y) * H^(y) == sum_x eq(x, x0) * D^(x)
-    let lhs2: G1 = dot(pi_vals, H_y);
-    let eqw: [F; 2^NX] = eq_weights(x0);
-    let rhs2: G1 = dot(eqw, D_x);
+    let lhs2 = dot(pi_vals, H_y);
+    let eqw = eq_weights(x0);
+    let rhs2 = dot(eqw, D_x);
     verify(lhs2 == rhs2);
 
     // 6) Verify claimed evaluation matches pi at y0 (Figure 2, Check 3)
