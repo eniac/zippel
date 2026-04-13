@@ -1,9 +1,9 @@
 // Hyrax Log-of-Dot-Product
 
 // BASE CASE (n=1)
-// Figure 8: bullet-reduce(Upsilon, a, g) for n=1
+// Figure 8: bullet-reduce(upsilon, a, g) for n=1
 fn bullet_reduce<G: Group, F: Scalar<G>>(
-    public Upsilon: G,
+    public upsilon: G,
     public a_hat: [F; 1],
     public g_hat: [G; 1],
     public g_base: G,
@@ -28,8 +28,8 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
     z2 <- a_hat[0] * (c * r_Upsilon_hat + r_beta) + r_delta;
 
     // Verifier Step 8
-    // Additive translation: a_hat[0] * (Upsilon*c + beta) + delta == z1 * (g_hat[0] + g_base*a_hat[0]) + h_base * z2
-    let lhs = (Upsilon * c + beta) * a_hat[0] + delta;
+    // Additive translation: a_hat[0] * (upsilon*c + beta) + delta == z1 * (g_hat[0] + g_base*a_hat[0]) + h_base * z2
+    let lhs = (upsilon * c + beta) * a_hat[0] + delta;
     let rhs = (g_hat[0] + g_base * a_hat[0]) * z1 + h_base * z2;
 
     lhs == rhs
@@ -37,7 +37,7 @@ fn bullet_reduce<G: Group, F: Scalar<G>>(
 
 // RECURSIVE STEP (n > 1)
 fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
-    public Upsilon: G,
+    public upsilon: G,
     public a_vec: [F; 2^N],
     public g_vec: [G; 2^N],
     public g_base: G,
@@ -63,10 +63,10 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     let dot_x2_a1 = dot(x_2, a_1);
 
     // Upsilon_{-1} = h^{r_{Upsilon_{-1}}} * g^{<x_1, a_2>} * prod_i g_{i+n/2}^{x_i}
-    Upsilon_neg1 <- h_base * r_Upsilon_neg1 + g_base * dot_x1_a2 + dot(g_2, x_1);
+    upsilon_neg1 <- h_base * r_Upsilon_neg1 + g_base * dot_x1_a2 + dot(g_2, x_1);
     
-    // Upsilon_1 = h^{r_{Upsilon_1}} * g^{<x_2, a_1>} * prod_i g_i^{x_{i+n/2}}
-    Upsilon_1 <- h_base * r_Upsilon_1 + g_base * dot_x2_a1 + dot(g_1, x_2);
+    // upsilon_1 = h^{r_{upsilon_1}} * g^{<x_2, a_1>} * prod_i g_i^{x_{i+n/2}}
+    upsilon_1 <- h_base * r_Upsilon_1 + g_base * dot_x2_a1 + dot(g_1, x_2);
 
     // Verifier Step 3
     c <- challenge<F>;
@@ -76,8 +76,8 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     let c_inv_sq = c_inv * c_inv;
 
     // Prover and Verifier Step 4
-    // Upsilon' = Upsilon_{-1}^{c^2} * Upsilon * Upsilon_1^{c^{-2}}
-    let Upsilon_prime = Upsilon_neg1 * c_sq + Upsilon + Upsilon_1 * c_inv_sq;
+    // upsilon' = Upsilon_{-1}^{c^2} * upsilon * upsilon_1^{c^{-2}}
+    let upsilon_prime = upsilon_neg1 * c_sq + upsilon + upsilon_1 * c_inv_sq;
     
     // a' = c^{-1} * a_1 + c * a_2
     let a_prime = a_1 * c_inv + a_2 * c;
@@ -95,9 +95,9 @@ fn bullet_reduce<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
     // r_Upsilon' = r_Upsilon_{-1} * c^2 + r_Upsilon + r_Upsilon_1 * c^{-2}
     let r_Upsilon_prime = r_Upsilon_neg1 * c_sq + r_Upsilon + r_Upsilon_1 * c_inv_sq;
 
-    // Step 5: Return bullet-reduce(Upsilon', a', g')
+    // Step 5: Return bullet-reduce(upsilon', a', g')
     bullet_reduce(
-        Upsilon_prime,
+        upsilon_prime,
         a_prime,
         g_prime,
         g_base,
@@ -132,7 +132,7 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
     rho <- challenge<F>;
 
     // Step 2 & 3
-    let Upsilon = xi + tau * rho;
+    let upsilon = xi + tau * rho;
     let r_Upsilon = r_xi_private + r_tau_private * rho;
     let a_rho = a_vec_public * rho;
     
@@ -142,7 +142,7 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
 
     // Step 4: Execute bullet-reduce
     let result = bullet_reduce(
-        Upsilon,
+        upsilon,
         a_rho,
         g_vec_public,
         g_base,
