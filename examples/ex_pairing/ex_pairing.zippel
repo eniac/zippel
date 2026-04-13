@@ -1,3 +1,3 @@
 fn pair<G1: Group, G2: Group, GT: Pairing<G1, G2>>(public a: G1, public b: G2) -> GT {
-        a * b
+    pair(a, b)
 }
