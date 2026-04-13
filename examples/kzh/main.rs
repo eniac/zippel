@@ -152,10 +152,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("x0".to_string()), Value::VecScalar(x0_vals)),
         (Vid("y0".to_string()), Value::VecScalar(y0_vals)),
         (Vid("z0".to_string()), Value::Scalar(z0)),
-        (Vid("H_xy".to_string()), Value::VecG1(h_xy_vals)),
-        (Vid("H_y".to_string()), Value::VecG1(h_y_vals)),
-        (Vid("D_x".to_string()), Value::VecG1(d_x_vals)),
-        (Vid("V_prime".to_string()), Value::G2(v_prime)),
-        (Vid("V_x".to_string()), Value::VecG2(v_x_vals)),
+        (Vid("h_xy".to_string()), Value::VecG1(h_xy_vals)),
+        (Vid("h_y".to_string()), Value::VecG1(h_y_vals)),
+        (Vid("d_x".to_string()), Value::VecG1(d_x_vals)),
+        (Vid("v_prime".to_string()), Value::G2(v_prime)),
+        (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
     ])
 }

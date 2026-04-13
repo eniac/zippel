@@ -14,26 +14,26 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
     // Public inputs known to prover and verifier:
     public g: G,           // Base for value in Pedersen commitments
     public h: G,           // Base for randomness in Pedersen commitments
-    public C1: G,          // First commitment C1 = g*m1 + h*r1
-    public C2: G           // Second commitment C2 = g*m2 + h*r2
+    public c1: G,          // First commitment C1 = g*m1 + h*r1
+    public c2: G           // Second commitment C2 = g*m2 + h*r2
 )
 // The 'where' clause defines the conditions the prover must satisfy:
-// 1. C1 is a valid commitment to m1 with randomness r1.
-// 2. C2 is a valid commitment to m2 with randomness r2.
+// 1. c1 is a valid commitment to m1 with randomness r1.
+// 2. c2 is a valid commitment to m2 with randomness r2.
 // 3. The committed values m1 and m2 are equal.
-where C1 == g*m1 + h*r1 && C2 == g*m2 + h*r2 && m1 == m2 {
+where c1 == g*m1 + h*r1 && c2 == g*m2 + h*r2 && m1 == m2 {
 
       // --- Prover's Computation ---
 
       // 1. Compute the difference in randomness.
-      //    If m1 == m2, then r_diff = r1 - r2 is the discrete log of (C1 - C2) w.r.t base h.
+      //    If m1 == m2, then r_diff = r1 - r2 is the discrete log of (c1 - c2) w.r.t base h.
       let r_diff = r1 - r2;
 
       // 2. Compute the difference commitment (can also be computed by verifier).
-      let C_diff = C1 - C2; // C_diff = C1 + (-C2), assuming group subtraction exists
-                            // If m1=m2, then C_diff = h * r_diff
+      let c_diff = c1 - c2; // c_diff = c1 + (-c2), assuming group subtraction exists
+                            // If m1=m2, then c_diff = h * r_diff
 
-      // 3. Start Schnorr proof of knowledge for r_diff such that C_diff = h * r_diff.
+      // 3. Start Schnorr proof of knowledge for r_diff such that c_diff = h * r_diff.
       //    a. Sample fresh randomness 'k' for the proof.
       let k = random<F>;
 
@@ -54,11 +54,11 @@ where C1 == g*m1 + h*r1 && C2 == g*m2 + h*r2 && m1 == m2 {
       z <- schnorr_z;
 
       // --- Verification Logic (encoded using 'verify') ---
-      // The verifier checks the Schnorr equation using public inputs (C1, C2, h)
+      // The verifier checks the Schnorr equation using public inputs (c1, c2, h)
       // and values from the transcript (t, c, z).
-      // Note: C_diff is re-computed here from public C1, C2 for clarity,
+      // Note: c_diff is re-computed here from public c1, c2 for clarity,
       // or could be passed/precomputed.
-      verify(h * z == t + (C1 - C2) * c);
+      verify(h * z == t + (c1 - c2) * c);
       // This expands to: h * (k + r_diff*c) == h*k + (h*r_diff)*c
-      // which holds if C1 - C2 == h*r_diff (i.e., if m1 == m2).
+      // which holds if c1 - c2 == h*r_diff (i.e., if m1 == m2).
 }

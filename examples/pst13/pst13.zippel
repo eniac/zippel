@@ -17,10 +17,10 @@
 // =============================================================================
 fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>>(
     private alpha: [F; 1],
-    public G: G1
+    public g_gen: G1
 ) -> [G1; 2] {
     let a = alpha[0];
-    [G * (1 - a), G * a]
+    [g_gen * (1 - a), g_gen * a]
 }
 
 // RECURSIVE CASE (N >= 2): strip the first trapdoor coordinate and recurse.
@@ -28,10 +28,10 @@ fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>>(
 // where ck_{N-1} is built from alpha[1..N] (the remaining N-1 coordinates).
 fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>, N: 2..10>(
     private alpha: [F; N],
-    public G: G1
+    public g_gen: G1
 ) -> [G1; 2^N] {
     let a = alpha[0];
-    let prev = pst13_ck(alpha[1..N], G);
+    let prev = pst13_ck(alpha[1..N], g_gen);
     (prev * (1 - a)) ++ (prev * a)
 }
 
@@ -41,12 +41,12 @@ fn pst13_ck<G1: Group, G2: Group, F: Scalar<G1, G2>, N: 2..10>(
 // =============================================================================
 fn pst13_setup<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 1..10>(
     private alpha: [F; N],
-    public G: G1,
-    public H: G2
+    public g_gen: G1,
+    public h_gen: G2
 ) -> {ck_N: [G1; 2^N], vk: [G2; N]} {
     {|
-        ck_N: pst13_ck(alpha, G),
-        vk: [H * alpha[i] for i in 0..N]
+        ck_N: pst13_ck(alpha, g_gen),
+        vk: [h_gen * alpha[i] for i in 0..N]
     |}
 }
 
@@ -73,7 +73,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
     public ck_curr: [G1; 2],
     public z_curr: [F; 1],
     public alpha_H_curr: [G2; 1],
-    public H: G2,
+    public h_gen: G2,
     public rem: GT          // remaining: LHS minus contributions so far
 ) -> Bool {
     // Derive ck_0 = G
@@ -90,7 +90,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
     pi_last <- dot(q, ck_0);
 
     // Check: rem == e(pi_last, (alpha - z)*H)
-    rem == pair(pi_last, alpha_H_curr[0] - (H * z_curr[0]))
+    rem == pair(pi_last, alpha_H_curr[0] - (h_gen * z_curr[0]))
 }
 
 // =============================================================================
@@ -105,7 +105,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
     public ck_curr: [G1; 2^K],
     public z_curr: [F; K],
     public alpha_H_curr: [G2; K],
-    public H: G2,
+    public h_gen: G2,
     public rem: GT          // remaining: LHS minus contributions so far
 ) -> Bool {
     // Derive next commitment key: ck_{K-1}[i] = ck_curr[i] + ck_curr[i + 2^(K-1)]
@@ -127,7 +127,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
     let p_red = p_lo + (q_curr * z_curr[0]);
 
     // Subtract this round's contribution from the remaining LHS
-    let rem_next = rem - pair(pi_curr, alpha_H_curr[0] - (H * z_curr[0]));
+    let rem_next = rem - pair(pi_curr, alpha_H_curr[0] - (h_gen * z_curr[0]));
 
     // Recurse on the remaining K-1 variables
     pst13_open_rounds(
@@ -135,7 +135,7 @@ fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2
         ck_next,
         z_curr[1..K],
         alpha_H_curr[1..K],
-        H,
+        h_gen,
         rem_next
     )
 }
@@ -157,21 +157,21 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>(
 
     public z: [F; N],           // evaluation point (z_1, ..., z_N)
     public y: F,                // claimed evaluation p(z)
-    public C_p: G1,             // commitment  C_p = dot(p, ck_N) = p(alpha) * G
+    public c_p: G1,             // commitment  c_p = dot(p, ck_N) = p(alpha) * G
 
     public ck_N: [G1; 2^N],     // [eq_N(alpha, i)*G  for i in {0,1}^N]
-    public G: G1,
-    public H: G2,
+    public g_gen: G1,
+    public h_gen: G2,
     public alpha_H: [G2; N]     // [alpha_i * H  for i in 1..N]
 
-) where C_p == pst13_commit(p, ck_N) {
+) where c_p == pst13_commit(p, ck_N) {
 
-    // LHS of the pairing check: e(C_p - y*G, H)
-    let lhs = pair(C_p - (G * y), H);
+    // LHS of the pairing check: e(c_p - y*g_gen, h_gen)
+    let lhs = pair(c_p - (g_gen * y), h_gen);
 
     // Run the recursive open rounds, threading the remaining LHS.
-    // Returns true iff e(C_p - y*G, H) == sum_i e(pi_i, (alpha_i - z_i)*H).
-    let result = pst13_open_rounds(p, ck_N, z, alpha_H, H, lhs);
+    // Returns true iff e(c_p - y*g_gen, h_gen) == sum_i e(pi_i, (alpha_i - z_i)*h_gen).
+    let result = pst13_open_rounds(p, ck_N, z, alpha_H, h_gen, lhs);
 
     verify(result)
 }

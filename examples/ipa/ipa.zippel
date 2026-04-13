@@ -7,7 +7,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
     public g_vec_k: [G; 1],          // Current g bases for this round
     public h_vec_k: [G; 1],          // Current h bases for this round
     public u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
-    public P_commitment_k: G,                // Current P commitment for this round
+    public p_commitment_k: G,                // Current P commitment for this round
     private a_vec_k_private: [F; 1],  // Prover's current 'a' vector (private)
     private b_vec_k_private: [F; 1]   // Prover's current 'b' vector (private)
 ) -> Bool {
@@ -29,19 +29,19 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         // Verifier computes c = a*b (the inner product for this base case)
         ip_val_at_base <- final_a_scalar * final_b_scalar;
 
-        // Verifier checks if P_commitment_k == g_vec_k[0]*final_a_scalar + h_vec_k[0]*final_b_scalar + u_base_for_ipa*ip_val_at_base
+        // Verifier checks if p_commitment_k == g_vec_k[0]*final_a_scalar + h_vec_k[0]*final_b_scalar + u_base_for_ipa*ip_val_at_base
         // (Translated from multiplicative g^a h^b u^c)
         let expected_P_at_base = ga + hb
                                + u_base_for_ipa * ip_val_at_base;
 
-        P_commitment_k == expected_P_at_base
+        p_commitment_k == expected_P_at_base
 }
 
 fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
     public g_vec_k: [G; 2^N_current],          // Current g bases for this round
     public h_vec_k: [G; 2^N_current],          // Current h bases for this round
     public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
-    public P_commitment_k: G,                   // Current P commitment for this round
+    public p_commitment_k: G,                   // Current P commitment for this round
     private a_vec_k_private: [F; 2^N_current],  // Prover's current 'a' vector (private)
     private b_vec_k_private: [F; 2^N_current]   // Prover's current 'b' vector (private)
 ) -> Bool {
@@ -66,8 +66,8 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
         // Prover "sends" L and R by adding them to the transcript.
         // L = (g_hi^a_lo) * (h_lo^b_hi) * (u^c_L)  (multiplicative notation)
         // L = g_hi*a_lo) + reduce(+, h_lo*b_hi) + u_base_for_ipa*c_L (additive)
-        L_transcript <- dot(g_v_hi, a_p_lo) + dot(h_v_lo, b_p_hi) + (u_base_for_ipa * cL_val);
-        R_transcript <- dot(g_v_lo, a_p_hi) + dot(h_v_hi, b_p_lo) + (u_base_for_ipa * cR_val);
+        l_transcript <- dot(g_v_hi, a_p_lo) + dot(h_v_lo, b_p_hi) + (u_base_for_ipa * cL_val);
+        r_transcript <- dot(g_v_lo, a_p_hi) + dot(h_v_hi, b_p_lo) + (u_base_for_ipa * cR_val);
 
         // Verifier "sends" challenge x (derived from transcript using Fiat-Shamir)
         x_challenge <- challenge<F>;
@@ -80,10 +80,10 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
         let h_prime_next = (h_v_lo * x_challenge) + (h_v_hi * inverse);
 
         // P' = L^(x^2) * P * R^(x^-2) (multiplicative)
-        // P_prime = L_transcript * (x_challenge*x_challenge) + P_commitment_k + R_transcript * (inverse * inverse) (additive)
-        let P_prime_next = (L_transcript * (x_challenge*x_challenge))
-                         + P_commitment_k
-                         + (R_transcript * (inverse * inverse));
+        // p_prime = l_transcript * (x_challenge*x_challenge) + p_commitment_k + r_transcript * (inverse * inverse) (additive)
+        let p_prime_next = (l_transcript * (x_challenge*x_challenge))
+                         + p_commitment_k
+                         + (r_transcript * (inverse * inverse));
 
         // Prover computes a' and b' for its private input to the next recursive call
         let a_prime_private = (a_p_lo * x_challenge) + (a_p_hi * inverse);
@@ -96,7 +96,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
             g_prime_next,
             h_prime_next,
             u_base_for_ipa, // Pass the same u received by this function call
-            P_prime_next,
+            p_prime_next,
             a_prime_private,
             b_prime_private
         )
@@ -107,7 +107,7 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     // --- Public Inputs ---
     public g_vec: [G; N_val_const],    // Corresponds to 'g' in the paper (vector of group elements)
     public h_vec: [G; N_val_const],    // Corresponds to 'h' in the paper (vector of group elements)
-    public P_initial_commitment: G,   // Corresponds to 'P' in the paper
+    public p_initial_commitment: G,   // Corresponds to 'P' in the paper
     public ip_val_claimed: F,         // Corresponds to 'c' (the inner product value) in the paper
     public u_aux_base: G,             // Corresponds to 'u' in the paper
 
@@ -115,7 +115,7 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     private a_vec_witness: [F; N_val_const],   // Corresponds to 'a' in the paper (vector of field elements)
     private b_vec_witness: [F; N_val_const]    // Corresponds to 'b' in the paper (vector of field elements)
 ) where
-        (P_initial_commitment == (dot(g_vec, a_vec_witness)
+        (p_initial_commitment == (dot(g_vec, a_vec_witness)
         + dot(h_vec, b_vec_witness))) && (ip_val_claimed == dot(a_vec_witness, b_vec_witness)) {
     // 1. "Verifier generates x <-$ Z*_p and sends it to Prover."
     //    In our non-interactive DSL, this is a Fiat-Shamir challenge.
@@ -123,10 +123,10 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     x_chal <- challenge<F>;
 
     // 2. "Let P' = P * u^(x*c)"
-    //    Translating to additive notation: P_prime = P_initial_commitment + u_aux_base * (x_chal * ip_val_claimed)
+    //    Translating to additive notation: p_prime = p_initial_commitment + u_aux_base * (x_chal * ip_val_claimed)
     //    'x_chal * ip_val_claimed' is a scalar multiplication.
     //    'u_aux_base * (scalar)' is scalar multiplication of a group element.
-    let P_prime = P_initial_commitment + (u_aux_base * (x_chal * ip_val_claimed));
+    let p_prime = p_initial_commitment + (u_aux_base * (x_chal * ip_val_claimed));
 
     //    We also need u^x for the input to Protocol 2.
     //    Translating to additive notation: u_raised_to_x = u_aux_base * x_chal
@@ -135,13 +135,13 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
     // 3. "Run Protocol 2 (ipa recursive) on Input(g, h, u^x, P'; a, b)"
     //    We call the assumed 'protocol_2' function.
     //    The inputs g_vec, h_vec are the original public base vectors.
-    //    u_raised_to_x and P_prime are the values computed above.
+    //    u_raised_to_x and p_prime are the values computed above.
     //    a_vec_witness and b_vec_witness are the original private witness vectors.
     let verification_result = ipa_recursive(
                                             g_vec,
                                             h_vec,
                                             u_raised_to_x,
-                                            P_prime,
+                                            p_prime,
                                             a_vec_witness,
                                             b_vec_witness
                                         );

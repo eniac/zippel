@@ -75,7 +75,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkField17>> {
     let inputs = Ctx::<Vid, Value<ArkField17>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
-        (Vid("P_initial_commitment".to_string()), p_initial_commitment),
+        (Vid("p_initial_commitment".to_string()), p_initial_commitment),
         (Vid("ip_val_claimed".to_string()), ip_val_claimed),
         (Vid("u_aux_base".to_string()), u_aux_base),
         (Vid("a_vec_witness".to_string()), a_vec_witness),
