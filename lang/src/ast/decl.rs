@@ -10,6 +10,7 @@ use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError};
+use crate::typ::subst::SubstError;
 use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
 
@@ -52,6 +53,8 @@ pub enum DeclError {
     EvalError(#[from] EvalError),
     #[error("DeclError: Invalid ranges in declaration {0}: \n\n{1}")]
     InvalidRange(CSig, RangeError),
+    #[error("DeclError: {0}")]
+    SubstError(#[from] SubstError),
 }
 
 impl<N> Body<N> {
@@ -134,9 +137,10 @@ impl UDecl {
     }
 
     /// Each declaration has typevariables that can be concretized to different sizes.
-    /// This method returns all possible size substitutions for the declaration
+    /// This method returns all possible size substitutions for the declaration.
+    /// If `sizes` pins a Range typevar, only that value is generated.
     pub fn get_size_substitutions(&'_ self, sizes: &Ctx<Tid, usize>) -> Result<Set<SizeSubsts>, DeclError> {
-        Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes))
+        Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes)?)
     }
 
     /// Concretize a declaration with a given size substitution

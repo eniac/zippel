@@ -1,5 +1,4 @@
 use backend::ArkBls12_381;
-use lang::id::Tid;
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::*;
@@ -10,9 +9,7 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/ex_rec/ex_rec.zippel"));
     let result = std::panic::catch_unwind(|| {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("N"), &3);
-        handler.compile(&sizes);
+        handler.compile(&Ctx::new());
     });
     match result {
         Ok(_) => println!("Compilation:    ✓ OK"),

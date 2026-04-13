@@ -8,7 +8,7 @@ fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>>(
     [ (1 - x[0]), x[0] ]
 }
 
-fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, K: 1..16>(
+fn eq_weights<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2, GT>, K: 2..16>(
     public x: [F; K]
 ) -> [F; 2^K] {
     let x_lo = x[0..(K-1)];
