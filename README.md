@@ -1,6 +1,6 @@
 # Zippel Compiler
 
-![Tests](https://circleci.com/gh/elefthei/zippel.svg?style=svg)
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/elefthei/zippel/tree/main.svg?style=svg&circle-token=CCIPRJ_X1CGq8YkBdsKkonVnzEfd8_184545287e2cdea30b77f5988e7463ba235f037d)](https://dl.circleci.com/status-badge/redirect/gh/elefthei/zippel/tree/main)
 
 Zippel compiles cryptographic protocols written in the Zippel language into optimized prover and verifier code, with static analyses for soundness, completeness, and zero-knowledge. **Prototype — not for production use.**
 
