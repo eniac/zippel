@@ -671,7 +671,7 @@ impl<N> Exp<N> {
         Exp::Log(a, Box::new(d), Box::new(e))
     }
     pub fn seq(a: Self, b: Self) -> Self {
-        Exp::Let(None, Box::new(a), Box::new(b))
+        Exp::Let(Some(Vid("_".to_string())), Box::new(a), Box::new(b))
     }
     pub fn and(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::And, Box::new(l), Box::new(r))
@@ -1709,8 +1709,8 @@ fn parser_fun_multivariate() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     let expected = Exp::fun(
         vec![Vid::from("x"), Vid::from("y"), Vid::from("z")],
-        Exp::from(3) * Exp::varstr("x") + 
-        Exp::from(4) * Exp::varstr("y") + 
+        Exp::from(3) * Exp::varstr("x") +
+        Exp::from(4) * Exp::varstr("y") +
         Exp::from(5) * Exp::varstr("x") * Exp::varstr("z")
     );
     assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
