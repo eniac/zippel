@@ -9,7 +9,7 @@ use share::Ctx;
 use ark_ff::Zero;
 use ark_std::UniformRand;
 
-const NUM_VARS: usize = 4;
+const NUM_VARS: usize = 12;
 const DROP_EVAL_POINT_TEST: bool = false;
 fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");

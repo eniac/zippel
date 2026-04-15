@@ -1,0 +1,24 @@
+[package]
+name = "sumcheck_compare"
+version = "0.1.0"
+edition = "2021"
+description = "Run Zippel sumcheck and HyperPlonk sum-check on the same seeded field data."
+
+[dependencies]
+zippel = { path = ".." }
+backend = { path = "../backend" }
+share = { path = "../share" }
+lang = { path = "../lang" }
+rand = { version = "0.8", features = ["std"] }
+num-bigint = { version = "0.4", default-features = false }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+
+# HyperPlonk (EspressoSystems); separate ark 0.4 stack from Zippel’s git ark.
+arithmetic = { git = "https://github.com/EspressoSystems/hyperplonk.git", package = "arithmetic" }
+subroutines = { git = "https://github.com/EspressoSystems/hyperplonk.git", package = "subroutines" }
+hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4.0", default-features = false, features = ["curve"] }
+hp-ark-ff = { package = "ark-ff", version = "0.4.0", default-features = false }
+hp-ark-poly = { package = "ark-poly", version = "0.4.0", default-features = false }
+hp-ark-serialize = { package = "ark-serialize", version = "0.4.0", default-features = false }
