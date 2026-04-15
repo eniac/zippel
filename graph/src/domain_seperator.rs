@@ -86,7 +86,7 @@ fn test_domain_separator() {
         u <- g*r;
         c <- challenge<F>;
         z <- r + x*c;
-        verify(g*z == u + h*c);
+        verify(g*z == u + h*c)
     }
 "#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();

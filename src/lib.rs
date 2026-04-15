@@ -392,7 +392,7 @@ mod tests {
         let src = r#"
             fn foo<F: Field, N: 1..S, S: Size>(a: [F; N]) -> F { a[0] }
             proto bar<F: Field, S: Size, M: 2..S+1>(public x: F) where x == x {
-                verify(x == x);
+                verify(x == x)
             }
         "#;
         let module = UModule::from_str(src).unwrap();

@@ -195,7 +195,7 @@ fn trans_clos_simple() {
             let r = random<F>;
             a <- r * s[i + 2];
             b <- r * s';
-            verify(a == b);
+            verify(a == b)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -251,7 +251,7 @@ fn trans_clos_many() {
             let r = random<F>;
             a <- r * s[i];
             b <- r * s';
-            verify(a == b);
+            verify(a == b)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));

@@ -70,7 +70,7 @@ pub enum BinOp {
     ///
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     verify(5 == 5);
+    ///     verify(5 == 5)
     ///     ```
     Equ,
 
@@ -247,7 +247,7 @@ pub enum Exp<N> {
     ///     Verifier check followed by expression.
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     verify(a == a);
+    ///     verify(a == a)
     ///     ...
     ///     ```
     Verify(Box<Exp<N>>),

@@ -257,7 +257,7 @@ mod tests {
                 let r = random<F>;
                 a <- r * s;
                 b <- r * x;
-                verify(a == b);
+                verify(a == b)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -437,7 +437,7 @@ mod tests {
     fn test_uniformity_from_dag_simple() {
         let ex = r#"
             proto simple<F: Field>(private x: F) where true {
-                verify(x == x);
+                verify(x == x)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));

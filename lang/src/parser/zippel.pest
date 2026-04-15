@@ -115,7 +115,6 @@ exp_term  = _{
     record_field_exp = { id ~ ":" ~ exp }                             // Record field with value
     bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op | eq_op | and_op }
 exps = { exp ~ ("," ~ exp)* }
-stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 
 /// Type variable declarations
 tvar  = { id ~ ":" ~ kind_ty }
@@ -134,8 +133,8 @@ args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols], [functions], or [type aliases].
 decl = { proto_decl | func_decl | type_decl }
-    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ stmts ~ "}" }
-    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }
+    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ exp ~ "}" }
+    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ exp ~ "}" }
     type_decl  = { "type" ~ id ~ "=" ~ typ ~ ";" }
 
 /// Top-level module

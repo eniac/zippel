@@ -105,7 +105,7 @@ mod tests {
                 let r = random<F*>;
                 a <- s * r;
                 b <- s' * r;
-                verify(a == b);
+                verify(a == b)
             }"#;
 
         debug!("Parsing example: {}", ex);
@@ -128,7 +128,7 @@ mod tests {
                 u <- g*r;
                 c <- challenge<F>;
                 z <- r + x*c;
-                verify(g*z == u + h*c);
+                verify(g*z == u + h*c)
             }"#;
 
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
@@ -151,7 +151,7 @@ mod tests {
                 let r = random<F>;
                 x <- a * r;
                 y <- b * r;
-                verify(x == y);
+                verify(x == y)
             }"#;
 
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();

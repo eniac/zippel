@@ -1659,7 +1659,7 @@ fn graph_foo() {
             a <- r * c;
             b <- r + c + s;
             x <- v[1..5];
-            verify(a * s == b * x[3]);
+            verify(a * s == b * x[3])
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
@@ -1676,7 +1676,7 @@ fn graph_poly() {
         proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
             let r = random<F*>;
             let p = a * b;
-            verify(p(r) == (a(r) * b(r)));
+            verify(p(r) == (a(r) * b(r)))
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);

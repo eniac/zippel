@@ -124,7 +124,7 @@ mod tests {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
-                verify(a == b);
+                verify(a == b)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -171,7 +171,7 @@ mod tests {
         let ex = r#"
             proto add_public<F: Field>(public x: F, public y: F) where true {
                 z <- x + y;
-                verify(z == x + y);
+                verify(z == x + y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -188,7 +188,7 @@ mod tests {
         let ex = r#"
             proto mix_quals<F: Field>(private x: F, public y: F) where true {
                 z <- x + y;
-                verify(z == x + y);
+                verify(z == x + y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -205,7 +205,7 @@ mod tests {
         let ex = r#"
             proto private_only<F: Field>(private x: F, private y: F) where true {
                 z <- x * y;
-                verify(z == x * y);
+                verify(z == x * y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -218,7 +218,7 @@ mod tests {
     fn test_qualifier_from_dag_finds_check() {
         let ex = r#"
             proto simple<F: Field>(private x: F) where true {
-                verify(x == x);
+                verify(x == x)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));

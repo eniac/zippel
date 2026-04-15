@@ -400,28 +400,8 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let args = GArgs::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // External relation
                 let relation = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                // Protocol's body
-                let next = inner.next().ok_or(ConversionError::NoMatch)?;
-                let body =
-                    match next.as_rule() {
-                        Rule::stmts => {
-                            let mut exps = Vec::new();
-                            for p in next.into_inner() {
-                                match p.as_rule() {
-                                    Rule::exp => {
-                                        exps.push(Exp::from_pest(&mut Pairs::single(p))?);
-                                    },
-                                    _ => unreachable!(),
-                                }
-                            }
-                            match exps.as_slice() {
-                                [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
-                                [body] => Ok(body.clone()),
-                                [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))
-                            }
-                        },
-                        _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(next)))
-                    }?;
+                // Protocol's body (single expression, chains via let/log/verify/assert continuations)
+                let body = Exp::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?;
                 Ok(Decl::proto(name, typevars, args, relation, body))
             },
             Rule::func_decl => {
@@ -434,28 +414,8 @@ impl<'pest> FromPest<'pest> for UDecl {
                 let args = GArgs::from_pest(&mut inner)?;
                 // Function return type
                 let ret = GTyp::from_pest(&mut inner)?;
-                // Function's body
-                let next = inner.next().ok_or(ConversionError::NoMatch)?;
-                let body =
-                    match next.as_rule() {
-                        Rule::stmts => {
-                            let mut exps = Vec::new();
-                            for p in next.into_inner() {
-                                match p.as_rule() {
-                                    Rule::exp => {
-                                        exps.push(Exp::from_pest(&mut Pairs::single(p))?);
-                                    },
-                                    _ => unreachable!(),
-                                }
-                            }
-                            match exps.as_slice() {
-                                [] => Err(ConversionError::Malformed(InputError::EmptyDecl(name.clone(), typevars.clone(), args.clone()))),
-                                [body] => Ok(body.clone()),
-                                [h, ts @ ..] => Ok(Exp::from_vec(h.clone(), ts))
-                            }
-                        },
-                        _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(next)))
-                    }?;
+                // Function's body (single expression, chains via let/log continuations)
+                let body = Exp::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?;
                 Ok(Decl::func(name, typevars, args, ret, body))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
