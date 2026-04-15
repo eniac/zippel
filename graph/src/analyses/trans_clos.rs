@@ -119,8 +119,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // Look for the node, by node index
         if let Some(index) = self.clos.iter().position(|(r2, _)| r2.node() == r.node()) {
             if r.reference.is_var() {
-                // Check if the node is a variable, then remove the old node and substitute it
-                self.clos.swap_remove(index);
+                // Replace with variable reference, preserving topological order
+                self.clos.remove(index);
             }
         }
         self.clos.push((r.clone(), op.clone()));
