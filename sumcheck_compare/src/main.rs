@@ -45,9 +45,9 @@ use hp_oracle_prover::HpSumcheckOracle;
 type HpVP = HpVirtualPolynomial<HpFr>;
 type ZFr = <ArkBls12_381 as ArkConfig>::F;
 
-const DEFAULT_NUM_VARS: usize = 25;
+const DEFAULT_NUM_VARS: usize = 10;
 /// Degree bound used by `examples/sumcheck/sumcheck.zippel` in full protocol mode.
-const FULL_PROTOCOL_MAX_DEGREE: usize = 25;
+const FULL_PROTOCOL_MAX_DEGREE: usize = 10;
 const DEFAULT_SEED: u64 = 0x5355_4D43_484B; // "SUMCHK"
 /// Default RNG seed for **shared** sum-check challenges (r1..r4), independent of MLE table seed.
 const DEFAULT_CHALLENGE_SEED: u64 = 0x4348_414c4c; // "CHALL"

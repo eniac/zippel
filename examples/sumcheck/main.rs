@@ -9,10 +9,21 @@ use share::Ctx;
 use ark_ff::Zero;
 use ark_std::UniformRand;
 
-const NUM_VARS: usize = 12;
+const NUM_VARS: usize = 10;
+const MAX_DEGREE: usize = 10;
 const DROP_EVAL_POINT_TEST: bool = false;
+
 fn main() {
+    let num_vars = NUM_VARS;
+    let max_degree = MAX_DEGREE;
+    if max_degree == 0 {
+        eprintln!("SUMCHECK_MAX_DEGREE must be >= 1.");
+        std::process::exit(2);
+    }
+
     println!("=== Sumcheck (ArkBls12_381) ===");
+    println!("num_vars:       {num_vars}");
+    println!("max_degree:     {max_degree}");
     let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"))
         .with_pdf(PathBuf::from("target/sumcheck_graphs.pdf"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -20,7 +31,7 @@ fn main() {
     sizes.insert(&Tid::new("S"), &10);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
+    let inputs = prover_create_inputs(num_vars, max_degree);
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
     let mut proof = handler.run_prover(prover_scheduled, inputs);
@@ -104,40 +115,28 @@ fn drop_one_eval_point_in_value(value: &mut Value<ArkBls12_381>) -> bool {
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(num_vars: usize, max_degree: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
-    let eval_count = 1usize << NUM_VARS;
+    let eval_count = 1usize << num_vars;
     let mut rng = rand::rngs::OsRng;
-    // Build a degree-3 virtual polynomial as a product of 3 MLEs.
-    let f1_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
-    let f2_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
-    let f3_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
+    let base_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
 
-    // Over the Boolean hypercube, each MLE evaluates to its table entry.
-    // So the product polynomial's evaluations are pointwise products.
-    let prod_evals: Vec<F> = f1_evals
+    // Build a degree-k virtual polynomial as base(x)^k over the boolean hypercube.
+    let claimed_sum: F = base_evals
         .iter()
-        .zip(f2_evals.iter())
-        .zip(f3_evals.iter())
-        .map(|((a, b), c)| *a * *b * *c)
-        .collect();
-    let claimed_sum: F = prod_evals.iter().fold(F::zero(), |acc, val| acc + val);
+        .map(|x| (0..max_degree).fold(F::from(1u64), |acc, _| acc * *x))
+        .fold(F::zero(), |acc, val| acc + val);
 
-    let f1 = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-        DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, f1_evals),
+    let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+        DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals),
     ));
-    let f2 = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-        DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, f2_evals),
-    ));
-    let f3 = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-        DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, f3_evals),
-    ));
-    let poly = Value::Poly(
-        f1.poly_mul(&f2)
-            .expect("failed to multiply f1*f2")
-            .poly_mul(&f3)
-            .expect("failed to multiply (f1*f2)*f3"),
-    );
+    let mut full_poly = base.clone();
+    for _ in 1..max_degree {
+        full_poly = full_poly
+            .poly_mul(&base)
+            .expect("failed to multiply full_poly by base");
+    }
+    let poly = Value::Poly(full_poly);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
