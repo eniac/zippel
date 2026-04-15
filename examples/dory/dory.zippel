@@ -80,15 +80,15 @@ fn dory_reduce<
     // Prover verifies hash structures privately, but Verifier uses the public hashes provided
 
 
-    let D1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for i in 0..1]);
-    let D1_r = reduce(+, [pair(u_r[0], gamma2_prime[0]) for i in 0..1]);
-    let D2_l = reduce(+, [pair(gamma1_prime[0], g_l[0]) for i in 0..1]);
-    let D2_r = reduce(+, [pair(gamma1_prime[0], g_r[0]) for i in 0..1]);
+    let d1_l = reduce(+, [pair(u_l[0], gamma2_prime[0]) for i in 0..1]);
+    let d1_r = reduce(+, [pair(u_r[0], gamma2_prime[0]) for i in 0..1]);
+    let d2_l = reduce(+, [pair(gamma1_prime[0], g_l[0]) for i in 0..1]);
+    let d2_r = reduce(+, [pair(gamma1_prime[0], g_r[0]) for i in 0..1]);
 
-    log_D1l <- D1_l;
-    log_D1r <- D1_r;
-    log_D2l <- D2_l;
-    log_D2r <- D2_r;
+    log_d1l <- d1_l;
+    log_d1r <- d1_r;
+    log_d2l <- d2_l;
+    log_d2r <- d2_r;
 
     rho <- challenge<F>;
     let rho_inv = 1 / rho;
@@ -116,8 +116,8 @@ fn dory_reduce<
     let g_prime = w2_l * alpha_inv + w2_r * alpha;
 
     let c1_prime = c1 + rho_inv * c2 + rho * c3 + gamma_pair_ipp + alpha_sq * log_vl + alpha_inv_sq * log_vr;
-    let c2_prime = alpha * log_D1l + alpha_inv * log_D1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
-    let c3_prime = alpha_inv * log_D2l + alpha * log_D2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
+    let c2_prime = alpha * log_d1l + alpha_inv * log_d1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
+    let c3_prime = alpha_inv * log_d2l + alpha * log_d2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
 
     dory_reduce(
         c1_prime,
@@ -179,16 +179,16 @@ fn dory_reduce<
     // Prover verifies hash structures privately, but Verifier uses the public hashes provided
 
 
-    let D1_l = reduce(+, [pair(u_l[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
-    let D1_r = reduce(+, [pair(u_r[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
-    let D2_l = reduce(+, [pair(gamma1_prime[i], g_l[i]) for i in 0..2^(LOG_N-1)]);
-    let D2_r = reduce(+, [pair(gamma1_prime[i], g_r[i]) for i in 0..2^(LOG_N-1)]);
+    let d1_l = reduce(+, [pair(u_l[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
+    let d1_r = reduce(+, [pair(u_r[i], gamma2_prime[i]) for i in 0..2^(LOG_N-1)]);
+    let d2_l = reduce(+, [pair(gamma1_prime[i], g_l[i]) for i in 0..2^(LOG_N-1)]);
+    let d2_r = reduce(+, [pair(gamma1_prime[i], g_r[i]) for i in 0..2^(LOG_N-1)]);
 
     // Prover sends D terms to the transcript
-    log_D1l <- D1_l;
-    log_D1r <- D1_r;
-    log_D2l <- D2_l;
-    log_D2r <- D2_r;
+    log_d1l <- d1_l;
+    log_d1r <- d1_r;
+    log_d2l <- d2_l;
+    log_d2r <- d2_r;
 
     // 2. Verifier sends rho
     rho <- challenge<F>;
@@ -221,8 +221,8 @@ fn dory_reduce<
     let g_prime = w2_l * alpha_inv + w2_r * alpha;
 
     let c1_prime = c1 + rho_inv * c2 + rho * c3 + gamma_pair_ipp + alpha_sq * log_vl + alpha_inv_sq * log_vr;
-    let c2_prime = alpha * log_D1l + alpha_inv * log_D1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
-    let c3_prime = alpha_inv * log_D2l + alpha * log_D2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
+    let c2_prime = alpha * log_d1l + alpha_inv * log_d1r + (alpha * rho) * hash1_l + (alpha_inv * rho) * hash1_r;
+    let c3_prime = alpha_inv * log_d2l + alpha * log_d2r + (alpha_inv * rho_inv) * hash2_l + (alpha * rho_inv) * hash2_r;
 
     let next_gamma1_prime = gamma1_prime[0..2^(LOG_N-2)];
     let next_gamma2_prime = gamma2_prime[0..2^(LOG_N-2)];

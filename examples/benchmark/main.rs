@@ -1,15 +1,20 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use backend::{ATyp, ArkBls12_381, Value};
+use lang::id::{Tid, Vid};
 use share::Ctx;
-use ark_std::UniformRand;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
+
+const N_VAL: usize = 8;
+const M_VAL: usize = 4;
 
 fn main() {
-    println!("=== Hyrax PoP (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/hyrax_pop/hyrax_pop.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    println!("=== Benchmark (ArkBls12_381, N={}, M={}) ===", N_VAL, M_VAL);
+    let args = ZippelArgs::new(PathBuf::from("examples/benchmark/benchmark.zippel"));
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("N_val_const"), &N_VAL);
+    sizes.insert(&Tid::new("M_val_const"), &M_VAL);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
@@ -18,7 +23,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -33,10 +41,9 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
     let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/hyrax_pop/hyrax_pop.zippel"));
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/benchmark/benchmark.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
@@ -57,30 +64,16 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let y = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_y = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let r_z = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-
-    let big_x = g * x + h * r_x;
-    let big_y = g * y + h * r_y;
-    let big_z = g * (x * y) + h * r_z;
+    let g_a_vec: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec(&ATyp::g1(), N_VAL));
+    let g_b_vec: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec(&ATyp::g1(), M_VAL));
+    let a: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec_scalar(N_VAL));
+    let b: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec_scalar(M_VAL));
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::Scalar(x)),
-        (Vid("y".to_string()), Value::Scalar(y)),
-        (Vid("r_X".to_string()), Value::Scalar(r_x)),
-        (Vid("r_Y".to_string()), Value::Scalar(r_y)),
-        (Vid("r_Z".to_string()), Value::Scalar(r_z)),
-        (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1(h)),
-        (Vid("big_x".to_string()), Value::G1(big_x)),
-        (Vid("big_y".to_string()), Value::G1(big_y)),
-        (Vid("big_z".to_string()), Value::G1(big_z)),
+        (Vid("g_a_vec".to_string()), g_a_vec),
+        (Vid("g_b_vec".to_string()), g_b_vec),
+        (Vid("a".to_string()), a),
+        (Vid("b".to_string()), b),
     ])
 }

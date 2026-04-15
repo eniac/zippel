@@ -1,25 +1,25 @@
-// Protocol implementing the non-interactive version of proof-of-product(X,Y,Z)
+// Protocol implementing the non-interactive version of proof-of-product(big_x,big_y,big_z)
 // from the Hyrax paper appendix/description.
-// It proves that Z commits x*y, given X commits x and Y commits y,
-// using Pedersen-like commitments X = g*x + h*r_X, Y = g*y + h*r_Y, Z = g*(x*y) + h*r_Z.
+// It proves that big_z commits x*y, given big_x commits x and big_y commits y,
+// using Pedersen-like commitments big_x = g*x + h*r_X, big_y = g*y + h*r_Y, big_z = g*(x*y) + h*r_Z.
 
 proto proof_of_product<G: Group, F: Scalar<G>>(
     // Private witness known only to the prover:
-    private x: F,            // Value committed in X
-    private y: F,            // Value committed in Y
-    private r_X: F,          // Randomness for X
-    private r_Y: F,          // Randomness for Y
-    private r_Z: F,          // Randomness for Z (such that Z commits x*y)
+    private x: F,            // Value committed in big_x
+    private y: F,            // Value committed in big_y
+    private r_X: F,          // Randomness for big_x
+    private r_Y: F,          // Randomness for big_y
+    private r_Z: F,          // Randomness for big_z (such that big_z commits x*y)
 
     // Public inputs known to prover and verifier:
     public g: G,           // Base G1 for Pedersen commitments
     public h: G,           // Base G2 for Pedersen commitments
-    public X: G,           // Commitment X = g*x + h*r_X
-    public Y: G,           // Commitment Y = g*y + h*r_Y
-    public Z: G            // Commitment Z = g*(x*y) + h*r_Z
+    public big_x: G,           // Commitment big_x = g*x + h*r_X
+    public big_y: G,           // Commitment big_y = g*y + h*r_Y
+    public big_z: G            // Commitment big_z = g*(x*y) + h*r_Z
 )
 // The 'where' clause defines the exact relations the prover must satisfy.
-where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
+where big_x == g*x + h*r_X && big_y == g*y + h*r_Y && big_z == g*(x*y) + h*r_Z {
 
       // --- Prover Phase ---
 
@@ -34,7 +34,7 @@ where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
       // Add commitments to the transcript
       alpha <- g*b1 + h*b2;
       beta <-  g*b3 + h*b4;
-      delta <- X*b3 + h*b5;
+      delta <- big_x*b3 + h*b5;
 
       // 2. Derive the Fiat-Shamir challenge 'c'.
       //    Corresponds to Verifier Step 2, made non-interactive.
@@ -53,10 +53,10 @@ where X == g*x + h*r_X && Y == g*y + h*r_Y && Z == g*(x*y) + h*r_Z {
       // --- Verification Logic (encoded using 'verify') ---
       // Combines the three checks from Verifier Step 4.
 
-      // Check 1: alpha + X*c == g*z1 + h*z2
-      // Check 2: beta + Y*c == g*z3 + h*z4
-      // Check 3: delta + Z*c == X*z3 + h*z5
-      verify(alpha + X*c == g*z1 + h*z2
-        && beta + Y*c == g*z3 + h*z4
-        && delta + Z*c == X*z3 + h*z5);
+      // Check 1: alpha + big_x*c == g*z1 + h*z2
+      // Check 2: beta + big_y*c == g*z3 + h*z4
+      // Check 3: delta + big_z*c == big_x*z3 + h*z5
+      verify(alpha + big_x*c == g*z1 + h*z2
+        && beta + big_y*c == g*z3 + h*z4
+        && delta + big_z*c == big_x*z3 + h*z5);
 }

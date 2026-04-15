@@ -95,9 +95,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
-        (Vid("G_factors".to_string()), G_factors),
-        (Vid("H_factors".to_string()), H_factors),
-        (Vid("P_initial_commitment".to_string()), p_initial_commitment),
+        (Vid("g_factors".to_string()), G_factors),
+        (Vid("h_factors".to_string()), H_factors),
+        (Vid("p_initial_commitment".to_string()), p_initial_commitment),
         (Vid("ip_val_claimed".to_string()), ip_val_claimed),
         (Vid("u_aux_base".to_string()), u_aux_base),
         (Vid("a_vec_witness".to_string()), a_vec_witness),

@@ -1188,7 +1188,15 @@ impl<'pest> FromPest<'pest> for UExp {
         AEXP_PARSER
             .map_primary(|pair| match pair.as_rule() {
                 Rule::bool_exp => Ok(Exp::Bool(pair.as_str().parse().unwrap())),
-                Rule::id => Ok(Exp::Var(Vid(pair.as_str().to_string()))),
+                Rule::id => {
+                    let name = pair.as_str().to_string();
+                    if name.starts_with(|c: char| c.is_uppercase()) {
+                        // Uppercase-starting identifiers are size type variables
+                        Ok(Exp::lit(Size::varstr(&name)))
+                    } else {
+                        Ok(Exp::Var(Vid(name)))
+                    }
+                },
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
                 Rule::fun_exp => {
                     let mut inner = pair.into_inner();
@@ -1299,13 +1307,19 @@ impl<'pest> FromPest<'pest> for UExp {
                 },
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::assert(UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?))
+                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    match inner.next() {
+                        Some(rest) => Ok(Exp::seq(Exp::assert(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        None => Ok(Exp::assert(cond)),
+                    }
                 },
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::verify(
-                        UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
+                    let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    match inner.next() {
+                        Some(rest) => Ok(Exp::seq(Exp::verify(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        None => Ok(Exp::verify(cond)),
+                    }
                 },
                 Rule::let_exp => {
                     let mut inner = pair.into_inner();

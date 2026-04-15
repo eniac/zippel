@@ -103,10 +103,13 @@ impl UModule {
         for decl in self.iter_decls() {
              let all_substs = decl.get_size_substitutions(sizes)?;
              for mut substs in all_substs.into_iter() {
-                // Merge externally-provided size values (e.g. S: Size) into the
-                // substitution context so that concretize can resolve all Size::Var references
+                // Merge externally-provided SizeVar values (e.g. S: Size) into the
+                // substitution context. Skip keys already set by range expansion
+                // to avoid overriding pinned Range typevar values.
                 for (k, v) in sizes.iter() {
-                    substs.0.insert(k, v);
+                    if !substs.contains(k) {
+                        substs.0.insert(k, v);
+                    }
                 }
                 let cdecl = decl.concretize(&substs)?;
                  ctx.insert_with(cdecl.sig, cdecl.body,

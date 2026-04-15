@@ -5,6 +5,13 @@ use crate::id::{Tid, TidSubst};
 use crate::typ::{Kind, UTypeVars};
 use crate::typ::range::Range;
 use share::traversal::ToTraversal1;
+use thiserror::Error;
+
+#[derive(Error, PartialEq, Debug)]
+pub enum SubstError {
+    #[error("Size {1} for typevar {0} is outside its declared range")]
+    OutOfRange(Tid, usize),
+}
 
 /// Represents a possible valuation of sized type variables
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
@@ -49,9 +56,11 @@ impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
 impl SizeSubsts {
 
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
-    // and take all possible combinations of sizes
-    // Warning: exponential, the idea is the are few sizes (or even 1)
-    pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Set<Self> {
+    // and take all possible combinations of sizes.
+    // If `sizes` provides a value for a Range typevar, pin to that value
+    // (generate only the singleton) after validating it's within range.
+    // Warning: exponential, the idea is there are few sizes (or even 1)
+    pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Result<Set<Self>, SubstError> {
         let typevar_ranges: Vec<(Tid, Range<usize>)> =
             tv.clone()
                 .into_iter()
@@ -64,19 +73,34 @@ impl SizeSubsts {
                         _ => None
                     }).collect();
 
+        // Pin ranges that have an explicit value in `sizes`
+        let pinned_ranges: Vec<(Tid, Range<usize>)> = typevar_ranges.into_iter()
+            .map(|(tid, range)| {
+                if let Some(&pinned) = sizes.get(&tid) {
+                    if range.contains(pinned) {
+                        Ok((tid, Range::singleton(pinned)))
+                    } else {
+                        Err(SubstError::OutOfRange(tid, pinned))
+                    }
+                } else {
+                    Ok((tid, range))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // If there are no type variables, return the empty substitution
-        if typevar_ranges.is_empty() {
-            return Set::from(vec![SizeSubsts::new()]);
+        if pinned_ranges.is_empty() {
+            return Ok(Set::from(vec![SizeSubsts::new()]));
         }
 
         // Take the multi_cartesian_product of all ranges to get all possible size
         // substitutions
-        typevar_ranges.into_iter()
+        Ok(pinned_ranges.into_iter()
             .map(|(tid, r)|
                 r.into_iter().map(|i| (tid.clone(), i)).collect::<Vec<_>>())
             .multi_cartesian_product()
             .map(Substs::from)
-            .collect::<Set<SizeSubsts>>()
+            .collect::<Set<SizeSubsts>>())
     }
 }
 
@@ -160,7 +184,7 @@ impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()),
+    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap(),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),
@@ -171,6 +195,31 @@ fn size_substs_from_typevars() {
             SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 2)]),
             SizeSubsts::from(vec![(Tid::from("N"), 3), (Tid::from("M"), 2)])
         ]));
+}
+
+#[test]
+fn size_substs_pinning() {
+    // Pin N=2 within range 0..4 — should produce only N=2 combinations
+    let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::from("N"), &2);
+    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &sizes).unwrap(),
+        Set::from(vec![
+            SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 1)]),
+            SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 2)]),
+        ]));
+}
+
+#[test]
+fn size_substs_pinning_out_of_range() {
+    // Pin N=10 outside range 0..4 — should error
+    let decl = Decl::from_str("fn test<N: 0..4>(public a: N) -> N { 1 }").unwrap();
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::from("N"), &10);
+    assert_eq!(
+        SizeSubsts::from_typevars(&decl.sig.typevars, &sizes),
+        Err(SubstError::OutOfRange(Tid::from("N"), 10))
+    );
 }
 
 #[test]

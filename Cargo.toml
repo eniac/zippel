@@ -102,3 +102,47 @@ path = "examples/node_issue/main.rs"
 name = "pst13"
 path = "examples/pst13/main.rs"
 
+[[example]]
+name = "benchmark"
+path = "examples/benchmark/main.rs"
+
+[[example]]
+name = "schnorr_no_random"
+path = "examples/schnorr_no_random/main.rs"
+
+[[example]]
+name = "schnorr_and"
+path = "examples/schnorr_and/main.rs"
+
+[[example]]
+name = "commitment_equality"
+path = "examples/commitment_equality/main.rs"
+
+[[example]]
+name = "ex_hyrax_sum"
+path = "examples/ex_hyrax_sum/main.rs"
+
+[[example]]
+name = "ex_pairing"
+path = "examples/ex_pairing/main.rs"
+
+[[example]]
+name = "ex_rec"
+path = "examples/ex_rec/main.rs"
+
+[[example]]
+name = "kzh"
+path = "examples/kzh/main.rs"
+
+[[example]]
+name = "stdlib"
+path = "examples/stdlib/main.rs"
+
+[[example]]
+name = "transcript_random"
+path = "examples/transcript_random/main.rs"
+
+[[example]]
+name = "virtual_test"
+path = "examples/virtual_test/main.rs"
+

@@ -108,8 +108,8 @@ exp_term  = _{
     ram_exp       = { id ~ "[" ~ exp ~ "]" }                          // Randm access into a vector
     pair_exp      = { "pair" ~ "(" ~ exp ~ "," ~ exp ~")" }           // Billinear pairing operation
     range_exp     = { range }                                         // Range expression
-    assert_exp    = { "assert" ~ "(" ~ exp ~ ")" }                    // Assertion (Prover) expression
-    verify_exp    = { "verify" ~ "(" ~ exp ~ ")"  }                   // Assertion (Verifier) expression
+    assert_exp    = { "assert" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Prover) expression
+    verify_exp    = { "verify" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Verifier) expression
     app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
     let_exp       = { "let" ~ id ~ "=" ~ exp ~ ";" ~ exp }            // Let expression
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
