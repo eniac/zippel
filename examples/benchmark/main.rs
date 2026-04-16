@@ -4,8 +4,9 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-const N_VAL: usize = 8;
-const M_VAL: usize = 4;
+// Need to match Zippel decl
+const N_VAL: usize = 10240;
+const M_VAL: usize = 1280;
 
 fn main() {
     println!("=== Benchmark (ArkBls12_381, N={}, M={}) ===", N_VAL, M_VAL);
