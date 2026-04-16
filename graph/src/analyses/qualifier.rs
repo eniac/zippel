@@ -59,8 +59,8 @@ impl QualifierPropagation {
 
     pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
-        let check = dag.find_check().expect("No check found in the DAG");
-        let mut worklist = vec![check];
+        let mut worklist = dag.find_check();
+        assert!(!worklist.is_empty(), "No check found in the DAG");
 
         while let Some(n) = worklist.pop() {
             if qp.quals.contains(&n) {
@@ -177,8 +177,9 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
-        let check_node = g.find_check().expect("Check node should exist");
-        if let Node::Op(_, qual) = &g[check_node] {
+        let check_nodes = g.find_check();
+        assert!(!check_nodes.is_empty(), "Check node should exist");
+        if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
         }
     }
@@ -194,8 +195,9 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
-        let check_node = g.find_check().expect("Check node should exist");
-        if let Node::Op(_, qual) = &g[check_node] {
+        let check_nodes = g.find_check();
+        assert!(!check_nodes.is_empty(), "Check node should exist");
+        if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
         }
     }
@@ -225,7 +227,7 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         
         let check = g.find_check();
-        assert!(check.is_some());
+        assert!(!check.is_empty());
     }
 
     #[test]

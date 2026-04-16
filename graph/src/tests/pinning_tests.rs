@@ -1398,7 +1398,7 @@ fn pin_get_prover_basic() {
     assert_eq!(prover.name(), Vid::new("foo"));
     // Prover should have the computation leading to the transcript (s + v)
     // but NOT the verify check node
-    assert!(prover.find_check().is_none());
+    assert!(prover.find_check().is_empty());
 }
 
 /// get_verifier extracts the verifier subgraph.
@@ -1417,7 +1417,7 @@ fn pin_get_verifier_basic() {
     let verifier = dag.get_verifier().unwrap();
 
     // Verifier must have a check node
-    assert!(verifier.find_check().is_some());
+    assert!(!verifier.find_check().is_empty());
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("foo"));
     // Verifier should not have private-only computations
@@ -1642,7 +1642,7 @@ fn pin_trc_reachability() {
     assert_eq!(backward.len(), dag.node_count(), "Backward closure from max should reach all nodes");
 }
 
-/// find_check finds a Check node in a protocol and returns None for a function.
+/// find_check finds Check nodes in a protocol and returns an empty Vec for a function.
 #[test]
 fn pin_find_check() {
     let proto_src = r#"
@@ -1651,13 +1651,13 @@ fn pin_find_check() {
         }
     "#;
     let proto_gs = parse_and_build(proto_src);
-    assert!(proto_gs[0].find_check().is_some(), "Protocol should have a check node");
+    assert!(!proto_gs[0].find_check().is_empty(), "Protocol should have a check node");
 
     let fn_src = r#"
         fn f<F: Field>(public a: F) -> F { a + a }
     "#;
     let fn_gs = parse_and_build(fn_src);
-    assert!(fn_gs[0].find_check().is_none(), "Function should not have a check node");
+    assert!(fn_gs[0].find_check().is_empty(), "Function should not have a check node");
 }
 
 // ============================================================================
@@ -1747,9 +1747,9 @@ fn pin_dags_protocols_vs_functions() {
     assert_eq!(gs.len(), 2);
 
     // Protocol should have a check node
-    assert!(protos[0].find_check().is_some());
+    assert!(!protos[0].find_check().is_empty());
     // Function should not
-    assert!(funcs[0].find_check().is_none());
+    assert!(funcs[0].find_check().is_empty());
 }
 
 /// get_proto finds a protocol by name.
@@ -2035,7 +2035,7 @@ fn pin_app_mle() {
     // This should produce several nodes for the arithmetic
     assert!(dag.node_count() > 2, "MLE app should produce multiple nodes");
     // Verify it's a function (no check node)
-    assert!(dag.find_check().is_none());
+    assert!(dag.find_check().is_empty());
 }
 
 // ── Stress tests (verify no stack overflow with iterative builder) ──
