@@ -58,5 +58,5 @@ where big_x == g*x + h*r_X && big_y == g*y + h*r_Y && big_z == g*(x*y) + h*r_Z {
       // Check 3: delta + big_z*c == big_x*z3 + h*z5
       verify(alpha + big_x*c == g*z1 + h*z2
         && beta + big_y*c == g*z3 + h*z4
-        && delta + big_z*c == big_x*z3 + h*z5);
+        && delta + big_z*c == big_x*z3 + h*z5)
 }

@@ -74,5 +74,5 @@ proto kzh<
     let claim = reduce(+, [pi[yi] * eqy[yi] for yi in 0..4]);
     let check3 = claim == z0;
 
-    verify(check1 && check2 && check3);
+    verify(check1 && check2 && check3)
 }

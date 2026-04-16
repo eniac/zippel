@@ -6,6 +6,6 @@ proto univariate_zero_check<F: Field, S: Size, N: S>(
     r <- challenge<F>;
     let left_hand = eval(p, [r]);
     let right_hand = eval(q, [r]) * eval(v, [r]);
-    verify(left_hand == right_hand);
+    verify(left_hand == right_hand)
     // verify(p(r) == q(r) * v(r));
 }

@@ -61,5 +61,5 @@ proto sumcheck<F: Field, S: Size, NUM_VARS_CONST, DEGREE>(
     public c: Mle<F, NUM_VARS_CONST>,
     public round_claims: [F; 2*NUM_VARS_CONST]
 ) where (sum_check_spec(inner_poly(a, b, c)) == claimed_sum) {
-    verify(sumcheck_round(claimed_sum, inner_poly(a,b,c), round_claims));
+    verify(sumcheck_round(claimed_sum, inner_poly(a,b,c), round_claims))
 }

@@ -27,5 +27,5 @@ proto prove_commitment_equality<G: Group, F: Scalar<G>>(
       // Check: h*z == t + c_diff*c
       // h*(k + r_diff*c) == h*k + (h*r_diff)*c
       // h*k + h*r_diff*c == h*k + c_diff*c  (This holds if c_diff = h*r_diff)
-      verify(h*z == t + c_diff*c);
+      verify(h*z == t + c_diff*c)
 }

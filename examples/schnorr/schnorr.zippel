@@ -3,5 +3,5 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
     u <- g*r;
     c <- challenge<F*>;
     z <- r + x*c;
-    verify(g*z == u + h*c);
+    verify(g*z == u + h*c)
 }

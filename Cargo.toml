@@ -115,6 +115,10 @@ name = "schnorr_and"
 path = "examples/schnorr_and/main.rs"
 
 [[example]]
+name = "schnorr_and_two_verify"
+path = "examples/schnorr_and_two_verify/main.rs"
+
+[[example]]
 name = "commitment_equality"
 path = "examples/commitment_equality/main.rs"
 
@@ -145,4 +149,3 @@ path = "examples/transcript_random/main.rs"
 [[example]]
 name = "virtual_test"
 path = "examples/virtual_test/main.rs"
-

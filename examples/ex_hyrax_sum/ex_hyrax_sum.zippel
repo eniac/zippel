@@ -2,6 +2,6 @@ fn hyrrax_sum<G: Group, F: Scalar<G>>(public g: [G; 32], public h: G) -> G {
   let rh = random<F>;
   let d = [random<F> for i in 0..32];
   let p = g * d;
-  h*rh + reduce(+, p);
+  h*rh + reduce(+, p)
 }
 

@@ -82,5 +82,5 @@ where xi == Com_Vec(g_vec, h, x_vec, r_xi)
       let check2 = (tau*c + beta == check2_rhs);
 
       // Verify that both checks pass
-      verify(check1 && check2);
+      verify(check1 && check2)
 }

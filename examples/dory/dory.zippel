@@ -305,5 +305,5 @@ proto dory_eval<
         u_vec,
         g_vec
     );
-    verify(verified);
+    verify(verified)
 }

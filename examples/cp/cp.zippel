@@ -17,5 +17,5 @@ where v == g*beta && w == u*beta {
 
     c <- challenge<F>;
     beta_z <- beta_r + beta*c;
-    verify(g*beta_z == v_r + v*c && u*beta_z == w_r + w*c);
+    verify(g*beta_z == v_r + v*c && u*beta_z == w_r + w*c)
 }

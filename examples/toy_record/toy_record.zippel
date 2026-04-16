@@ -4,5 +4,5 @@ fn main() {
     let a: User = {| name: 1, balance: 100 |};
     let name = a.name;
     let balance = a.balance;
-    verify(name == 1 && balance == 100);
+    verify(name == 1 && balance == 100)
 }
