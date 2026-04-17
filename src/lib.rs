@@ -78,16 +78,16 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         // Enable detailed error messages from pest parser
         // This provides more comprehensive error messages for debugging parser errors
         lang::init_parser();
-        
-        ZippelHandler { 
+
+        ZippelHandler {
             args,
-            sized_module: None, 
-            concrete_module: None, 
-            proto_graph: None, 
-            prover_graph: None, 
-            verifier_graph: None, 
-            entry_point: None, 
-            public_inputs: None, 
+            sized_module: None,
+            concrete_module: None,
+            proto_graph: None,
+            prover_graph: None,
+            verifier_graph: None,
+            entry_point: None,
+            public_inputs: None,
             prover_args: None,
             analyze_graph: None
         }
@@ -140,9 +140,9 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         let gs = unwrap!(UDags::<C>::from_module(self.concrete_module.as_ref().unwrap().clone()));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs)); 
+        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
 
-        let mut up = UniformityPropagation::new();        
+        let mut up = UniformityPropagation::new();
         let g_analyze = up.from_dag(&g_analyze);
         self.analyze_graph = Some(g_analyze);
 
@@ -173,11 +173,11 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         let combined = verifier.combine_dag(&prover);
         self.output_pdf(&combined, "combined_graph");
     }
-    
+
     pub fn set_public_inputs(&mut self, public_inputs: Ctx<Vid, Value<C>>) {
         self.public_inputs = Some(public_inputs);
         let prover = self.prover_graph.as_ref().unwrap();
-        
+
         // save public inputs as public_inputs
         let prover_args = prover.args();
         self.prover_args = Some(prover_args);
@@ -192,17 +192,17 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
     //Run prover, takes inputs and returns proof
     pub fn run_prover(&mut self, prover_scheduled: TDag<C>, inputs: Ctx<Vid, Value<C>>) -> Vec<Value<C>> {
         let prover = self.prover_graph.as_ref().unwrap();
-        
+
         // save public inputs as public_inputs
         let prover_args = prover.args();
         let public_args: Vec<Vid> = prover_args.clone().iter().filter(|arg| arg.is_public()).map(|arg| arg.var().unwrap()).collect();
         let public_inputs = inputs.clone().into_iter().filter(|(vid, _)| public_args.contains(&vid)).collect::<Ctx<Vid, Value<C>>>();
-        
+
         let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
-            &self.args.file_path.display().to_string(), 
+            &self.args.file_path.display().to_string(),
             &prover.clone(),
         );
-      
+
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
@@ -234,11 +234,11 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         let inputs = self.public_inputs.as_ref().unwrap().clone();
         let mut inputs = inputs.clone();
         inputs.append(&pg_additional_args);
-        
+
         // Verifier uses the same public inputs (instance) as the prover
         // The instance should only contain the public statement, not the proof
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
-            &self.args.file_path.display().to_string(), 
+            &self.args.file_path.display().to_string(),
             &verifier.clone(),
         );
         // For now, use prover state since we don't have narg_string yet
@@ -247,7 +247,7 @@ impl<C:ArkConfig + HasOpFactory> ZippelHandler<C> {
         let result = MutexGraph::run_graph(Arc::new(MutexGraph::new(verifier_scheduled)),  Arc::new(inputs), &mut verifier_state);
         result
     }
-    
+
    pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
@@ -382,6 +382,7 @@ pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use backend::ArkBls12_381;
 
     /// Regression: find_minimal_sizes must collect all SizeVars before
     /// collecting ranges, so ranges that appear before their SizeVar
@@ -402,5 +403,72 @@ mod tests {
             "SizeVar S should be found even when Range appears first");
         let s_val = *sizes.get(&Tid::new("S")).unwrap();
         assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
+    }
+
+    /// Runtime test: protocol with two verify statements, both passing.
+    /// Compile, run prover, run verifier, check that verification passes.
+    #[test]
+    fn test_runtime_multiple_verify_positive() {
+        let src = r#"
+proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+    let r = random<F>;
+    x <- a * r;
+    y <- b * r;
+    verify(r == r);
+    verify(x == y)
+}
+"#;
+        let dir = std::env::temp_dir().join("zippel_test_multiple_verify_positive");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("eq_proof_positive.zippel");
+        std::fs::write(&file_path, src).unwrap();
+        let args = ZippelArgs::new(file_path);
+        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+        handler.compile(&Ctx::new());
+
+        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        inputs.insert(&Vid::new("a"), &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)));
+        inputs.insert(&Vid::new("b"), &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)));
+
+        let scheduled_prover = handler.default_schedule_prover();
+        let proof = handler.run_prover(scheduled_prover, inputs);
+        let scheduled_verifier = handler.default_schedule_verifier();
+        let verifier_result = handler.run_verifier(scheduled_verifier, proof);
+        let result = check_verification(verifier_result);
+        assert!(result.passed, "eq_proof with a == b should pass verification");
+    }
+
+    /// Runtime test: protocol where a verify condition is deliberately false.
+    /// The verification should FAIL when c ≠ 0.
+    #[test]
+    fn test_runtime_multiple_verify_negative_wrong_condition() {
+        let src = r#"
+proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b {
+    let r = random<F>;
+    x <- a * r;
+    y <- b * r;
+    verify(x == y);
+    verify(c == 0)
+}
+"#;
+        let dir = std::env::temp_dir().join("zippel_test_multiple_verify_negative");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("bad_check_negative.zippel");
+        std::fs::write(&file_path, src).unwrap();
+        let args = ZippelArgs::new(file_path);
+        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+        handler.compile(&Ctx::new());
+
+        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        inputs.insert(&Vid::new("a"), &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)));
+        inputs.insert(&Vid::new("b"), &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)));
+        inputs.insert(&Vid::new("c"), &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)));
+
+        let scheduled_prover = handler.default_schedule_prover();
+        let proof = handler.run_prover(scheduled_prover, inputs);
+        let scheduled_verifier = handler.default_schedule_verifier();
+        let verifier_result = handler.run_verifier(scheduled_verifier, proof);
+        let result = check_verification(verifier_result);
+        assert!(!result.passed, "bad_check with c = 42 should fail verification since c != 0");
     }
 }

@@ -371,43 +371,65 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
                 }
             }
+
             if remove_from_running == running_nodes && ready_nodes.is_empty() {
-                let node_index = remove_from_running.first().unwrap();
-                let node = &g.mutex_graph[*node_index];
-                match node {
-                    Node::Op(_, annotation) => {
-                        let return_val = annotation.return_value.lock().unwrap();
-                        if return_val.is_some() {
-                            final_return.push(return_val.clone().unwrap());
-                        }
-                    },
-                    Node::Transcr(_, _) => {
-                        let transcript_nodes = g.mutex_graph.transcript_nodes();
-
-
-                        for node_transcript in transcript_nodes {
-                            let transcript_node = &g.mutex_graph[node_transcript];
-                            match transcript_node {
-                                Node::Transcr(_, annotation) => {
-                                    let return_val = annotation.return_value.lock().unwrap();
-                                    if return_val.is_some() && !*annotation.is_challenge.lock().unwrap() {
-                                        final_return.push(return_val.clone().unwrap());
+                // Collect values from ALL finished Op nodes, not just the first one.
+                // This ensures multiple Check node results are all returned.
+                let mut transcript_collected = false;
+                for finished_idx in &remove_from_running {
+                    let node = &g.mutex_graph[*finished_idx];
+                    match node {
+                        Node::Op(_, annotation) => {
+                            let return_val = annotation.return_value.lock().unwrap();
+                            if return_val.is_some() {
+                                final_return.push(return_val.clone().unwrap());
+                            }
+                        },
+                        Node::Transcr(_, _) => {
+                            // Only collect transcript values once even if multiple
+                            // transcript nodes finish simultaneously.
+                            if !transcript_collected {
+                                transcript_collected = true;
+                                for node_transcript in g.mutex_graph.transcript_nodes() {
+                                    let transcript_node = &g.mutex_graph[node_transcript];
+                                    match transcript_node {
+                                        Node::Transcr(_, annotation) => {
+                                            let return_val = annotation.return_value.lock().unwrap();
+                                            if return_val.is_some() && !*annotation.is_challenge.lock().unwrap() {
+                                                final_return.push(return_val.clone().unwrap());
+                                            }
+                                        },
+                                        _ => {
+                                            panic!("Not possible");
+                                        }
                                     }
                                 }
-                                _ => {
-                                    panic!("Not possible");
-                                }
                             }
-
-                        }
-                    },
-                    Node::Inp(_, _) | Node::Rel(_, _) => {
+                        },
+                        Node::Inp(_, _) | Node::Rel(_, _) => {}
                     }
                 }
             }
             let remove_finished_set: HashSet<NodeIndex> = remove_from_running.into_iter().collect();
             running_nodes.retain(|x| !remove_finished_set.contains(x));
         }
+
+        // Collect any Check node values that weren't already gathered.
+        // When multiple verify statements exist, the termination condition
+        // (all running nodes finish at once) may not hold, so individual
+        // Check results can be lost. Sweep the graph once more and include
+        // every Check node's computed value.
+        for node_idx in g.mutex_graph.node_indices() {
+            if let Node::Op(op, annotation) | Node::Transcr(op, annotation) = &g.mutex_graph[node_idx] {
+                if matches!(**op, Op::Check(_)) {
+                    let return_val = annotation.return_value.lock().unwrap();
+                    if let Some(ref val) = *return_val {
+                        final_return.push(val.clone());
+                    }
+                }
+            }
+        }
+
         final_return
     }
 }

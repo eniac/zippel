@@ -167,6 +167,110 @@ mod tests {
     }
 
     #[test]
+    fn completeness_multiple_verify() {
+        let ex = r#"
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == x);
+                verify(x == y)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(), "eq_proof with two verify statements should be complete");
+    }
+
+    #[test]
+    fn completeness_multiple_verify_independent() {
+        let ex = r#"
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                let s = random<F>;
+                x <- a * r;
+                y <- b * r;
+                u <- a * s;
+                v <- b * s;
+                verify(x == y);
+                verify(u == v)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(), "eq_proof with two independent verify statements should be complete");
+    }
+
+    /// Negative: second verify makes the protocol incomplete.
+    /// verify(x == y) is complete (follows from a == b), but
+    /// verify(x == 0) is not — x is a transcript variable (in prover vocabulary)
+    /// but nothing forces x = 0. The polynomial `x` reduces to `a*r`, not 0.
+    #[test]
+    fn completeness_multiple_verify_negative() {
+        let ex = r#"
+            proto incomplete<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y);
+                verify(x == 0)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_err(), "verify(x == 0) is not implied by a == b, so protocol should be incomplete");
+    }
+
+    /// Cross-function boundary: a function with verify is inlined into the protocol.
+    /// The inlined verify's Check node IS terminal in the full DAG — its result is
+    /// discarded by Let(None, ...) so nothing consumes it. find_check() finds both
+    /// the inlined and protocol's own check nodes.
+    #[test]
+    fn completeness_cross_function_verify() {
+        let ex = r#"
+            fn with_check<F: Field>(x: F) -> F {
+                verify(x == x);
+                x
+            }
+            proto caller<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                z <- with_check(y);
+                verify(z == y)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+
+        let caller = gs.protocols()[0];
+        assert_eq!(caller.find_check().len(), 2,
+            "Full DAG should have 2 terminal checks: inlined verify from function, and protocol's own verify");
+
+        let g = QualifierPropagation::from_dag(caller);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(), "Both verifies are complete: inlined verify(x==x) is trivial, verify(z==y) follows from a==b");
+    }
+
+    #[test]
     fn test_buchberger_spoly_produces_ux_hr() {
         use lang::typ::{Qualifier, Distribution};
         use backend::ATyp;

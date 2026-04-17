@@ -858,11 +858,11 @@ impl<C: ArkConfig, A> Dags<C, A> {
     }
 
     pub fn protocols(&self) -> Vec<&Dag<C, A>> {
-        self.0.iter().filter(|g| !g.find_check().is_empty()).collect()
+        self.0.iter().filter(|g| g.relation_node().is_some()).collect()
     }
 
     pub fn functions(&self) -> Vec<&Dag<C, A>> {
-        self.0.iter().filter(|g| g.find_check().is_empty()).collect()
+        self.0.iter().filter(|g| g.relation_node().is_none()).collect()
     }
 
     /// Annotate all graphs using function [f]
