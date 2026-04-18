@@ -435,10 +435,10 @@ fn zk_multiple_verify_one_safe_one_leak() {
     assert!(kz.run().is_err(), "One safe and one leaking verify should fail knowledge analysis");
 }
 
-/// Leak: both verify statements leak private information.
-/// verify(a ==is properly blinded, another directly leaks the secret.
-/// The first verify is safe (has random blinding), but the second verify(b == b)
-/// directly leaks s - t to the transcript.
+/// Leak: the two verify statements together leak private information.
+/// Each check is a trivial self-equality on a transcript value (`a == a` and `b == b`).
+/// Since `a = s + r` and `b = t + r` reuse the same blinding value `r`, publishing both
+/// values reveals `a - b = s - t`, so the transcript leaks information about the secrets.
 #[test]
 fn zk_multiple_verify_one_safe_one_subtle_leak() {
     let ex = r#"

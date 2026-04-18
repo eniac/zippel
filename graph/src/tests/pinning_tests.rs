@@ -1714,9 +1714,9 @@ fn pin_get_verifier_multiple_checks() {
 
     let verifier = dag.get_verifier().unwrap();
 
-    // Verifier must have check nodes — at least one for each verify
+    // Verifier must have one check node for each verify in this protocol
     let checks = verifier.find_check();
-    assert!(checks.len() == 2, "Verifier should have at least 2 check nodes for a protocol with two verify statements, got {}", checks.len());
+    assert!(checks.len() == 2, "Verifier should have exactly 2 check nodes for a protocol with two verify statements, got {}", checks.len());
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("two_verify"));
     // Verifier args should only include public inputs

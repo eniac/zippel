@@ -418,9 +418,8 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
     verify(x == y)
 }
 "#;
-        let dir = std::env::temp_dir().join("zippel_test_multiple_verify_positive");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("eq_proof_positive.zippel");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("eq_proof_positive.zippel");
         std::fs::write(&file_path, src).unwrap();
         let args = ZippelArgs::new(file_path);
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -451,9 +450,8 @@ proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b 
     verify(c == 0)
 }
 "#;
-        let dir = std::env::temp_dir().join("zippel_test_multiple_verify_negative");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("bad_check_negative.zippel");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("bad_check_negative.zippel");
         std::fs::write(&file_path, src).unwrap();
         let args = ZippelArgs::new(file_path);
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

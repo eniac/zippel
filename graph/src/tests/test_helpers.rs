@@ -136,10 +136,13 @@ fn evaluate_op<C: HasOpFactory>(
         Op::Ref(r, _) => match r {
             Ref::Node(n) => computed.get(n).expect("Node should be computed").clone(),
             Ref::Var(vid, node_idx) => {
-                if let Some(v) = inputs.get(vid) {
+                // Resolves by `node_idx` first to ensure variable shadowing works.
+                if let Some(v) = computed.get(node_idx) {
+                    v.clone()
+                } else if let Some(v) = inputs.get(vid) {
                     v.clone()
                 } else {
-                    computed.get(&node_idx).expect("Variable should be computed").clone()
+                    panic!("Variable should be computed or provided as input")
                 }
             }
         },

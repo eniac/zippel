@@ -847,7 +847,6 @@ impl<C: ArkConfig, A> Dags<C, A> {
         self.0.len()
     }
 
-    /// A protocol has a verifier assertion
     pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
         self.protocols().into_iter().find(|g|
             if let Some(v) = g[g.input_node()].name() {
@@ -857,6 +856,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
             })
     }
 
+    /// A protocol has a relation node
     pub fn protocols(&self) -> Vec<&Dag<C, A>> {
         self.0.iter().filter(|g| g.relation_node().is_some()).collect()
     }
