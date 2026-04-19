@@ -510,26 +510,26 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     self.basis.push(SparsePolynomial::var(&pr));
                 }),
             Op::Check(a) => self.add_op(pr, a.get().clone()),
-            Op::Challenge(t, b) => {
-                let op = Op::Challenge(t, b);
-                self.np.insert(&pr, &op);
-            }
-            Op::Random(t, b) => {
-                let op = Op::Random(t, b);
-                self.np.insert(&pr, &op);
-            }
-            Op::Interpolate(points, evals) => {
-                let op = Op::Interpolate(points, evals);
-                self.np.insert(&pr, &op);
-            }
-            Op::Ifft(a) => {
-                let op = Op::Ifft(a);
-                self.np.insert(&pr, &op);
-            }
-            Op::Fft(a) => {
-                let op = Op::Fft(a);
-                self.np.insert(&pr, &op);
-            }
+            Op::Challenge(t, b) => { let op = Op::Challenge(t, b); self.np.insert(&pr, &op); },
+            Op::Random(t, b) => { let op = Op::Random(t, b); self.np.insert(&pr, &op); },
+            Op::Ifft(a) => { let op = Op::Ifft(a); self.np.insert(&pr, &op); },
+            Op::Fft(a) => { let op = Op::Fft(a); self.np.insert(&pr, &op); },
+            // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
+            // to the i-th scalar poly read from `inner` by `to_poly`. These
+            // three share identity semantics on coefficients / evaluations —
+            // only the slot-count / enumeration of `pr.typ` differs, and that
+            // is driven entirely by the input's shape (to_poly already returns
+            // the right number of polys). Basis-change between coefficient
+            // and evaluation form happens in later phases (Eval / Bin on
+            // mixed polynomial types).
+            Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
+                let polys = self.to_poly(inner);
+                for (i, p) in polys.into_iter().enumerate() {
+                    let pf = pr.clone().with_index(i);
+                    self.pl.insert(&pf, &p);
+                    self.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            },
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {
                     let pf = pr.with_index(i);
@@ -1002,5 +1002,129 @@ mod tests {
             Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::Mle(3));
         let polys = builder.to_poly(&op);
         assert_eq!(polys.len(), 8);
+    }
+
+    // -----------------------------------------------------------------
+    // add_op: Op::Poly / Op::Mle / Op::Coef (identity on coefficient slots)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_add_op_poly_binds_coefficient_slots() {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        // Op::Poly( [c0=1, c1=2, c2=3] ) -> VPoly<1, 2>.
+        let coefs: Vec<_> = (1..=3u64)
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
+            .collect();
+        let op_poly: GOp<ArkBls12_381> =
+            Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs)));
+
+        builder.add_op(pref_p.clone(), op_poly);
+
+        // Three coefficient slots should have been bound.
+        for i in 0..3 {
+            let slot = pref_p.with_index(i);
+            assert!(builder.pl.contains(&slot), "slot {} missing from pl", i);
+        }
+        // And three basis equations pushed.
+        assert_eq!(builder.basis.basis.len(), 3);
+    }
+
+    #[test]
+    fn test_add_op_coef_roundtrips_poly() {
+        // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+
+        // First: inject a VPoly<1, 2> value via Op::Poly.
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let coefs: Vec<_> = (1..=3u64)
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
+            .collect();
+        builder.add_op(
+            pref_p.clone(),
+            Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))),
+        );
+
+        // Then: Op::Coef reading the VPoly back into a Uni(3) output.
+        let pref_c = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let ref_p: GOp<ArkBls12_381> =
+            Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 2));
+        builder.add_op(pref_c.clone(), Op::Coef(mk::<ArkBls12_381>(ref_p)));
+
+        // Each Coef slot should be bound identically to the corresponding
+        // VPoly coefficient PRef — that's the round-trip identity. `to_poly`
+        // retypes per-slot PRefs to ATyp::scalar(), so we expect that form
+        // on the RHS.
+        for i in 0..3 {
+            let coef_slot = pref_c.with_index(i);
+            let mut poly_slot = pref_p.with_index(i);
+            poly_slot.typ = ATyp::scalar();
+            let stored = builder.pl.get(&coef_slot).expect("coef slot missing");
+            let expected = SparsePolynomial::<Fr, GrevLexTerm>::var(&poly_slot);
+            assert_eq!(*stored, expected, "coef[{}] did not bind to poly[{}]", i, i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_mle_binds_hypercube_slots() {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        // Mle<2> has 2^2 = 4 hypercube slots.
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let vals: Vec<_> = (1..=4u64)
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
+            .collect();
+        builder.add_op(
+            pref_p.clone(),
+            Op::Mle(mk::<ArkBls12_381>(Op::Vec(vals))),
+        );
+
+        assert_eq!(builder.basis.basis.len(), 4);
+        for i in 0..4 {
+            assert!(builder.pl.contains(&pref_p.with_index(i)),
+                "mle slot {} missing", i);
+        }
     }
 }
