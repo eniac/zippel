@@ -56,14 +56,12 @@ fn main() {
 
 fn create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    
-    let x: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
-    let y: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
-    let status_g1: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::g1());
-    
+
+    let n: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
+    let b: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::scalar());
+
     Ctx::from_iter([
-        (Vid("x".to_string()), x),
-        (Vid("y".to_string()), y),
-        (Vid("status_g1".to_string()), status_g1),
+        (Vid("n".to_string()), n),
+        (Vid("b".to_string()), b),
     ])
 }
