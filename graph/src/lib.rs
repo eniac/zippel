@@ -1440,6 +1440,8 @@ impl<C: HasOpFactory> UDag<C> {
                 let nassert = self.add_node(Node::check(&oa));
                 // Add edges
                 self.add_edges(edge_type, nassert, oa);
+                // Assert depends on the full transcript (implicit ordering)
+                self.add_edge(*transcr, nassert, Dep::transcript());
                 return Ok(GOp::underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, &vctx, &exp),
@@ -1451,6 +1453,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // Add new node
                 let nverify = self.add_node(Node::check(&oa));
                 self.add_edges(edge_type, nverify, oa);
+                // Verify depends on the full transcript (implicit ordering)
+                self.add_edge(*transcr, nverify, Dep::transcript());
                 return Ok(GOp::underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, &vctx, &exp),

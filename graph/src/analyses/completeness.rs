@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use backend::ArkConfig;
 use backend::op::{HasOpFactory, Ref};
+use share::Set;
 
 use log::debug;
 use petgraph::graph::NodeIndex;
@@ -70,12 +71,20 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         debug!("Prover:\n{}", self.prover);
         debug!("Impl:\n{}", self.verifier);
 
-        // Only check verifier polynomials whose variables are all in the prover's
-        // vocabulary. Internal verifier nodes are irrelevant for completeness.
+        // Verifier-visible variables: prover computation nodes + public input arguments.
+        // Private inputs are prover-only and not visible to the verifier.
         let prover_vars = self.prover.vars();
+        let public_args: Set<PRef> = self.verifier.args.iter()
+            .filter(|a| a.is_public())
+            .cloned()
+            .collect();
+        let verifier_visible = prover_vars.union(public_args);
+
+        // Check all verifier polynomials whose variables are verifier-visible.
+        // Polynomials with verifier-internal nodes are skipped.
         for p in self.verifier.basis.iter() {
             let poly_vars = p.vars();
-            if poly_vars.iter().all(|v| prover_vars.contains(v)) {
+            if poly_vars.iter().all(|v| verifier_visible.contains(v)) {
                 let remainder = self.prover.basis.reduce(p.clone());
                 if !remainder.is_zero() {
                     return Err(AnalysisError::Incomplete(remainder));
@@ -198,4 +207,49 @@ mod tests {
         let rem = gb.reduce(target);
         assert!(rem.is_zero(), "h*r - u*x should reduce to 0 given g*x = h and g*r = u");
     }
+
+    /// Issue #74, case 2: verify(r == 0) is unrelated to relation a == b.
+    /// Completeness should fail because the relation does NOT imply r == 0.
+    #[test]
+    fn incomplete_wrong_verify() {
+        let ex = r#"
+            proto incomplete<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(r == 0)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_err(), "Protocol with verify(r == 0) should be incomplete when relation is a == b");
+    }
+
+    /// Issue #74, case 1: verify(x == y && c == 0) adds extra constraint c == 0
+    /// not implied by relation a == b. Should be incomplete.
+    #[test]
+    fn incomplete_unused_public_input() {
+        let ex = r#"
+            proto incomplete<F: Field>(private a: F, private b: F, public c: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y && c == 0)
+            }"#;
+
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_err(), "Protocol with unused public input c == 0 should be incomplete");
+    }
+
 }
