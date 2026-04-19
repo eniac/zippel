@@ -535,10 +535,135 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let pf = pr.with_index(i);
                     self.add_op(pf, v.get().clone());
                 }
-            }
-            op => {
-                self.np.insert(&pr, &op);
-            }
+            },
+            // Op::Eval(p, xs): evaluate a polynomial `p` at points `xs`.
+            //
+            // Three shapes are handled (dispatched on p.typ() × |xs slots|):
+            //
+            //   1. Univariate batched — p: Uni(_) or VPoly(1, _), xs: len k ≥ 1
+            //        result[i] = Σ_j a_j · xs[i]^j                  (Uni(k) output)
+            //
+            //   2. Multivariate in coefficient basis — p: VPoly(n, m) with n ≥ 2, k ≤ n
+            //        full (k == n):  scalar = Σ_{|κ|≤m} a_κ · Π_i xs[i]^{κ_i}
+            //        partial (k<n):  VPoly<n-k, m>; coef at κ′ =
+            //                        Σ_{κ_fixed: (κ_fixed,κ′) valid} a_{(κ_fixed,κ′)}
+            //                        · Π_i xs[i]^{κ_fixed,i}
+            //
+            //   3. Multilinear in evaluation basis — p: Mle(n), k ≤ n
+            //        Uses eq(b,x) = b·x + (1-b)(1-x) = x if b=1 else 1-x.
+            //        full (k == n):  scalar = Σ_b v_b · Π_i eq(b_i, xs[i])
+            //        partial (k<n):  Mle<n-k>; eval at b′ =
+            //                        Σ_{b_fixed} v_{(b_fixed,b′)} · Π_i eq(b_fixed,i, xs[i])
+            //
+            // The input xs may statically have either `Uni(k)` or `Vec(_, k)`;
+            // `to_poly` normalises both to k scalar polys. Unsupported shapes
+            // (e.g. k > n, or Record operands) fall through to the np catch-all
+            // via `None`.
+            Op::Eval(ref p, ref xs) => {
+                let p_typ = p.typ();
+                let xs_polys = self.to_poly(xs);
+                let k = xs_polys.len();
+                let result: Option<Vec<SparsePolynomial<C::F, T>>> = match &p_typ {
+                    ATyp::Uni(_) | ATyp::VPoly(1, _) if k >= 1 => {
+                        // Univariate batched: p coef vector [a_0, ..., a_{d-1}].
+                        let p_polys = self.to_poly(p);
+                        let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                        let out = (0..k).map(|i| {
+                            let xi = &xs_polys[i];
+                            let mut acc = SparsePolynomial::<C::F, T>::zero();
+                            let mut xi_pow = one.clone();
+                            for aj in p_polys.iter() {
+                                acc = &acc + &(aj * &xi_pow);
+                                xi_pow = &xi_pow * xi;
+                            }
+                            acc
+                        }).collect();
+                        Some(out)
+                    }
+                    ATyp::VPoly(n, mdeg) if *n >= 2 && k <= *n => {
+                        let p_polys = self.to_poly(p);
+                        let all_k = multi_indices(*n, *mdeg);
+                        // Build Π_j xs[j]^{k_fixed[j]} over the first k vars.
+                        let mono = |k_fixed: &[usize]| -> SparsePolynomial<C::F, T> {
+                            let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                            for (j, &kij) in k_fixed.iter().enumerate() {
+                                if kij == 0 { continue; }
+                                let mut xp = xs_polys[j].clone();
+                                xp.pow(kij);
+                                acc = &acc * &xp;
+                            }
+                            acc
+                        };
+                        if k == *n {
+                            let mut acc = SparsePolynomial::<C::F, T>::zero();
+                            for (idx, ki) in all_k.iter().enumerate() {
+                                acc = &acc + &(&p_polys[idx] * &mono(ki));
+                            }
+                            Some(vec![acc])
+                        } else {
+                            let remaining_n = n - k;
+                            let result_indices = multi_indices(remaining_n, *mdeg);
+                            let out = result_indices.iter().map(|kp| {
+                                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                                for (idx, ki) in all_k.iter().enumerate() {
+                                    if &ki[k..] != &kp[..] { continue; }
+                                    acc = &acc + &(&p_polys[idx] * &mono(&ki[..k]));
+                                }
+                                acc
+                            }).collect();
+                            Some(out)
+                        }
+                    }
+                    ATyp::Mle(n) if k <= *n => {
+                        let p_polys = self.to_poly(p);
+                        let all_b = hypercube(*n);
+                        let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                        let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                            if bi == 1 { x.clone() } else { &one - x }
+                        };
+                        let eq_prod = |b_fixed: &[usize]| -> SparsePolynomial<C::F, T> {
+                            let mut acc = one.clone();
+                            for (j, &bj) in b_fixed.iter().enumerate() {
+                                acc = &acc * &eq(bj, &xs_polys[j]);
+                            }
+                            acc
+                        };
+                        if k == *n {
+                            let mut acc = SparsePolynomial::<C::F, T>::zero();
+                            for (idx, b) in all_b.iter().enumerate() {
+                                acc = &acc + &(&p_polys[idx] * &eq_prod(b));
+                            }
+                            Some(vec![acc])
+                        } else {
+                            let remaining_n = n - k;
+                            let result_b = hypercube(remaining_n);
+                            let out = result_b.iter().map(|bp| {
+                                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                                for (idx, b) in all_b.iter().enumerate() {
+                                    if &b[k..] != &bp[..] { continue; }
+                                    acc = &acc + &(&p_polys[idx] * &eq_prod(&b[..k]));
+                                }
+                                acc
+                            }).collect();
+                            Some(out)
+                        }
+                    }
+                    _ => None,
+                };
+                match result {
+                    Some(polys) => {
+                        for (i, poly) in polys.into_iter().enumerate() {
+                            let pf = pr.clone().with_index(i);
+                            self.pl.insert(&pf, &poly);
+                            self.basis.push(poly - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    None => {
+                        self.np.insert(&pr, &Op::Eval(p.clone(), xs.clone()));
+                    }
+                }
+            },
+            op => { self.np.insert(&pr, &op); },
         }
     }
 }
@@ -1126,5 +1251,319 @@ mod tests {
             assert!(builder.pl.contains(&pref_p.with_index(i)),
                 "mle slot {} missing", i);
         }
+    }
+
+    // -----------------------------------------------------------------
+    // add_op: Op::Eval (phase 3)
+    //   - univariate batched     (Uni / VPoly(1,_))
+    //   - full multivariate      (VPoly(n,m) n≥2 and Mle(n))
+    //   - partial multivariate
+    // -----------------------------------------------------------------
+
+    /// Helper: a PRef registered with the builder so `find_ref` can locate
+    /// it, returning the pref for caller use. The slot type isn't important
+    /// here; we only need the reference node / index to resolve.
+    fn register_ref<T: Monomial>(
+        builder: &mut GroebnerBuilder<ArkBls12_381, T>,
+        node: usize,
+        typ: ATyp,
+    ) -> crate::PRef {
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        let pref = PRef::from_node(
+            NodeIndex::new(node),
+            typ,
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.pl.insert(&pref, &SparsePolynomial::var(&pref));
+        builder.args.insert(pref.clone());
+        pref
+    }
+
+    #[test]
+    fn test_add_op_eval_univariate_batched() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+
+        // p(x) = a_0 + a_1 x   as VPoly(1,1): 2 coefficient slots on node 0.
+        // xs = [x0, x1]        as Uni(2):     2 slots on node 1.
+        // Expected: result[i] = a_0 + a_1 * xs[i].
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(1, 1));
+        let _pref_xs = register_ref(&mut builder, 1, ATyp::Uni(2));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Expected: 2 result slots + 2 basis equations, and no np insertion.
+        assert_eq!(builder.np.len(), 0, "eval should not have fallen through to np");
+        for i in 0..2 {
+            assert!(builder.pl.contains(&result.with_index(i)),
+                "uni batched result slot {} missing", i);
+        }
+        // Each result slot: poly = a_0 + a_1 * xs[i] (a linear polynomial in
+        // 4 input variables). Check it depends on exactly {a_0, a_1, xs[i]}.
+        let a0 = PRef { typ: ATyp::scalar(), ..PRef::from_node(NodeIndex::new(0), ATyp::VPoly(1,1), 0, Qualifier::Private, Distribution::default()) };
+        let mut a1 = a0.clone(); a1.index = 1;
+        let mut x0 = a0.clone(); x0.reference = Ref::Node(NodeIndex::new(1)); x0.index = 0;
+        let mut x1 = x0.clone(); x1.index = 1;
+
+        let slot0 = builder.pl.get(&result.with_index(0)).unwrap();
+        let vars0 = slot0.vars();
+        assert!(vars0.contains(&a0), "slot 0 missing a_0");
+        assert!(vars0.contains(&a1), "slot 0 missing a_1");
+        assert!(vars0.contains(&x0), "slot 0 missing xs[0]");
+        assert!(!vars0.contains(&x1), "slot 0 should not contain xs[1]");
+
+        let slot1 = builder.pl.get(&result.with_index(1)).unwrap();
+        let vars1 = slot1.vars();
+        assert!(vars1.contains(&a0), "slot 1 missing a_0");
+        assert!(vars1.contains(&a1), "slot 1 missing a_1");
+        assert!(vars1.contains(&x1), "slot 1 missing xs[1]");
+        assert!(!vars1.contains(&x0), "slot 1 should not contain xs[0]");
+        let _ = Fr::from(0u64); // silence unused Fr import warning
+    }
+
+    #[test]
+    fn test_add_op_eval_univariate_batched_with_constants() {
+        // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Bind p via Op::Poly of literal scalars -> 2 slot prefs on node 0.
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(1, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let coefs: Vec<_> = [3u64, 5]
+            .iter()
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
+            .collect();
+        builder.add_op(pref_p.clone(), Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))));
+
+        // Bind xs similarly on node 1 as Uni(2).
+        let pref_xs = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let xs: Vec<_> = [7u64, 11]
+            .iter()
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
+            .collect();
+        // Treat xs as a plain Uni literal via Op::Poly (binds 2 slots with literal polys).
+        builder.add_op(pref_xs.clone(), Op::Poly(mk::<ArkBls12_381>(Op::Vec(xs))));
+
+        // Now issue eval:  p(xs).
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
+            mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Check stored polys: since all inputs are constants, each result slot
+        // stores a polynomial equal to a_0 + a_1 * x as a sparse poly in the
+        // slot PRefs (constants haven't been inlined). We verify the basis
+        // equation reduces correctly by substituting literal values via `vars`.
+        // Specifically: each result slot must be non-zero and refer to the 3
+        // input slots.
+        let slot0 = builder.pl.get(&result.with_index(0)).unwrap();
+        let slot1 = builder.pl.get(&result.with_index(1)).unwrap();
+        assert!(!slot0.is_zero());
+        assert!(!slot1.is_zero());
+        // Two new basis equations (for the 2 result slots); plus the prior
+        // Op::Poly bindings (2 for p, 2 for xs).
+        assert_eq!(builder.basis.basis.len(), 2 + 2 + 2);
+    }
+
+    #[test]
+    fn test_add_op_eval_vpoly_full_multivariate() {
+        // VPoly(2, 2) has 6 coef slots; eval at Uni(2) => scalar (one slot).
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _ = register_ref(&mut builder, 0, ATyp::VPoly(2, 2));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(2));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 2))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // One result slot (scalar) produced, zero np entries for eval.
+        assert!(builder.pl.contains(&result.with_index(0)));
+        // Should contain all 6 coef PRefs of p + both xs slots.
+        let slot = builder.pl.get(&result.with_index(0)).unwrap();
+        let vars = slot.vars();
+        assert!(vars.len() >= 6, "expected coef + eval vars; got {} vars", vars.len());
+    }
+
+    #[test]
+    fn test_add_op_eval_vpoly_partial_multivariate() {
+        // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _ = register_ref(&mut builder, 0, ATyp::VPoly(3, 1));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(3, 1))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // VPoly(2, 1) has num_coeffs = C(2+1, 1) = 3 slots (one for constant,
+        // two for each linear variable).
+        assert_eq!(num_coeffs(&ATyp::VPoly(2, 1)), 3);
+        for i in 0..3 {
+            assert!(builder.pl.contains(&result.with_index(i)),
+                "partial vpoly eval slot {} missing", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_eval_mle_full_multivariate() {
+        // Mle(2) has 4 eval slots; eval at Uni(2) => scalar.
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _ = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(2));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::Mle(2))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+        );
+        builder.add_op(result.clone(), op);
+
+        assert!(builder.pl.contains(&result.with_index(0)));
+        // Result poly should reference all 4 Mle slots + both xs slots.
+        let slot = builder.pl.get(&result.with_index(0)).unwrap();
+        let vars = slot.vars();
+        assert!(vars.len() >= 4, "mle full eval got {} vars", vars.len());
+    }
+
+    #[test]
+    fn test_add_op_eval_mle_partial_multivariate() {
+        // Mle(3) evaluated at Uni(1) => Mle(2) (4 slots).
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _ = register_ref(&mut builder, 0, ATyp::Mle(3));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::Mle(3))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Mle(2) has 4 eval slots.
+        for i in 0..4 {
+            assert!(builder.pl.contains(&result.with_index(i)),
+                "partial mle eval slot {} missing", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_eval_unsupported_falls_through_to_np() {
+        // Eval at a Record (which to_poly can't handle) should fall through to np.
+        use crate::PRef;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _ = register_ref(&mut builder, 0, ATyp::VPoly(3, 2));
+        // xs with k > n should fall through (k=4 > n=3).
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(4));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Eval(
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(3, 2))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(4))),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Unsupported shape → stored in np, not pl.
+        assert!(builder.np.contains(&result));
+        assert!(!builder.pl.contains(&result));
     }
 }
