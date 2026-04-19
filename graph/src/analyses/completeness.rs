@@ -454,4 +454,59 @@ mod tests {
             "Mle × Mle equality under relation a==b should be complete");
     }
 
+    /// Phase 6 regression: correct `Op::Eval::typ()` dispatch.
+    ///
+    /// `Op::Eval::typ()` at `backend/src/op.rs` used to return `x.typ()`
+    /// unconditionally, which was only correct by accident for univariate
+    /// batched evaluation. After the phase 6 fix it dispatches on
+    /// `(p.typ(), x.typ())` for full and partial multivariate eval on
+    /// VPoly / Mle. This helper-style test builds a minimal `Op::Eval`
+    /// node for each shape and asserts the returned `ATyp`.
+    #[test]
+    fn op_eval_typ_dispatch() {
+        use crate::{Ref, Op as BOp, GOp, mk};
+        use backend::{ATyp, ArkBls12_381};
+        use petgraph::graph::NodeIndex;
+
+        // Build an Op::Eval(p, x) where p has type `p_typ` and x has type `x_typ`.
+        let mk_eval = |p_typ: ATyp, x_typ: ATyp| -> GOp<ArkBls12_381> {
+            let p: GOp<ArkBls12_381> = BOp::Ref(Ref::Node(NodeIndex::new(0)), p_typ);
+            let x: GOp<ArkBls12_381> = BOp::Ref(Ref::Node(NodeIndex::new(1)), x_typ);
+            BOp::Eval(mk(p), mk(x))
+        };
+
+        // Univariate batched: Uni(m) at Vec(scalar, k) → Vec(scalar, k).
+        let op = mk_eval(ATyp::Uni(3), ATyp::Vec(Box::new(ATyp::scalar()), 4));
+        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 4),
+            "univariate batched eval should keep Vec(scalar, k)");
+
+        // Univariate batched with Uni(k) on the right (equivalent shape).
+        let op = mk_eval(ATyp::Uni(3), ATyp::Uni(4));
+        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 4));
+
+        // VPoly(1, m) is effectively univariate, same rule.
+        let op = mk_eval(ATyp::VPoly(1, 3), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+
+        // Full multivariate VPoly: VPoly(n, m) at Vec(scalar, n) → scalar.
+        let op = mk_eval(ATyp::VPoly(2, 2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        assert_eq!(op.typ(), ATyp::scalar(),
+            "full multivariate VPoly eval should be scalar");
+
+        // Partial VPoly: VPoly(n, m) at Vec(scalar, k) with k<n → VPoly(n-k, m).
+        let op = mk_eval(ATyp::VPoly(3, 2), ATyp::Vec(Box::new(ATyp::scalar()), 1));
+        assert_eq!(op.typ(), ATyp::VPoly(2, 2),
+            "partial multivariate VPoly eval should drop k variables");
+
+        // Full Mle: Mle(n) at Vec(scalar, n) → scalar.
+        let op = mk_eval(ATyp::Mle(2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        assert_eq!(op.typ(), ATyp::scalar(),
+            "full Mle eval should be scalar");
+
+        // Partial Mle: Mle(n) at Vec(scalar, k) with k<n → Mle(n-k).
+        let op = mk_eval(ATyp::Mle(3), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        assert_eq!(op.typ(), ATyp::Mle(1),
+            "partial Mle eval should drop k variables");
+    }
+
 }
