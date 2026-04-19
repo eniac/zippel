@@ -19,6 +19,86 @@ use backend::{ATyp, ArkConfig, ArkScalarOps, Value};
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
+// ---------------------------------------------------------------------------
+// PRef-slot enumeration helpers for polynomial / MLE values.
+//
+// These define the canonical order in which the slots of a polynomial-typed
+// PRef are laid out (via `PRef::with_index(i)`). They are NOT monomial / term
+// orderings — the existing `ElimTerm` / `GrevLexTerm` orderings in
+// `monomial.rs` are untouched.
+//
+//   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
+//   * Mle<N>      → 2^N slots, one per hypercube point b ∈ {0,1}^N.
+//   * Uni(n)      → n slots (coefficient vector).
+//   * Vec(_, n)   → n slots.
+// ---------------------------------------------------------------------------
+
+/// All multi-indices `(k_1, …, k_n)` with `sum(k_i) ≤ m`, in graded-lex order
+/// (by total degree, then lex within the same degree).
+fn multi_indices(n: usize, m: usize) -> Vec<Vec<usize>> {
+    fn go(n: usize, budget: usize, acc: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        if n == 0 {
+            out.push(acc.clone());
+            return;
+        }
+        for k in 0..=budget {
+            acc.push(k);
+            go(n - 1, budget - k, acc, out);
+            acc.pop();
+        }
+    }
+    let mut all = Vec::new();
+    let mut scratch = Vec::with_capacity(n);
+    go(n, m, &mut scratch, &mut all);
+    // Sort by (total degree, lex) to get a stable graded-lex enumeration.
+    all.sort_by(|a, b| {
+        let da: usize = a.iter().sum();
+        let db: usize = b.iter().sum();
+        da.cmp(&db).then_with(|| a.cmp(b))
+    });
+    all
+}
+
+/// All boolean multi-indices `b ∈ {0,1}^n` in lex order (matches how
+/// `Op::Mle(v)` unpacks a length-`2^N` vector).
+fn hypercube(n: usize) -> Vec<Vec<usize>> {
+    (0..(1usize << n))
+        .map(|i| (0..n).map(|j| (i >> j) & 1).collect())
+        .collect()
+}
+
+/// Number of PRef slots needed to represent a value of the given type.
+fn num_coeffs(typ: &ATyp) -> usize {
+    match typ {
+        ATyp::VPoly(n, m) => multi_indices(*n, *m).len(),
+        ATyp::Mle(n) => 1usize << *n,
+        ATyp::Uni(n) => *n,
+        ATyp::Vec(_, n) => *n,
+        _ => 1,
+    }
+}
+
+/// Inverse of the enumeration: position of multi-index / hypercube point `k`
+/// in the canonical slot order for the given type.
+fn index_of(typ: &ATyp, k: &[usize]) -> usize {
+    match typ {
+        ATyp::VPoly(n, m) => multi_indices(*n, *m)
+            .iter()
+            .position(|kk| kk.as_slice() == k)
+            .expect("multi-index out of range for VPoly"),
+        ATyp::Mle(n) => {
+            debug_assert_eq!(k.len(), *n);
+            let mut acc = 0usize;
+            for (j, bj) in k.iter().enumerate() {
+                debug_assert!(*bj <= 1);
+                acc |= (bj & 1) << j;
+            }
+            acc
+        }
+        _ => 0,
+    }
+}
+
 /// This is used to construct a Groebner basis from the ideals corresponding to
 /// each one of groups G1, G2, GT and the scalar ring F.
 /// Construct a Groebner basis from a graph, by first taking the transitive
@@ -195,23 +275,43 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Ref(v, typ) => {
                 let pf = self.find_ref(&v);
                 match typ {
-                    ATyp::Vec(box t, n) => (0..*n)
-                        .map(|i| {
-                            let mut pf = pf.clone();
-                            pf.index = i;
-                            pf.typ = t.clone();
-                            SparsePolynomial::var(&pf)
-                        })
-                        .collect::<Vec<_>>(),
-                    ATyp::Uni(n) => (0..*n)
-                        .map(|i| {
-                            let mut pf = pf.clone();
-                            pf.index = i;
-                            pf.typ = ATyp::scalar();
-                            SparsePolynomial::var(&pf)
-                        })
-                        .collect::<Vec<_>>(),
-                    _ => vec![SparsePolynomial::var(&pf)],
+                    ATyp::Vec(box t, n) =>
+                        (0..*n).into_iter()
+                            .map(|i| {
+                                let mut pf = pf.clone();
+                                pf.index = i;
+                                pf.typ = t.clone();
+                                SparsePolynomial::var(&pf)
+                            })
+                            .collect::<Vec<_>>(),
+                    ATyp::Uni(n) =>
+                        (0..*n).into_iter()
+                            .map(|i| {
+                                let mut pf = pf.clone();
+                                pf.index = i;
+                                pf.typ = ATyp::scalar();
+                                SparsePolynomial::var(&pf)
+                            })
+                            .collect::<Vec<_>>(),
+                    ATyp::VPoly(n, m) =>
+                        (0..num_coeffs(&ATyp::VPoly(*n, *m))).into_iter()
+                            .map(|i| {
+                                let mut pf = pf.clone();
+                                pf.index = i;
+                                pf.typ = ATyp::scalar();
+                                SparsePolynomial::var(&pf)
+                            })
+                            .collect::<Vec<_>>(),
+                    ATyp::Mle(n) =>
+                        (0..num_coeffs(&ATyp::Mle(*n))).into_iter()
+                            .map(|i| {
+                                let mut pf = pf.clone();
+                                pf.index = i;
+                                pf.typ = ATyp::scalar();
+                                SparsePolynomial::var(&pf)
+                            })
+                            .collect::<Vec<_>>(),
+                    _ => vec![SparsePolynomial::var(&pf)]
                 }
             }
             Op::Value(v) => self.to_poly_value(v),
@@ -780,5 +880,127 @@ mod tests {
         assert!(builder.basis.basis[0].contains(&pref_c));
         assert!(builder.basis.basis[1].contains(&pref_c));
         assert!(!builder.basis.basis[0].contains(&pref_a));
+    }
+
+    // -----------------------------------------------------------------
+    // Polynomial / MLE enumeration helpers
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_multi_indices_univariate() {
+        // Uni degree 3 → 1-variable VPoly with total degree ≤ 3.
+        let got = multi_indices(1, 3);
+        assert_eq!(got, vec![vec![0], vec![1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn test_multi_indices_two_vars_deg2() {
+        // VPoly<2, 2>: all k with k_1 + k_2 ≤ 2, in graded-lex order.
+        let got = multi_indices(2, 2);
+        assert_eq!(got, vec![
+            vec![0, 0],                  // deg 0
+            vec![0, 1], vec![1, 0],      // deg 1 (lex)
+            vec![0, 2], vec![1, 1], vec![2, 0], // deg 2 (lex)
+        ]);
+        assert_eq!(got.len(), 6); // C(2+2, 2) = 6
+    }
+
+    #[test]
+    fn test_hypercube_enumeration() {
+        let got = hypercube(3);
+        assert_eq!(got.len(), 8);
+        // lex: bit 0 is inner-most, so b = [b0, b1, b2] read little-endian.
+        assert_eq!(got[0], vec![0, 0, 0]);
+        assert_eq!(got[1], vec![1, 0, 0]);
+        assert_eq!(got[2], vec![0, 1, 0]);
+        assert_eq!(got[7], vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn test_num_coeffs() {
+        assert_eq!(num_coeffs(&ATyp::VPoly(2, 2)), 6);
+        assert_eq!(num_coeffs(&ATyp::VPoly(3, 1)), 4);  // scalar + 3 linear
+        assert_eq!(num_coeffs(&ATyp::Mle(3)), 8);
+        assert_eq!(num_coeffs(&ATyp::Uni(5)), 5);
+        assert_eq!(num_coeffs(&ATyp::scalar()), 1);
+    }
+
+    #[test]
+    fn test_index_of_vpoly_roundtrip() {
+        let typ = ATyp::VPoly(2, 2);
+        for (i, k) in multi_indices(2, 2).into_iter().enumerate() {
+            assert_eq!(index_of(&typ, &k), i);
+        }
+    }
+
+    #[test]
+    fn test_index_of_mle_roundtrip() {
+        let typ = ATyp::Mle(3);
+        for (i, b) in hypercube(3).into_iter().enumerate() {
+            assert_eq!(index_of(&typ, &b), i);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // to_poly on polynomial-typed refs
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_to_poly_vpoly_ref_expands_coefficients() {
+        use crate::PRef;
+        use crate::Ref;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(2, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        // Register pref_p so find_ref can locate it.
+        builder.pl.insert(&pref_p, &SparsePolynomial::var(&pref_p));
+        builder.args.insert(pref_p.clone());
+
+        let op: GOp<ArkBls12_381> =
+            Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 2));
+        let polys = builder.to_poly(&op);
+        assert_eq!(polys.len(), 6);
+        // Each coefficient should be a distinct variable PRef indexed 0..6.
+        for (i, _) in polys.iter().enumerate() {
+            let expected = pref_p.with_index(i).clone();
+            let expected = PRef {
+                typ: ATyp::scalar(),
+                ..expected
+            };
+            assert!(polys[i].contains(&expected),
+                "coefficient poly {} does not contain expected PRef (index {})", i, i);
+        }
+    }
+
+    #[test]
+    fn test_to_poly_mle_ref_expands_evaluations() {
+        use crate::PRef;
+        use crate::Ref;
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.pl.insert(&pref_p, &SparsePolynomial::var(&pref_p));
+        builder.args.insert(pref_p.clone());
+
+        let op: GOp<ArkBls12_381> =
+            Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::Mle(3));
+        let polys = builder.to_poly(&op);
+        assert_eq!(polys.len(), 8);
     }
 }
