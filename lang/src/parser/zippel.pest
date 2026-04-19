@@ -19,7 +19,7 @@ and_op = @{ "&&" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" }
+keyword = {"let" | "fn" | "proto" | "type" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 
@@ -107,7 +107,7 @@ exp_term  = _{
     assert_exp    = { "assert" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Prover) expression
     verify_exp    = { "verify" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Verifier) expression
     app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
-    let_exp       = { "let" ~ id ~ "=" ~ exp ~ ";" ~ exp }            // Let expression
+    let_exp       = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp ~ ";" ~ exp }  // Let expression (optional type annotation)
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
     bool_exp      = { "true" | "false" }                              // True or false constants
     minus_exp     = _{ unary_minus ~ exp }                            // Negative expressions

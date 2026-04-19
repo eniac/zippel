@@ -281,6 +281,39 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Typs<T, N> {
     }
 }
 
+/// Trait for inlining type aliases. Replaces `Typ::Base(name)` with the
+/// expanded type when `name` is a key in the type alias context.
+pub trait TypeInline<N>: Sized {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self;
+}
+
+impl<N: Clone> TypeInline<N> for GTyp<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        match self {
+            Typ::Base(ref b) => {
+                if let Some(expanded) = ctx.get(b) {
+                    expanded.clone().type_inline(ctx)
+                } else {
+                    self
+                }
+            },
+            Typ::Vec(box t, n) => Typ::Vec(Box::new(t.type_inline(ctx)), n),
+            Typ::Poly(b, m, n) => Typ::Poly(b, m, n),
+            Typ::Fin(r) => Typ::Fin(r),
+            Typ::Bool => Typ::Bool,
+            Typ::Record(fields) => Typ::Record(
+                Ctx::from_iter(fields.into_iter().map(|(k, v)| (k, v.type_inline(ctx))))
+            ),
+        }
+    }
+}
+
+impl<N: Clone> TypeInline<N> for GTyps<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        Typs(self.0.into_iter().map(|t| t.type_inline(ctx)).collect())
+    }
+}
+
 /// Pretty-printer for zippel types.
 impl<'a, D, A, T, N> Pretty<'a, D, A> for Typ<T, N>
 where

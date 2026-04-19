@@ -958,6 +958,10 @@ impl<C: HasOpFactory> UDag<C> {
                 let vars =
                     atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+            },
+            CBody::TypeAlias => {
+                // Type aliases are expanded inline during module parsing,
+                // no graph nodes needed.
             }
         }
 
