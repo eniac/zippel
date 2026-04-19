@@ -80,6 +80,7 @@ fn num_coeffs(typ: &ATyp) -> usize {
 
 /// Inverse of the enumeration: position of multi-index / hypercube point `k`
 /// in the canonical slot order for the given type.
+#[allow(dead_code)]
 fn index_of(typ: &ATyp, k: &[usize]) -> usize {
     match typ {
         ATyp::VPoly(n, m) => multi_indices(*n, *m)
@@ -448,36 +449,139 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             // Polynomial operations
-            Op::Bin(BinOp::Add | BinOp::And, a, b, _) => self
-                .to_poly(&a)
-                .into_iter()
-                .zip(self.to_poly(&b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_index(i);
-                    self.pl.insert(&pf, &(&a + &b));
-                    self.basis.push(a + b - SparsePolynomial::var(&pf));
-                }),
-            Op::Bin(BinOp::Sub, a, b, _) => self
-                .to_poly(&a)
-                .into_iter()
-                .zip(self.to_poly(&b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_index(i);
-                    self.pl.insert(&pf, &(&a - &b));
-                    self.basis.push(a - b - SparsePolynomial::var(&pf));
-                }),
-            Op::Bin(BinOp::Mul, a, b, _) => self
-                .to_poly(&a)
-                .into_iter()
-                .zip(self.to_poly(&b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_index(i);
-                    self.pl.insert(&pf, &(&a * &b));
-                    self.basis.push(a * b - SparsePolynomial::var(&pf));
-                }),
+            Op::Bin(BinOp::Add | BinOp::And, a, b, _) =>
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
+                    .enumerate()
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.pl.insert(&pf, &(&a + &b));
+                        self.basis.push(a + b - SparsePolynomial::var(&pf));
+                    }),
+            Op::Bin(BinOp::Sub, a, b, _) =>
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
+                    .enumerate()
+                    .for_each(|(i, (a, b))| {
+                        let pf = pr.clone().with_index(i);
+                        self.pl.insert(&pf, &(&a - &b));
+                        self.basis.push(a - b - SparsePolynomial::var(&pf));
+                    }),
+            Op::Bin(BinOp::Mul, ref a, ref b, _) => {
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let is_poly = |t: &ATyp| matches!(t, ATyp::VPoly(_, _) | ATyp::Mle(_));
+                let result: Option<Vec<SparsePolynomial<C::F, T>>> =
+                    if is_poly(&a_typ) || is_poly(&b_typ) {
+                        match (&a_typ, &b_typ, &pr.typ) {
+                            // VPoly × VPoly of same num_vars → convolution into the
+                            // result type's multi-index basis. Terms whose total
+                            // degree exceeds the result's max_degree are dropped
+                            // (they must be zero for the expression to be well-typed).
+                            (
+                                ATyp::VPoly(na, ma),
+                                ATyp::VPoly(nb, mb),
+                                ATyp::VPoly(nr, mr),
+                            ) if na == nb && na == nr => {
+                                let a_polys = self.to_poly(a);
+                                let b_polys = self.to_poly(b);
+                                let a_idx = multi_indices(*na, *ma);
+                                let b_idx = multi_indices(*nb, *mb);
+                                let r_idx = multi_indices(*nr, *mr);
+                                let mut out: Vec<SparsePolynomial<C::F, T>> =
+                                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                                for (ia, ka) in a_idx.iter().enumerate() {
+                                    for (ib, kb) in b_idx.iter().enumerate() {
+                                        let k: Vec<usize> = ka
+                                            .iter()
+                                            .zip(kb.iter())
+                                            .map(|(x, y)| x + y)
+                                            .collect();
+                                        if k.iter().sum::<usize>() > *mr { continue; }
+                                        // Find slot; must exist for total degree ≤ mr.
+                                        let ir = r_idx
+                                            .iter()
+                                            .position(|rk| rk == &k)
+                                            .expect("multi-index missing in result");
+                                        out[ir] = &out[ir] + &(&a_polys[ia] * &b_polys[ib]);
+                                    }
+                                }
+                                Some(out)
+                            }
+                            // Mle(n) × Mle(n) → VPoly(n, 2). Basis change using the
+                            // per-variable coefficient table of eq(b_i, x) · eq(b'_i, x):
+                            //   (0,0): 1 - 2x + x²     → [1, -2, 1]
+                            //   (0,1): x - x²          → [0,  1,-1]
+                            //   (1,0): x - x²          → [0,  1,-1]
+                            //   (1,1): x²              → [0,  0, 1]
+                            (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
+                                if na == nb && na == nr && *mr >= 2 =>
+                            {
+                                let n = *na;
+                                let a_polys = self.to_poly(a);
+                                let b_polys = self.to_poly(b);
+                                let all_b = hypercube(n);
+                                let r_idx = multi_indices(n, *mr);
+                                // Per-variable coefficient table: coeff[ba][bb][k] for k ∈ {0,1,2}.
+                                let coeff: [[[i64; 3]; 2]; 2] = [
+                                    [[1, -2, 1], [0, 1, -1]],
+                                    [[0, 1, -1], [0, 0, 1]],
+                                ];
+                                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                                    if v >= 0 {
+                                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                                    } else {
+                                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                                    }
+                                };
+                                let mut out: Vec<SparsePolynomial<C::F, T>> =
+                                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                                for (ia, ba) in all_b.iter().enumerate() {
+                                    for (ib, bb) in all_b.iter().enumerate() {
+                                        let uv = &a_polys[ia] * &b_polys[ib];
+                                        // Each (ba, bb) contributes to every result multi-index
+                                        // κ with the scalar Π_i coeff[ba_i][bb_i][κ_i].
+                                        for (ir, k) in r_idx.iter().enumerate() {
+                                            let mut scalar: i64 = 1;
+                                            for i in 0..n {
+                                                let c = coeff[ba[i]][bb[i]][k[i]];
+                                                if c == 0 { scalar = 0; break; }
+                                                scalar *= c;
+                                            }
+                                            if scalar == 0 { continue; }
+                                            out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
+                                        }
+                                    }
+                                }
+                                Some(out)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                match result {
+                    Some(polys) => {
+                        for (i, poly) in polys.into_iter().enumerate() {
+                            let pf = pr.clone().with_index(i);
+                            self.pl.insert(&pf, &poly);
+                            self.basis.push(poly - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    None => {
+                        // Non-polynomial operands (Uni, Vec, scalar): zip coefficient-wise.
+                        // This matches the pre-phase-4 behaviour for non-VPoly/Mle types.
+                        self.to_poly(a).into_iter()
+                            .zip(self.to_poly(b).into_iter())
+                            .enumerate()
+                            .for_each(|(i, (ap, bp))| {
+                                let pf = pr.clone().with_index(i);
+                                self.pl.insert(&pf, &(&ap * &bp));
+                                self.basis.push(ap * bp - SparsePolynomial::var(&pf));
+                            })
+                    }
+                }
+            },
             Op::Bin(BinOp::Dot, a, b, _) => {
                 let sum = self
                     .to_poly(&a)
@@ -1565,5 +1669,299 @@ mod tests {
         // Unsupported shape → stored in np, not pl.
         assert!(builder.np.contains(&result));
         assert!(!builder.pl.contains(&result));
+    }
+
+    // -----------------------------------------------------------------
+    // add_op: Op::Bin(Add|Sub|Mul) over polynomial operands (phase 4)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_add_op_vpoly_add_coefficient_wise() {
+        // VPoly(2,1) has 3 coefficient slots.  a + b should bind result.slot(i)
+        // to a.slot(i) + b.slot(i) for each of the 3 slots.
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let pref_b = register_ref(&mut builder, 1, ATyp::VPoly(2, 1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Add,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
+            ATyp::VPoly(2, 1),
+        );
+        builder.add_op(result.clone(), op);
+
+        // 3 result slots bound.
+        for i in 0..3 {
+            assert!(builder.pl.contains(&result.with_index(i)),
+                "add result slot {} missing", i);
+        }
+        // Each result slot contains exactly a.slot(i) + b.slot(i).
+        for i in 0..3 {
+            let mut a_slot = pref_a.with_index(i);
+            a_slot.typ = ATyp::scalar();
+            let mut b_slot = pref_b.with_index(i);
+            b_slot.typ = ATyp::scalar();
+            let stored = builder.pl.get(&result.with_index(i)).unwrap();
+            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
+                + &SparsePolynomial::var(&b_slot);
+            assert_eq!(*stored, expected,
+                "vpoly add slot {} mismatch", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_mle_add_pointwise() {
+        // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let pref_b = register_ref(&mut builder, 1, ATyp::Mle(2));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Add,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::Mle(2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::Mle(2))),
+            ATyp::Mle(2),
+        );
+        builder.add_op(result.clone(), op);
+
+        for i in 0..4 {
+            let mut a_slot = pref_a.with_index(i);
+            a_slot.typ = ATyp::scalar();
+            let mut b_slot = pref_b.with_index(i);
+            b_slot.typ = ATyp::scalar();
+            let stored = builder.pl.get(&result.with_index(i)).unwrap();
+            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
+                + &SparsePolynomial::var(&b_slot);
+            assert_eq!(*stored, expected,
+                "mle add slot {} mismatch", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_vpoly_sub_coefficient_wise() {
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::VPoly(2, 2));
+        let pref_b = register_ref(&mut builder, 1, ATyp::VPoly(2, 2));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Sub,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::VPoly(2, 2))),
+            ATyp::VPoly(2, 2),
+        );
+        builder.add_op(result.clone(), op);
+
+        // VPoly(2,2) has 6 slots.
+        assert_eq!(num_coeffs(&ATyp::VPoly(2, 2)), 6);
+        for i in 0..6 {
+            let mut a_slot = pref_a.with_index(i);
+            a_slot.typ = ATyp::scalar();
+            let mut b_slot = pref_b.with_index(i);
+            b_slot.typ = ATyp::scalar();
+            let stored = builder.pl.get(&result.with_index(i)).unwrap();
+            let expected = &SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&a_slot)
+                - &SparsePolynomial::var(&b_slot);
+            assert_eq!(*stored, expected,
+                "vpoly sub slot {} mismatch", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_vpoly_mul_univariate_convolution() {
+        // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::VPoly(1, 1));
+        let pref_b = register_ref(&mut builder, 1, ATyp::VPoly(1, 1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
+            ATyp::VPoly(1, 2),
+        );
+        builder.add_op(result.clone(), op);
+
+        // VPoly(1,2) has num_coeffs = 3 slots (degrees 0, 1, 2 in graded-lex order).
+        assert_eq!(num_coeffs(&ATyp::VPoly(1, 2)), 3);
+        let a0 = { let mut p = pref_a.with_index(0); p.typ = ATyp::scalar(); p };
+        let a1 = { let mut p = pref_a.with_index(1); p.typ = ATyp::scalar(); p };
+        let b0 = { let mut p = pref_b.with_index(0); p.typ = ATyp::scalar(); p };
+        let b1 = { let mut p = pref_b.with_index(1); p.typ = ATyp::scalar(); p };
+
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let deg0 = builder.pl.get(&result.with_index(0)).unwrap().clone();
+        let deg1 = builder.pl.get(&result.with_index(1)).unwrap().clone();
+        let deg2 = builder.pl.get(&result.with_index(2)).unwrap().clone();
+        assert_eq!(deg0, &var(&a0) * &var(&b0), "(*.x^0)");
+        assert_eq!(deg1, &(&var(&a0) * &var(&b1)) + &(&var(&a1) * &var(&b0)), "(*.x^1)");
+        assert_eq!(deg2, &var(&a1) * &var(&b1), "(*.x^2)");
+    }
+
+    #[test]
+    fn test_add_op_vpoly_mul_multivariate_spotcheck() {
+        // VPoly(2,1) × VPoly(2,1) → VPoly(2,2). We spot-check one slot.
+        // VPoly(2,1) multi-indices (graded-lex by total deg then lex):
+        //   [0,0], [0,1], [1,0]   (sizes 3)
+        // VPoly(2,2) multi-indices:
+        //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let pref_b = register_ref(&mut builder, 1, ATyp::VPoly(2, 1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
+            ATyp::VPoly(2, 2),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Check the constant-term slot (multi-index [0,0]): should be a_[0,0] * b_[0,0].
+        let r_idx = multi_indices(2, 2);
+        let a_idx = multi_indices(2, 1);
+        let pos_00 = r_idx.iter().position(|k| k == &vec![0,0]).unwrap();
+        let a_pos_00 = a_idx.iter().position(|k| k == &vec![0,0]).unwrap();
+
+        let a00 = { let mut p = pref_a.with_index(a_pos_00); p.typ = ATyp::scalar(); p };
+        let b00 = { let mut p = pref_b.with_index(a_pos_00); p.typ = ATyp::scalar(); p };
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let got = builder.pl.get(&result.with_index(pos_00)).unwrap().clone();
+        assert_eq!(got, &var(&a00) * &var(&b00), "VPoly(2,2) constant term mismatch");
+
+        // Ensure all 6 slots were populated.
+        for i in 0..6 {
+            assert!(builder.pl.contains(&result.with_index(i)),
+                "VPoly(2,2) slot {} missing", i);
+        }
+    }
+
+    #[test]
+    fn test_add_op_mle_mul_basis_change() {
+        // Mle(1) × Mle(1) → VPoly(1, 2). Verify by evaluating the resulting poly at
+        // a concrete point x: for p(x) = u_0 · (1-x) + u_1 · x and
+        // q(x) = v_0 · (1-x) + v_1 · x, the product p·q has coefficients
+        //   x^0 :  u_0 v_0
+        //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
+        //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        use backend::op::mk;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_u = register_ref(&mut builder, 0, ATyp::Mle(1));
+        let pref_v = register_ref(&mut builder, 1, ATyp::Mle(1));
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::Mle(1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::Mle(1))),
+            ATyp::VPoly(1, 2),
+        );
+        builder.add_op(result.clone(), op);
+
+        // 3 slots populated.
+        for i in 0..3 { assert!(builder.pl.contains(&result.with_index(i)),
+            "Mle×Mle slot {} missing", i); }
+
+        let u0 = { let mut p = pref_u.with_index(0); p.typ = ATyp::scalar(); p };
+        let u1 = { let mut p = pref_u.with_index(1); p.typ = ATyp::scalar(); p };
+        let v0 = { let mut p = pref_v.with_index(0); p.typ = ATyp::scalar(); p };
+        let v1 = { let mut p = pref_v.with_index(1); p.typ = ATyp::scalar(); p };
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+
+        let deg0 = builder.pl.get(&result.with_index(0)).unwrap().clone();
+        let deg1 = builder.pl.get(&result.with_index(1)).unwrap().clone();
+        let deg2 = builder.pl.get(&result.with_index(2)).unwrap().clone();
+
+        // deg0 = u_0 * v_0
+        assert_eq!(deg0, &var(&u0) * &var(&v0), "mle mul deg0");
+
+        // deg1 = -2 u_0 v_0 + u_0 v_1 + u_1 v_0
+        let two = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::lit(
+            &<ark_bls12_381::Fr as From<u64>>::from(2u64)
+        );
+        let expected_deg1 = &(&(&var(&u0) * &var(&v1)) + &(&var(&u1) * &var(&v0)))
+            - &(&two * &(&var(&u0) * &var(&v0)));
+        assert_eq!(deg1, expected_deg1, "mle mul deg1");
+
+        // deg2 = u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
+        let expected_deg2 = &(&(&var(&u0) * &var(&v0)) - &(&var(&u0) * &var(&v1)))
+            + &(&(&var(&u1) * &var(&v1)) - &(&var(&u1) * &var(&v0)));
+        assert_eq!(deg2, expected_deg2, "mle mul deg2");
     }
 }
