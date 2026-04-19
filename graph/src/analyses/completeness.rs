@@ -415,4 +415,43 @@ mod tests {
             "Protocol with unused public input c == 0 should be incomplete"
         );
     }
+
+    /// Phase 4 regression: Mle × Mle multiplication combined with relation
+    /// reduction. Given relation `a == b` on two multilinear extensions, the
+    /// verifier checks `a*a == a*b`. This reduces to zero in the Gröbner
+    /// basis only when the analysis (1) does slot-wise basis change for
+    /// Mle × Mle (phase 4), and (2) uses the relation `a_i - b_i = 0` on
+    /// every evaluation slot. Pre-phase-4 the zip-based Mul arm produced
+    /// coefficient-wise products instead of convolution/basis-change terms
+    /// on both sides of the equation, so the difference was still zero and
+    /// this test would have passed accidentally — but the *shapes* of the
+    /// output polynomials were wrong. Post-phase-4 both the shapes and the
+    /// arithmetic are correct, and the completeness check still succeeds.
+    #[test]
+    fn mle_product_relation_completeness() {
+        use lang::id::Tid;
+
+        let ex = r#"
+            proto mle_mul_rel<F: Field, N: Size>(
+                public a: Mle<F, N>,
+                public b: Mle<F, N>
+            ) where a == b {
+                let p = a * a;
+                let q = a * b;
+                verify(p == q)
+            }"#;
+
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("N"), &2);
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "Mle × Mle equality under relation a==b should be complete");
+    }
+
 }
