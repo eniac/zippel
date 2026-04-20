@@ -1,0 +1,10 @@
+/Users/sydniesheacohen/SydnieShea/zippel/zippel/target-small/debug/deps/hashconsing-0d675147aa2c8856.d: /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/lib.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll/hashers.rs
+
+/Users/sydniesheacohen/SydnieShea/zippel/zippel/target-small/debug/deps/libhashconsing-0d675147aa2c8856.rlib: /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/lib.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll/hashers.rs
+
+/Users/sydniesheacohen/SydnieShea/zippel/zippel/target-small/debug/deps/libhashconsing-0d675147aa2c8856.rmeta: /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/lib.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll.rs /Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll/hashers.rs
+
+/Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/lib.rs:
+/Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/coll.rs:
+/Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll.rs:
+/Users/sydniesheacohen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashconsing-1.6.0/src/hash_coll/hashers.rs:

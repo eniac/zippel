@@ -6,9 +6,9 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
     public challenges: [F; NUM_VARS_CONST - V],
     public prev_eval: F,
     public challenge: F,
-    public curr_round: F
+    public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
     let out = marginalize(cfg);
     let pi = out.next_poly;
 
@@ -31,9 +31,9 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public challenges: [F; NUM_VARS_CONST - 1],
     public prev_eval: F,
     public challenge: F,
-    public curr_round: F
+    public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
     let out = marginalize(cfg);
     evs <- out.evaluations;
     let round_ok = prev_eval == evs[0] + evs[1];
@@ -53,12 +53,12 @@ proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let zero = claimed_sum - claimed_sum;
-        let cfg0 = {| poly: poly, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
+        let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
         let out0 = marginalize(cfg0);
         let evs0 = out0.evaluations;
         claimed_sum == evs0[0] + evs0[1] {
     let zero = claimed_sum - claimed_sum;
-    let cfg0 = {| poly: poly, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
+    let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
     let out0 = marginalize(cfg0);
     evs0 <- out0.evaluations;
     let round1_ok = claimed_sum == evs0[0] + evs0[1];

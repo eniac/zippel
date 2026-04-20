@@ -1,44 +1,61 @@
-use zippel::*;
-use std::path::PathBuf;
-use backend::ArkBls12_381;
-<<<<<<< HEAD
+use backend::{ArkField17, ATyp, Value};
+use lang::id::Vid;
 use share::Ctx;
+use std::path::PathBuf;
+use std::time::Instant;
+use zippel::*;
 
 fn main() {
-    println!("=== Marginalize (ArkBls12_381, compile-only) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/marginalize/marginalize.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
-    println!("Compilation:    ✓ OK");
+    println!("=== Marginalize (ArkField17) ===");
+    let zippel_path = PathBuf::from("examples/marginalize.zippel");
+    let args =
+        ZippelArgs::new(zippel_path.clone()).with_subgraph("marginalize_proto".to_string());
 
-    // Static analysis (completeness & ZK)
-    println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/marginalize/marginalize.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let analysis = analysis_handler.minimal_analysis();
-    match &analysis.completeness {
-        Ok(()) => println!("Completeness:   ✓"),
-        Err(e) => println!("Completeness:   ✗ {}", e),
-    }
-    match &analysis.zk {
-        Ok(()) => println!("ZK:             ✓"),
-        Err(e) => println!("ZK:             ✗ {}", e),
-    }
-
-fn main() {
-    println!("Starting marginalize example");
-    // Path relative to workspace root when running: cargo run --example marginalize
-    let args = ZippelArgs::new(PathBuf::from("examples/marginalize.zippel"))
-        .with_pdf(PathBuf::from("marginalize_example.pdf"));
-
-    // Use a tiny field (mod 17) so the numbers that appear in the
-    // marginalize test are small and easy to understand.
-    let mut handler: zippel::ZippelHandler<ArkField17> = ZippelHandler::new(args);
+    let mut handler: ZippelHandler<ArkField17> = ZippelHandler::new(args);
 
     println!("Compiling...");
-    handler.compile();
-    println!("Compilation:    ✓ OK");
->>>>>>> 9327b6c (Cleanup)
+    handler.compile(&Ctx::new());
+    println!("Compilation:      ✓ OK");
+
+    let inputs = create_inputs();
+    let prover_scheduled = handler.default_schedule_prover();
+    let prover_start = Instant::now();
+    let proof = handler.run_prover(prover_scheduled, inputs);
+    let prover_elapsed = prover_start.elapsed();
+    let proof_bytes = proof_size_bytes::<ArkField17>(&proof);
+    println!("Prover time:      {prover_elapsed:.2?}");
+    println!(
+        "Proof size:       {} bytes ({} elements)",
+        proof_bytes,
+        proof.len()
+    );
+
+    let verifier_scheduled = handler.default_schedule_verifier();
+    let verifier_start = Instant::now();
+    let verifier_result = handler.run_verifier(verifier_scheduled, proof);
+    let verifier_elapsed = verifier_start.elapsed();
+    let result = check_verification(verifier_result);
+    println!("Verifier time:    {verifier_elapsed:.2?}");
+    if result.passed {
+        println!("Verification:     ✓ PASSED");
+    } else {
+        println!("Verification:     ✗ FAILED");
+        std::process::exit(1);
+    }
+
+    println!("\n--- Static Analysis ---");
+    let analysis_args =
+        ZippelArgs::new(zippel_path).with_subgraph("marginalize_proto".to_string());
+    let mut analysis_handler: ZippelHandler<ArkField17> = ZippelHandler::new(analysis_args);
+    let analysis = analysis_handler.minimal_analysis();
+    match &analysis.completeness {
+        Ok(()) => println!("Completeness:     ✓"),
+        Err(e) => println!("Completeness:     ✗ {}", e),
+    }
+    match &analysis.zk {
+        Ok(()) => println!("ZK:               ✓"),
+        Err(e) => println!("ZK:               ✗ {}", e),
+    }
 }
 
 fn create_inputs() -> Ctx<Vid, Value<ArkField17>> {
@@ -96,4 +113,3 @@ fn create_inputs() -> Ctx<Vid, Value<ArkField17>> {
         (Vid("challenge".to_string()), challenge),
     ])
 }
-

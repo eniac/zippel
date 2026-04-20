@@ -5,7 +5,7 @@ fn marginalize_test<F: Field>(
     public round: Fin<3>,
     public challenge: F
 ) -> { evaluations: [F; 3], next_poly: Poly<F, 1, 2> } {
-    let cfg = {| poly: poly, round: round, challenge: challenge |};
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
     marginalize(cfg)
 }
 
@@ -31,7 +31,7 @@ proto marginalize_proto<F: Field>
     (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
     where true {
 
-    let cfg = {| poly: poly, round: round, challenge: challenge |};
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
     let out = marginalize(cfg);
 
     let expected = [2, 10, 9];
@@ -46,7 +46,7 @@ fn marginalize_test<F: Field>(
     public y: F,
     public challenge: F
 ) -> { evaluations: [F; 3], next_poly: Poly<F, 0, 2> } {
-    let cfg = {| poly: poly, round: round, challenge: challenge |};
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
     marginalize(cfg)
 }
 
@@ -64,7 +64,7 @@ proto marginalize_univariate_proto<F: Field>
     (public poly: Poly<F, 1, 2>, public num_variables: Fin<1>, public max_degree: Fin<2>, public round: Fin<3>, public y: F, public challenge: F)
     where true {
 
-    let cfg = {| poly: poly, round: round, challenge: challenge |};
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
     let out = marginalize(cfg);
 
     // Rust side fixes `poly` to poly(x) = x^2 + x + y over F17, so:

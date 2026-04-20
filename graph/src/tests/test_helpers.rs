@@ -6,6 +6,7 @@
 use crate::{UDag, Node, Op, GOp, Ref, PRef, mk};
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
+use backend::values::{marginalize as backend_marginalize, round_univariate_from_marginalize_evals};
 use lang::id::Vid;
 use lang::typ::{Nothing, Qualifier, Distribution};
 use petgraph::graph::NodeIndex;
@@ -161,7 +162,83 @@ fn evaluate_op<C: HasOpFactory>(
                 .collect();
             Value::Record(evaluated_fields)
         }
-        Op::Ifft(_) | Op::Fft(_) | Op::Poly(_) | Op::Mle(_) | 
+        Op::Poly(a) => {
+            let a_val = evaluate_op(a, computed, inputs);
+            a_val.value_poly()
+        }
+        Op::Marginalize(a) => {
+            let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
+                Op::Record(fields) => {
+                    let poly_op = fields
+                        .get(&"poly".to_string())
+                        .expect("marginalize: missing field 'poly'");
+                    let challenge_op = fields
+                        .get(&"challenge".to_string())
+                        .expect("marginalize: missing field 'challenge'");
+                    let round_op = fields.get(&"round".to_string());
+                    let num_variables_op = fields.get(&"num_variables".to_string());
+                    let max_degree_op = fields.get(&"max_degree".to_string());
+
+                    let poly_val = evaluate_op(poly_op, computed, inputs);
+                    let challenge_val = evaluate_op(challenge_op, computed, inputs);
+                    let round_val = round_op.map(|op| evaluate_op(op, computed, inputs));
+                    let num_variables_val = num_variables_op.map(|op| evaluate_op(op, computed, inputs));
+                    let max_degree_val = max_degree_op.map(|op| evaluate_op(op, computed, inputs));
+                    (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
+                }
+                _ => {
+                    let cfg_val = evaluate_op(a, computed, inputs);
+                    let Value::Record(record) = cfg_val else { unreachable!() };
+                    let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
+                    let challenge_val = record.get(&"challenge".to_string()).cloned().unwrap();
+                    let round_val = record.get(&"round".to_string()).cloned();
+                    let num_variables_val = record.get(&"num_variables".to_string()).cloned();
+                    let max_degree_val = record.get(&"max_degree".to_string()).cloned();
+                    (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
+                }
+            };
+
+            let poly = poly_val.into_poly().clone();
+            let challenge = Some(challenge_val.into_scalar());
+            let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
+            let num_variables = if let Some(v) = num_variables_val {
+                v.into_index()
+            } else {
+                let current_poly_vars = poly.num_vars().unwrap_or(1);
+                if round == 0 { current_poly_vars } else { current_poly_vars + (round - 1) }
+            };
+            let max_degree = max_degree_val.map(|v| v.into_index()).unwrap_or_else(|| poly.degree());
+
+            let (evals, next_poly) =
+                backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
+            let mut out_fields = Ctx::new();
+            out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
+            out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
+            Value::Record(out_fields)
+        }
+        Op::Interpolate0dEval(evals, d) => {
+            let evals_val = evaluate_op(evals, computed, inputs);
+            let d_val = evaluate_op(d, computed, inputs);
+            let mut evals_vec: Vec<C::F> = match evals_val {
+                Value::VecScalar(v) => v,
+                v => v.into_vec_index().iter().map(|i| C::FOps::from_usize(*i)).collect(),
+            };
+            let degree = d_val.into_index();
+            assert!(
+                evals_vec.len() >= degree + 1,
+                "interpolate0d expects at least d+1 evaluations, got {} for d={}",
+                evals_vec.len(),
+                degree
+            );
+            evals_vec.truncate(degree + 1);
+            Value::Poly(round_univariate_from_marginalize_evals::<C::F>(&evals_vec))
+        }
+        Op::Proj(record_op, field_name, _) => {
+            let rec_val = evaluate_op(record_op, computed, inputs);
+            let Value::Record(record) = rec_val else { unreachable!() };
+            record.get(&field_name).cloned().unwrap()
+        }
+        Op::Ifft(_) | Op::Fft(_) | Op::Mle(_) |
         Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
@@ -275,5 +352,89 @@ mod tests {
         
         let expected: Value<TestConfig> = scalar(7);
         assert!(values_equal(&result.unwrap(), &expected));
+    }
+
+    #[test]
+    fn test_poly_op() {
+        let mut builder = GraphBuilder::<TestConfig>::new();
+        let poly_from_coeffs = Op::Poly(mk(Op::Value(Value::VecIndex(vec![1, 2, 3]))));
+        builder.add_op(poly_from_coeffs);
+
+        let dag = builder.build();
+        let result = execute_graph(&dag, test_inputs()).expect("expected poly result");
+        match result {
+            Value::Poly(_) => {}
+            other => panic!("expected Value::Poly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_proj_op() {
+        let mut builder = GraphBuilder::<TestConfig>::new();
+        let mut fields = Ctx::new();
+        fields.insert(&"x".to_string(), &mk(Op::Value(scalar::<TestConfig>(7))));
+        fields.insert(&"y".to_string(), &mk(Op::Value(scalar::<TestConfig>(9))));
+        let rec = Op::Record(fields);
+        let proj_x = Op::Proj(mk(rec), "x".to_string(), ATyp::scalar());
+        builder.add_op(proj_x);
+
+        let dag = builder.build();
+        let result = execute_graph(&dag, test_inputs()).expect("expected projection result");
+        assert!(values_equal(&result, &scalar::<TestConfig>(7)));
+    }
+
+    #[test]
+    fn test_interpolate_0d_eval_op() {
+        let mut builder = GraphBuilder::<TestConfig>::new();
+        let evals = Op::Value(Value::VecScalar(vec![
+            <TestConfig as ArkConfig>::FOps::from_usize(2),
+            <TestConfig as ArkConfig>::FOps::from_usize(10),
+            <TestConfig as ArkConfig>::FOps::from_usize(9),
+        ]));
+        let degree = Op::Value(Value::Index(2));
+        let interp = Op::Interpolate0dEval(mk(evals), mk(degree));
+        builder.add_op(interp);
+
+        let dag = builder.build();
+        let result = execute_graph(&dag, test_inputs()).expect("expected interpolation result");
+        match result {
+            Value::Poly(_) => {}
+            other => panic!("expected Value::Poly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_marginalize_op() {
+        let mut builder = GraphBuilder::<TestConfig>::new();
+
+        let poly = Value::<TestConfig>::VecIndex(vec![1, 2, 3]).value_poly();
+        let mut cfg_fields = Ctx::new();
+        cfg_fields.insert(&"poly".to_string(), &mk(Op::Value(poly)));
+        cfg_fields.insert(
+            &"challenge".to_string(),
+            &mk(Op::Value(Value::Scalar(<TestConfig as ArkConfig>::FOps::zero()))),
+        );
+        cfg_fields.insert(&"round".to_string(), &mk(Op::Value(Value::Index(0))));
+        cfg_fields.insert(&"num_variables".to_string(), &mk(Op::Value(Value::Index(1))));
+        cfg_fields.insert(&"max_degree".to_string(), &mk(Op::Value(Value::Index(2))));
+        let cfg = Op::Record(cfg_fields);
+
+        builder.add_op(Op::Marginalize(mk(cfg)));
+
+        let dag = builder.build();
+        let result = execute_graph(&dag, test_inputs()).expect("expected marginalize result");
+        let Value::Record(fields) = result else {
+            panic!("expected Value::Record from marginalize");
+        };
+        let evals = fields.get(&"evaluations".to_string()).expect("evaluations field");
+        let next_poly = fields.get(&"next_poly".to_string()).expect("next_poly field");
+        match evals {
+            Value::VecScalar(v) => assert_eq!(v.len(), 3),
+            other => panic!("expected VecScalar evaluations, got {other:?}"),
+        }
+        match next_poly {
+            Value::Poly(_) => {}
+            other => panic!("expected Poly next_poly, got {other:?}"),
+        }
     }
 }

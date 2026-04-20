@@ -151,7 +151,7 @@ impl UDecl {
 
         csig.typevars = csig.typevars
             .into_iter()
-            .filter(|tv| !matches!(tv.kind, CKind::SizeVar))
+            .filter(|tv| !matches!(tv.kind, CKind::SizeVar | CKind::Range(_)))
             .collect();
 
         // Check the ranges

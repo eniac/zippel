@@ -338,11 +338,45 @@ impl Typeable for CExp {
                     _ => return Err(TypeError::poly(kctx, vctx, self)),
                 };
 
+                let challenge_typ = fields.get(&"challenge".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "challenge", &fields))?;
+                let challenge_tid = challenge_typ
+                    .to_scalar(kctx)
+                    .ok_or_else(|| TypeError::exp(kctx, vctx, self))?;
+                if challenge_tid != field_tid {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let round_typ = fields.get(&"round".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "round", &fields))?;
+                if !matches!(round_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let num_variables_typ = fields.get(&"num_variables".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields))?;
+                if !matches!(num_variables_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let max_degree_typ = fields.get(&"max_degree".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields))?;
+                if !matches!(max_degree_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                // Runtime consumes max_degree as an index. When this is a singleton Fin,
+                // preserve that precise degree in the inferred output type.
+                let out_degree = match max_degree_typ {
+                    CTyp::Fin(r) if r.step == 1 && r.end == r.start + 1 => r.start,
+                    _ => d,
+                };
+
                 let mut out_fields = Ctx::new();
                 let f_typ = CTyp::Base(field_tid.clone());
-                out_fields.insert(&"evaluations".to_string(), &CTyp::vec(&f_typ, d + 1));
+                out_fields.insert(&"evaluations".to_string(), &CTyp::vec(&f_typ, out_degree + 1));
                 let next_n = if n > 0 { n - 1 } else { 0 };
-                out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, d));
+                out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, out_degree));
 
                 Ok(CTyp::Record(out_fields))
             },

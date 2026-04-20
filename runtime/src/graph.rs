@@ -197,7 +197,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return v_val.value_reduce(*op);
             }
             Op::Marginalize(a) => {
-                let (poly_val, challenge_val, round_val, max_degree_val) = match &**a {
+                let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
                     Op::Record(fields) => {
                         let poly_op = fields
                             .get(&"poly".to_string())
@@ -206,13 +206,16 @@ impl<C: ArkConfig> MutexGraph<C> {
                             .get(&"challenge".to_string())
                             .expect("marginalize: missing field 'challenge'");
                         let round_op = fields.get(&"round".to_string());
+                        let num_variables_op = fields.get(&"num_variables".to_string());
                         let max_degree_op = fields.get(&"max_degree".to_string());
 
                         let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
                         let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
                         let round_val = round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                        let num_variables_val =
+                            num_variables_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
                         let max_degree_val = max_degree_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                        (poly_val, challenge_val, round_val, max_degree_val)
+                        (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
                     }
                     _ => {
                         let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
@@ -226,8 +229,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                             .cloned()
                             .unwrap();
                         let round_val = record.get(&"round".to_string()).cloned();
+                        let num_variables_val = record.get(&"num_variables".to_string()).cloned();
                         let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-                        (poly_val, challenge_val, round_val, max_degree_val)
+                        (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
                     }
                 };
 
@@ -235,14 +239,15 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let challenge = Some(challenge_val.into_scalar());
                 let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
 
-                let current_poly_vars = poly
-                    .num_vars()
-                    .unwrap();
-
-                let num_variables = if round == 0 {
-                    current_poly_vars
+                let num_variables = if let Some(v) = num_variables_val {
+                    v.into_index()
                 } else {
-                    current_poly_vars + (round - 1)
+                    let current_poly_vars = poly.num_vars().unwrap_or(1);
+                    if round == 0 {
+                        current_poly_vars
+                    } else {
+                        current_poly_vars + (round - 1)
+                    }
                 };
 
                 let max_degree = max_degree_val
@@ -348,11 +353,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
 
                 if thread_num_val <= (max_threads - active_threads) {
-                    let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(thread_num_val)
-                        .build()
-                        .unwrap();
-
                     // check if node is a challenge node
                     let mut challenge_node = false;
                     let mut input_node = false;
@@ -380,13 +380,23 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
 
                     if !challenge_node && !input_node {
-
-                        let graph = Arc::clone(&g);
-                        let inputs_arc = Arc::clone(&inputs);
-                        pool.spawn(move || {
-                            graph.handle_node(node_index, inputs_arc);
-                        });
-
+                        if thread_num_val <= 1 {
+                            let graph = Arc::clone(&g);
+                            let inputs_arc = Arc::clone(&inputs);
+                            rayon::spawn(move || {
+                                graph.handle_node(node_index, inputs_arc);
+                            });
+                        } else {
+                            let pool = rayon::ThreadPoolBuilder::new()
+                                .num_threads(thread_num_val)
+                                .build()
+                                .unwrap();
+                            let graph = Arc::clone(&g);
+                            let inputs_arc = Arc::clone(&inputs);
+                            pool.spawn(move || {
+                                graph.handle_node(node_index, inputs_arc);
+                            });
+                        }
                     }
                     running_nodes.push(node_index);
                     active_threads += thread_num_val;
