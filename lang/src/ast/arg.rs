@@ -5,7 +5,7 @@ use std::fmt;
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
 use share::traversal::{ToTraversal1, ToTraversal2};
 use crate::id::{Tid, Vid, TidSubst};
-use crate::typ::{Size, Typ, Qualifier, Distribution, Range, RangeTraversal};
+use crate::typ::{Size, Typ, Qualifier, Distribution, Range, RangeTraversal, TypeInline, GTyp};
 use crate::parser::*;
 
 /// `Arg` represents an argument in the Zippel language, including its identifier, type, and principals.
@@ -154,6 +154,18 @@ impl<T: Clone, N: Clone> RangeTraversal<N> for Arg<T, N> {
 impl<T: Clone, N: Clone> RangeTraversal<N> for Args<T, N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Args(self.0.into_iter().map(|arg| arg.range_traverse(f)).collect::<Result<_, _>>()?))
+    }
+}
+
+impl<N: Clone> TypeInline<N> for GArg<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        Arg { typ: self.typ.type_inline(ctx), ..self }
+    }
+}
+
+impl<N: Clone> TypeInline<N> for GArgs<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        Args(self.0.into_iter().map(|a| a.type_inline(ctx)).collect())
     }
 }
 

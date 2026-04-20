@@ -11,6 +11,6 @@ proto virtual_test<F: Field>(
     
     // Verify the result
     let expected = poly([4, 13, 22, 15]);  // (1 + 2x + 3x^2) * (4 + 5x) = 4 + 13x + 22x^2 + 15x^3
-    verify(p3 == expected);
+    verify(p3 == expected)
 }
 

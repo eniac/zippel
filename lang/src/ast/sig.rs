@@ -1,4 +1,4 @@
-use crate::typ::{Size, CKind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal};
+use crate::typ::{Size, CKind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal, TypeInline};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
 use crate::ast::{GArg, GArgs};
@@ -85,6 +85,17 @@ impl<N: Clone> TidSubst for Sig<N> {
 impl<N: Clone> RangeTraversal<N> for Sig<N> {
     fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
         Ok(Sig { name: self.name, typevars: self.typevars.range_traverse(f)?, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
+    }
+}
+
+impl<N: Clone> TypeInline<N> for Sig<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        Sig {
+            name: self.name,
+            typevars: self.typevars,
+            args: self.args.type_inline(ctx),
+            ret: self.ret.type_inline(ctx),
+        }
     }
 }
 

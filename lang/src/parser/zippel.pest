@@ -19,7 +19,7 @@ and_op = @{ "&&" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" }
+keyword = {"let" | "fn" | "proto" | "type" }
 id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 
@@ -111,7 +111,7 @@ exp_term  = _{
     assert_exp    = { "assert" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Prover) expression
     verify_exp    = { "verify" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Verifier) expression
     app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
-    let_exp       = { "let" ~ id ~ "=" ~ exp ~ ";" ~ exp }            // Let expression
+    let_exp       = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp ~ ";" ~ exp }  // Let expression (optional type annotation)
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression
     bool_exp      = { "true" | "false" }                              // True or false constants
     minus_exp     = _{ unary_minus ~ exp }                            // Negative expressions
@@ -119,7 +119,6 @@ exp_term  = _{
     record_field_exp = { id ~ ":" ~ exp }                             // Record field with value
     bin_op        = _{ concat_op | add_op | sub_op | mul_op | div_op | pow_op | rem_op | eq_op | and_op }
 exps = { exp ~ ("," ~ exp)* }
-stmts   = { exp ~ (";" ~ exp)* ~ ";"? }
 
 /// Type variable declarations
 tvar  = { id ~ ":" ~ kind_ty }
@@ -138,8 +137,8 @@ args = { arg? ~ ("," ~ arg)* }
 
 /// Declarations are either [protocols], [functions], or [type aliases].
 decl = { proto_decl | func_decl | type_decl }
-    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ stmts ~ "}" }
-    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ stmts ~ "}" }
+    proto_decl = { "proto" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "where" ~ exp ~ "{" ~ exp ~ "}" }
+    func_decl  = { "fn" ~ id ~ "<" ~ tvars ~ ">" ~ "(" ~ args ~ ")" ~ "->" ~ typ ~ "{" ~ exp ~ "}" }
     type_decl  = { "type" ~ id ~ "=" ~ typ ~ ";" }
 
 /// Top-level module

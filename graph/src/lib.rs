@@ -311,13 +311,13 @@ impl<C: ArkConfig, A> Dag<C, A> {
         let transcript_nodes_list: Vec<NodeIndex> = self.graph.node_indices()
             .filter(|n| self[*n].is_transcript())
             .collect();
-        
+
         // Do a topological sort of the transcript nodes
         let mut ordered = Vec::new();
         if !transcript_nodes_list.is_empty() {
             let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
             let mut has_parent_in_list = HashSet::new();
-            
+
             for &node in &transcript_nodes_list {
                 for parent in self.graph.neighbors_directed(node, petgraph::Direction::Incoming) {
                     if transcript_nodes_list.contains(&parent) {
@@ -325,19 +325,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
                         has_parent_in_list.insert(node);
                     }
                 }
-            }        
- 
+            }
+
             let root = transcript_nodes_list.iter()
                 .find(|&&n| !has_parent_in_list.contains(&n))
                 .expect("Cycle detected in transcript nodes");
-            
+
             let mut current = *root;
             ordered.push(current);
             while let Some(&child) = transcript_nodes_list.iter()
                 .find(|&&n| parent_map.get(&n) == Some(&current)) {
                 ordered.push(child);
                 current = child;
-            }  
+            }
         }
         ordered
     }
@@ -358,14 +358,15 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
-    /// Get the verifier assertion, a check node with no outgoing edges
-    pub fn find_check(&self) -> Option<NodeIndex> {
+    /// Get all verifier assertions, check nodes with no outgoing edges
+    pub fn find_check(&self) -> Vec<NodeIndex> {
         self.node_indices()
-            .find_map(|n| match &self[n] {
+            .filter_map(|n| match &self[n] {
                 Node::Op(op, _) | Node::Transcr(op, _)
                     if matches!(&**op, Op::Check(_)) && self.nodes_from(n).count() == 0 => Some(n),
                 _ => None
             })
+            .collect()
     }
 
     pub fn nodes_from(&self, n: NodeIndex) -> Neighbors<'_, Dep, u32> {
@@ -671,9 +672,9 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
         }
 
-        // Add the verifier nodes, start with the verifier assertion
-        let n_check = self.find_check().expect("No verifier assertion found");
-        let mut worklist = vec![n_check];
+        // Add the verifier nodes, start with the verifier assertions
+        let mut worklist = self.find_check();
+        assert!(!worklist.is_empty(), "No verifier assertion found");
 
         while let Some(n) = worklist.pop() {
             if node_map_self.contains_key(&n) {
@@ -697,7 +698,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 }
             }
 
-            // Add node to prover graph
+            // Add node to verifier graph
             let new_node = verifier.add_node(self[n].clone());
             node_map_self.insert(n, new_node);
 
@@ -711,7 +712,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
         }
 
-        // Add edges to prover graph using the mapped node indices
+        // Add edges to verifier graph using the mapped node indices
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
@@ -850,7 +851,7 @@ impl<C: ArkConfig, A> Dags<C, A> {
 
     /// A protocol has a verifier assertion
     pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
-        self.protocols().into_iter().find(|g| 
+        self.protocols().into_iter().find(|g|
             if let Some(v) = g[g.input_node()].name() {
                 &v.0 == name
             } else {
@@ -859,11 +860,11 @@ impl<C: ArkConfig, A> Dags<C, A> {
     }
 
     pub fn protocols(&self) -> Vec<&Dag<C, A>> {
-        self.0.iter().filter(|g| g.find_check().is_some()).collect()
+        self.0.iter().filter(|g| !g.find_check().is_empty()).collect()
     }
 
     pub fn functions(&self) -> Vec<&Dag<C, A>> {
-        self.0.iter().filter(|g| !g.find_check().is_some()).collect()
+        self.0.iter().filter(|g| g.find_check().is_empty()).collect()
     }
 
     /// Annotate all graphs using function [f]
@@ -991,6 +992,10 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+            },
+            CBody::TypeAlias => {
+                // Type aliases are expanded inline during module parsing,
+                // no graph nodes needed.
             }
         }
 
@@ -1014,7 +1019,7 @@ impl<C: HasOpFactory> UDag<C> {
         var_map: &HashMap<Vid, usize>
     ) -> Result<PolyVariant<C::F>, GraphError> {
         use ark_ff::{Zero, One};
-        
+
         match exp {
             CExp::Lit(n) => {
                 // Scalar constant
@@ -1096,7 +1101,7 @@ impl<C: HasOpFactory> UDag<C> {
                 let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                 let eval_op = GOp::eval(vp, vx);
-                
+
                 return Ok(eval_op)
             },
 
@@ -1514,6 +1519,8 @@ impl<C: HasOpFactory> UDag<C> {
                 let nassert = self.add_node(Node::check(&oa));
                 // Add edges
                 self.add_edges(edge_type, nassert, oa);
+                // Assert depends on the full transcript (implicit ordering)
+                self.add_edge(*transcr, nassert, Dep::transcript());
                 return Ok(GOp::underscore(nassert, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, &vctx, &exp),
@@ -1525,6 +1532,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // Add new node
                 let nverify = self.add_node(Node::check(&oa));
                 self.add_edges(edge_type, nverify, oa);
+                // Verify depends on the full transcript (implicit ordering)
+                self.add_edge(*transcr, nverify, Dep::transcript());
                 return Ok(GOp::underscore(nverify, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, &vctx, &exp),
@@ -1537,24 +1546,24 @@ impl<C: HasOpFactory> UDag<C> {
                     .enumerate()
                     .map(|(i, v)| (v.clone(), i))
                     .collect();
-                
+
                 let poly = Self::exp_to_poly_variant(&body, &fun_vars, &var_map)?;
-                
+
                 // Create a Value::Poly from the PolyVariant wrapped in VirtualPolynomial
                 let poly_value = Value::Poly(VirtualPolynomial::from_poly(poly));
-                
+
                 return Ok(GOp::Value(poly_value))
             },
             CExp::Record(fields) => {
                 // For records, we add each field to the graph and create a Record operation
                 let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
-                
+
                 for (field_name, field_exp) in fields.iter() {
                     let field_op = self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let hop = mk::<C>(field_op);
                     field_ops.insert(field_name, &hop);
                 }
-                
+
                 // Return a Record operation with named fields
                 return Ok(GOp::Record(field_ops))
             },
@@ -1575,7 +1584,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     kctx, &vctx, &CExp::Record(fields.clone()), field_name.as_str(), &field_types
                                 ))
                             })?;
-                        
+
                         // Add the field expression to the graph
                         self.add_exp(field_exp.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)
                     },
@@ -1583,10 +1592,10 @@ impl<C: HasOpFactory> UDag<C> {
                         let id_clone = id.clone();
                         let record_op = vars.get(&id_clone)
                             .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, &vctx, &CExp::Var(id_clone.clone()))))?;
-                        
+
                         // Try to infer the record type to verify the field exists
                         let record_typ = CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), &vctx)?;
-                        
+
                         match &record_typ {
                             CTyp::Record(fields) => {
                                 // Verify the field exists and get its type
@@ -1594,7 +1603,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                         kctx, &vctx, &CExp::Var(id_clone.clone()), field_name.as_str(), fields
                                     )))?;
-                                
+
                                 // Extract the field from the record operation
                                 match record_op {
                                     GOp::Record(record_fields) => {
@@ -1610,7 +1619,7 @@ impl<C: HasOpFactory> UDag<C> {
                                             .ok_or_else(|| GraphError::Type(TypeError::ark(
                                                 kctx, &vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
                                             )))?;
-                                        
+
                                         // The field is accessed via projection, so we return a Ref with the field type
                                         return Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
                                     },
@@ -1641,7 +1650,7 @@ impl<C: HasOpFactory> UDag<C> {
                     _ => {
                         // For other expressions, try to infer the record type
                         let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
-                        
+
                         match record_typ {
                             CTyp::Record(fields) => {
                                 // Get the field type
@@ -1649,7 +1658,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
                                         kctx, &vctx, &record_exp, field_name.as_str(), &fields
                                     )))?;
-                                
+
                                 // For complex expressions, we'd need to evaluate them first
                                 // For now, return an error indicating this isn't fully supported
                                 Err(GraphError::Type(TypeError::next(
@@ -1744,7 +1753,7 @@ fn graph_foo() {
             a <- r * c;
             b <- r + c + s;
             x <- v[1..5];
-            verify(a * s == b * x[3]);
+            verify(a * s == b * x[3])
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);
@@ -1761,7 +1770,7 @@ fn graph_poly() {
         proto poly_mul<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 4>) where a == a {
             let r = random<F*>;
             let p = a * b;
-            verify(p(r) == (a(r) * b(r)));
+            verify(p(r) == (a(r) * b(r)))
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     debug!("{}", m);

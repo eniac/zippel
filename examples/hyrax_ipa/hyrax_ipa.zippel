@@ -152,5 +152,5 @@ proto proof_log_of_dot_prod<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
         r_Upsilon
     );
 
-    verify(result);
+    verify(result)
 }

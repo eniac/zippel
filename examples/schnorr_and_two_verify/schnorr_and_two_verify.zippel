@@ -12,5 +12,6 @@ proto reuse_randomness<G: Group, F: Scalar<G>>(
       c <- challenge<F>;
       z1 <- r + x*c;      // Response for x
       z2 <- r + y*c;      // Response for y
-      verify(g*z1 == u1 + h1*c && g*z2 == u2 + h2*c)
+      verify(g*z1 == u1 + h1*c);
+      verify(g*z2 == u2 + h2*c)
 }

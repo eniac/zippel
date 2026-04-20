@@ -1,26 +1,21 @@
-use ark_ff::{Field, One, Zero};
-use ark_poly::DenseMultilinearExtension;
+use ark_ff::Zero;
 use ark_std::UniformRand;
-use backend::poly_variant::PolyVariant;
-use backend::VirtualPolynomial;
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::{Tid, Vid};
+use lang::id::Vid;
 use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+// NX and NY are hardcoded to 2 in the .zippel protocol (see the challenge block).
 const NX: usize = 2;
-const NY: usize = 1;
-const NUM_VARS: usize = NX + NY;
+const NY: usize = 2;
 
 fn main() {
     println!("=== KZH (ArkBls12_381, NX={}, NY={}) ===", NX, NY);
     let args = ZippelArgs::new(PathBuf::from("examples/kzh/kzh.zippel"));
     let compile_result = std::panic::catch_unwind(|| {
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("NX"), &NX);
-        sizes.insert(&Tid::new("NY"), &NY);
+        let sizes = Ctx::new();
         handler.compile(&sizes);
         handler
     });
@@ -84,78 +79,56 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let one = <ArkBls12_381 as ArkConfig>::F::one();
-    let zero = <ArkBls12_381 as ArkConfig>::F::zero();
 
-    let tau = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g1 = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g2 = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    // KZH SRS (Figure 2): per-row trapdoors tau_i, per-column generators G_j,
+    // blinder alpha. H_{i,j} = tau_i * G_j; H^j = alpha * G_j;
+    // V^i = tau_i * V; V' = alpha * V.
+    let g2_base = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let alpha = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
     let h_xy_size = 1usize << (NX + NY);
     let h_y_size = 1usize << NY;
     let d_x_size = 1usize << NX;
 
-    let h_xy_vals: Vec<_> = (0..h_xy_size).map(|k| g1 * tau.pow([k as u64])).collect();
-    let h_y_vals: Vec<_> = (0..h_y_size).map(|j| g1 * tau.pow([j as u64])).collect();
+    let g_cols: Vec<<ArkBls12_381 as ArkConfig>::G1> =
+        (0..h_y_size).map(|_| <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)).collect();
+    let tau_rows: Vec<<ArkBls12_381 as ArkConfig>::F> =
+        (0..d_x_size).map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng)).collect();
 
-    let v_prime = g2 * tau.pow([(d_x_size as u64)]);
-    let v_x_vals: Vec<_> = (0..d_x_size).map(|i| g2 * tau.pow([i as u64])).collect();
+    let h_xy_vals: Vec<_> = (0..h_xy_size)
+        .map(|k| {
+            let i = k >> NY;
+            let j = k & (h_y_size - 1);
+            g_cols[j] * tau_rows[i]
+        })
+        .collect();
+    let h_y_vals: Vec<_> = (0..h_y_size).map(|j| g_cols[j] * alpha).collect();
 
+    let v_prime = g2_base * alpha;
+    let v_x_vals: Vec<_> = (0..d_x_size).map(|i| g2_base * tau_rows[i]).collect();
+
+    // Prover's secret polynomial: random evaluations on the boolean hypercube.
     let f_evals: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..h_xy_size)
         .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
         .collect();
 
+    // Aux cache from commit phase: d_x[i] = sum_j f(i,j) * h_y[j].
     let d_x_vals: Vec<_> = (0..d_x_size)
         .map(|i| {
-            let mut d_x_i = <ArkBls12_381 as ArkConfig>::G1::zero();
+            let mut acc = <ArkBls12_381 as ArkConfig>::G1::zero();
             for j in 0..h_y_size {
-                let f_ij = f_evals[i * h_y_size + j];
-                d_x_i = d_x_i + h_y_vals[j] * f_ij;
+                acc = acc + h_y_vals[j] * f_evals[i * h_y_size + j];
             }
-            d_x_i
+            acc
         })
         .collect();
 
-    let x0_vals: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..NX)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
-        .collect();
-    let y0_vals: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..NY)
-        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
-        .collect();
-
-    let z0 = (0..h_xy_size).fold(zero, |acc, k| {
-        let mut weight = one;
-        for i in 0..NX {
-            let bit = (k >> (NUM_VARS - 1 - i)) & 1;
-            if bit == 1 {
-                weight = weight * x0_vals[i];
-            } else {
-                weight = weight * (one - x0_vals[i]);
-            }
-        }
-        for j in 0..NY {
-            let bit = (k >> (NUM_VARS - 1 - NX - j)) & 1;
-            if bit == 1 {
-                weight = weight * y0_vals[j];
-            } else {
-                weight = weight * (one - y0_vals[j]);
-            }
-        }
-        acc + f_evals[k] * weight
-    });
-
-    let mle = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, f_evals.clone());
-    let f_xy_poly = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(mle)));
-
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_xy".to_string()), f_xy_poly),
-        (Vid("x0".to_string()), Value::VecScalar(x0_vals)),
-        (Vid("y0".to_string()), Value::VecScalar(y0_vals)),
-        (Vid("z0".to_string()), Value::Scalar(z0)),
-        (Vid("h_xy".to_string()), Value::VecG1(h_xy_vals)),
-        (Vid("h_y".to_string()), Value::VecG1(h_y_vals)),
-        (Vid("d_x".to_string()), Value::VecG1(d_x_vals)),
+        (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
+        (Vid("h_xy".to_string()),    Value::VecG1(h_xy_vals)),
+        (Vid("h_y".to_string()),     Value::VecG1(h_y_vals)),
+        (Vid("d_x".to_string()),     Value::VecG1(d_x_vals)),
         (Vid("v_prime".to_string()), Value::G2(v_prime)),
-        (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
+        (Vid("v_x".to_string()),     Value::VecG2(v_x_vals)),
     ])
 }

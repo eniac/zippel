@@ -14,5 +14,5 @@ proto vpoly_product_check<F: Field, S: Size, N: S>(
     let rhs = eval(a, [r1, r2]) * eval(b, [r1, r2]);
 
     // Verify product consistency
-    verify(lhs == rhs);
+    verify(lhs == rhs)
 }

@@ -6,5 +6,5 @@ proto benchmark<G: Group, F: Scalar<G>, N_val_const: 10240, M_val_const: 1280>(
     private b: [F; M_val_const]) where
         (a == a) {
     c <- dot(a, g_a_vec) + dot(b, g_b_vec);
-    verify(c == c);
+    verify(c == c)
 }

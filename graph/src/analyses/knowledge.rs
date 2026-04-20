@@ -158,7 +158,7 @@ fn knowledge_foo() {
             c <- challenge<F>;
             a <- r * c;
             b <- r  + c + s;
-            verify(a == b);
+            verify(a == b)
         }"#;
 
     debug!("Parsing example: {}", ex);
@@ -192,7 +192,7 @@ fn groebner_bar() {
             let r = random<F>;
             a <- r * s;
             b <- r * s';
-            verify(a == b);
+            verify(a == b)
         }"#;
 
     debug!("Parsing example: {}", ex);
@@ -224,7 +224,7 @@ fn groebner_baz() {
             let r = random<F>;
             a <- r * s[3];
             b <- r * s';
-            verify(a == b);
+            verify(a == b)
         }"#;
 
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
@@ -262,7 +262,7 @@ fn groebner_ex3() {
             let b = r + s';
             c <- g * a;
             d <- g * b;
-            verify(c == d);
+            verify(c == d)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -293,7 +293,7 @@ fn schnorr_zk() {
             u <- g*r;
             c <- challenge<F*>;
             z <- r + x*c;
-            verify(g*z == u + h*c);
+            verify(g*z == u + h*c)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -315,7 +315,7 @@ fn zk_regression_direct_secret_leak() {
             d <- x;
             c <- challenge<F*>;
             z <- r + x*c;
-            verify(g*z == u + h*c);
+            verify(g*z == u + h*c)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -338,7 +338,7 @@ fn zk_leak_unblinded_linear_combination() {
     let ex = r#"
         proto leak<F: Field>(private x: F, public y: F) where x == x {
             d <- x + y;
-            verify(d == d);
+            verify(d == d)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -358,7 +358,7 @@ fn zk_leak_no_random_blinding() {
         proto leak<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
             c <- challenge<F*>;
             z <- x * c;
-            verify(g*z == h*c);
+            verify(g*z == h*c)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -378,7 +378,7 @@ fn zk_leak_secret_difference_on_transcript() {
         proto leak<F: Field>(private s: F, private t: F, public y: F) where y == y {
             a <- s + y;
             b <- t + y;
-            verify(a == b);
+            verify(a == b)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -400,7 +400,7 @@ fn zk_safe_schnorr_with_blinding() {
             u <- g*r;
             c <- challenge<F*>;
             z <- r + x*c;
-            verify(g*z == u + h*c);
+            verify(g*z == u + h*c)
         }"#;
     let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));

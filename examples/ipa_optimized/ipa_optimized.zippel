@@ -161,5 +161,5 @@ proto ipa_wrapper<G: Group, F: Scalar<G>, S: Size, N_val_const: 2^S>(
                                         );
 
     // This Protocol 1 succeeds if the called ipa_recursive verifies successfully.
-    verify(verification_result);
+    verify(verification_result)
 }

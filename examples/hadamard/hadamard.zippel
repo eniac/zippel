@@ -11,6 +11,6 @@ proto hadamard<F: Field, S: Size, N: 1..S>(
     r <- challenge<F>;
     let left_hand = eval(p_A, [r]) * eval(p_B, [r]) - eval(p_C, [r]);
     let right_hand = eval(q, [r]) * eval(v_H, [r]);
-    verify(left_hand == right_hand);
+    verify(left_hand == right_hand)
 }
 

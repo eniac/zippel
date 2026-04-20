@@ -25,5 +25,5 @@ proto sum_test<F: Field, N_val_const: 4>(
                                             sum_vec
                                         );
 
-    verify(verification_result);
+    verify(verification_result)
 }

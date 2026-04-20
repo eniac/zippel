@@ -2,5 +2,5 @@ proto no_random_knowledge_of_dlog<G: Group, F: Scalar<G>>(private x: F, public g
   // NOTE: No randomness 'r' is sampled.
   c <- challenge<F>;
   z <- x*c;       // Response depends directly on secret and challenge
-  verify(g*z == h*c);
+  verify(g*z == h*c)
 }

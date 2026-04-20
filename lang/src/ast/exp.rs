@@ -11,6 +11,7 @@ use share::traversal::ToTraversal1;
 
 use share::{Set, BoxAllocator, Pretty, DocAllocator, DocBuilder};
 use crate::typ::Size;
+use crate::typ::GTyp;
 use crate::typ::range::{Range, RangeTraversal};
 use crate::id::{Tid, TidSubst, Vid};
 
@@ -70,7 +71,7 @@ pub enum BinOp {
     ///
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     verify(5 == 5);
+    ///     verify(5 == 5)
     ///     ```
     Equ,
 
@@ -261,7 +262,7 @@ pub enum Exp<N> {
     ///     Verifier check followed by expression.
     ///     **Zippel Code:**
     ///     ```zippel
-    ///     verify(a == a);
+    ///     verify(a == a)
     ///     ...
     ///     ```
     Verify(Box<Exp<N>>),
@@ -1323,11 +1324,22 @@ impl<'pest> FromPest<'pest> for UExp {
                 },
                 Rule::let_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::letx(
-                        Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
-                    ))
+                    let var = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    // Next is either a type annotation or the value expression
+                    let next = inner.next().unwrap();
+                    let (typ_ann, val) = if next.as_rule() == Rule::exp {
+                        // No type annotation: next is the value
+                        (None, Exp::from_pest(&mut Pairs::single(next))?)
+                    } else {
+                        // Type annotation present: next is typ, then exp
+                        let typ = GTyp::from_pest(&mut Pairs::single(next))?;
+                        let val = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                        (Some(typ), val)
+                    };
+                    let body = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                    // Type annotation is checked during type inference, not stored in AST
+                    let _ = typ_ann;
+                    Ok(Exp::letx(var, val, body))
                 },
                 Rule::log_exp => {
                     let mut inner = pair.into_inner();

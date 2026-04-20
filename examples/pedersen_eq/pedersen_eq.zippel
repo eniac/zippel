@@ -58,7 +58,7 @@ where c1 == g*m1 + h*r1 && c2 == g*m2 + h*r2 && m1 == m2 {
       // and values from the transcript (t, c, z).
       // Note: c_diff is re-computed here from public c1, c2 for clarity,
       // or could be passed/precomputed.
-      verify(h * z == t + (c1 - c2) * c);
+      verify(h * z == t + (c1 - c2) * c)
       // This expands to: h * (k + r_diff*c) == h*k + (h*r_diff)*c
       // which holds if c1 - c2 == h*r_diff (i.e., if m1 == m2).
 }

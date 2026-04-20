@@ -66,8 +66,8 @@ impl QualifierPropagation {
 
     pub fn from_dag<C: ArkConfig>(dag: &UDag<C>) -> QDag<C> {
         let mut qp = QualifierPropagation { quals: Ctx::new() };
-        let check = dag.find_check().expect("No check found in the DAG");
-        let mut worklist = vec![check];
+        let mut worklist = dag.find_check();
+        assert!(!worklist.is_empty(), "No check found in the DAG");
 
         while let Some(n) = worklist.pop() {
             if qp.quals.contains(&n) {
@@ -131,7 +131,7 @@ mod tests {
                 let r = random<F>;
                 a <- r * s[i];
                 b <- r * s';
-                verify(a == b);
+                verify(a == b)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -178,14 +178,15 @@ mod tests {
         let ex = r#"
             proto add_public<F: Field>(public x: F, public y: F) where true {
                 z <- x + y;
-                verify(z == x + y);
+                verify(z == x + y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
-        let check_node = g.find_check().expect("Check node should exist");
-        if let Node::Op(_, qual) = &g[check_node] {
+        let check_nodes = g.find_check();
+        assert!(!check_nodes.is_empty(), "Check node should exist");
+        if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
         }
     }
@@ -195,14 +196,15 @@ mod tests {
         let ex = r#"
             proto mix_quals<F: Field>(private x: F, public y: F) where true {
                 z <- x + y;
-                verify(z == x + y);
+                verify(z == x + y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
-        let check_node = g.find_check().expect("Check node should exist");
-        if let Node::Op(_, qual) = &g[check_node] {
+        let check_nodes = g.find_check();
+        assert!(!check_nodes.is_empty(), "Check node should exist");
+        if let Node::Op(_, qual) = &g[check_nodes[0]] {
             assert_eq!(*qual, Qualifier::Public);
         }
     }
@@ -212,7 +214,7 @@ mod tests {
         let ex = r#"
             proto private_only<F: Field>(private x: F, private y: F) where true {
                 z <- x * y;
-                verify(z == x * y);
+                verify(z == x * y)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
@@ -225,14 +227,14 @@ mod tests {
     fn test_qualifier_from_dag_finds_check() {
         let ex = r#"
             proto simple<F: Field>(private x: F) where true {
-                verify(x == x);
+                verify(x == x)
             }"#;
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         
         let check = g.find_check();
-        assert!(check.is_some());
+        assert!(!check.is_empty());
     }
 
     #[test]
