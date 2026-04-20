@@ -59,16 +59,21 @@ impl SyncReceiver {
     /// Returns `None` when the channel is closed, which means no
     /// pool tasks remain and no more sync nodes will arrive.
     ///
-    /// The sender clone carried by each `Node` message is dropped
-    /// immediately upon receipt.  This is safe because:
+    /// The sender clone carried by each `SyncMessage` is returned
+    /// to the caller (the main thread) and stays alive for the
+    /// duration of sync-node processing.  When the caller finishes
+    /// processing the node and drops the `SyncMessage` (or moves
+    /// the `tx` into successor pushes), the sender clone is
+    /// released.  This keeps the channel open during processing,
+    /// which matters because:
     ///
     /// * Every running pool task holds its own `SyncSender` clone
     ///   for the entire lifetime of the task, so the channel stays
     ///   open as long as any task is running.
     ///
     /// * Messages already buffered in the channel are delivered
-    ///   before `Err` even after all senders are dropped, so no
-    ///   sync nodes are lost when the last task finishes.
+    ///   before `RecvError` even after all senders are dropped, so
+    ///   no sync nodes are lost when the last task finishes.
     pub fn pop(&self) -> Option<SyncMessage> {
         return self.rx.recv().ok();
     }

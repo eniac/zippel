@@ -62,7 +62,14 @@ pub struct MutexGraph<C: ArkConfig> {
 // ---------------------------------------------------------------------------
 
 /// Returns true if the node requires sponge processing on the main thread.
-/// Inp, Challenge, and all Transcr nodes are sync nodes.
+///
+/// Sync nodes are `Inp` and `Transcr` nodes:
+/// - `Inp` is source node that sends public values through the
+///   sponge before their successors can run.
+/// - `Transcr` nodes (including `Challenge`) require sequential sponge
+///   state updates.
+///
+/// `Op` nodes are compute-only and run on the thread pool.
 fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
     match &g.mutex_graph[node_idx] {
         Node::Inp(_, _) | Node::Transcr(_, _) => true,
@@ -123,7 +130,11 @@ fn update_successors<C: ArkConfig>(
                     );
                 }
             }
-            _ => unreachable!(),
+            // Inp and Rel nodes have no remaining_deps counter;
+            // they should never appear as successors.
+            Node::Inp(_, _) | Node::Rel(_, _) => {
+                unreachable!("Inp/Rel node {:?} on sync channel", node_idx)
+            }
         }
     }
 }
@@ -376,8 +387,10 @@ impl<C: ArkConfig> MutexGraph<C> {
     ///
     /// # Sponge synchronization
     ///
-    /// Sync nodes (Inp, Rel, Transcr) are processed on the main thread
-    /// because they require sequential sponge state updates.
+    /// Sync nodes (Inp and Transcr) are processed on the main
+    /// thread because they require sequential sponge state updates.
+    /// Inp node sends public values through the sponge;
+    /// Transcr nodes (including Challenge) update or squeeze sponge state.
     ///
     /// # Thread pool
     ///
@@ -403,21 +416,25 @@ impl<C: ArkConfig> MutexGraph<C> {
         //
         // Set remaining_deps counters, collect result indices, and
         // identify initially-ready nodes — all in one pass.
+        // Reserve one core for the main thread (sync node processing).
+        // .max(2) before subtraction prevents underflow and ensures the
+        // pool capacity is at least 1.
         let mut max_thread_num: usize = std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(1).max(2) - 1; // ensure at least one thread is allocated for nodes
+            .unwrap_or(1).max(2) - 1;
         let mut result_indices: Vec<NodeIndex> = Vec::new();
+        // Capacity of 1 is enough: sync nodes are connected in the DAG,
+        // meaning that at any time, only one sync node can be processed.
         let (tx, rx) = sync_channel(1);
 
         for node_idx in g.mutex_graph.node_indices() {
-            // TODO: is this efficient?
-            let unique_preds: HashSet<NodeIndex> = g
-                .mutex_graph
-                .neighbors_directed(node_idx, Direction::Incoming)
-                .collect();
             match &g.mutex_graph[node_idx] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                     max_thread_num = max_thread_num.max(annotation.thread_num);
+                    let unique_preds: HashSet<NodeIndex> = g
+                        .mutex_graph
+                        .neighbors_directed(node_idx, Direction::Incoming)
+                        .collect();
                     annotation
                         .remaining_deps
                         .store(unique_preds.len(), Ordering::SeqCst);
@@ -511,7 +528,7 @@ impl<C: ArkConfig> MutexGraph<C> {
 
             match &g.mutex_graph[node_idx] {
                 Node::Inp(_, prefs) => {
-                    debug!("[run_graph] node {:?} is Inp with {} prefs", node_idx, prefs.len());
+                    debug!("[run_graph] node {:?} is Inp/Rel with {} prefs", node_idx, prefs.len());
                     // Send public values through the sponge.
                     for pref in prefs.clone() {
                         if pref.qualifier.is_public() && !pref.from_transcript {
@@ -539,7 +556,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                         prover_state.public_message(serialized.as_slice());
                     }
                 }
-                _ => unreachable!(),
+                Node::Op(_, _) | Node::Rel(_, _) => {
+                    // Non-sync Op and Rel nodes should never appear on the sync
+                    // channel. Panic indicates a logic error in scheduling.
+                    unreachable!("non-sync Op node {:?} on sync channel", node_idx)
+                }
             };
 
             // Update successors — pushes ready sync nodes to the sync queue

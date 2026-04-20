@@ -16,7 +16,10 @@ struct PendingTask {
 struct PoolState {
     /// FIFO queue of tasks waiting for capacity.
     ///
-    /// TODO: can we optimize the execution order of tasks?
+    /// TODO: current FIFO ordering suffers from head-of-line blocking:
+    /// if the task at the front requires more capacity than available,
+    /// smaller tasks behind it that *could* fit are also blocked.
+    /// Consider priority-based or best-fit scheduling to improve throughput.
     queue: VecDeque<PendingTask>,
 }
 
@@ -44,32 +47,27 @@ struct PoolState {
 /// `None`, signalling that the pool is idle.
 pub struct PoolManager {
     total_capacity: usize,
-    used: Arc<AtomicUsize>,
+    used: AtomicUsize,
     pool_cache: Mutex<HashMap<usize, Vec<Arc<rayon::ThreadPool>>>>,
     state: Mutex<PoolState>,
 }
 
 impl PoolManager {
     pub fn new(total_capacity: usize) -> Arc<Self> {
-        let used = Arc::new(AtomicUsize::new(0));
-            Arc::new(Self {
-                total_capacity,
-                used,
-                pool_cache: Mutex::new(HashMap::new()),
-                state: Mutex::new(PoolState {
-                    queue: VecDeque::new(),
-                })
-            })
+        Arc::new(Self {
+            total_capacity,
+            used: AtomicUsize::new(0),
+            pool_cache: Mutex::new(HashMap::new()),
+            state: Mutex::new(PoolState {
+                queue: VecDeque::new(),
+            }),
+        })
     }
 
     /// Atomically try to reserve `cost` units of capacity in `used`.
     ///
-    /// `credit` represents capacity that will be freed but is still
-    /// counted in `used` (e.g., a completing task's cost). The check
-    /// becomes `current + cost <= total_capacity + credit`, which is
-    /// equivalent to `current + cost - credit <= total_capacity`.
-    ///
     /// Returns `true` if the reservation succeeded (`used += cost`).
+    /// Uses a CAS loop to handle concurrent reservations.
     fn try_reserve(&self, cost: usize) -> bool {
         loop {
             let current = self.used.load(Ordering::SeqCst);
@@ -91,9 +89,11 @@ impl PoolManager {
     /// Submit a task with its thread cost.
     ///
     /// Fast path: atomically reserve capacity via CAS and start
-    /// immediately. Slow path: queue the task, then try to drain
-    /// in case capacity has become available since the CAS loop
-    /// exited.
+    /// immediately. Slow path: queue the task, then drain any tasks
+    /// that now fit within capacity. Drained tasks are collected
+    /// under the state lock and spawned after releasing it, so that
+    /// pool creation (which may be slow) does not block other
+    /// submitters.
     pub fn submit(
         self: &Arc<Self>,
         cost: usize,
@@ -104,21 +104,25 @@ impl PoolManager {
             self.spawn_task(cost, task);
             return;
         }
-        // Slow path: queue the task, then try to drain in case
-        // capacity has become available since the CAS loop exited.
-        let mut state = self.state.lock().unwrap();
-        state.queue.push_back(PendingTask {
-            cost,
-            task,
-        });
-        self.drain_pending(&mut state);
+        // Slow path: queue the task, then drain any that now fit.
+        // Tasks are collected while holding the lock, then spawned
+        // after releasing it to avoid holding the state mutex during
+        // pool creation.
+        let to_spawn = {
+            let mut state = self.state.lock().unwrap();
+            state.queue.push_back(PendingTask { cost, task });
+            self.drain_pending_locked(&mut state)
+        };
+        for PendingTask { cost, task } in to_spawn {
+            self.spawn_task(cost, task);
+        }
     }
 
     /// Spawn a task on a rayon pool.
     ///
     /// The caller must have already reserved `cost` units in `used`
-    /// via `try_reserve`. Unlike the old `start_task`, this does NOT
-    /// increment `used` — the reservation is already accounted for.
+    /// via `try_reserve`. This method does NOT increment `used` —
+    /// the reservation is already accounted for.
     fn spawn_task(
         self: &Arc<Self>,
         cost: usize,
@@ -127,10 +131,6 @@ impl PoolManager {
         let pool = self.get_or_create_pool(cost);
         let pm = Arc::clone(self);
         let closure_pool = Arc::clone(&pool);
-        // The sender clone is moved into the closure so that the
-        // channel stays open while the task is running.  When the
-        // task finishes the clone is dropped; if this was the last
-        // sender the channel closes and `pop()` returns `None`.
         pool.spawn(move || {
             task();
             pm.on_task_completed(cost, closure_pool);
@@ -155,46 +155,49 @@ impl PoolManager {
 
     /// Drain pending tasks that fit within capacity.
     ///
-    /// Must be called while holding the `state` lock. `credit`
-    /// represents capacity in `used` that will be freed (e.g., a
-    /// completing task's cost that is still counted in `used`).
-    fn drain_pending(
+    /// Must be called while holding the `state` lock. Returns a vec of
+    /// tasks that were successfully reserved, with their queue entries
+    /// removed. The caller should drop the state lock before spawning
+    /// these tasks to avoid holding the mutex during pool creation.
+    fn drain_pending_locked(
         self: &Arc<Self>,
-        state: &mut PoolState
-    ) {
+        state: &mut PoolState,
+    ) -> Vec<PendingTask> {
+        let mut to_spawn = Vec::new();
         while let Some(pending) = state.queue.front() {
             if self.try_reserve(pending.cost) {
-                let PendingTask { cost, task } = state.queue.pop_front().unwrap();
-                self.spawn_task(cost, task);
+                to_spawn.push(state.queue.pop_front().unwrap());
             } else {
                 break;
             }
         }
+        to_spawn
     }
 
     fn on_task_completed(self: &Arc<Self>, completed_cost: usize, pool: Arc<rayon::ThreadPool>) {
         debug!("[on_task_completed] cost={}", completed_cost);
+
+        // Free the capacity held by this task.
         self.used.fetch_sub(completed_cost, Ordering::SeqCst);
 
-        // Drain queued tasks that now fit within capacity.
-        // `completed_cost` provides virtual credit: it is still in
-        // `used` but will be freed once draining is complete, so
-        // the capacity check accounts for it.
-        loop {
-            let mut state = self.state.lock().unwrap();
-            if let Some(pending) = state.queue.front() {
-                if self.try_reserve(pending.cost) {
-                    let PendingTask { cost, task } = state.queue.pop_front().unwrap();
-                    drop(state);
-                    self.spawn_task(cost, task);
-                    continue;
-                }
-            }
-            break;
+        // Return the pool to the cache for reuse before draining so
+        // that drained tasks needing the same pool size can reuse it
+        // instead of creating a new one.
+        {
+            let mut cache = self.pool_cache.lock().unwrap();
+            cache.entry(completed_cost).or_default().push(pool);
         }
 
-        // Return the pool to the cache for reuse.
-        let mut cache = self.pool_cache.lock().unwrap();
-        cache.entry(completed_cost).or_default().push(pool);
+        // Drain queued tasks that now fit within capacity. Capacity
+        // has been freed by the fetch_sub above, so try_reserve may
+        // now succeed for waiting tasks. Tasks are collected under
+        // the lock and spawned after releasing it.
+        let to_spawn = {
+            let mut state = self.state.lock().unwrap();
+            self.drain_pending_locked(&mut state)
+        };
+        for PendingTask { cost, task } in to_spawn {
+            self.spawn_task(cost, task);
+        }
     }
 }
