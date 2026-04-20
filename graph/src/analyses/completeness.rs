@@ -454,6 +454,49 @@ mod tests {
             "Mle × Mle equality under relation a==b should be complete");
     }
 
+    /// Phase 7 attempted regression: `eval(a*b, xs) == eval(a, xs) * eval(b, xs)`
+    /// for `a, b : Mle<F, N>`.
+    ///
+    /// After the phase-7 `CTyp::lub_mul` fix the whole expression now
+    /// type-checks: `a*b` correctly has type `Poly<F, N, 2>`, `eval(p, xs)`
+    /// collapses to scalar, and the downstream equality is well-typed.
+    ///
+    /// However the Gröbner builder still panics with
+    /// `Reference rr not found in context` — the failure is independent of
+    /// `lub_mul` and is about how `let`-bound intermediates derived from
+    /// `challenge` values are resolved in the prover/verifier subgraph
+    /// projection. This is a separate bug tracked outside phase 7.
+    #[test]
+    #[ignore = "blocked by separate Gröbner let-binding bug (phase 7 follow-up)"]
+    fn mle_eval_product_completeness() {
+        use lang::id::Tid;
+
+        let ex = r#"
+            proto mle_eval_product<F: Field, N: Size>(
+                public a: Mle<F, N>,
+                public b: Mle<F, N>
+            ) where a == a {
+                let p = a * b;
+                r1 <- challenge<F>;
+                r2 <- challenge<F>;
+                let l = eval(p, [r1, r2]);
+                let rr = eval(a, [r1, r2]) * eval(b, [r1, r2]);
+                verify(l == rr)
+            }"#;
+
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("N"), &2);
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "eval-based Mle product identity should be complete");
+    }
+
     /// Phase 6 regression: correct `Op::Eval::typ()` dispatch.
     ///
     /// `Op::Eval::typ()` at `backend/src/op.rs` used to return `x.typ()`
