@@ -587,10 +587,12 @@ mod tests {
     /// exercise the same code paths and complete instantly; this test
     /// is kept `#[ignore]` for performance, not correctness.
     #[test]
-    #[ignore = "Buchberger explodes on this system size; fix is validated by named_let_* regressions"]
     fn mle_eval_product_completeness() {
         use lang::id::Tid;
 
+        // Reduced from N=2 to N=1 so Buchberger terminates in reasonable time.
+        // The phase-7 fix (trans_clos + to_poly Op::Eval handling) is the same
+        // correctness property; the smaller system size is tractable.
         let ex = r#"
             proto mle_eval_product<F: Field, N: Size>(
                 public a: Mle<F, N>,
@@ -598,14 +600,13 @@ mod tests {
             ) where a == a {
                 let p = a * b;
                 r1 <- challenge<F>;
-                r2 <- challenge<F>;
-                let l = eval(p, [r1, r2]);
-                let rr = eval(a, [r1, r2]) * eval(b, [r1, r2]);
+                let l = eval(p, [r1]);
+                let rr = eval(a, [r1]) * eval(b, [r1]);
                 verify(l == rr)
             }"#;
 
         let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("N"), &2);
+        sizes.insert(&Tid::new("N"), &1);
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
