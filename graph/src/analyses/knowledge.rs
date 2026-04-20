@@ -530,3 +530,36 @@ fn zk_multiple_verify_both_safe() {
         "Two verify statements both properly blinded with independent randoms should pass knowledge analysis"
     );
 }
+
+/// Part B.5 regression #6: knowledge analysis on a named-let eval product.
+///
+/// Confirms the Phase 8 Part B fixes (trans_clos recursion into
+/// Op::Eval/Coef/Mle/Poly + to_poly dispatch to eval_to_poly) also
+/// cover the `KnowledgeAnalysis` consumer of `GroebnerBuilder`, not
+/// just completeness. Pre-fix this panicked with
+/// `Reference l not found in context`. A small univariate shape is
+/// used to keep Buchberger tractable.
+#[test]
+fn knowledge_named_let_eval_product() {
+    use lang::id::Tid;
+
+    let ex = r#"
+        proto ke<F: Field, N: Size>(public a: Uni<F, N>) where a == a {
+            r1 <- challenge<F>;
+            let l = eval(a, [r1]);
+            verify(l == l)
+        }"#;
+
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("N"), &2);
+    let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    // All inputs are public so nothing could leak; trivially ZK.
+    assert!(kz.run().is_ok(),
+        "public-only eval protocol should be ZK (no private secrets to leak)");
+}
