@@ -926,4 +926,154 @@ mod tests {
             "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity");
     }
 
+    // -----------------------------------------------------------------
+    // Phase 13 regressions: polynomial division via `D·Q + R = P`.
+    // -----------------------------------------------------------------
+
+    /// Phase 13 regression: exact division round-trip —
+    /// `(p · d) / d == p` for univariate polynomials.
+    ///
+    /// The prover's basis contains:
+    ///   * `prod = p · d` (coefficient-wise convolution from Mul arm),
+    ///   * canonical identity rows `prod_k − Σ D_i·q_wit_j − r_wit_k = 0`
+    ///     (from `div_witnesses`), and
+    ///   * linking rows `q_wit[j] − q_ref[j] = 0` (from `link_to_witness`),
+    ///   * verify rows `q_ref[j] − p[j] = 0` (from `BinOp::Equ`).
+    ///
+    /// The verifier's basis has the same verify rows, which reduce to 0
+    /// modulo the prover's Gröbner basis.
+    #[test]
+    fn poly_div_exact_completeness() {
+        let ex = r#"
+            proto poly_div_exact<F: Field>(
+                public p: Poly<F, 1, 1>,
+                public d: Poly<F, 1, 1>
+            ) where p == p {
+                let prod = p * d;
+                let q = prod / d;
+                verify(q == p)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "(p*d)/d == p should be complete via D·Q + R = P");
+    }
+
+    /// Phase 13 regression: the canonical divmod identity —
+    /// `p == d · q + r` where `q = p / d`, `r = p % d`.
+    ///
+    /// This is the core win of the shared-witness side-table: both `/`
+    /// and `%` on the same `(p, d)` hash-consed pair reuse the same
+    /// `(q_wit, r_wit)` PRefs, so the prover's basis already contains
+    /// the row `p − d·q_wit − r_wit = 0` exactly once. The verify row
+    /// `p − d·q − r = 0` (after linking q→q_wit, r→r_wit) reduces to
+    /// this identity row directly.
+    #[test]
+    fn poly_divmod_identity_completeness() {
+        let ex = r#"
+            proto poly_divmod<F: Field>(
+                public p: Poly<F, 1, 2>,
+                public d: Poly<F, 1, 1>
+            ) where p == p {
+                let q = p / d;
+                let r = p % d;
+                verify(p == d * q + r)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "verify(p == d*q + r) should collapse directly to the shared identity row");
+    }
+
+    /// Phase 13 regression: pairing-free KZG opening shape.
+    ///
+    /// Mirrors the `q_val = (p_val - y) / poly([-z, 1])` step from KZG
+    /// *without* the pairing layer: given `p_val`, `y`, `z`, verify that
+    /// `q_val * poly([-z, 1]) == p_val - y`. This is exactly the Div
+    /// identity `P = D·Q + 0` after recognising `R = 0` (degree-0 slot
+    /// of a Poly(F,1,0) witness).
+    #[test]
+    fn kzg_opening_shape_completeness() {
+        let ex = r#"
+            proto kzg_shape<F: Field>(
+                public p_val: Poly<F, 1, 2>,
+                public z: F,
+                public y: F
+            ) where p_val == p_val {
+                let d_val = poly([-z, 1]);
+                let diff = p_val - y;
+                let q_val = diff / d_val;
+                verify(q_val * d_val == diff)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "KZG opening shape q * (x - z) == p - y should be complete");
+    }
+
+    /// Phase 13 regression: full KZG (un-deferred from phase 12).
+    ///
+    /// Runs `examples/kzg/kzg.zippel` through `CompletenessAnalysis`.
+    /// Relies on:
+    ///   * Phase 12 pairing layer — `pair(a,b) = to_poly(a)·to_poly(b)·var(__gt__)`.
+    ///   * Phase 13 poly division — `q_val = (p_val − y) / poly([−z, 1])`
+    ///     lowers to the shared-witness identity
+    ///     `p_val − y = poly([−z,1]) · q_wit + r_wit`.
+    ///
+    /// With both layers, the KZG opening check
+    ///   `pair(pi, h_val − h·z) == pair(c − y·g, h)`
+    /// reduces to `0` under the combined prover basis.
+    ///
+    /// **Blocked (not phase 13)**: `CTyp::lub_div` in `lang/src/typ/lub.rs:767`
+    /// returns `Poly<F, 1, ma - mb>` but `poly([F;n])` → `Poly<F,1,n>` and
+    /// `coef(Poly<F,1,n>)` → `[F;n]` treat the parameter as *coefficient
+    /// count*, not degree. So for `p : [F; N]`, the expression
+    /// `(p_val - y) / poly([-z, 1])` yields `q_val : Poly<F,1,N-2>` whose
+    /// `coef` has length `N-2`, but the intended length `N-1` is required
+    /// for `dot(pi_val, ss[0..N-1])` to type-check. Fixing this is a
+    /// phase-7 follow-up (the off-by-one was introduced by the phase-7 fix
+    /// that landed before the coef/poly/eval conventions were reconciled).
+    #[test]
+    #[ignore = "blocked: CTyp::lub_div off-by-one (phase-7 follow-up, see doc comment)"]
+    fn full_kzg_completeness() {
+        use lang::id::Tid;
+        let ex = r#"
+            proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
+                    (private p: [F; N], public z: F, public y: F, public ss: [G1; N],
+                    public g: G1, public h: G2, public h_val: G2)
+                    where p == p {
+                let p_val = poly(p);
+                c <- dot(p, ss);
+                let q_val = (p_val - y) / poly([-z, 1]);
+                let pi_val = coef(q_val);
+                let test = ss[0..N-1];
+                pi <- dot(pi_val, test);
+                let lhs = pair(pi, (h_val) - (h * z));
+                let rhs = pair(c - y * g, h);
+                verify(lhs == rhs)
+            }"#;
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("N"), &3);
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "full KZG should be complete via phase-12 pairing + phase-13 poly-div");
+    }
+
 }
