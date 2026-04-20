@@ -832,4 +832,74 @@ mod tests {
             "literal scalar binding should fold through Gröbner basis");
     }
 
+    /// Phase 11 regression: bilinearity shift — `pair(a·P, Q) == pair(P, a·Q)`.
+    ///
+    /// Both sides decompose to `a · v_{P,Q}` in exponent space; the basis
+    /// reduces `lhs - rhs` to zero.
+    #[test]
+    fn pair_bilinear_shift_completeness() {
+        let ex = r#"
+            proto pair_shift<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
+                (public p: G1, public q: G2, public a: F) where a == a {
+                let lhs = pair(a * p, q);
+                let rhs = pair(p, a * q);
+                verify(lhs == rhs)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity");
+    }
+
+    /// Phase 11 regression: bilinearity over sums —
+    /// `pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q)`.
+    ///
+    /// In exponent space, `pair(P1+P2, Q)` decomposes to
+    /// `v_{P1,Q} + v_{P2,Q}`, and the RHS — assuming Zippel lowers GT's
+    /// `+` to `Bin(Add, ...)` — decomposes the same way.
+    #[test]
+    #[ignore = "GT additive semantics in frontend not yet confirmed"]
+    fn pair_bilinear_additive_completeness() {
+        let ex = r#"
+            proto pair_additive<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
+                (public p1: G1, public p2: G1, public q: G2) where p1 == p1 {
+                let lhs = pair(p1 + p2, q);
+                let rhs = pair(p1, q) + pair(p2, q);
+                verify(lhs == rhs)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q) should be complete");
+    }
+
+    /// Phase 11 pinning test: a reflexive Pair verify completes, confirming
+    /// the new decompose-and-emit path doesn't panic and the basis row is
+    /// consistent with itself.
+    #[test]
+    fn pair_reflexive_completeness() {
+        let ex = r#"
+            proto pair_trivial<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
+                (public p: G1, public q: G2) where p == p {
+                let u = pair(p, q);
+                verify(u == u)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "pair(P, Q) == pair(P, Q) (reflexive) should be complete");
+    }
+
 }
