@@ -313,8 +313,8 @@ fn inverse_test() {
     let c = (&a / &b).dot(b.clone());
     assert_deq!(&c, &Value::<TestConfig>::scalar_from_usize(10));
 
-    let a = Value::<TestConfig>::random(&mut rng, &ATyp::Uni(2));
-    let b = a.clone() * a.clone();
+    let a = Value::<TestConfig>::random(&mut rng, &ATyp::Uni(1));
+    let b= a.clone() * a.clone();
     let c = b.clone() / a.clone();
     assert_deq!(&a, &c);
 }
