@@ -756,4 +756,80 @@ mod tests {
             "ifft(u + v) == ifft(u) + ifft(v) should be complete");
     }
 
+    /// Phase 10 regression: `reduce(+, v) == Σ v[i]`.
+    #[test]
+    fn reduce_add_completeness() {
+        let ex = r#"
+            proto reduce_add<F: Field>(public a: F, public b: F, public c: F) where a == a {
+                let v = [a, b, c];
+                let s = reduce(+, v);
+                verify(s == a + b + c)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "reduce(+, [a,b,c]) == a+b+c should be complete");
+    }
+
+    /// Phase 10 regression: `reduce(*, v) == Π v[i]`.
+    #[test]
+    fn reduce_mul_completeness() {
+        let ex = r#"
+            proto reduce_mul<F: Field>(public a: F, public b: F, public c: F) where a == a {
+                let v = [a, b, c];
+                let p = reduce(*, v);
+                verify(p == a * b * c)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "reduce(*, [a,b,c]) == a*b*c should be complete");
+    }
+
+    /// Phase 10 regression: `reduce(-, [a,b,c]) == a - b - c` (left-fold).
+    #[test]
+    fn reduce_sub_completeness() {
+        let ex = r#"
+            proto reduce_sub<F: Field>(public a: F, public b: F, public c: F) where a == a {
+                let v = [a, b, c];
+                let s = reduce(-, v);
+                verify(s == a - b - c)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "reduce(-, [a,b,c]) == a-b-c should be complete");
+    }
+
+    /// Phase 10 regression: a scalar literal binds as a polynomial constant
+    /// so `verify(c == 7)` reduces via the basis row `c - 7`.
+    #[test]
+    fn literal_scalar_binding_completeness() {
+        let ex = r#"
+            proto literal_scalar<F: Field>(public x: F) where x == x {
+                let c = 7;
+                verify(c == 7)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "literal scalar binding should fold through Gröbner basis");
+    }
+
 }

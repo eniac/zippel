@@ -120,6 +120,16 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            Op::Record(fields) => Op::Record(
+                fields.into_iter()
+                    .map(|(k, v)| (k.clone(), mk::<C>(self.trans_clos_op(dag, v.get().clone()))))
+                    .collect(),
+            ),
+            Op::Pair(a, b, t) => {
+                let oa = self.trans_clos_op(dag, a.get().clone());
+                let ob = self.trans_clos_op(dag, b.get().clone());
+                Op::Pair(mk::<C>(oa), mk::<C>(ob), t)
+            },
             op => op
         }
     }
