@@ -113,7 +113,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Reduce(op, v) => Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
-            op => op,
+            Op::Eval(p, xs) => Op::Eval(
+                mk::<C>(self.trans_clos_op(dag, p.get().clone())),
+                mk::<C>(self.trans_clos_op(dag, xs.get().clone())),
+            ),
+            Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
+            op => op
         }
     }
 

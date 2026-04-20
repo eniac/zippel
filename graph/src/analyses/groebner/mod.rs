@@ -269,6 +269,101 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Shared helper for `Op::Eval(p, xs)` — returns `Some(polys)` when the
+    /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by both
+    /// `to_poly` (when Eval appears nested inside another op) and `add_op`
+    /// (when Eval is the top-level op being bound to a PRef).
+    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+        let p_typ = p.typ();
+        let xs_polys = self.to_poly(xs);
+        let k = xs_polys.len();
+        match &p_typ {
+            ATyp::Uni(_) | ATyp::VPoly(1, _) if k >= 1 => {
+                let p_polys = self.to_poly(p);
+                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let out = (0..k).map(|i| {
+                    let xi = &xs_polys[i];
+                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    let mut xi_pow = one.clone();
+                    for aj in p_polys.iter() {
+                        acc = &acc + &(aj * &xi_pow);
+                        xi_pow = &xi_pow * xi;
+                    }
+                    acc
+                }).collect();
+                Some(out)
+            }
+            ATyp::VPoly(n, mdeg) if *n >= 2 && k <= *n => {
+                let p_polys = self.to_poly(p);
+                let all_k = multi_indices(*n, *mdeg);
+                let mono = |k_fixed: &[usize], xs_polys: &[SparsePolynomial<C::F, T>]| -> SparsePolynomial<C::F, T> {
+                    let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                    for (j, &kij) in k_fixed.iter().enumerate() {
+                        if kij == 0 { continue; }
+                        let mut xp = xs_polys[j].clone();
+                        xp.pow(kij);
+                        acc = &acc * &xp;
+                    }
+                    acc
+                };
+                if k == *n {
+                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    for (idx, ki) in all_k.iter().enumerate() {
+                        acc = &acc + &(&p_polys[idx] * &mono(ki, &xs_polys));
+                    }
+                    Some(vec![acc])
+                } else {
+                    let remaining_n = n - k;
+                    let result_indices = multi_indices(remaining_n, *mdeg);
+                    let out = result_indices.iter().map(|kp| {
+                        let mut acc = SparsePolynomial::<C::F, T>::zero();
+                        for (idx, ki) in all_k.iter().enumerate() {
+                            if &ki[k..] != &kp[..] { continue; }
+                            acc = &acc + &(&p_polys[idx] * &mono(&ki[..k], &xs_polys));
+                        }
+                        acc
+                    }).collect();
+                    Some(out)
+                }
+            }
+            ATyp::Mle(n) if k <= *n => {
+                let p_polys = self.to_poly(p);
+                let all_b = hypercube(*n);
+                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                    if bi == 1 { x.clone() } else { &one - x }
+                };
+                let eq_prod = |b_fixed: &[usize], xs_polys: &[SparsePolynomial<C::F, T>]| -> SparsePolynomial<C::F, T> {
+                    let mut acc = one.clone();
+                    for (j, &bj) in b_fixed.iter().enumerate() {
+                        acc = &acc * &eq(bj, &xs_polys[j]);
+                    }
+                    acc
+                };
+                if k == *n {
+                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    for (idx, b) in all_b.iter().enumerate() {
+                        acc = &acc + &(&p_polys[idx] * &eq_prod(b, &xs_polys));
+                    }
+                    Some(vec![acc])
+                } else {
+                    let remaining_n = n - k;
+                    let result_b = hypercube(remaining_n);
+                    let out = result_b.iter().map(|bp| {
+                        let mut acc = SparsePolynomial::<C::F, T>::zero();
+                        for (idx, b) in all_b.iter().enumerate() {
+                            if &b[k..] != &bp[..] { continue; }
+                            acc = &acc + &(&p_polys[idx] * &eq_prod(&b[..k], &xs_polys));
+                        }
+                        acc
+                    }).collect();
+                    Some(out)
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// This function converts an operation to a vector of sparse polynomial expressions,
     /// exploding vectors where possible.
     fn to_poly(&mut self, op: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
@@ -368,8 +463,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 } else {
                     vec![]
                 }
-            }
-            _ => vec![],
+            },
+            Op::Eval(p, xs) => self.eval_to_poly(p, xs).unwrap_or_else(Vec::new),
+            _ => vec![]
         }
     }
 }
@@ -664,96 +760,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // (e.g. k > n, or Record operands) fall through to the np catch-all
             // via `None`.
             Op::Eval(ref p, ref xs) => {
-                let p_typ = p.typ();
-                let xs_polys = self.to_poly(xs);
-                let k = xs_polys.len();
-                let result: Option<Vec<SparsePolynomial<C::F, T>>> = match &p_typ {
-                    ATyp::Uni(_) | ATyp::VPoly(1, _) if k >= 1 => {
-                        // Univariate batched: p coef vector [a_0, ..., a_{d-1}].
-                        let p_polys = self.to_poly(p);
-                        let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                        let out = (0..k).map(|i| {
-                            let xi = &xs_polys[i];
-                            let mut acc = SparsePolynomial::<C::F, T>::zero();
-                            let mut xi_pow = one.clone();
-                            for aj in p_polys.iter() {
-                                acc = &acc + &(aj * &xi_pow);
-                                xi_pow = &xi_pow * xi;
-                            }
-                            acc
-                        }).collect();
-                        Some(out)
-                    }
-                    ATyp::VPoly(n, mdeg) if *n >= 2 && k <= *n => {
-                        let p_polys = self.to_poly(p);
-                        let all_k = multi_indices(*n, *mdeg);
-                        // Build Π_j xs[j]^{k_fixed[j]} over the first k vars.
-                        let mono = |k_fixed: &[usize]| -> SparsePolynomial<C::F, T> {
-                            let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                            for (j, &kij) in k_fixed.iter().enumerate() {
-                                if kij == 0 { continue; }
-                                let mut xp = xs_polys[j].clone();
-                                xp.pow(kij);
-                                acc = &acc * &xp;
-                            }
-                            acc
-                        };
-                        if k == *n {
-                            let mut acc = SparsePolynomial::<C::F, T>::zero();
-                            for (idx, ki) in all_k.iter().enumerate() {
-                                acc = &acc + &(&p_polys[idx] * &mono(ki));
-                            }
-                            Some(vec![acc])
-                        } else {
-                            let remaining_n = n - k;
-                            let result_indices = multi_indices(remaining_n, *mdeg);
-                            let out = result_indices.iter().map(|kp| {
-                                let mut acc = SparsePolynomial::<C::F, T>::zero();
-                                for (idx, ki) in all_k.iter().enumerate() {
-                                    if &ki[k..] != &kp[..] { continue; }
-                                    acc = &acc + &(&p_polys[idx] * &mono(&ki[..k]));
-                                }
-                                acc
-                            }).collect();
-                            Some(out)
-                        }
-                    }
-                    ATyp::Mle(n) if k <= *n => {
-                        let p_polys = self.to_poly(p);
-                        let all_b = hypercube(*n);
-                        let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                        let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
-                            if bi == 1 { x.clone() } else { &one - x }
-                        };
-                        let eq_prod = |b_fixed: &[usize]| -> SparsePolynomial<C::F, T> {
-                            let mut acc = one.clone();
-                            for (j, &bj) in b_fixed.iter().enumerate() {
-                                acc = &acc * &eq(bj, &xs_polys[j]);
-                            }
-                            acc
-                        };
-                        if k == *n {
-                            let mut acc = SparsePolynomial::<C::F, T>::zero();
-                            for (idx, b) in all_b.iter().enumerate() {
-                                acc = &acc + &(&p_polys[idx] * &eq_prod(b));
-                            }
-                            Some(vec![acc])
-                        } else {
-                            let remaining_n = n - k;
-                            let result_b = hypercube(remaining_n);
-                            let out = result_b.iter().map(|bp| {
-                                let mut acc = SparsePolynomial::<C::F, T>::zero();
-                                for (idx, b) in all_b.iter().enumerate() {
-                                    if &b[k..] != &bp[..] { continue; }
-                                    acc = &acc + &(&p_polys[idx] * &eq_prod(&b[..k]));
-                                }
-                                acc
-                            }).collect();
-                            Some(out)
-                        }
-                    }
-                    _ => None,
-                };
+                let result = self.eval_to_poly(p, xs);
                 match result {
                     Some(polys) => {
                         for (i, poly) in polys.into_iter().enumerate() {
