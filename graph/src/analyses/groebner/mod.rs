@@ -6,6 +6,8 @@ pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
+use crate::{GOp, HOp, Op, Ref};
+use lang::ast::BinOp;
 use crate::DQDag;
 use crate::analyses::TransClos;
 use crate::pref::PRef;
@@ -135,6 +137,20 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     pub np: Ctx<PRef, GOp<C>>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub args: Set<PRef>,
+    /// Phase 13: polynomial div/rem witness side-table.
+    ///
+    /// Maps each `(dividend, divisor)` HOp pair for which a VPoly `/` or `%`
+    /// has been encountered to a fresh pair of witness PRefs
+    /// `(q_wit, r_wit)` with the canonical identity
+    ///
+    ///     dividend = divisor · q_wit + r_wit
+    ///
+    /// emitted into `basis` exactly once (on first lookup). Subsequent
+    /// `Div` / `Rem` ops on the same `(a, b)` just link the user's `pr`
+    /// to the already-minted `q_wit` / `r_wit`, so matching `p / d`
+    /// and `p % d` in a program share the same witnesses and reduce
+    /// `verify(p == d * q + r)` to the canonical row directly.
+    pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
@@ -144,6 +160,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             np: Ctx::new(),
             pl: Ctx::new(),
             args: Set::new(),
+            div_wit: Ctx::new(),
         }
     }
 
@@ -245,6 +262,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
         // Remap args
         self.args = self.args.iter().map(f).collect();
+
+        // Phase 13: remap div_wit values (keys are HOp, which are builder-
+        // local and not affected by PRef remapping).
+        self.div_wit = self.div_wit.iter().map(|(k, (q, r))|
+            (k.clone(), (f(q), f(r)))
+        ).collect();
     }
 
     /// Merge another builder's basis, polynomial definitions, and non-polynomial
@@ -258,6 +281,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
         for (k, v) in other.np.iter() {
             self.np.insert(k, v);
+        }
+        // Phase 13: keep other's div_wit entries so subsequent Div/Rem ops
+        // on the same operand pairs reuse the existing identity rows
+        // instead of emitting duplicates. HOp uids are builder-local so a
+        // literal merge can introduce key collisions only when the two
+        // builders share a HConsign (the common case when they were built
+        // from the same DAG); cross-HConsign duplicates are harmless —
+        // each (q, r) pair is constrained by its own identity row set
+        // already present in `basis`.
+        for (k, v) in other.div_wit.iter() {
+            if !self.div_wit.contains(&k) {
+                self.div_wit.insert(&k, v);
+            }
         }
     }
 
@@ -318,6 +354,118 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             self.np.insert(&pref, &Op::Ref(pref.reference.clone(), typ));
         }
         pref
+    }
+
+    /// Phase 13: polynomial division witnesses `(q_wit, r_wit)` for a
+    /// `(dividend, divisor)` HOp pair of VPoly operands.
+    ///
+    /// On first call for a given `(a, b)`, mints fresh stable-named witness
+    /// PRefs `q_wit : VPoly(nr, ma - mb)` and `r_wit : VPoly(nr, mb - 1)`,
+    /// then emits the canonical polynomial identity rows
+    ///
+    ///     a_polys[k]  −  Σ_{(i,j): b_idx[i]+q_idx[j]=k} b_polys[i] · var(q_wit[j])
+    ///                 −  (if k ∈ r_idx)  var(r_wit[k])                    =  0
+    ///
+    /// for every `k ∈ a_idx`, encoding `dividend = divisor · q_wit + r_wit`.
+    ///
+    /// On subsequent calls with the same `(a, b)`, returns the cached pair
+    /// without re-emitting rows — so both `Op::Bin(BinOp::Div)` and
+    /// `Op::Bin(BinOp::Rem)` on the same operands share the same witnesses,
+    /// making `verify(p == d*q + r)` collapse directly to the canonical row
+    /// under Buchberger.
+    ///
+    /// Returns `None` if either operand isn't VPoly/Uni-shaped, if num_vars
+    /// differ, or if `ma < mb` (no well-defined quotient).
+    fn div_witnesses(&mut self, a: &HOp<C>, b: &HOp<C>) -> Option<(PRef, PRef)> {
+        // Canonical VPoly shape extraction (handles both ATyp::VPoly and the
+        // legacy ATyp::Uni(n) ≡ VPoly(1, n-1) alias).
+        fn poly_shape(t: &ATyp) -> Option<(usize, usize)> {
+            match t {
+                ATyp::VPoly(n, m) => Some((*n, *m)),
+                ATyp::Uni(n) => Some((1, n.saturating_sub(1))),
+                _ => None,
+            }
+        }
+
+        let key = (a.clone(), b.clone());
+        if let Some(wit) = self.div_wit.get(&key) {
+            return Some(wit.clone());
+        }
+
+        let a_typ = a.get().typ();
+        let b_typ = b.get().typ();
+        let (na, ma) = poly_shape(&a_typ)?;
+        let (nb, mb) = poly_shape(&b_typ)?;
+        if na != nb { return None; }
+        if ma < mb || mb == 0 { return None; }
+
+        let nr = na;
+        let mq = ma - mb;
+        let mr = mb - 1;
+
+        // Mint stable witness PRefs. Offsets 1000+2k / 1001+2k are far from
+        // the phase-12 sentinel offsets (1..3) and from real DAG node indices.
+        let counter = self.div_wit.len();
+        let q_name = format!("__div_q_{}__", counter);
+        let r_name = format!("__div_r_{}__", counter);
+        let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), 1000 + 2 * counter);
+        let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), 1001 + 2 * counter);
+
+        // Emit canonical identity rows: one per a_idx multi-index.
+        let a_polys = self.to_poly(a.get());
+        let b_polys = self.to_poly(b.get());
+        let a_idx = multi_indices(na, ma);
+        let b_idx = multi_indices(nb, mb);
+        let q_idx = multi_indices(nr, mq);
+        let r_idx = multi_indices(nr, mr);
+
+        debug_assert_eq!(a_polys.len(), a_idx.len(),
+            "to_poly(a) slot count mismatch: {} vs a_idx {}", a_polys.len(), a_idx.len());
+        debug_assert_eq!(b_polys.len(), b_idx.len(),
+            "to_poly(b) slot count mismatch: {} vs b_idx {}", b_polys.len(), b_idx.len());
+
+        for (ka_pos, k) in a_idx.iter().enumerate() {
+            let mut rhs = SparsePolynomial::<C::F, T>::zero();
+            // D · Q contribution.
+            for (i_pos, ki) in b_idx.iter().enumerate() {
+                for (j_pos, kj) in q_idx.iter().enumerate() {
+                    let sum: Vec<usize> = ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
+                    if sum == *k {
+                        let qf = q_wit.clone().with_index(j_pos);
+                        rhs = &rhs + &(&b_polys[i_pos] * &SparsePolynomial::var(&qf));
+                    }
+                }
+            }
+            // R contribution (only for k with total degree ≤ mr).
+            if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
+                let rf = r_wit.clone().with_index(r_pos);
+                rhs = &rhs + &SparsePolynomial::var(&rf);
+            }
+            self.basis.push(&a_polys[ka_pos] - &rhs);
+        }
+
+        self.div_wit.insert(&key, &(q_wit.clone(), r_wit.clone()));
+        Some((q_wit, r_wit))
+    }
+
+    /// Phase 13: link the user's PRef `pr` to a witness PRef `wit` slot by
+    /// slot, for when `pr` aliases a div/rem witness produced by
+    /// `div_witnesses`. Emits `var(pr[j]) − var(wit[j]) = 0` for every
+    /// `j < num_coeffs(pr.typ)`, and registers `pl[pr[j]] = var(wit[j])`.
+    fn link_to_witness(&mut self, pr: &PRef, wit: &PRef) {
+        let n_pr = num_coeffs(&pr.typ);
+        let n_wit = num_coeffs(&wit.typ);
+        // Number of shared slots. If user's pr has more slots than the
+        // witness (unusual — would indicate the lub widened the result),
+        // link what we can; excess pr slots stay unconstrained (opaque).
+        let n = n_pr.min(n_wit);
+        for j in 0..n {
+            let pf = pr.clone().with_index(j);
+            let wf = wit.clone().with_index(j);
+            let wvar = SparsePolynomial::var(&wf);
+            self.pl.insert(&pf, &wvar);
+            self.basis.push(&wvar - &SparsePolynomial::var(&pf));
+        }
     }
 
     fn to_poly_value(&mut self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
@@ -612,6 +760,29 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let gt = self.gt_pref();
                 vec![&e_a * &e_b * SparsePolynomial::var(&gt)]
             },
+            // Phase 13: nested polynomial division / remainder. Emit (or
+            // reuse) the canonical identity rows via `div_witnesses` and
+            // return the witness's per-slot vars so the caller can compose
+            // them further (e.g. inside `verify(lhs == d*q + r)`).
+            //
+            // Non-VPoly operands fall through to `vec![]` (opaque) — the
+            // pre-phase-13 behaviour for nested Div inside to_poly.
+            Op::Bin(BinOp::Div, a, b, _) => {
+                if let Some((q_wit, _r_wit)) = self.div_witnesses(a, b) {
+                    let n = num_coeffs(&q_wit.typ);
+                    (0..n).map(|i| SparsePolynomial::var(&q_wit.clone().with_index(i))).collect()
+                } else {
+                    vec![]
+                }
+            },
+            Op::Bin(BinOp::Rem, a, b, _) => {
+                if let Some((_q_wit, r_wit)) = self.div_witnesses(a, b) {
+                    let n = num_coeffs(&r_wit.typ);
+                    (0..n).map(|i| SparsePolynomial::var(&r_wit.clone().with_index(i))).collect()
+                } else {
+                    vec![]
+                }
+            },
             _ => vec![]
         }
     }
@@ -834,28 +1005,60 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .sum();
                 self.pl.insert(&pr, &sum);
                 self.basis.push(sum - SparsePolynomial::var(&pr))
-            }
-            Op::Bin(BinOp::Div, ref a, ref b, _) => self
-                .to_poly(a)
-                .into_iter()
-                .zip(self.to_poly(b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_index(i);
-                    self.np
-                        .insert(&pf, &Op::ram(op_for_div.clone(), Op::index(i)));
-                    self.basis.push(a - b * SparsePolynomial::var(&pf));
-                }),
-            Op::Bin(BinOp::Equ, a, b, _) => self
-                .to_poly(&a)
-                .into_iter()
-                .zip(self.to_poly(&b))
-                .for_each(|(a, b)| {
-                    self.pl.insert(&pr, &(&a - &b));
-                    self.pl.insert(&pr, &SparsePolynomial::lit(&C::F::zero()));
-                    self.basis.push(a - b);
-                    self.basis.push(SparsePolynomial::var(&pr));
-                }),
+            },
+            // Phase 13: polynomial division `pr = a / b`.
+            //
+            // For VPoly/Uni operands of the same num_vars, route through
+            // `div_witnesses` which emits the canonical `a = b·q + r`
+            // identity into the basis (once per operand pair) and returns
+            // the shared `(q_wit, r_wit)` witnesses. Then link `pr` to
+            // `q_wit` so references to `pr` resolve to the quotient
+            // witness during Buchberger reduction.
+            //
+            // For scalar / Fin / Uni-of-scalar / Vec operands, fall back
+            // to the legacy coefficient-wise `a - b·var(pr) = 0` encoding
+            // (correct for pointwise field division).
+            Op::Bin(BinOp::Div, ref a, ref b, _) => {
+                if let Some((q_wit, _r_wit)) = self.div_witnesses(a, b) {
+                    self.link_to_witness(&pr, &q_wit);
+                } else {
+                    self.to_poly(a).into_iter()
+                        .zip(self.to_poly(b).into_iter())
+                        .enumerate()
+                        .for_each(|(i, (a_p, b_p))| {
+                            let pf = pr.clone().with_index(i);
+                            self.np.insert(&pf, &Op::ram(op_for_div.clone(), Op::index(i)));
+                            self.basis.push(a_p - b_p * SparsePolynomial::var(&pf));
+                        });
+                }
+            },
+            // Phase 13: polynomial remainder `pr = a % b`.
+            //
+            // Mirrors `Div` but aliases `pr` to `r_wit`. The canonical
+            // identity row is emitted exactly once per `(a, b)` pair, so
+            // if the program also computes `a / b`, both ops share the
+            // same witnesses and `verify(a == b*q + r)` reduces directly
+            // to the canonical row.
+            //
+            // For non-VPoly operands we leave `pr` opaque in `np` (the
+            // pre-phase-13 default), since pointwise `%` has no Gröbner
+            // reduction that's correct in general.
+            Op::Bin(BinOp::Rem, ref a, ref b, _) => {
+                if let Some((_q_wit, r_wit)) = self.div_witnesses(a, b) {
+                    self.link_to_witness(&pr, &r_wit);
+                } else {
+                    self.np.insert(&pr, &op_for_div);
+                }
+            },
+            Op::Bin(BinOp::Equ, a, b, _) =>
+                self.to_poly(&a).into_iter()
+                    .zip(self.to_poly(&b).into_iter())
+                    .for_each(|(a, b)| {
+                        self.pl.insert(&pr, &(&a - &b));
+                        self.pl.insert(&pr, &SparsePolynomial::lit(&C::F::zero()));
+                        self.basis.push(a - b);
+                        self.basis.push(SparsePolynomial::var(&pr));
+                    }),
             Op::Check(a) => self.add_op(pr, a.get().clone()),
             Op::Challenge(t, b) => { let op = Op::Challenge(t, b); self.np.insert(&pr, &op); },
             Op::Random(t, b) => { let op = Op::Random(t, b); self.np.insert(&pr, &op); },
@@ -2283,5 +2486,278 @@ mod tests {
         let expected_deg2 = &(&(&var(&u0) * &var(&v0)) - &(&var(&u0) * &var(&v1)))
             + &(&(&var(&u1) * &var(&v1)) - &(&var(&u1) * &var(&v0)));
         assert_eq!(deg2, expected_deg2, "mle mul deg2");
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 13: polynomial division & remainder via `D·Q + R = P`.
+    // ---------------------------------------------------------------------
+
+    /// Helper: build a VPoly Div or Rem op and run `add_op`.
+    fn add_op_div_rem(
+        builder: &mut GroebnerBuilder<ArkBls12_381, GrevLexTerm>,
+        bop: lang::ast::BinOp,
+        a_node: usize, a_typ: ATyp,
+        b_node: usize, b_typ: ATyp,
+        result_node: usize, result_typ: ATyp,
+    ) -> crate::PRef {
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+        let result = PRef::from_node(
+            NodeIndex::new(result_node),
+            result_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            bop,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(a_node)), a_typ)),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(b_node)), b_typ)),
+            result_typ,
+        );
+        builder.add_op(result.clone(), op);
+        result
+    }
+
+    #[test]
+    fn test_add_op_vpoly_div_univariate_identity() {
+        // VPoly(1,2) / VPoly(1,1) → VPoly(1,1).
+        //   a has num_coeffs = 3 slots (a_0, a_1, a_2)
+        //   b has num_coeffs = 2 slots (b_0, b_1)
+        //   q_wit: VPoly(1,1), 2 slots (q_0, q_1)
+        //   r_wit: VPoly(1,0), 1 slot  (r_0)
+        // Canonical identity rows (from div_witnesses):
+        //   k=[0] (total deg 0): a_0  -  (b_0·q_0 + r_0)
+        //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
+        //   k=[2] (total deg 2): a_2  -  b_1·q_1
+        // link_to_witness emits 2 more rows: var(q_wit[j]) - var(result[j]), j=0,1.
+        use lang::ast::BinOp;
+        use lang::id::Vid;
+        use lang::typ::{Qualifier, Distribution};
+        use crate::{PRef, Ref};
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::VPoly(1, 2));
+        let pref_b = register_ref(&mut builder, 1, ATyp::VPoly(1, 1));
+
+        let basis_before = builder.basis.len();
+        let result = add_op_div_rem(
+            &mut builder, BinOp::Div,
+            0, ATyp::VPoly(1, 2),
+            1, ATyp::VPoly(1, 1),
+            2, ATyp::VPoly(1, 1),
+        );
+
+        // The witness side-table has exactly one entry.
+        assert_eq!(builder.div_wit.len(), 1, "div_wit should have one (a,b) entry");
+
+        // Recover the q_wit / r_wit PRefs (minted by sentinel_pref with
+        // Qualifier::Public and stable node indices MAX - 1000 / MAX - 1001).
+        let q_wit = PRef::from_var(
+            Vid::from("__div_q_0__"),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1000),
+            ATyp::VPoly(1, 1),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let r_wit = PRef::from_var(
+            Vid::from("__div_r_0__"),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1001),
+            ATyp::VPoly(1, 0),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+
+        // Per-slot input vars (typ=scalar, as `to_poly(Op::Ref)` produces).
+        let scl = |p: &PRef, i: usize| {
+            let mut q = p.clone().with_index(i);
+            q.typ = ATyp::scalar();
+            q
+        };
+        // Per-slot witness vars. `div_witnesses` uses `wit.clone().with_index(j)`
+        // WITHOUT resetting typ, so q_wit slots keep typ=VPoly(1,1) and
+        // r_wit slots keep typ=VPoly(1,0).
+        let wit_slot = |p: &PRef, i: usize| p.clone().with_index(i);
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let a0 = scl(&pref_a, 0);
+        let a1 = scl(&pref_a, 1);
+        let a2 = scl(&pref_a, 2);
+        let b0 = scl(&pref_b, 0);
+        let b1 = scl(&pref_b, 1);
+        let q0 = wit_slot(&q_wit, 0);
+        let q1 = wit_slot(&q_wit, 1);
+        let r0 = wit_slot(&r_wit, 0);
+
+        // 3 identity rows + 2 linking rows.
+        assert_eq!(builder.basis.len() - basis_before, 5,
+                   "expected 3 identity + 2 linking rows");
+
+        // Check identity rows exist in basis.
+        let expected_k0 = &var(&a0) - &(&(&var(&b0) * &var(&q0)) + &var(&r0));
+        let expected_k1 = &var(&a1) - &(&(&var(&b0) * &var(&q1)) + &(&var(&b1) * &var(&q0)));
+        let expected_k2 = &var(&a2) - &(&var(&b1) * &var(&q1));
+        for (lbl, expected) in [("k0", &expected_k0), ("k1", &expected_k1), ("k2", &expected_k2)] {
+            assert!(builder.basis.iter().any(|row| row == expected),
+                    "basis missing identity row {}", lbl);
+        }
+
+        // link_to_witness: pl[result[j]] = var(q_wit[j]) for j=0,1.
+        assert_eq!(builder.pl.get(&result.with_index(0)).cloned(),
+                   Some(var(&q0)), "pl[result[0]] should alias q_wit[0]");
+        assert_eq!(builder.pl.get(&result.with_index(1)).cloned(),
+                   Some(var(&q1)), "pl[result[1]] should alias q_wit[1]");
+
+        // Linking rows: var(q_wit[j]) - var(result[j]).
+        // link_to_witness uses `result.clone().with_index(j)` (typ unchanged).
+        let r0_slot = result.clone().with_index(0);
+        let r1_slot = result.clone().with_index(1);
+        let link0 = &var(&q0) - &var(&r0_slot);
+        let link1 = &var(&q1) - &var(&r1_slot);
+        assert!(builder.basis.iter().any(|row| row == &link0),
+                "basis missing link row var(q_wit[0]) - var(result[0])");
+        assert!(builder.basis.iter().any(|row| row == &link1),
+                "basis missing link row var(q_wit[1]) - var(result[1])");
+    }
+
+    #[test]
+    fn test_add_op_vpoly_rem_univariate_identity() {
+        // VPoly(1,2) % VPoly(1,1) → VPoly(1,0).
+        // Same witnesses as the Div test, but link result to r_wit (1 slot).
+        use lang::ast::BinOp;
+        use lang::id::Vid;
+        use lang::typ::{Qualifier, Distribution};
+        use crate::{PRef, Ref};
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_a = register_ref(&mut builder, 0, ATyp::VPoly(1, 2));
+        let _pref_b = register_ref(&mut builder, 1, ATyp::VPoly(1, 1));
+
+        let basis_before = builder.basis.len();
+        let result = add_op_div_rem(
+            &mut builder, BinOp::Rem,
+            0, ATyp::VPoly(1, 2),
+            1, ATyp::VPoly(1, 1),
+            2, ATyp::VPoly(1, 0),
+        );
+
+        assert_eq!(builder.div_wit.len(), 1, "one div_wit entry after Rem");
+
+        let r_wit = PRef::from_var(
+            Vid::from("__div_r_0__"),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1001),
+            ATyp::VPoly(1, 0),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let scl = |p: &PRef, i: usize| {
+            let mut q = p.clone().with_index(i);
+            q.typ = ATyp::scalar();
+            q
+        };
+        let _ = scl;  // kept for parity with the Div test; not used here.
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        // r_wit slots keep typ=VPoly(1,0) (div_witnesses/link_to_witness
+        // don't reset typ to scalar).
+        let r0 = r_wit.clone().with_index(0);
+
+        // 3 identity rows + 1 linking row (result has only 1 slot).
+        assert_eq!(builder.basis.len() - basis_before, 4,
+                   "expected 3 identity + 1 linking row");
+
+        // pl[result[0]] = var(r_wit[0]).
+        assert_eq!(builder.pl.get(&result.with_index(0)).cloned(),
+                   Some(var(&r0)), "pl[result[0]] should alias r_wit[0]");
+
+        // Linking row: link_to_witness uses result.with_index(0) (typ unchanged).
+        let r0_slot = result.clone().with_index(0);
+        let link = &var(&r0) - &var(&r0_slot);
+        assert!(builder.basis.iter().any(|row| row == &link),
+                "basis missing link row var(r_wit[0]) - var(result[0])");
+    }
+
+    #[test]
+    fn test_add_op_div_then_rem_shares_witness() {
+        // Both `a/b` and `a%b` on the same `(a,b)` HOp pair share the
+        // witness side-table. Second op should NOT emit new identity rows.
+        use lang::ast::BinOp;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_a = register_ref(&mut builder, 0, ATyp::VPoly(1, 2));
+        let _pref_b = register_ref(&mut builder, 1, ATyp::VPoly(1, 1));
+
+        let basis_before_div = builder.basis.len();
+        let _q_res = add_op_div_rem(
+            &mut builder, BinOp::Div,
+            0, ATyp::VPoly(1, 2),
+            1, ATyp::VPoly(1, 1),
+            2, ATyp::VPoly(1, 1),
+        );
+        let after_div = builder.basis.len();
+        assert_eq!(builder.div_wit.len(), 1, "div_wit has 1 entry after Div");
+
+        let _r_res = add_op_div_rem(
+            &mut builder, BinOp::Rem,
+            0, ATyp::VPoly(1, 2),
+            1, ATyp::VPoly(1, 1),
+            3, ATyp::VPoly(1, 0),
+        );
+        let after_rem = builder.basis.len();
+
+        // Still a single entry — Rem hit the cached witness pair.
+        assert_eq!(builder.div_wit.len(), 1, "div_wit unchanged after Rem (cached)");
+
+        // Div added 3 identity + 2 linking = 5 rows.
+        assert_eq!(after_div - basis_before_div, 5,
+                   "Div emitted 3 identity + 2 linking rows");
+        // Rem added ONLY the linking row (1 slot on VPoly(1,0)) — no new identity.
+        assert_eq!(after_rem - after_div, 1,
+                   "Rem on cached (a,b) should only emit 1 linking row, not re-emit identity");
+    }
+
+    #[test]
+    fn test_add_op_div_scalar_fallback() {
+        // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
+        // `div_witnesses` returns None (poly_shape fails on scalar), so no
+        // witness side-table entry is created.
+        use lang::ast::BinOp;
+        use crate::{PRef, Ref};
+        use lang::typ::{Qualifier, Distribution};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = register_ref(&mut builder, 0, ATyp::scalar());
+        let pref_b = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let basis_before = builder.basis.len();
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Div,
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::scalar())),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::scalar())),
+            ATyp::scalar(),
+        );
+        builder.add_op(result.clone(), op);
+
+        // No witness side-table entry for scalar fallback.
+        assert_eq!(builder.div_wit.len(), 0,
+                   "div_wit stays empty on scalar Div");
+
+        // Legacy zip emits exactly one row: a - b · var(result).
+        assert_eq!(builder.basis.len() - basis_before, 1,
+                   "scalar fallback emits 1 row");
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let expected = &var(&pref_a) - &(&var(&pref_b) * &var(&result));
+        assert!(builder.basis.iter().any(|row| row == &expected),
+                "scalar fallback row should be `a - b · var(result)`");
     }
 }
