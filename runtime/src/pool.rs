@@ -111,7 +111,7 @@ struct PoolState {
 pub struct PoolManager {
     total_capacity: usize,
     used: Arc<AtomicUsize>,
-    pool_cache: Mutex<HashMap<usize, Vec<rayon::ThreadPool>>>,
+    pool_cache: Mutex<HashMap<usize, Vec<Arc<rayon::ThreadPool>>>>,
     state: Mutex<PoolState>,
     /// TODO: what if we replace SyncQueue with a per-task channel?
     sync_queue: SyncQueue,
@@ -198,13 +198,18 @@ impl PoolManager {
     ) {
         let pool = self.get_or_create_pool(cost);
         let pm = Arc::clone(self);
+        let closure_pool = Arc::clone(&pool);
+        // The sender clone is moved into the closure so that the
+        // channel stays open while the task is running.  When the
+        // task finishes the clone is dropped; if this was the last
+        // sender the channel closes and `pop()` returns `None`.
         pool.spawn(move || {
             task();
-            pm.on_task_completed(cost);
+            pm.on_task_completed(cost, closure_pool);
         });
     }
 
-    fn get_or_create_pool(&self, cost: usize) -> rayon::ThreadPool {
+    fn get_or_create_pool(&self, cost: usize) -> Arc<rayon::ThreadPool> {
         let mut cache = self.pool_cache.lock().unwrap();
         if let Some(pools) = cache.get_mut(&cost) {
             if let Some(pool) = pools.pop() {
@@ -212,10 +217,12 @@ impl PoolManager {
             }
         }
         drop(cache);
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(cost.max(1))
-            .build()
-            .expect("Failed to create thread pool")
+        Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(cost.max(1))
+                .build()
+                .expect("Failed to create thread pool"),
+        )
     }
 
     /// Drain pending tasks that fit within capacity.
@@ -238,7 +245,7 @@ impl PoolManager {
         }
     }
 
-    fn on_task_completed(self: &Arc<Self>, completed_cost: usize) {
+    fn on_task_completed(self: &Arc<Self>, completed_cost: usize, pool: Arc<rayon::ThreadPool>) {
         debug!("[on_task_completed] cost={}", completed_cost);
 
         // Drain queued tasks that now fit within capacity.
@@ -274,5 +281,9 @@ impl PoolManager {
             }
             break;
         }
+
+        // Return the pool to the cache for reuse.
+        let mut cache = self.pool_cache.lock().unwrap();
+        cache.entry(completed_cost).or_default().push(pool);
     }
 }
