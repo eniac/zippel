@@ -24,6 +24,12 @@ spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = 
 
 [dev-dependencies]
 tempfile = "3.10"
+criterion = "0.5"
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+
+[[bench]]
+name = "graph_execution"
+harness = false
 
 [[example]]
 name = "mle"
@@ -152,3 +158,7 @@ path = "examples/transcript_random/main.rs"
 [[example]]
 name = "virtual_test"
 path = "examples/virtual_test/main.rs"
+
+[[example]]
+name = "map_comp_bench"
+path = "examples/map_comp_bench/main.rs"
