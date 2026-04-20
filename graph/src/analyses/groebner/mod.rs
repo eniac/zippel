@@ -143,7 +143,9 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     /// has been encountered to a fresh pair of witness PRefs
     /// `(q_wit, r_wit)` with the canonical identity
     ///
+    /// ```text
     ///     dividend = divisor · q_wit + r_wit
+    /// ```
     ///
     /// emitted into `basis` exactly once (on first lookup). Subsequent
     /// `Div` / `Rem` ops on the same `(a, b)` just link the user's `pr`
@@ -363,8 +365,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// PRefs `q_wit : VPoly(nr, ma - mb)` and `r_wit : VPoly(nr, mb - 1)`,
     /// then emits the canonical polynomial identity rows
     ///
+    /// ```text
     ///     a_polys[k]  −  Σ_{(i,j): b_idx[i]+q_idx[j]=k} b_polys[i] · var(q_wit[j])
     ///                 −  (if k ∈ r_idx)  var(r_wit[k])                    =  0
+    /// ```
     ///
     /// for every `k ∈ a_idx`, encoding `dividend = divisor · q_wit + r_wit`.
     ///
