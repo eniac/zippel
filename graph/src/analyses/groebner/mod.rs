@@ -9,9 +9,7 @@ pub use sparsepoly::SparsePolynomial;
 use crate::DQDag;
 use crate::analyses::TransClos;
 use crate::pref::PRef;
-use crate::{GOp, Op, Ref};
-use lang::ast::BinOp;
-use lang::typ::{Distribution, Qualifier};
+use lang::id::Vid;
 
 use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use backend::{Value, ATyp, ArkConfig, ArkScalarOps};
@@ -137,19 +135,6 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     pub np: Ctx<PRef, GOp<C>>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub args: Set<PRef>,
-    /// Phase 11: side-table for bilinear pairing closure.
-    ///
-    /// Maps a canonical `(G1-base, G2-base)` PRef pair to a fresh F-variable
-    /// representing `log_{g_T}(e(P, Q))`. Reused across every `Op::Pair`
-    /// that decomposes to the same base pair, so Buchberger can equate
-    /// bilinearly equivalent pairing expressions (e.g.
-    /// `pair(a·P, Q) == pair(P, a·Q)` both reduce to `a · v_{P,Q}`).
-    pub pair_vars: Ctx<(PRef, PRef), PRef>,
-    /// Phase 11: monotonic counter for minting fresh synthetic PRefs
-    /// (for literal group values and `pair_vars` entries). Grown large
-    /// (from `usize::MAX` downward) to avoid colliding with real DAG
-    /// node indices.
-    pair_counter: usize,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
@@ -159,8 +144,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             np: Ctx::new(),
             pl: Ctx::new(),
             args: Set::new(),
-            pair_vars: Ctx::new(),
-            pair_counter: 0,
         }
     }
 
@@ -262,11 +245,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
         // Remap args
         self.args = self.args.iter().map(f).collect();
-
-        // Phase 11: remap pair_vars keys and values.
-        self.pair_vars = self.pair_vars.iter().map(|((p, q), v)| {
-            ((f(p), f(q)), f(v))
-        }).collect();
     }
 
     /// Merge another builder's basis, polynomial definitions, and non-polynomial
@@ -281,168 +259,65 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         for (k, v) in other.np.iter() {
             self.np.insert(k, v);
         }
-        // Phase 11: merge pair_vars. First-seen wins — only add entries
-        // we don't already know about, preserving the fresh virtual PRef
-        // minted by whichever builder saw the pair first (so basis rows
-        // referencing that builder's PRef remain valid).
-        for (k, v) in other.pair_vars.iter() {
-            if self.pair_vars.find(|k2, _| k2 == k).is_none() {
-                self.pair_vars.insert(k, v);
-            }
-        }
-        // Bump our counter past `other`'s to keep future mints fresh.
-        if other.pair_counter > self.pair_counter {
-            self.pair_counter = other.pair_counter;
-        }
     }
 
-    /// Phase 11: mint a fresh synthetic PRef (used for literal G1/G2
-    /// operands and for virtual `v_{P,Q}` pair variables). Uses a
-    /// monotonic counter counting *down* from `usize::MAX` so that
-    /// the synthesized `NodeIndex` values cannot collide with real
-    /// DAG node indices (which grow up from 0).
-    fn fresh_pref(&mut self, typ: ATyp) -> PRef {
-        self.pair_counter += 1;
-        let idx = NodeIndex::new(usize::MAX - self.pair_counter);
-        PRef::from_node(idx, typ, 0, Qualifier::Public, Distribution::default())
+    /// Phase 12: lazy accessor for the G1 generator sentinel `__g1__`.
+    ///
+    /// Every opaque G1 element `P` is modeled (in exponent space) as
+    /// `var(P) = exp_P · var(__g1__)`. We do NOT emit the linking
+    /// basis row explicitly — existing Bin(Add/Sub/Mul) on group types
+    /// already treats `var(P)` as an F-scalar, so Buchberger already
+    /// propagates exponents through ring arithmetic. The sentinel's
+    /// role is to appear as a dimensional-consistency factor on GT
+    /// expressions produced by `Op::Pair`.
+    ///
+    /// The sentinel PRef has a stable `Ref::Var(Vid("__g1__"),
+    /// NodeIndex(usize::MAX - 1))` reference, so two independent
+    /// `GroebnerBuilder`s agree on which PRef this is — required for
+    /// `merge` and cross-builder visibility.
+    #[allow(dead_code)]
+    fn g1_pref(&mut self) -> PRef {
+        self.sentinel_pref("__g1__", ATyp::g1(), 1)
     }
 
-    /// Phase 11: look up or mint the virtual pair-variable `v_{P,Q}`.
+    /// Phase 12: lazy accessor for the G2 generator sentinel `__g2__`.
+    #[allow(dead_code)]
+    fn g2_pref(&mut self) -> PRef {
+        self.sentinel_pref("__g2__", ATyp::g2(), 2)
+    }
+
+    /// Phase 12: lazy accessor for the GT generator sentinel `__gt__`.
     ///
-    /// Equal to `log_{g_T}(e(P, Q))` in exponent space. Once minted,
-    /// registered as an opaque np entry so `vars()` finds it and
-    /// Buchberger can reason about it.
-    fn pair_var_for(&mut self, p: &PRef, q: &PRef) -> PRef {
-        if let Some(existing) = self.pair_vars
-            .find(|k, _| k.0 == *p && k.1 == *q)
-            .map(|(_, v)| v.clone())
-        {
-            return existing;
+    /// `Op::Pair(a, b)` emits the basis row
+    ///   `var(pr) − to_poly(a)·to_poly(b)·var(__gt__) = 0`
+    /// which encodes the pairing axiom
+    ///   `pair(__g1__, __g2__) = __gt__`
+    /// combined with bilinearity:
+    ///   `pair(α·__g1__, β·__g2__) = α·β·__gt__`.
+    fn gt_pref(&mut self) -> PRef {
+        self.sentinel_pref("__gt__", ATyp::gt(), 3)
+    }
+
+    /// Shared helper for sentinel PRef construction. Uses a stable
+    /// `NodeIndex` in the high end of the address space (counting down
+    /// from `usize::MAX`) so synthesized sentinels can never collide
+    /// with real DAG node indices (which grow up from 0). Registers
+    /// the sentinel in `np` on first use so `vars()` picks it up.
+    fn sentinel_pref(&mut self, name: &str, typ: ATyp, offset: usize) -> PRef {
+        let vid = Vid::from(name);
+        let idx = NodeIndex::new(usize::MAX - offset);
+        let pref = PRef::from_var(
+            vid,
+            idx,
+            typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        if !self.np.contains(&pref) {
+            self.np.insert(&pref, &Op::Ref(pref.reference.clone(), typ));
         }
-        let v = self.fresh_pref(ATyp::scalar());
-        self.pair_vars.insert(&(p.clone(), q.clone()), &v);
-        // Register as opaque so it shows up in vars().
-        self.np.insert(&v, &Op::Ref(v.reference.clone(), ATyp::scalar()));
-        v
-    }
-
-    /// Phase 11: mint or recall a stable PRef for a group literal.
-    ///
-    /// Literal group elements (e.g. generator points) need a stable
-    /// identity so that two occurrences of the same literal in
-    /// different Pair expressions decompose to the same base PRef.
-    /// We key by the raw `Value<C>` bytes indirectly — actually, for
-    /// simplicity, each literal gets a fresh PRef; two syntactically
-    /// identical literals in one Pair basis row still commute
-    /// through `pair_var_for`, so as long as the sibling scalar
-    /// linear form is the same we still close the basis. Literals
-    /// that re-appear across `verify` sites but refer to "the
-    /// generator" are expected to be named inputs in practice.
-    ///
-    /// Registered in `np` on mint so `vars()` finds it.
-    fn mint_group_literal_pref(&mut self, typ: ATyp) -> PRef {
-        let v = self.fresh_pref(typ.clone());
-        self.np.insert(&v, &Op::Ref(v.reference.clone(), typ));
-        v
-    }
-
-    /// Phase 11: decompose a G1- or G2-typed `Op` tree into a list
-    /// `Σ s_i · P_i` of scalar-coefficient / base-PRef pairs.
-    ///
-    /// The scalar coefficients live in F (represented as
-    /// `SparsePolynomial`), and each base PRef is treated as an
-    /// opaque F-variable — this is the "exponent space" encoding
-    /// that lets us emit bilinear pairing equations as ordinary
-    /// polynomial basis rows.
-    ///
-    /// Handled shapes:
-    ///   * `Ref(r, G*)`                → `[(1, find_ref(r))]`
-    ///   * `Ram(Ref(r, vec G*), Lit i)` → `[(1, find_ref(r).with_index(i))]`
-    ///   * `Bin(Add, a, b, G*)`        → `decompose(a) ++ decompose(b)`
-    ///   * `Bin(Sub, a, b, G*)`        → `decompose(a) ++ (-1)·decompose(b)`
-    ///   * `Bin(Mul, s, p, G*)` with s: scalar, p: G*  → `s · decompose(p)`
-    ///   * `Bin(Mul, p, s, G*)` symmetric
-    ///   * `Value(G1/G2/G1Affine/G2Affine)` → `[(1, fresh base literal)]`
-    ///   * anything else               → `[(1, fresh opaque PRef)]`
-    ///
-    /// Duplicate base PRefs are *not* folded — the caller (outer
-    /// product over two linear forms) looks up `pair_var_for` per
-    /// term and SparsePolynomial addition handles aggregation.
-    fn decompose_group(
-        &mut self,
-        op: &GOp<C>,
-    ) -> Vec<(SparsePolynomial<C::F, T>, PRef)> {
-        match op {
-            Op::Ref(r, _) => {
-                let pf = self.find_ref(r);
-                vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-            }
-            Op::Ram(a, b) => {
-                match (a.get(), b.get()) {
-                    (Op::Ref(n, _), Op::Value(Value::Index(i))) => {
-                        let pf = self.find_ref(n).with_index(*i);
-                        vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-                    }
-                    _ => {
-                        // Fallback: treat the whole Ram as one opaque base.
-                        let pf = self.mint_group_literal_pref(op.typ());
-                        vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-                    }
-                }
-            }
-            Op::Bin(BinOp::Add, a, b, t) if t.is_group() => {
-                let mut out = self.decompose_group(a.get());
-                out.extend(self.decompose_group(b.get()));
-                out
-            }
-            Op::Bin(BinOp::Sub, a, b, t) if t.is_group() => {
-                let mut out = self.decompose_group(a.get());
-                let neg_one = SparsePolynomial::<C::F, T>::lit(&-C::F::one());
-                let rhs = self.decompose_group(b.get());
-                out.extend(rhs.into_iter().map(|(s, p)| (s * neg_one.clone(), p)));
-                out
-            }
-            Op::Bin(BinOp::Mul, a, b, t) if t.is_group() => {
-                // Determine which side is the scalar. In exponent space,
-                // "scalar · group" → multiply every coeff of the group
-                // side's linear form by the scalar's polynomial form.
-                let a_typ = a.get().typ();
-                let b_typ = b.get().typ();
-                if a_typ.is_group() && !b_typ.is_group() {
-                    let scalar = {
-                        let p = self.to_poly(b.get());
-                        p.into_iter().next().unwrap_or_else(SparsePolynomial::zero)
-                    };
-                    self.decompose_group(a.get()).into_iter()
-                        .map(|(s, p)| (s * scalar.clone(), p))
-                        .collect()
-                } else if !a_typ.is_group() && b_typ.is_group() {
-                    let scalar = {
-                        let p = self.to_poly(a.get());
-                        p.into_iter().next().unwrap_or_else(SparsePolynomial::zero)
-                    };
-                    self.decompose_group(b.get()).into_iter()
-                        .map(|(s, p)| (s * scalar.clone(), p))
-                        .collect()
-                } else {
-                    // Group × Group isn't well-typed, but guard defensively.
-                    let pf = self.mint_group_literal_pref(op.typ());
-                    vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-                }
-            }
-            Op::Value(v) if matches!(v,
-                Value::G1(_) | Value::G2(_)
-                | Value::G1Affine(_) | Value::G2Affine(_)) =>
-            {
-                let pf = self.mint_group_literal_pref(op.typ());
-                vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-            }
-            _ => {
-                // Fallback: opaque base.
-                let pf = self.mint_group_literal_pref(op.typ());
-                vec![(SparsePolynomial::lit(&C::F::one()), pf)]
-            }
-        }
+        pref
     }
 
     fn to_poly_value(&mut self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
@@ -711,23 +586,31 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.reduce_unfold(*rop, elems).unwrap_or_else(Vec::new)
             },
             Op::Eval(p, xs) => self.eval_to_poly(p, xs).unwrap_or_else(Vec::new),
-            // Phase 11: `Op::Pair(a, b, t)` — bilinear expansion in exponent space.
-            // Decompose both operands into linear forms over base G1/G2 PRefs,
-            // then emit `Σ_{i,j} s_i · t_j · var(v_{P_i, Q_j})`. This lets
-            // inlined `Op::Pair` sub-expressions (e.g. inside Bin(Equ) for a
-            // verify) reduce polynomially instead of being treated as opaque.
+            // Phase 12: `Op::Pair(a, b, _)` — bilinear pairing.
+            //
+            // In exponent space, if we model every group element as
+            //   E : G1 ≅ e_E · __g1__,   F : G2 ≅ e_F · __g2__
+            // then by bilinearity
+            //   pair(E, F) = e_E · e_F · pair(__g1__, __g2__)
+            //             = e_E · e_F · __gt__.
+            //
+            // Since the existing Bin(Add/Sub/Mul) arms on group-typed
+            // operands already propagate through `to_poly` as F-ring
+            // arithmetic on the group vars (treating each group var
+            // as its own exponent), we can read the exponent of each
+            // operand directly off `to_poly(a)[0]` / `to_poly(b)[0]`.
+            // The final `var(__gt__)` factor carries the GT "unit" and
+            // lets `pair(P,Q) + pair(P',Q)` collapse to
+            // `(e_P + e_P') · e_Q · var(__gt__)` under Buchberger.
             Op::Pair(a, b, _) => {
-                let lhs_lf = self.decompose_group(a.get());
-                let rhs_lf = self.decompose_group(b.get());
-                let mut e = SparsePolynomial::<C::F, T>::zero();
-                for (s_i, p_i) in &lhs_lf {
-                    for (t_j, q_j) in &rhs_lf {
-                        let v_ij = self.pair_var_for(p_i, q_j);
-                        let coeff = s_i.clone() * t_j.clone();
-                        e = e + coeff * SparsePolynomial::var(&v_ij);
-                    }
-                }
-                vec![e]
+                let e_a = self.to_poly(a.get())
+                    .into_iter().next()
+                    .unwrap_or_else(SparsePolynomial::zero);
+                let e_b = self.to_poly(b.get())
+                    .into_iter().next()
+                    .unwrap_or_else(SparsePolynomial::zero);
+                let gt = self.gt_pref();
+                vec![&e_a * &e_b * SparsePolynomial::var(&gt)]
             },
             _ => vec![]
         }
@@ -1158,47 +1041,27 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     self.np.insert(&pr, &raw);
                 }
             },
-            // Phase 11: `Op::Pair(a, b, t)` — bilinear pairing into the
-            // target group, encoded in *exponent space*.
+            // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via __gt__
+            // sentinel. The result `pr : GT` is bound to the exponent-space
+            // bilinear form:
             //
-            // G1, G2, GT are all cyclic of order `r = |F|` on pairing-friendly
-            // curves, so every group PRef is implicitly treated as its
-            // discrete log. The bilinear pairing becomes
-            //   log_{g_T}(e(Σ s_i·P_i, Σ t_j·Q_j)) = Σ_{i,j} s_i·t_j·v_{P_i,Q_j}
-            // where v_{P,Q} = log_{g_T}(e(P,Q)) is a fresh F-variable shared
-            // across all Pair ops that decompose to the same base pair.
+            //   var(pr) = to_poly(a) · to_poly(b) · var(__gt__)
             //
-            // We also keep the slot-registration from phase 10 so
-            // `find_ref(Ref::Var(pair_let_name, _))` continues to resolve.
-            Op::Pair(ref a, ref b, ref t) => {
-                let lhs_lf = self.decompose_group(a.get());
-                let rhs_lf = self.decompose_group(b.get());
-
-                // Build E = Σ s_i · t_j · var(v_{P_i, Q_j}).
-                let mut e = SparsePolynomial::<C::F, T>::zero();
-                for (s_i, p_i) in &lhs_lf {
-                    for (t_j, q_j) in &rhs_lf {
-                        let v_ij = self.pair_var_for(p_i, q_j);
-                        let coeff = s_i.clone() * t_j.clone();
-                        e = e + coeff * SparsePolynomial::var(&v_ij);
-                    }
-                }
-
-                // Bind pr (single scalar slot, conceptually) to E.
-                // pr.typ is GT (a base type), so num_coeffs == 1.
-                let n = num_coeffs(&pr.typ);
-                if n <= 1 {
-                    self.pl.insert(&pr, &e);
-                    self.basis.push(&e - &SparsePolynomial::var(&pr));
-                } else {
-                    // Defensive: if somehow pr.typ is vector-shaped, fall
-                    // back to phase-10-style slot registration.
-                    let raw = Op::Pair(a.clone(), b.clone(), t.clone());
-                    for i in 0..n {
-                        let pf = pr.clone().with_index(i);
-                        self.np.insert(&pf, &raw);
-                    }
-                }
+            // which encodes both the pairing axiom `pair(__g1__, __g2__) =
+            // __gt__` and full bilinearity. Matching pair expressions on both
+            // sides of a `verify(lhs == rhs)` then cancel under Buchberger
+            // because their basis rows are identical F-polynomials.
+            Op::Pair(ref a, ref b, _) => {
+                let e_a = self.to_poly(a.get())
+                    .into_iter().next()
+                    .unwrap_or_else(SparsePolynomial::zero);
+                let e_b = self.to_poly(b.get())
+                    .into_iter().next()
+                    .unwrap_or_else(SparsePolynomial::zero);
+                let gt = self.gt_pref();
+                let e = &e_a * &e_b * SparsePolynomial::var(&gt);
+                self.pl.insert(&pr, &e);
+                self.basis.push(&e - &SparsePolynomial::var(&pr));
             },
             // Phase 10: `Op::Record(fields)` — keep the record itself
             // opaque, but recursively process each field by delegating to
