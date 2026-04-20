@@ -42,8 +42,15 @@ impl<C: ArkConfig> AsymptoticCost<C> {
     pub fn cost_add(lt: &ATyp, rt: &ATyp, nthreads: usize) -> f64 {
         match (lt, rt) {
             (ATyp::Base(a), ATyp::Base(b)) => Self::base_add(a, b),
-            (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) => {
-                (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64)
+            (ATyp::Vec(box lt, _), ATyp::Vec(box rt, n)) =>
+                (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64),
+            (ATyp::Uni(lt), ATyp::Uni(rt)) =>
+                ((*lt.max(rt) + 1) as f64) * Self::SCALAR_ADD / (nthreads as f64),
+            (ATyp::Uni(_lt), _) => {
+                1.0
+            },
+            (_, _) => {
+                1.0
             }
             (ATyp::Uni(lt), ATyp::Uni(rt)) => {
                 (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64)
@@ -75,13 +82,9 @@ impl<C: ArkConfig> AsymptoticCost<C> {
                 (*n as f64) * Self::cost_mul(lt, rt, nthreads) / (nthreads as f64)
             }
             (ATyp::Uni(n), ATyp::Base(ABase::Scalar))
-            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) => {
-                (*n as f64) * Self::SCALAR_MUL / (nthreads as f64)
-            }
-            (a, b) => {
-                debug!("{} {}", a, b);
-                1.0
-            } //unreachable!()} TODO: fix this
+            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) =>
+                ((*n + 1) as f64) * Self::SCALAR_MUL / (nthreads as f64),
+            (a, b) => {debug!("{} {}", a, b); 1.0}//unreachable!()} TODO: fix this
         }
     }
 

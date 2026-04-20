@@ -70,11 +70,15 @@ fn hypercube(n: usize) -> Vec<Vec<usize>> {
 }
 
 /// Number of PRef slots needed to represent a value of the given type.
+///
+/// Per `docs/poly-encoding.md`, `m` in every polynomial ATyp is the max
+/// degree, so a `Uni(m)` has `m + 1` coefficient slots and a
+/// `VPoly(n, m)` has `C(m + n, n)` slots.
 fn num_coeffs(typ: &ATyp) -> usize {
     match typ {
         ATyp::VPoly(n, m) => multi_indices(*n, *m).len(),
         ATyp::Mle(n) => 1usize << *n,
-        ATyp::Uni(n) => *n,
+        ATyp::Uni(m) => *m + 1,
         ATyp::Vec(_, n) => *n,
         _ => 1,
     }
@@ -381,12 +385,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// Returns `None` if either operand isn't VPoly/Uni-shaped, if num_vars
     /// differ, or if `ma < mb` (no well-defined quotient).
     fn div_witnesses(&mut self, a: &HOp<C>, b: &HOp<C>) -> Option<(PRef, PRef)> {
-        // Canonical VPoly shape extraction (handles both ATyp::VPoly and the
-        // legacy ATyp::Uni(n) ≡ VPoly(1, n-1) alias).
+        // Canonical VPoly shape extraction (handles both ATyp::VPoly and
+        // `ATyp::Uni(m) ≡ VPoly(1, m)` per docs/poly-encoding.md — `m` is
+        // the max degree in both forms).
         fn poly_shape(t: &ATyp) -> Option<(usize, usize)> {
             match t {
                 ATyp::VPoly(n, m) => Some((*n, *m)),
-                ATyp::Uni(n) => Some((1, n.saturating_sub(1))),
+                ATyp::Uni(m) => Some((1, *m)),
                 _ => None,
             }
         }
@@ -661,8 +666,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                                 SparsePolynomial::var(&pf)
                             })
                             .collect::<Vec<_>>(),
-                    ATyp::Uni(n) =>
-                        (0..*n).into_iter()
+                    ATyp::Uni(m) =>
+                        (0..=*m).into_iter()
                             .map(|i| {
                                 let mut pf = pf.clone();
                                 pf.index = i;
@@ -1125,6 +1130,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // mixed polynomial types).
             Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
                 let polys = self.to_poly(inner);
+                debug_assert_eq!(polys.len(), num_coeffs(&pr.typ),
+                    "Op::Poly/Mle/Coef slot count mismatch: {} polys vs num_coeffs({}) = {}",
+                    polys.len(), pr.typ, num_coeffs(&pr.typ));
                 for (i, p) in polys.into_iter().enumerate() {
                     let pf = pr.clone().with_index(i);
                     self.pl.insert(&pf, &p);
@@ -1677,7 +1685,9 @@ mod tests {
         assert_eq!(num_coeffs(&ATyp::VPoly(2, 2)), 6);
         assert_eq!(num_coeffs(&ATyp::VPoly(3, 1)), 4);  // scalar + 3 linear
         assert_eq!(num_coeffs(&ATyp::Mle(3)), 8);
-        assert_eq!(num_coeffs(&ATyp::Uni(5)), 5);
+        // Per docs/poly-encoding.md: Uni(m) has m+1 coefficient slots.
+        assert_eq!(num_coeffs(&ATyp::Uni(5)), 6);
+        assert_eq!(num_coeffs(&ATyp::Uni(0)), 1);
         assert_eq!(num_coeffs(&ATyp::scalar()), 1);
     }
 
@@ -1826,10 +1836,11 @@ mod tests {
             Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))),
         );
 
-        // Then: Op::Coef reading the VPoly back into a Uni(3) output.
+        // Then: Op::Coef reading the VPoly back into a Uni(2) output
+        // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
         let pref_c = PRef::from_node(
             NodeIndex::new(1),
-            ATyp::Uni(3),
+            ATyp::Uni(2),
             0,
             Qualifier::Private,
             Distribution::default(),
@@ -1923,15 +1934,15 @@ mod tests {
         use backend::op::mk;
 
         // p(x) = a_0 + a_1 x   as VPoly(1,1): 2 coefficient slots on node 0.
-        // xs = [x0, x1]        as Uni(2):     2 slots on node 1.
+        // xs = [x0, x1]        as Uni(1):     degree 1 = 2 slots on node 1.
         // Expected: result[i] = a_0 + a_1 * xs[i].
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(1, 1));
-        let _pref_xs = register_ref(&mut builder, 1, ATyp::Uni(2));
+        let _pref_xs = register_ref(&mut builder, 1, ATyp::Uni(1));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
-            ATyp::Uni(2),
+            ATyp::Uni(1),
             0,
             Qualifier::Private,
             Distribution::default(),
@@ -1939,7 +1950,7 @@ mod tests {
 
         let op: GOp<ArkBls12_381> = Op::Eval(
             mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
-            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
         );
         builder.add_op(result.clone(), op);
 
@@ -1997,10 +2008,10 @@ mod tests {
             .collect();
         builder.add_op(pref_p.clone(), Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))));
 
-        // Bind xs similarly on node 1 as Uni(2).
+        // Bind xs similarly on node 1 as Uni(1) (degree 1 = 2 slots).
         let pref_xs = PRef::from_node(
             NodeIndex::new(1),
-            ATyp::Uni(2),
+            ATyp::Uni(1),
             0,
             Qualifier::Private,
             Distribution::default(),
@@ -2015,14 +2026,14 @@ mod tests {
         // Now issue eval:  p(xs).
         let result = PRef::from_node(
             NodeIndex::new(2),
-            ATyp::Uni(2),
+            ATyp::Uni(1),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(1, 1))),
-            mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+            mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
         );
         builder.add_op(result.clone(), op);
 
@@ -2050,7 +2061,7 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _ = register_ref(&mut builder, 0, ATyp::VPoly(2, 2));
-        let _ = register_ref(&mut builder, 1, ATyp::Uni(2));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -2061,7 +2072,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(2, 2))),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
         );
         builder.add_op(result.clone(), op);
 
@@ -2082,7 +2093,7 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _ = register_ref(&mut builder, 0, ATyp::VPoly(3, 1));
-        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(0));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -2093,7 +2104,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(3, 1))),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(0))),
         );
         builder.add_op(result.clone(), op);
 
@@ -2115,7 +2126,7 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _ = register_ref(&mut builder, 0, ATyp::Mle(2));
-        let _ = register_ref(&mut builder, 1, ATyp::Uni(2));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -2126,7 +2137,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::Mle(2))),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(2))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
         );
         builder.add_op(result.clone(), op);
 
@@ -2146,7 +2157,7 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _ = register_ref(&mut builder, 0, ATyp::Mle(3));
-        let _ = register_ref(&mut builder, 1, ATyp::Uni(1));
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(0));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -2157,7 +2168,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::Mle(3))),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(1))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(0))),
         );
         builder.add_op(result.clone(), op);
 
@@ -2177,8 +2188,8 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let _ = register_ref(&mut builder, 0, ATyp::VPoly(3, 2));
-        // xs with k > n should fall through (k=4 > n=3).
-        let _ = register_ref(&mut builder, 1, ATyp::Uni(4));
+        // xs with k > n should fall through (k=4 > n=3). Uni(3) = degree 3 = 4 slots.
+        let _ = register_ref(&mut builder, 1, ATyp::Uni(3));
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -2189,7 +2200,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Eval(
             backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(0)), ATyp::VPoly(3, 2))),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(4))),
+            backend::op::mk::<ArkBls12_381>(Op::Ref(crate::Ref::Node(NodeIndex::new(1)), ATyp::Uni(3))),
         );
         builder.add_op(result.clone(), op);
 
