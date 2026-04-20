@@ -1,37 +1,57 @@
 use zippel::*;
 use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
+use backend::{ArkBls12_381, ArkConfig, Value};
 use backend::poly_variant::PolyVariant;
 use backend::VirtualPolynomial;
 use ark_poly::DenseMultilinearExtension;
 use lang::id::{Vid, Tid};
 use share::Ctx;
 use ark_ff::Zero;
+use ark_std::UniformRand;
 
-const NUM_VARS: usize = 1;
+const NUM_VARS: usize = 10;
+const MAX_DEGREE: usize = 10;
+const DROP_EVAL_POINT_TEST: bool = false;
 
 fn main() {
+    let num_vars = NUM_VARS;
+    let max_degree = MAX_DEGREE;
+    if max_degree == 0 {
+        eprintln!("SUMCHECK_MAX_DEGREE must be >= 1.");
+        std::process::exit(2);
+    }
+
     println!("=== Sumcheck (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+    println!("num_vars:       {num_vars}");
+    println!("max_degree:     {max_degree}");
+    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"))
+        .with_pdf(PathBuf::from("target/sumcheck_graphs.pdf"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &10);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
+    let inputs = prover_create_inputs(num_vars, max_degree);
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_scheduled, inputs);
+    let mut proof = handler.run_prover(prover_scheduled, inputs);
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
     println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    if DROP_EVAL_POINT_TEST {
+        let removed = drop_one_eval_point_from_proof(&mut proof);
+        println!(
+            "Tamper test:    remove one evaluation point -> {}",
+            if removed { "applied" } else { "not found" }
+        );
+    }
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
     let verifier_result = handler.run_verifier(verifier_scheduled, proof);
     let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
+    let result = check_verification(verifier_result.clone());
     println!("Verifier time:  {verifier_elapsed:.2?}");
     if result.passed {
         println!("Verification:   ✓ PASSED");
@@ -40,55 +60,87 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
-    println!("\n--- Static Analysis ---");
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        analysis_handler.minimal_analysis()
-    });
-    match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
+    // // Static analysis (completeness & ZK)
+    // println!("\n--- Static Analysis ---");
+    // let analysis_result = std::panic::catch_unwind(|| {
+    //     let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+    //     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    //     analysis_handler.minimal_analysis()
+    // });
+    // match analysis_result {
+    //     Ok(analysis) => {
+    //         match &analysis.completeness {
+    //             Ok(()) => println!("Completeness:   ✓"),
+    //             Err(e) => println!("Completeness:   ✗ {}", e),
+    //         }
+    //         match &analysis.zk {
+    //             Ok(()) => println!("ZK:             ✓"),
+    //             Err(e) => println!("ZK:             ✗ {}", e),
+    //         }
+    //     }
+    //     Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    // }
+}
+
+fn drop_one_eval_point_from_proof(proof: &mut [Value<ArkBls12_381>]) -> bool {
+    for value in proof.iter_mut() {
+        if drop_one_eval_point_in_value(value) {
+            return true;
         }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    }
+    false
+}
+
+fn drop_one_eval_point_in_value(value: &mut Value<ArkBls12_381>) -> bool {
+    match value {
+        Value::VecScalar(v) => {
+            if !v.is_empty() {
+                v.pop();
+                return true;
+            }
+            false
+        }
+        Value::Record(fields) => {
+            let keys: Vec<String> = fields.iter().map(|(k, _)| k.clone()).collect();
+            for key in keys {
+                if let Some(inner) = fields.get_mut(&key) {
+                    if drop_one_eval_point_in_value(inner) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(num_vars: usize, max_degree: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    let eval_count = 1usize << num_vars;
     let mut rng = rand::rngs::OsRng;
-    let mut random_scalar = || {
-        Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar()).into_scalar()
-    };
+    let base_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
 
-    let eval_count = 1usize << NUM_VARS;
-    let g_evals: Vec<_> = (0..eval_count).map(|_| random_scalar()).collect();
+    // Build a degree-k virtual polynomial as base(x)^k over the boolean hypercube.
+    let claimed_sum: F = base_evals
+        .iter()
+        .map(|x| (0..max_degree).fold(F::from(1u64), |acc, _| acc * *x))
+        .fold(F::zero(), |acc, val| acc + val);
 
-    let claimed_sum = g_evals.iter()
-        .fold(<ArkBls12_381 as ArkConfig>::F::zero(), |acc, val| acc + val);
-
-    let half = eval_count / 2;
-    let zero = <ArkBls12_381 as ArkConfig>::F::zero();
-    let g1_0 = g_evals[0..half].iter().copied()
-        .fold(zero, |acc, val| acc + val);
-    let g1_1 = g_evals[half..].iter().copied()
-        .fold(zero, |acc, val| acc + val);
-    let round_claims = vec![g1_0, g1_1];
-
-    let g_poly = DenseMultilinearExtension::from_evaluations_vec(NUM_VARS, g_evals.clone());
-    let g_poly_value = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(g_poly)));
+    let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+        DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals),
+    ));
+    let mut full_poly = base.clone();
+    for _ in 1..max_degree {
+        full_poly = full_poly
+            .poly_mul(&base)
+            .expect("failed to multiply full_poly by base");
+    }
+    let poly = Value::Poly(full_poly);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("claimed_sum".to_string()), Value::Scalar(claimed_sum)),
-        (Vid("g_poly".to_string()), g_poly_value),
-        (Vid("round_claims".to_string()), Value::VecScalar(round_claims)),
+        (Vid("poly".to_string()), poly),
     ])
 }
 

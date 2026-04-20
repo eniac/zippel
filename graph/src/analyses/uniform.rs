@@ -47,11 +47,15 @@ impl UniformityPropagation {
             Op::Ifft(op) => self.op_ancestors(op),
             Op::Fft(op) => self.op_ancestors(op),
             Op::Mle(op) => self.op_ancestors(op),
+            Op::Marginalize(op) => self.op_ancestors(op),
+            Op::Interpolate0dEval(op, d) =>
+                self.op_ancestors(op).union(self.op_ancestors(d)),
+            Op::Proj(op, _, _) => self.op_ancestors(op),
             Op::Random(_, _) => Set::new(),
             Op::Challenge(_, _) => Set::new(),
             Op::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| self.op_ancestors(v)).collect(),
-            Op::Pair(a, b, _) 
+            Op::Pair(a, b, _)
             | Op::Bin(_, a, b, _) => {
                 let a_ancestors = self.op_ancestors(a);
                 let b_ancestors = self.op_ancestors(b);
@@ -82,7 +86,13 @@ impl UniformityPropagation {
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
-            Op::Bin(BinOp::Add, a, b, _) 
+            Op::Marginalize(a) => self.from_op(a),
+            Op::Interpolate0dEval(a, d) => {
+                let _ = self.from_op(d)?;
+                self.from_op(a)
+            },
+            Op::Proj(a, _, _) => self.from_op(a),
+            Op::Bin(BinOp::Add, a, b, _)
             | Op::Bin(BinOp::Concat, a, b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;

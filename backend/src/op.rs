@@ -63,6 +63,15 @@ pub enum Op<C: ArkConfig, R> {
     /// Multilinear extension
     Mle(HOp<C>),
 
+    /// Sum-check marginalization helper
+    Marginalize(HOp<C>),
+
+    /// Interpolate univariate polynomial from evaluations on 0..n-1
+    Interpolate0dEval(HOp<C>, HOp<C>),
+
+    /// Project a field from a record value
+    Proj(HOp<C>, String, ATyp),
+
     /// Coefficients of a polynomial
     Coef(HOp<C>),
 
@@ -145,6 +154,9 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Coef(_) => 23,
             Op::Mle(_) => 24,
             Op::Reduce(_, _) => 25,
+            Op::Marginalize(_) => 26,
+            Op::Interpolate0dEval(_, _) => 27,
+            Op::Proj(_, _, _) => 28,
         }
     }
 
@@ -191,6 +203,15 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Eval(_p, x) => x.typ(),
             Op::Coef(op) => op.typ(),
             Op::Mle(op) => op.typ(),
+            Op::Marginalize(op) => op.typ(),
+            Op::Interpolate0dEval(evals, d) => {
+                match (evals.typ(), d.get()) {
+                    (ATyp::Vec(_, n), Op::Value(Value::Index(di))) if *di + 1 <= n => ATyp::uni(*di),
+                    (ATyp::Vec(_, n), _) => ATyp::uni(n.saturating_sub(1)),
+                    _ => panic!("interpolate0d expects a vector argument"),
+                }
+            }
+            Op::Proj(_, _, typ) => typ.clone(),
             Op::Reduce(op, v) => {
                 let (elem, _) = v.typ().into_vec();
                 ATyp::lub_op(*op, &elem, &elem, &Nothing)
@@ -559,6 +580,18 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Mle(mk::<C>(op))
     }
 
+    pub fn marginalize(op: Self) -> GOp<C> {
+        Op::Marginalize(mk::<C>(op))
+    }
+
+    pub fn interpolate0d_eval(evals: Self, d: Self) -> GOp<C> {
+        Op::Interpolate0dEval(mk::<C>(evals), mk::<C>(d))
+    }
+
+    pub fn proj(record_op: Self, field: String, typ: ATyp) -> GOp<C> {
+        Op::Proj(mk::<C>(record_op), field, typ)
+    }
+
     pub fn reduce(op: BinOp, v: Self) -> GOp<C> {
         Op::Reduce(op, mk::<C>(v))
     }
@@ -661,7 +694,11 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Mle(v)
             | Op::Coef(v)
             | Op::Reduce(_, v)
+            | Op::Marginalize(v)
             | Op::Fft(v) => v.references(),
+            Op::Interpolate0dEval(v, d) =>
+                v.references().into_iter().chain(d.references().into_iter()).collect(),
+            Op::Proj(v, _, _) => v.references(),
             Op::Value(_)
             | Op::Random(_, _)
             | Op::Challenge(_, _) => vec![],
@@ -689,6 +726,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_node_indices(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
+            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
+            Op::Interpolate0dEval(a, b) => Op::Interpolate0dEval(mk::<C>(a.map_node_indices(f)), mk::<C>(b.map_node_indices(f))),
+            Op::Proj(op, field, typ) => Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone()),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             _ => self.clone()
         }
@@ -715,6 +755,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
             Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
+            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
+            Op::Interpolate0dEval(a, b) => Op::Interpolate0dEval(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f))),
+            Op::Proj(op, field, typ) => Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone()),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_refs(f))),
         }
     }
@@ -750,6 +793,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Check(op) => op.inline(vars, except),
             Op::Ifft(v) => Op::Ifft(mk::<C>(v.inline(vars, except))),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
+            Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
+            Op::Interpolate0dEval(a, b) => Op::Interpolate0dEval(mk::<C>(a.inline(vars, except)), mk::<C>(b.inline(vars, except))),
+            Op::Proj(v, field, typ) => Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone()),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
             _ => self.clone()
         }
@@ -973,6 +1019,25 @@ where
             Op::Mle(v) => allocator.concat([
                 allocator.text("(mle "),
                 v.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Marginalize(v) => allocator.concat([
+                allocator.text("(marginalize "),
+                v.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Interpolate0dEval(evals, d) => allocator.concat([
+                allocator.text("(interpolate0d "),
+                evals.get().clone().pretty(allocator),
+                allocator.text(", "),
+                d.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Proj(v, field, _) => allocator.concat([
+                allocator.text("(proj "),
+                v.get().clone().pretty(allocator),
+                allocator.text(" ."),
+                allocator.text(field.clone()),
                 allocator.text(")"),
             ]),
             Op::Pair(a, b, _) => allocator.concat([

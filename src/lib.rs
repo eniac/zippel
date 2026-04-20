@@ -355,29 +355,6 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
     sizes
 }
 
-/// Result of verifying a proof
-pub struct VerificationResult<C: ArkConfig> {
-    pub passed: bool,
-    pub outputs: Vec<Value<C>>,
-}
-
-/// Interpret verifier output as pass/fail.
-/// Passes if every `Value::Bool` in the output is `true`.
-pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
-    let passed = outputs.iter().all(|v| match v {
-        Value::Bool(b) => *b,
-        _ => true,
-    });
-    VerificationResult { passed, outputs }
-}
-
-/// Compute the total serialized size (in bytes) of a proof certificate.
-pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
-    proof.iter()
-        .filter_map(|v| value_to_bytes(v).ok())
-        .map(|b| b.len())
-        .sum()
-}
 
 #[cfg(test)]
 mod tests {
@@ -403,4 +380,28 @@ mod tests {
         let s_val = *sizes.get(&Tid::new("S")).unwrap();
         assert!(s_val >= 2, "S should be ≥ 2, got {}", s_val);
     }
+}
+
+/// Result of verifying a proof
+pub struct VerificationResult<C: ArkConfig> {
+    pub passed: bool,
+    pub outputs: Vec<Value<C>>,
+}
+
+/// Interpret verifier output as pass/fail.
+/// Passes if every `Value::Bool` in the output is `true`.
+pub fn check_verification<C: ArkConfig>(outputs: Vec<Value<C>>) -> VerificationResult<C> {
+    let passed = outputs.iter().all(|v| match v {
+        Value::Bool(b) => *b,
+        _ => true,
+    });
+    VerificationResult { passed, outputs }
+}
+
+/// Compute the total serialized size (in bytes) of a proof certificate.
+pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
+    proof.iter()
+        .filter_map(|v| value_to_bytes(v).ok())
+        .map(|b| b.len())
+        .sum()
 }

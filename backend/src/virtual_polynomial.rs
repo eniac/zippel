@@ -72,6 +72,48 @@ impl<F: Field> VirtualPolynomial<F> {
         }
     }
 
+    pub fn fix_first_mle_variables_factorwise(
+        &self,
+        points: &[F],
+    ) -> Result<Self, PolyError<F>> {
+        if points.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let mut new_flattened = Vec::with_capacity(self.flattened_polys.len());
+
+        for poly_arc in &self.flattened_polys {
+            let fixed_variant = match &**poly_arc {
+                PolyVariant::DenseMle(mle) => {
+                    PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
+                }
+                other => other.clone(),
+            };
+
+            new_flattened.push(Arc::new(fixed_variant));
+        }
+
+        let mut new_lookup = HashMap::new();
+        for (idx, poly) in new_flattened.iter().enumerate() {
+            new_lookup.insert(Arc::clone(poly), idx);
+        }
+
+        let mut result = VirtualPolynomial {
+            products: self.products.clone(),
+            flattened_polys: new_flattened,
+            poly_pointers_lookup: new_lookup,
+            num_variables: self
+                .num_variables
+                .map(|n| n.saturating_sub(points.len())),
+        };
+
+        if result.products.is_empty() {
+            result.num_variables = None;
+        }
+
+        Ok(result)
+    }
+
     /// Add a product of polynomials to this virtual polynomial
     /// The polynomials will be multiplied together, then multiplied by the coefficient
     pub fn add_poly_list(
@@ -451,11 +493,69 @@ impl<F: Field> VirtualPolynomial<F> {
 }
 
 impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
-    fn serialize_with_mode<W: Write>(&self, mut writer: W, _compress: ark_serialize::Compress) -> Result<(), SerializationError> {
-        // Normalize to a single PolyVariant and serialize that
-        let normalized = self.normalize()
-            .map_err(|_| SerializationError::InvalidData)?;
-        normalized.serialize_compressed(&mut writer)
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), SerializationError> {
+        match self.normalize() {
+            Ok(normalized) => {
+                return normalized.serialize_compressed(&mut writer);
+            }
+            Err(PolyError::MleMultiplication { .. }) => {
+                1u8.serialize_compressed(&mut writer)?;
+
+                // Encode num_variables as Option<usize>
+                match self.num_variables {
+                    Some(n) => {
+                        true.serialize_compressed(&mut writer)?;
+                        (n as u64).serialize_compressed(&mut writer)?;
+                    }
+                    None => {
+                        false.serialize_compressed(&mut writer)?;
+                    }
+                }
+
+                // Encode products: Vec<(F, Vec<usize>)>
+                (self.products.len() as u64).serialize_compressed(&mut writer)?;
+                for (coeff, indices) in &self.products {
+                    // Coefficient
+                    coeff.serialize_compressed(&mut writer)?;
+                    // Indices into flattened_polys
+                    (indices.len() as u64).serialize_compressed(&mut writer)?;
+                    for &idx in indices {
+                        (idx as u64).serialize_compressed(&mut writer)?;
+                    }
+                }
+
+                // Encode flattened_polys with an explicit tag per variant so the
+                // representation is canonical and self-contained.
+                (self.flattened_polys.len() as u64).serialize_compressed(&mut writer)?;
+                for poly_arc in &self.flattened_polys {
+                    match poly_arc.as_ref() {
+                        PolyVariant::DenseUni(p) => {
+                            0u8.serialize_compressed(&mut writer)?;
+                            p.serialize_compressed(&mut writer)?;
+                        }
+                        PolyVariant::SparseUni(p) => {
+                            1u8.serialize_compressed(&mut writer)?;
+                            p.serialize_compressed(&mut writer)?;
+                        }
+                        PolyVariant::DenseMle(m) => {
+                            2u8.serialize_compressed(&mut writer)?;
+                            m.serialize_compressed(&mut writer)?;
+                        }
+                        PolyVariant::SparseMultivariate(p) => {
+                            3u8.serialize_compressed(&mut writer)?;
+                            p.serialize_compressed(&mut writer)?;
+                        }
+                    }
+                }
+
+                Ok(())
+            }
+            Err(_) => Err(SerializationError::InvalidData),
+        }
     }
 
     fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
@@ -657,11 +757,11 @@ mod tests {
     use ark_bls12_381::Fr;
     use ark_ff::{UniformRand, Zero, One};
     use ark_std::test_rng;
-    use ark_poly::{
-        univariate::DensePolynomial,
-        DenseMultilinearExtension,
-        DenseUVPolynomial,
-    };
+use ark_poly::{
+    univariate::DensePolynomial,
+    DenseMultilinearExtension,
+    DenseUVPolynomial,
+};
 
     // ========== Test Helpers ==========
     fn create_vp_from_scalar(val: u64) -> VirtualPolynomial<Fr> {

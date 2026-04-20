@@ -6,7 +6,7 @@ use ark_poly::{
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use ark_std::log2;
 use lang::typ::{Nothing, CRange};
 use lang::ast::BinOp;
@@ -222,7 +222,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             Ok(())
         }
         Value::Poly(poly) => {
-            // Serialize VirtualPolynomial by first trying to get univariate coefficients,
+            // Serialize `VirtualPolynomial` by first trying to get univariate coefficients,
             // and falling back to a generic vector view if available.
             if let Some(coeffs) = poly.to_coeffs() {
                 for f in coeffs {
@@ -235,9 +235,25 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
                 }
                 Ok(())
             } else {
-                Err(SerializationError::InvalidData)
+                // Fallback for arbitrary virtual polynomials (e.g. product of MLEs) so
+                // public inputs can be serialized for the transcript.
+                const VIRTUAL_POLY_TAG: u8 = 2;
+                VIRTUAL_POLY_TAG.serialize_compressed(&mut *writer)?;
+                (poly.products.len() as u64).serialize_compressed(&mut *writer)?;
+                for (coeff, indices) in &poly.products {
+                    coeff.serialize_compressed(&mut *writer)?;
+                    (indices.len() as u64).serialize_compressed(&mut *writer)?;
+                    for &idx in indices {
+                        (idx as u64).serialize_compressed(&mut *writer)?;
+                    }
+                }
+                (poly.flattened_polys.len() as u64).serialize_compressed(&mut *writer)?;
+                for poly_arc in &poly.flattened_polys {
+                    (**poly_arc).serialize_compressed(&mut *writer)?;
+                }
+                Ok(())
             }
-        },
+        }
         Value::Record(fields) => {
             // Serialize record fields
             (fields.len() as u64).serialize_compressed(&mut *writer)?;
@@ -247,7 +263,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
                 serialize_value_internal(value, &mut *writer)?;
             }
             Ok(())
-        },
+        }
     }
 }
 
@@ -1396,6 +1412,45 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Typed division.
+    ///
+    /// This delegates to `value_div` for most types, but for `ATyp::Uni(_)`
+    /// it switches `value_div` into "polynomial mode" by wrapping the operands
+    /// as `Value::Poly` first so that the existing `Poly/Poly` arm performs
+    /// true polynomial division, and then normalizes the quotient length.
+    #[inline]
+    pub fn value_div_typed(self, other: Self, typ: &ATyp) -> Self {
+        match typ {
+            ATyp::Uni(out_len) => {
+                // Use the existing `Value::Poly / Value::Poly` arm in `value_div`.
+                let mut rhs = other.value_poly();
+                let lhs_poly = self.value_poly();
+                lhs_poly.value_div(&mut rhs);
+
+                // `rhs` now holds the quotient as a polynomial; convert to coeffs.
+                let q_coeffs = rhs.value_coef();
+                let mut coeffs = match q_coeffs {
+                    Value::VecScalar(v) => v,
+                    _ => unreachable!("value_coef must return VecScalar"),
+                };
+
+                // Ensure coefficient vector length matches the inferred Uni size.
+                if coeffs.len() < *out_len {
+                    coeffs.extend(std::iter::repeat(C::F::zero()).take(*out_len - coeffs.len()));
+                } else if coeffs.len() > *out_len {
+                    coeffs.truncate(*out_len);
+                }
+
+                Value::VecScalar(coeffs)
+            }
+            _ => {
+                let mut rhs = other;
+                self.value_div(&mut rhs);
+                rhs
+            }
+        }
+    }
+
     pub fn value_rem(&self, other: &mut Self) {
         match (self, &other) {
             (Value::Index(a), Value::Index(b)) => *other.into_index_mut() = *a % *b,
@@ -1841,6 +1896,7 @@ impl<C: ArkConfig> Value<C> {
     pub fn eval(self, other: &mut Self) {
         match (&self, &other) {
             (Value::Poly(poly), Value::VecIndex(b)) => {
+                let n_points = b.len();
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
                 let result_poly = if poly.is_univariate() {
@@ -1853,7 +1909,11 @@ impl<C: ArkConfig> Value<C> {
 
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
-                    Value::Scalar(scalar)
+                    if n_points == 1 {
+                        Value::VecScalar(vec![scalar])
+                    } else {
+                        Value::Scalar(scalar)
+                    }
                 } else if let Some(vec) = result_poly.to_vec() {
                     Value::VecScalar(vec)
                 } else {
@@ -1861,6 +1921,7 @@ impl<C: ArkConfig> Value<C> {
                 };
             },
             (Value::Poly(poly), Value::VecScalar(v)) => {
+                let n_points = v.len();
                 let result_poly = if poly.is_univariate() {
                     poly.evaluate_vec(v)
                 } else if let Ok(scalar) = poly.evaluate_mv(v) {
@@ -1871,7 +1932,11 @@ impl<C: ArkConfig> Value<C> {
 
                 // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
-                    Value::Scalar(scalar)
+                    if n_points == 1 {
+                        Value::VecScalar(vec![scalar])
+                    } else {
+                        Value::Scalar(scalar)
+                    }
                 } else if let Some(vec) = result_poly.to_vec() {
                     Value::VecScalar(vec)
                 } else {
@@ -2569,6 +2634,216 @@ impl<C: ArkConfig> Value<C> {
             _ => panic!("Expected vector, found {}", self),
         }
     }
+}
+
+pub fn round_univariate_from_marginalize_evals<F: PrimeField>(evals: &[F]) -> VirtualPolynomial<F> {
+    let n = evals.len();
+    assert!(n > 0, "marginalize evaluations must be non-empty");
+    if n == 1 {
+        return VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
+            vec![evals[0]],
+        )));
+    }
+    let mut aug: Vec<Vec<F>> = (0..n)
+        .map(|i| {
+            let xi = F::from(i as u64);
+            let mut row = Vec::with_capacity(n + 1);
+            let mut pow = F::one();
+            for _ in 0..n {
+                row.push(pow);
+                pow *= xi;
+            }
+            row.push(evals[i]);
+            row
+        })
+        .collect();
+    for col in 0..n {
+        let mut pivot = None;
+        for row in col..n {
+            if !aug[row][col].is_zero() {
+                pivot = Some(row);
+                break;
+            }
+        }
+        let pr = pivot.expect("singular Vandermonde in round_univariate interpolation");
+        aug.swap(col, pr);
+        let inv = aug[col][col].inverse().unwrap();
+        for j in col..=n {
+            aug[col][j] *= inv;
+        }
+        for row in 0..n {
+            if row != col {
+                let factor = aug[row][col];
+                if !factor.is_zero() {
+                    let pivot_row: Vec<F> = aug[col][col..=n].to_vec();
+                    for j in col..=n {
+                        aug[row][j] -= factor * pivot_row[j - col];
+                    }
+                }
+            }
+        }
+    }
+    let coeffs: Vec<F> = (0..n).map(|i| aug[i][n]).collect();
+    VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs)))
+}
+
+pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
+    let g = round_univariate_from_marginalize_evals::<F>(evals);
+    g.evaluate_uv(&x)
+}
+
+pub fn marginalize<C: ArkConfig>(
+    poly: &VirtualPolynomial<C::F>,
+    num_variables: usize,
+    max_degree: usize,
+    round: usize,
+    challenge: Option<C::F>,
+) -> (Vec<C::F>, VirtualPolynomial<C::F>) {
+    // if self.round >= self.poly.aux_info.num_variables
+    if num_variables == 0 {
+        panic!("marginalize: num_variables must be > 0");
+    }
+
+    if let Some(n) = poly.num_vars() {
+        let expected_current_vars = if round == 0 {
+            num_variables
+        } else {
+            num_variables.saturating_sub(round - 1)
+        };
+        if n != expected_current_vars {
+            panic!(
+                "marginalize: num_variables mismatch: polynomial has {}, expected {} (num_variables={}, round={})",
+                n, expected_current_vars, num_variables, round
+            );
+        }
+    }
+
+    // Step 1:
+    // fix argument and evaluate f(x) over x_m = r; where r is the challenge
+    // for the current round, and m is the round number, indexed from 1
+    //
+    // i.e.:
+    // at round m <= n, for each mle g(x_1, ... x_n) within the flattened_mle
+    // which has already been evaluated to g(r_1, ..., r_{m-1}, x_m ... x_n)
+    //
+    //    g(r_1, ..., r_{m-1}, x_m ... x_n)
+    //
+    // eval g over r_m, and mutate g to g(r_1, ... r_m, x_{m+1}... x_n)
+    let next_poly = if round == 0 {
+        poly.clone()
+    } else if let Some(r) = challenge {
+        poly.fix_first_mle_variables_factorwise(&[r])
+            .unwrap_or_else(|_| poly.clone())
+    } else {
+        poly.clone()
+    };
+
+    // Step 2: generate sum for the partial evaluated polynomial:
+    // f(r_1, ... r_m, x_{m+1}... x_n); we sum over the hypercube for the remaining
+    let num_remaining_vars = num_variables.saturating_sub(round + 1);
+    let total: usize = 1usize << num_remaining_vars;
+    let expected_mle_vars = num_variables.saturating_sub(round);
+
+    let all_mle = next_poly.flattened_polys.iter().all(|p| p.as_mle_evaluations().is_some());
+    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
+        let tables: Vec<&[C::F]> = next_poly
+            .flattened_polys
+            .iter()
+            .filter_map(|p| p.as_mle_evaluations())
+            .collect();
+        if tables.len() == next_poly.flattened_polys.len()
+            && tables.iter().all(|t| t.len() == (1usize << expected_mle_vars))
+        {
+            Some(tables)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut evaluations = vec![C::F::zero(); max_degree + 1];
+
+    if let Some(tables) = mle_tables {
+        let mut products_sum = vec![C::F::zero(); max_degree + 1];
+
+        for (coefficient, products) in &next_poly.products {
+            let mut coeff_acc = vec![C::F::zero(); max_degree + 1];
+            let product_tables: Vec<&[C::F]> = products
+                .iter()
+                .map(|&idx| tables[idx])
+                .collect();
+            let k = product_tables.len();
+
+            let partials: Vec<Vec<C::F>> = (0..total)
+                .into_par_iter()
+                .map(|b| {
+                    let v0: Vec<C::F> = product_tables
+                        .iter()
+                        .map(|tab| tab[2 * b])
+                        .collect();
+                    let v1: Vec<C::F> = product_tables
+                        .iter()
+                        .map(|tab| tab[2 * b + 1])
+                        .collect();
+                    // P(t) = prod_i ((1-t)*v0_i + t*v1_i); compute coeffs of P (degree k).
+                    let mut coeffs = vec![C::F::zero(); k + 1];
+                    coeffs[0] = C::F::one();
+                    for i in 0..k {
+                        let a = v0[i];
+                        let b_i = v1[i] - v0[i];
+                        for d in (1..=i + 1).rev() {
+                            coeffs[d] = coeffs[d] * a + coeffs[d - 1] * b_i;
+                        }
+                        coeffs[0] = coeffs[0] * a;
+                    }
+                    coeffs
+                })
+                .collect();
+
+            for partial in partials {
+                for (acc, &p) in coeff_acc.iter_mut().zip(partial.iter()) {
+                    *acc += p;
+                }
+            }
+            for (ps, &acc) in products_sum.iter_mut().zip(coeff_acc.iter()) {
+                *ps += *coefficient * acc;
+            }
+        }
+
+        for t_idx in 0..=max_degree {
+            let t = C::FOps::from_usize(t_idx);
+            let mut val = C::F::zero();
+            let mut t_pow = C::F::one();
+            for d in 0..=max_degree {
+                val += products_sum[d] * t_pow;
+                t_pow *= t;
+            }
+            evaluations[t_idx] = val;
+        }
+    } else {
+        let point_len = num_variables - round;
+        for t_idx in 0..=max_degree {
+            let t = C::FOps::from_usize(t_idx);
+            let sum: C::F = (0..total)
+                .into_par_iter()
+                .map(|b| {
+                    let mut point: Vec<C::F> = Vec::with_capacity(point_len);
+                    point.push(t);
+                    for j in 0..num_remaining_vars {
+                        let bit = (b >> j) & 1;
+                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+                    }
+                    next_poly
+                        .evaluate_mv(&point)
+                        .expect("marginalize: polynomial evaluation failed")
+                })
+                .sum();
+            evaluations[t_idx] = sum;
+        }
+    }
+
+    (evaluations, next_poly)
 }
 
 impl<C: ArkConfig> AddAssign for Value<C> {

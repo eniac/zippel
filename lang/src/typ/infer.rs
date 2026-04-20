@@ -283,16 +283,17 @@ impl Typeable for CExp {
                         let _i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         Ok(CTyp::Vec(b, len_vec))
                     }
-                    (CTyp::Poly(_i, n, 1), CTyp::Vec(b, len_vec)) => {
+                    // Multivariate polynomial (MLE, virtual, etc.): any variable count > 1 and
+                    // any tracked max degree. Backend evaluates at a point or fixes leading vars.
+                    (CTyp::Poly(_i, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
                         let i = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
                         if len_vec == n {
-                           return Ok(*b); 
+                           return Ok(*b);
                         }
                         if len_vec < n {
-                            return Ok(CTyp::Poly(i, n - len_vec, 1));
+                            return Ok(CTyp::Poly(i, n - len_vec, d));
                         }
                         return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
-                        
                     },
                     _ => Err(TypeError::eval(kctx, &vctx, p, x))
                 }
@@ -318,6 +319,92 @@ impl Typeable for CExp {
                         Ok(CTyp::Poly(i, n_pow, 1))
                     },
                     _ => Err(TypeError::mle(kctx, &vctx, self))
+                }
+            }
+
+            // Infer the type of a marginalize call.
+            CExp::Marginalize(box rec) => {
+                let rec_typ = rec.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                let CTyp::Record(ref fields) = rec_typ else {
+                    return Err(TypeError::not_a_record(kctx, vctx, &rec, &rec_typ));
+                };
+
+                let poly_typ = fields.get(&"poly".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "poly", &fields))?;
+                let (field_tid, n, d) = match poly_typ {
+                    CTyp::Poly(tid, n, d) => (tid.clone(), *n, *d),
+                    _ => return Err(TypeError::poly(kctx, vctx, self)),
+                };
+
+                let challenge_typ = fields.get(&"challenge".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "challenge", &fields))?;
+                let challenge_tid = challenge_typ
+                    .to_scalar(kctx)
+                    .ok_or_else(|| TypeError::exp(kctx, vctx, self))?;
+                if challenge_tid != field_tid {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let round_typ = fields.get(&"round".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "round", &fields))?;
+                if !matches!(round_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let num_variables_typ = fields.get(&"num_variables".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields))?;
+                if !matches!(num_variables_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let max_degree_typ = fields.get(&"max_degree".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields))?;
+                if !matches!(max_degree_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                // Runtime consumes max_degree as an index. When this is a singleton Fin,
+                // preserve that precise degree in the inferred output type.
+                let out_degree = match max_degree_typ {
+                    CTyp::Fin(r) if r.step == 1 && r.end == r.start + 1 => r.start,
+                    _ => d,
+                };
+
+                let mut out_fields = Ctx::new();
+                let f_typ = CTyp::Base(field_tid.clone());
+                out_fields.insert(&"evaluations".to_string(), &CTyp::vec(&f_typ, out_degree + 1));
+                let next_n = if n > 0 { n - 1 } else { 0 };
+                out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, out_degree));
+
+                Ok(CTyp::Record(out_fields))
+            },
+
+            CExp::Interpolate0dEval(box evals, box d) => {
+                let tevals = evals
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let td = d
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                match (tevals, td) {
+                    (CTyp::Vec(box inner, n), CTyp::Fin(r)) => {
+                        if let CTyp::Base(e_tid) = inner {
+                            if !(r.step == 1 && r.end == r.start + 1) {
+                                return Err(TypeError::interp(kctx, vctx, &d, &CTyp::Fin(r)));
+                            }
+                            let degree = r.start;
+                            if n < degree + 1 {
+                                return Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&CTyp::Base(e_tid), n)));
+                            }
+                            Ok(CTyp::Poly(e_tid, 1, degree))
+                        } else {
+                            Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&inner, n)))
+                        }
+                    }
+                    (tevals, _) => Err(TypeError::interp(kctx, vctx, &evals, &tevals)),
                 }
             },
 
@@ -675,19 +762,24 @@ impl Typeable for CExp {
                     _ => {
                         // It is a function
                         // Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx.iter().filter_map(|sig| {
-                            // If the function name matches
-                            if &sig.name == id {
-                                // The argument types must match the parameter types
-                                let (vs, _) = sig.clone()
-                                    .unify(&param_types, &kctx)
-                                    .ok()?;
-                                // Return new signature
-                                Some(vs)
-                            } else {
-                                None
+                        let mut matching_sigs: Vec<_> = fctx.iter().filter_map(|sig| {
+                            if &sig.name != id {
+                                return None;
                             }
-                        }).collect::<Vec<_>>();
+                            let (vs, _) = sig.clone()
+                                .unify(&param_types, &kctx)
+                                .ok()?;
+                            Some(vs)
+                        }).collect();
+                        // [CTyp::unify] uses max() on univariate degree so many overloads
+                        // Poly<F,1,d> all unify with Poly<F,1,1>. When ambiguous, keep only
+                        // signatures whose parameters match argument types exactly (no widening).
+                        if matching_sigs.len() > 1 {
+                            matching_sigs.retain(|vs| {
+                                vs.args.iter().zip(param_types.0.iter())
+                                    .all(|(a, t)| a.typ == *t)
+                            });
+                        }
 
                         // Only one function shoud match
                         if matching_sigs.len() != 1 {

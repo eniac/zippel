@@ -4,3 +4,4 @@ target
 *.dot
 *.lic
 gurobi.log
+target-small

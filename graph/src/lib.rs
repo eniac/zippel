@@ -740,28 +740,30 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 impl<C: ArkConfig> WritePdf for Dag<C, String> {
     /// Write graph to PDF
     fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
-        // Write graphviz file
         let fdot: String = format!("{}.dot", filename.to_string());
         // Remove old file if there
         std::fs::remove_file(&fdot).ok();
 
         // Create graphviz object
-        let graphviz =  Dot::with_attr_getters(
-                &self.graph,
-                &[],
-                &|_, e|
-                        match e.weight().0 {
-                            DepType::Data => "color = \"black\"",
-                            DepType::Transcript => "color = \"red\"",
-                        }.to_string(),
-                &|_, n|
-                        match n.1 {
-                            Node::Inp(_, _) => "shape = \"box\"".to_string(),
-                            Node::Rel(_, _) => "shape = \"note\"".to_string(),
-                            Node::Transcr(_, _) => "color = \"red\"".to_string(),
-                            _ => "shape = \"ellipse\"".to_string(),
-                        }.to_string()
-            );
+        let graphviz = Dot::with_attr_getters(
+            &self.graph,
+            &[],
+            &|_, e| {
+                match e.weight().0 {
+                    DepType::Data => "color = \"black\"",
+                    DepType::Transcript => "color = \"red\"",
+                }
+                .to_string()
+            },
+            &|_, n| {
+                match n.1 {
+                    Node::Inp(_, _) => "shape = \"box\"".to_string(),
+                    Node::Rel(_, _) => "shape = \"note\"".to_string(),
+                    Node::Transcr(_, _) => "color = \"red\"".to_string(),
+                    _ => "shape = \"ellipse\"".to_string(),
+                }
+            },
+        );
 
         // Write to file
         std::fs::write(fdot.clone(), graphviz.to_string())?;
@@ -934,6 +936,14 @@ impl<C: HasOpFactory> UDag<C> {
             atyps.insert(id, &at);
             vctx.insert(id, typ);
         }
+        // Expose singleton range typevars (e.g. N: 4) as term-level constants.
+        for (tid, kind) in kctx.iter() {
+            if let CKind::Range(r) = kind {
+                if r.step == 1 && r.end == r.start + 1 {
+                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
+                }
+            }
+        }
 
         // Typecheck the body with the type signature
         body.typecheck(sig.clone(), &fctx.keys())?;
@@ -944,19 +954,43 @@ impl<C: HasOpFactory> UDag<C> {
                 debug!("Adding proto: {:?}", sig);
                 // Start node
                 let mut start = self.add_node(Node::inp(sig.name.clone(), asig.clone()));
-                let vars =
+                let mut vars: Ctx<Vid, GOp<C>> =
                     atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                for (tid, kind) in kctx.iter() {
+                    if let CKind::Range(r) = kind {
+                        if r.step == 1 && r.end == r.start + 1 {
+                            let vid = Vid::new(&tid.0);
+                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        }
+                    }
+                }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
                 // Relation start
                 start = self.add_node(Node::rel(sig.name.clone(), asig));
-                let vars =
+                let mut vars: Ctx<Vid, GOp<C>> =
                     atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                for (tid, kind) in kctx.iter() {
+                    if let CKind::Range(r) = kind {
+                        if r.step == 1 && r.end == r.start + 1 {
+                            let vid = Vid::new(&tid.0);
+                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        }
+                    }
+                }
                 self.add_top_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
             },
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.clone(), asig));
-                let vars =
+                let mut vars: Ctx<Vid, GOp<C>> =
                     atyps.iter().map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone()))).collect();
+                for (tid, kind) in kctx.iter() {
+                    if let CKind::Range(r) = kind {
+                        if r.step == 1 && r.end == r.start + 1 {
+                            let vid = Vid::new(&tid.0);
+                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                        }
+                    }
+                }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
             },
             CBody::TypeAlias => {
@@ -1158,6 +1192,28 @@ impl<C: HasOpFactory> UDag<C> {
                 })?))
             },
 
+            CExp::Marginalize(box rec) => {
+                let child = self.add_exp(rec, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+
+                let nmarg = self.add_node(Node::marginalize(&child));
+
+                self.add_edges(edge_type, nmarg, child);
+
+                return Ok(GOp::underscore(nmarg, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    TypeError::next(
+                        TypeError::exp(kctx, &vctx, &exp),
+                        TypeError::ark(kctx, &vctx, &exp, &typ),
+                    )
+                })?))
+            },
+
+            CExp::Interpolate0dEval(box evals, box d) => {
+                // Interpolate g from evals on points 0..(n-1) (i.e. 0..d), returning g as a univariate polynomial.
+                let ve = self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let vd = self.add_exp(d, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                return Ok(GOp::Interpolate0dEval(mk::<C>(ve), mk::<C>(vd)))
+            },
+
             // Billinear pairing
             CExp::Pair(box a, box b) => {
                 a.infer(kctx, &fctx.keys(), &vctx)?;
@@ -1329,20 +1385,22 @@ impl<C: HasOpFactory> UDag<C> {
                         continue;
                     },
                     _ => {
-                        // It is a function. Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx.iter().filter_map(|(sig, body)|
-                            // If the function name matches
-                            if sig.name == fid {
-                                    // The argument types must match the parameter types
-                                    let (sig, subs) = sig.clone()
-                                        .unify(&param_types, &kctx)
-                                        .ok()?;
-                                    // Return new signature
-                                    Some((sig, body, subs))
-                                } else {
-                                    None
-                                }
-                        ).collect::<Vec<_>>();
+                        let mut matching_sigs: Vec<_> = fctx.iter().filter_map(|(sig, body)| {
+                            if sig.name != fid {
+                                return None;
+                            }
+                            let (sig, subs) = sig.clone()
+                                .unify(&param_types, &kctx)
+                                .ok()?;
+                            Some((sig, body, subs))
+                        }).collect();
+
+                        if matching_sigs.len() > 1 {
+                            matching_sigs.retain(|(sig, _, _)| {
+                                sig.args.iter().zip(param_types.0.iter())
+                                    .all(|(a, t)| a.typ == *t)
+                            });
+                        }
 
                         // Only one function shoud match (enforced by the type system)
                         assert_eq!(matching_sigs.len(), 1);
@@ -1358,9 +1416,26 @@ impl<C: HasOpFactory> UDag<C> {
                            .collect::<Result<_, _>>()?;
 
                         // Trampoline: replace context and continue with body
-                        vctx = sig.args.to_ctx();
-                        vars = sig.args.iter().zip(oparams.iter())
-                            .map(|(arg, op)| (arg.id.clone(), op.clone())).collect::<Ctx<Vid, _>>();
+                        let mut next_vctx = vctx.clone();
+                        for (vid, typ) in sig.args.to_ctx().iter() {
+                            next_vctx.insert(vid, typ);
+                        }
+                        vctx = next_vctx;
+                        let mut next_vars = vars.clone();
+                        for (arg, op) in sig.args.iter().zip(oparams.iter()) {
+                            next_vars.insert(&arg.id, op);
+                        }
+                        vars = next_vars;
+                        let fn_kctx = sig.typevars.to_ctx();
+                        for (tid, kind) in fn_kctx.iter() {
+                            if let CKind::Range(r) = kind {
+                                if r.step == 1 && r.end == r.start + 1 {
+                                    let vid = Vid::new(&tid.0);
+                                    vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                                    vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
+                                }
+                            }
+                        }
                         exp = body.body();
                         continue;
                     }
@@ -1515,7 +1590,7 @@ impl<C: HasOpFactory> UDag<C> {
                     },
                     CExp::Var(id) => {
                         let id_clone = id.clone();
-                        let record_op = &vars.get(&id_clone)
+                        let record_op = vars.get(&id_clone)
                             .ok_or_else(|| GraphError::Type(TypeError::exp(kctx, &vctx, &CExp::Var(id_clone.clone()))))?;
 
                         // Try to infer the record type to verify the field exists
@@ -1547,6 +1622,16 @@ impl<C: HasOpFactory> UDag<C> {
 
                                         // The field is accessed via projection, so we return a Ref with the field type
                                         return Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
+                                    },
+                                    GOp::Ref(Ref::Node(node), _op_typ) => {
+                                        // Record produced by a node (e.g. marginalize); add Proj node
+                                        let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
+                                            .ok_or_else(|| GraphError::Type(TypeError::ark(
+                                                kctx, &vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
+                                            )))?;
+                                        let proj_node = self.add_node(Node::proj(&record_op, &field_name, &field_typ_atyp));
+                                        self.add_edges(edge_type, proj_node, record_op.clone());
+                                        Ok(GOp::Ref(Ref::Node(proj_node), field_typ_atyp))
                                     },
                                     _ => {
                                         Err(GraphError::Type(TypeError::not_a_record(
