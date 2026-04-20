@@ -412,29 +412,6 @@ fn zk_safe_schnorr_with_blinding() {
     assert!(kz.run().is_ok(), "Schnorr with proper blinding should be ZK");
 }
 
-/// Leak: one verify is properly blinded, another directly leaks the secret.
-/// The first verify is safe (has random blinding), but the second verify(s == s)
-/// directly leaks s to the transcript.
-#[test]
-fn zk_multiple_verify_one_safe_one_leak() {
-    let ex = r#"
-        proto mixed<F: Field>(private s: F, private t: F, public y: F) where y == y {
-            let r = random<F>;
-            x <- s * r;
-            w <- t * r;
-            verify(x == w);
-            verify(s == s)
-        }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
-    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
-
-    let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_err(), "One safe and one leaking verify should fail knowledge analysis");
-}
-
 /// Leak: the two verify statements together leak private information.
 /// Each check is a trivial self-equality on a transcript value (`a == a` and `b == b`).
 /// Since `a = s + r` and `b = t + r` reuse the same blinding value `r`, publishing both

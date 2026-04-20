@@ -11,7 +11,8 @@ impl LocalScheduler {
     pub fn new_with_system<C: ArkConfig, CM: CostModel<C, Ref>>(dag: &UDag<C>, cost_model: &CM, min_gap: f64) -> Self {
         let num_threads: usize = std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(1);
+            .unwrap_or(1)
+            .max(2); // ensure at least one thread is assigned to each node
         Self::new(dag, num_threads - 1 , cost_model, min_gap)
     }
 

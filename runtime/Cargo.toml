@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rayon = "1.10.0"
+crossbeam-channel = "0.5"
 rand = { version = "0.8", features = ["std"] }
 petgraph = "0.7.1"
 thiserror = "2.0.11"

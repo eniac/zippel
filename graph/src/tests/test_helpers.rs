@@ -559,7 +559,7 @@ mod tests {
         }
         match computed.get(&checks[1]) {
             Some(Value::Bool(true)) => {}
-            Some(v) => panic!("Second check node produced {:?}, expected Bool(false)", v),
+            Some(v) => panic!("Second check node produced {:?}, expected Bool(true)", v),
             None => panic!("Second check node was not computed"),
         }
     }
