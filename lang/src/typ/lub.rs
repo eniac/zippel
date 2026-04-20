@@ -547,28 +547,22 @@ impl Lub for CTyp {
                     ))
                 } else {
                     Err(LubError::add(&x, &y))
-                }
-            }
-            // Uni<A> + Vec<B> = Uni<C> where C = A = B
-            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if n == m {
-                    let tb = b
-                        .to_scalar(ctx)
-                        .ok_or(LubError::add(&x, &y))
+                },
+            // Uni<F, n> + Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
+            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) =>
+                if *n + 1 == *m {
+                    let tb = b.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
                     Ok(CTyp::uni(&tb, *n))
                 } else {
                     Err(LubError::add(&x, &y))
-                }
-            }
-            // Vec<A> + Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if n == m {
-                    let ta = a
-                        .to_scalar(ctx)
-                        .ok_or(LubError::add(&x, &y))
+                },
+            // Vec<F, k> + Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
+            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) =>
+                if *n == *m + 1 {
+                    let ta = a.to_scalar(ctx).ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *n))
+                    Ok(CTyp::uni(&ta, *m))
                 } else {
                     Err(LubError::add(&x, &y))
                 }
@@ -640,28 +634,22 @@ impl Lub for CTyp {
                     ))
                 } else {
                     Err(LubError::sub(&x, &y))
-                }
-            }
-            // Uni<A> - Vec<B> = Uni<C> where C = A = B
-            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if n == m {
-                    let tb = b
-                        .to_scalar(ctx)
-                        .ok_or(LubError::sub(&x, &y))
+                },
+            // Uni<F, n> - Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
+            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) =>
+                if *n + 1 == *m {
+                    let tb = b.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
                     Ok(CTyp::uni(&tb, *n))
                 } else {
                     Err(LubError::sub(&x, &y))
-                }
-            }
-            // Vec<A> - Uni<B> = Uni<C> where C = A = B
-            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if n == m {
-                    let ta = a
-                        .to_scalar(ctx)
-                        .ok_or(LubError::sub(&x, &y))
+                },
+            // Vec<F, k> - Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
+            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) =>
+                if *n == *m + 1 {
+                    let ta = a.to_scalar(ctx).ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *n))
+                    Ok(CTyp::uni(&ta, *m))
                 } else {
                     Err(LubError::sub(&x, &y))
                 }
@@ -853,19 +841,19 @@ impl Lub for CTyp {
 
     fn lub_rem(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
-                Tid::lub_rem(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
-            )),
-            (CTyp::Fin(a), CTyp::Fin(b)) => Ok(CTyp::Fin(
-                Range::lub_rem(a, b, &Nothing)
-                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
-            )),
-            // Uni<A> % Uni<B> = Uni<C> where deg(C) = deg(B) - 1
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) if n >= m => Ok(CTyp::Poly(
-                Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
-                1,
-                m.saturating_sub(1),
-            )),
+            (CTyp::Base(a), CTyp::Base(b)) =>
+                Ok(CTyp::Base(Tid::lub_rem(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?)),
+            (CTyp::Fin(a), CTyp::Fin(b)) =>
+                Ok(CTyp::Fin(Range::lub_rem(a, b, &Nothing)
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?)),
+            // General Poly<F,n1,m1> % Poly<F,n2,m2> = Poly<F, max(n1,n2), m2 - 1> if m2 >= 1.
+            // (Per poly-encoding spec: remainder has degree strictly less than divisor.)
+            (CTyp::Poly(a, na, _ma), CTyp::Poly(b, nb, mb)) if *mb >= 1 => {
+                let num_vars = *na.max(nb);
+                Ok(CTyp::Poly(Tid::lub_equ(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?, num_vars, *mb - 1))
+            },
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
@@ -940,12 +928,11 @@ impl Lub for CTyp {
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
                 } else {
                     Err(LubError::dot(&x, &y))
-                }
-            }
-            // Vec<A> . Uni<A> = A
+                },
+            // Vec<F, k> . Uni<F, m> = F if k == m + 1 (coeff count = degree + 1)
             (CTyp::Vec(box a, n), CTyp::Poly(b, 1, m))
-            | (CTyp::Poly(b, 1, m), CTyp::Vec(box a, n)) => {
-                if n == m {
+            | (CTyp::Poly(b, 1, m), CTyp::Vec(box a, n)) =>
+                if *n == *m + 1 {
                     // Type [a] and [b] should be multiplied
                     Ok(CTyp::lub_mul(&a, &CTyp::base(b), ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
@@ -1253,6 +1240,30 @@ fn lub_typ() {
         Ok(CTyp::Poly(f.clone(), 1, 0)));
     assert_eq!(CTyp::lub_div(&CTyp::uni(&f, 7), &CTyp::uni(&f, 3), &ctx),
         Ok(CTyp::Poly(f.clone(), 1, 4)));
+
+    // Phase 14.C: poly-encoding unification (m = max degree).
+    // lub_rem Poly×Poly: Poly<F,1,5> % Poly<F,1,3> = Poly<F,1,2> (deg = 3 - 1).
+    assert_eq!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 2)));
+    // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
+    // General Poly×Poly rem: Poly<F,2,5> % Poly<F,3,2> = Poly<F,3,1> (max vars, m2 - 1).
+    assert_eq!(CTyp::lub_rem(&CTyp::Poly(f.clone(), 2, 5), &CTyp::Poly(f.clone(), 3, 2), &ctx),
+        Ok(CTyp::Poly(f.clone(), 3, 1)));
+
+    // lub_add Uni↔Vec consistency: k == m + 1 (coeff count = degree + 1).
+    // Poly<F,1,3> + Vec<F,4> = Poly<F,1,3> (4 coeffs ↔ degree 3).
+    assert_eq!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3)));
+    assert_eq!(CTyp::lub_add(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::uni(&f, 3)));
+    // Length mismatch rejected.
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+
+    // lub_mul Poly×Poly: degrees add. Poly<F,1,2> * Poly<F,1,3> = Poly<F,1,5>.
+    assert_eq!(CTyp::lub_mul(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::uni(&f, 5)));
 
 }
 
