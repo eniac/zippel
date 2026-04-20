@@ -5,6 +5,23 @@ use lang::typ::{CKind, CTyp, Nothing};
 use share::{Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
+/// Binomial coefficient `C(n, k)` with saturating semantics.
+///
+/// Used by `ATyp::size` to count coefficients of `VPoly(n, m)` — the
+/// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
+/// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
+fn binomial(n: usize, k: usize) -> usize {
+    if k > n {
+        return 0;
+    }
+    let k = k.min(n - k);
+    let mut result: usize = 1;
+    for i in 0..k {
+        result = result.saturating_mul(n - i) / (i + 1);
+    }
+    result
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ABase {
     G1,
@@ -23,12 +40,17 @@ pub enum ATyp {
     Vec(Box<ATyp>, usize),
     /// Record type with named fields
     Record(Ctx<String, ATyp>),
-    /// Univariate polynomial in coefficient form (max degree)
+    /// Univariate polynomial in coefficient form. The parameter is the
+    /// **max polynomial degree** (not the coefficient count); coefficient
+    /// count is `m + 1`. See `docs/poly-encoding.md`.
     Uni(usize),
-    /// Multilinear extension (num variables)
+    /// Multilinear extension over `n` boolean variables. Coefficient /
+    /// evaluation count is `2^n`. See `docs/poly-encoding.md`.
     Mle(usize),
-    /// Virtual polynomial - product of polynomials (num_vars, max_degree)
-    VPoly(usize, usize),
+    /// Virtual (multivariate) polynomial `VPoly(n, m)`: `n` variables and
+    /// **max total degree** `m`. Coefficient count is `C(m + n, n)`.
+    /// See `docs/poly-encoding.md`.
+    VPoly(usize, usize)
 }
 
 impl ATyp {
@@ -80,11 +102,15 @@ impl ATyp {
     pub fn vpoly(num_vars: usize, max_degree: usize) -> Self {
         ATyp::VPoly(num_vars, max_degree)
     }
+    /// View this type as `(element, length)`. For `Uni(m)`, the length
+    /// is the coefficient count `m + 1` (not the degree). This matches
+    /// `size()` and the `Vec<F, m + 1>` ↔ `Poly<F, 1, m>` consistency
+    /// rule in `docs/poly-encoding.md`.
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
-            ATyp::Uni(n) => (ATyp::scalar(), n),
-            _ => unreachable!(),
+            ATyp::Uni(m) => (ATyp::scalar(), m + 1),
+            _ => unreachable!()
         }
     }
 
@@ -128,14 +154,24 @@ impl ATyp {
         }
     }
 
+    /// Number of flattened scalar slots needed to represent a value of
+    /// this type — i.e. the **coefficient count** under the canonical
+    /// polynomial encoding (see `docs/poly-encoding.md`).
+    ///
+    /// - `Uni(m)` has `m + 1` coefficients.
+    /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
+    /// - `VPoly(n, m)` has `C(m + n, n)` multi-indices with total
+    ///   degree `≤ m`.
     pub fn size(&self) -> usize {
         match self {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
-            ATyp::Record(fields) => fields.iter().map(|(_, t)| t.size()).sum(),
-            ATyp::Uni(n) => *n,
-            ATyp::Mle(n) => *n,
-            ATyp::VPoly(m, n) => m * n,
+            ATyp::Record(fields) => {
+                fields.iter().map(|(_, t)| t.size()).sum()
+            }
+            ATyp::Uni(m) => *m + 1,
+            ATyp::Mle(n) => 1usize << *n,
+            ATyp::VPoly(n, m) => binomial(*m + *n, *n),
         }
     }
 
