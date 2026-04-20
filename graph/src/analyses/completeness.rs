@@ -673,4 +673,87 @@ mod tests {
             "partial Mle eval should drop k variables");
     }
 
+    /// Phase 9 regression: `ifft(v)` roundtrips through `fft` to `v`.
+    ///
+    /// The Gröbner builder should recognise that `fft(ifft(v)) == v` is
+    /// an identity at the equation level, because each op produces N
+    /// linear equations on the DFT matrix M[i,j] = ω^{ij} whose product
+    /// is the identity matrix. With N=2 we have ω = -1, 4 equations
+    /// across 6 variables.
+    #[test]
+    fn ifft_roundtrip_completeness() {
+        let ex = r#"
+            proto ifft_roundtrip<F: Field>(public v: [F; 2]) where v == v {
+                let p = ifft(v);
+                let u = fft(p);
+                verify(u == v)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "fft(ifft(v)) == v should be complete via DFT basis equations");
+    }
+
+    /// Phase 9 regression: `fft` respects addition (linearity).
+    ///
+    /// For any `a`, `b : Poly<F, 1, N>`, `fft(a + b) == fft(a) + fft(b)`.
+    /// Confirms that the DFT basis rows correctly compose with pointwise
+    /// addition — this is what a Plonk-style prover relies on when
+    /// computing the quotient polynomial.
+    #[test]
+    fn fft_linearity_completeness() {
+        let ex = r#"
+            proto fft_linearity<F: Field>(
+                public a: Poly<F, 1, 2>,
+                public b: Poly<F, 1, 2>
+            ) where a == a {
+                let c = a + b;
+                let va = fft(a);
+                let vb = fft(b);
+                let vc = fft(c);
+                verify(vc == va + vb)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "fft(a + b) == fft(a) + fft(b) should be complete");
+    }
+
+    /// Phase 9 regression: `ifft` respects addition (symmetric of above).
+    ///
+    /// `ifft(u + v) == ifft(u) + ifft(v)` for vectors `u, v : Vec<F, N>`.
+    #[test]
+    fn ifft_linearity_completeness() {
+        let ex = r#"
+            proto ifft_linearity<F: Field>(
+                public u: [F; 2],
+                public v: [F; 2]
+            ) where u == u {
+                let w = u + v;
+                let pu = ifft(u);
+                let pv = ifft(v);
+                let pw = ifft(w);
+                verify(pw == pu + pv)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "ifft(u + v) == ifft(u) + ifft(v) should be complete");
+    }
+
 }

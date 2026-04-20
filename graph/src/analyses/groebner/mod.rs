@@ -13,11 +13,11 @@ use crate::{GOp, Op, Ref};
 use lang::ast::BinOp;
 use lang::typ::{Distribution, Qualifier};
 
-use ark_ff::{One, Zero};
+use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use backend::{Value, ATyp, ArkConfig, ArkScalarOps};
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, ArkScalarOps, Value};
-use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
+use ark_ff::{One, Zero, FftField, Field};
 
 // ---------------------------------------------------------------------------
 // PRef-slot enumeration helpers for polynomial / MLE values.
@@ -98,6 +98,30 @@ fn index_of(typ: &ATyp, k: &[usize]) -> usize {
         }
         _ => 0,
     }
+}
+
+/// Compute row `i` of the DFT matrix applied to `coeffs`:
+///    `Σ_j ω^{i·j} · coeffs[j]`.
+///
+/// Used by the `Op::Ifft` / `Op::Fft` arms to express the relation
+/// between coefficient form and evaluation-at-roots-of-unity form as a
+/// set of N linear polynomial equations. The caller is responsible for
+/// providing `ω` such that `ω^N = 1` and `ω` has order exactly `N`
+/// (typically `C::F::get_root_of_unity(N)`).
+fn dft_row<F: Field, T: Monomial>(
+    coeffs: &[SparsePolynomial<F, T>],
+    omega: F,
+    i: usize,
+) -> SparsePolynomial<F, T> {
+    let w_step = omega.pow([i as u64]);
+    let mut wij = F::one();
+    let mut acc = SparsePolynomial::<F, T>::zero();
+    for c in coeffs.iter() {
+        let scalar = SparsePolynomial::<F, T>::lit(&wij);
+        acc = acc + c * &scalar;
+        wij *= w_step;
+    }
+    acc
 }
 
 /// This is used to construct a Groebner basis from the ideals corresponding to
@@ -712,8 +736,55 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Check(a) => self.add_op(pr, a.get().clone()),
             Op::Challenge(t, b) => { let op = Op::Challenge(t, b); self.np.insert(&pr, &op); },
             Op::Random(t, b) => { let op = Op::Random(t, b); self.np.insert(&pr, &op); },
-            Op::Ifft(a) => { let op = Op::Ifft(a); self.np.insert(&pr, &op); },
-            Op::Fft(a) => { let op = Op::Fft(a); self.np.insert(&pr, &op); },
+            // Op::Ifft(v): p = ifft(v) where p is a univariate polynomial in
+            // coefficient form and v a length-N vector of its evaluations at
+            // the N-th roots of unity. Constraints (linear over F):
+            //   for each i ∈ [0, N): Σ_j ω^{i·j} · p[j]  =  v[i]
+            // where ω is a primitive N-th root of unity and p[j] is the
+            // j-th coefficient slot of `pr`. If `get_root_of_unity(N)` is
+            // None (N isn't a 2-adic divisor of |F|-1), fall back to opaque.
+            Op::Ifft(ref a) => {
+                let v_polys = self.to_poly(a);
+                let n = v_polys.len();
+                if let Some(omega) = C::F::get_root_of_unity(n as u64) {
+                    // Row i: Σ_j ω^{i·j} · pr[j] = v_polys[i]
+                    let coeff_vars: Vec<SparsePolynomial<C::F, T>> = (0..n)
+                        .map(|j| SparsePolynomial::var(&pr.clone().with_index(j)))
+                        .collect();
+                    for i in 0..n {
+                        let lhs = dft_row(&coeff_vars, omega, i);
+                        self.basis.push(&lhs - &v_polys[i]);
+                    }
+                    // Register each coefficient slot of `pr` in `pl` so
+                    // `find_ref` can resolve `Ref::Var("p", _)` later.
+                    for j in 0..n {
+                        let pf = pr.clone().with_index(j);
+                        let v = SparsePolynomial::var(&pf);
+                        self.pl.insert(&pf, &v);
+                    }
+                } else {
+                    self.np.insert(&pr, &Op::Ifft(a.clone()));
+                }
+            },
+            // Op::Fft(p): v = fft(p) — symmetric to Ifft. Here `pr` holds
+            // the N output-vector slots; the coefficients live in `p`. The
+            // same DFT matrix applies:
+            //   for each i ∈ [0, N): v[i] = Σ_j ω^{i·j} · p[j]
+            Op::Fft(ref a) => {
+                let coeff_polys = self.to_poly(a);
+                let n = coeff_polys.len();
+                if let Some(omega) = C::F::get_root_of_unity(n as u64) {
+                    for i in 0..n {
+                        let lhs = dft_row(&coeff_polys, omega, i);
+                        let pf = pr.clone().with_index(i);
+                        // Register v[i]'s polynomial form in pl and push basis eqn.
+                        self.pl.insert(&pf, &lhs);
+                        self.basis.push(&lhs - &SparsePolynomial::var(&pf));
+                    }
+                } else {
+                    self.np.insert(&pr, &Op::Fft(a.clone()));
+                }
+            },
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
             // to the i-th scalar poly read from `inner` by `to_poly`. These
             // three share identity semantics on coefficients / evaluations —
