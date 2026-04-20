@@ -855,14 +855,14 @@ mod tests {
             "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity");
     }
 
-    /// Phase 11 regression: bilinearity over sums —
+    /// Phase 11 regression, un-ignored in phase 12: bilinearity over sums —
     /// `pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q)`.
     ///
-    /// In exponent space, `pair(P1+P2, Q)` decomposes to
-    /// `v_{P1,Q} + v_{P2,Q}`, and the RHS — assuming Zippel lowers GT's
-    /// `+` to `Bin(Add, ...)` — decomposes the same way.
+    /// Under phase 12, `pair(a,b)` is `to_poly(a)·to_poly(b)·var(__gt__)`.
+    /// Since `to_poly(P1+P2) = var(P1) + var(P2)` (existing Bin(Add) arm)
+    /// and GT addition lowers to `Bin(Add, _, _, GT)`, both sides reduce
+    /// to the same F-polynomial `(var(P1)+var(P2))·var(Q)·var(__gt__)`.
     #[test]
-    #[ignore = "GT additive semantics in frontend not yet confirmed"]
     fn pair_bilinear_additive_completeness() {
         let ex = r#"
             proto pair_additive<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
@@ -900,6 +900,30 @@ mod tests {
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok(),
             "pair(P, Q) == pair(P, Q) (reflexive) should be complete");
+    }
+
+    /// Phase 12 regression: bilinear product —
+    /// `pair((a·b)·P, Q) == pair(a·P, b·Q)`.
+    ///
+    /// Both sides reduce to `a·b·exp_P·exp_Q·var(__gt__)` in exponent
+    /// space, cancelling under Buchberger.
+    #[test]
+    fn pair_bilinear_product_completeness() {
+        let ex = r#"
+            proto pair_product<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>
+                (public p: G1, public q: G2, public a: F, public b: F) where a == a {
+                let lhs = pair((a * b) * p, q);
+                let rhs = pair(a * p, b * q);
+                verify(lhs == rhs)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(ca.run().is_ok(),
+            "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity");
     }
 
 }
