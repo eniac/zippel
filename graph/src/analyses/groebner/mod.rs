@@ -293,6 +293,61 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Phase 10: generic dispatcher for `Op::Reduce(op, v)`.
+    ///
+    /// Returns `Some(polys)` when the inner BinOp has a polynomial
+    /// identity over `C::F`, `None` when it must stay opaque.
+    ///
+    /// Polynomial cases (result has `len(pr.typ)` slots, but we return
+    /// enough polys for the caller to drive `pr.with_index(i)`):
+    ///
+    /// * `Add`    — scalar output, `Σ elems` (empty → `0`).
+    /// * `Sub`    — scalar output, left-fold difference `e_0 - e_1 - e_2 - …`
+    ///              (empty → `None`; we can't choose a neutral element).
+    /// * `Mul`    — scalar output, `Π elems` (empty → `1`).
+    /// * `Concat` — concatenation of slot-lists into a single vector
+    ///              of length `Σ |e_i|`. Elements are the raw slot polys.
+    ///
+    /// Opaque cases (`None`): `Div`, `Rem`, `Pow`, `Dot`, `Equ`, `And`
+    /// — they either aren't polynomial over the scalar field or would
+    /// require tracking inverses / boolean axioms that are outside
+    /// scope.
+    fn reduce_unfold(
+        &mut self,
+        op: BinOp,
+        elems: Vec<SparsePolynomial<C::F, T>>,
+    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+        match op {
+            BinOp::Add => {
+                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                for e in elems {
+                    acc = &acc + &e;
+                }
+                Some(vec![acc])
+            }
+            BinOp::Sub => {
+                let mut iter = elems.into_iter();
+                let first = iter.next()?;
+                let mut acc = first;
+                for e in iter {
+                    acc = &acc - &e;
+                }
+                Some(vec![acc])
+            }
+            BinOp::Mul => {
+                let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                for e in elems {
+                    acc = &acc * &e;
+                }
+                Some(vec![acc])
+            }
+            BinOp::Concat => Some(elems),
+            // Non-polynomial or boolean-domain — stay opaque.
+            BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Dot
+                | BinOp::Equ | BinOp::And => None,
+        }
+    }
+
     /// Shared helper for `Op::Eval(p, xs)` — returns `Some(polys)` when the
     /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by both
     /// `to_poly` (when Eval appears nested inside another op) and `add_op`
@@ -475,18 +530,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         .map(|(a, b)| a * b)
                         .sum(),
                 ]
-            }
-            Op::Reduce(BinOp::Add, v) => {
-                vec![self.to_poly(v).into_iter().sum()]
-            }
-            Op::Reduce(BinOp::Mul, v) => {
-                let polys = self.to_poly(v);
-                let mut iter = polys.into_iter();
-                if let Some(first) = iter.next() {
-                    vec![iter.fold(first, |acc, p| acc * p)]
-                } else {
-                    vec![]
-                }
+            },
+            Op::Reduce(rop, v) => {
+                let elems = self.to_poly(v);
+                self.reduce_unfold(*rop, elems).unwrap_or_else(Vec::new)
             },
             Op::Eval(p, xs) => self.eval_to_poly(p, xs).unwrap_or_else(Vec::new),
             _ => vec![]
@@ -843,6 +890,125 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     None => {
                         self.np.insert(&pr, &Op::Eval(p.clone(), xs.clone()));
                     }
+                }
+            },
+            // Phase 10: `Op::Reduce(op, v)` — unfold into `op`-fold of
+            // `to_poly(v)` when the inner BinOp is polynomial over F.
+            // Otherwise opaque (np).
+            Op::Reduce(rop, ref v) => {
+                let elems = self.to_poly(v);
+                match self.reduce_unfold(rop, elems) {
+                    Some(polys) => {
+                        for (i, p) in polys.into_iter().enumerate() {
+                            let pf = pr.clone().with_index(i);
+                            self.pl.insert(&pf, &p);
+                            self.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    None => {
+                        self.np.insert(&pr, &Op::Reduce(rop, v.clone()));
+                    }
+                }
+            },
+            // Phase 10: `Op::Value(lit)` — pattern-match on the `Value`
+            // variant via `to_poly_value`, then bind each slot of `pr` to
+            // the corresponding literal polynomial. This lets literal
+            // constants act as real polynomials in the basis (e.g.
+            // `let c = 7; verify(x == c)` folds without needing an
+            // opaque `c` variable).
+            //
+            // Group / Pair / Poly literals aren't scalars and fall through
+            // to the opaque catch-all below via `to_poly_value`'s
+            // `unreachable!` — which we guard against with a try-convert.
+            Op::Value(ref v) => {
+                // `to_poly_value` panics on unsupported Value variants; we
+                // keep it behind a closure so the panic path is explicit.
+                // Currently it supports Scalar / Bool / Index / Vec and
+                // the Vec* flavours; everything else (G1/G2/GT/Poly/Record)
+                // falls through to np.
+                let polys_opt: Option<Vec<SparsePolynomial<C::F, T>>> = match v {
+                    Value::Scalar(_) | Value::Bool(_) | Value::Index(_)
+                        | Value::Vec(_) | Value::VecBool(_)
+                        | Value::VecScalar(_) | Value::VecIndex(_) =>
+                        Some(self.to_poly_value(v)),
+                    _ => None,
+                };
+                match polys_opt {
+                    Some(polys) => {
+                        for (i, p) in polys.into_iter().enumerate() {
+                            let pf = pr.clone().with_index(i);
+                            self.pl.insert(&pf, &p);
+                            self.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    None => { self.np.insert(&pr, &Op::Value(v.clone())); }
+                }
+            },
+            // Phase 10: `Op::Ram(a, b)` — RAM reads are treated as *fresh
+            // identifiers* in the Gröbner basis. A runtime RAM access can't
+            // be equated with any compile-time slot (the underlying array
+            // may have been mutated through an aliased reference, etc.), so
+            // even with a literal index we do not emit a basis row relating
+            // `pr` to `find_ref(a).with_index(i)`.
+            //
+            // We do need every slot of `pr` to appear in `np`, otherwise
+            // `find_ref(Ref::Var(pr_name, _))` panics for subsequent ops
+            // that read the RAM result.
+            Op::Ram(ref a, ref b) => {
+                let n = num_coeffs(&pr.typ);
+                let raw = Op::Ram(a.clone(), b.clone());
+                for i in 0..n {
+                    let pf = pr.clone().with_index(i);
+                    self.np.insert(&pf, &raw);
+                }
+                if n == 0 {
+                    self.np.insert(&pr, &raw);
+                }
+            },
+            // Phase 10: `Op::Pair(a, b, t)` — bilinear pairing into the
+            // target group. Values live outside the scalar field, so we
+            // have no direct polynomial identity. We keep the op opaque
+            // but register every slot of `pr` in `np` so `find_ref`
+            // resolves references to pair-valued let-bindings.
+            //
+            // TODO(phase-11?): exploit multiplicative bilinearity
+            //   α·Pair(b, c) = Pair(α·b, c) = Pair(b, α·c)
+            // by recording a (pr → (a_ref, b_ref)) side-table and emitting
+            // equations when a scalar multiple of a pairing appears
+            // alongside another pairing with a matching scaled operand.
+            Op::Pair(ref a, ref b, ref t) => {
+                let n = num_coeffs(&pr.typ);
+                let raw = Op::Pair(a.clone(), b.clone(), t.clone());
+                for i in 0..n {
+                    let pf = pr.clone().with_index(i);
+                    self.np.insert(&pf, &raw);
+                }
+                if n == 0 {
+                    self.np.insert(&pr, &raw);
+                }
+            },
+            // Phase 10: `Op::Record(fields)` — keep the record itself
+            // opaque, but recursively process each field by delegating to
+            // `add_op` with a fresh PRef whose `reference` re-uses `pr`'s
+            // (so subsequent field projections — which lower to
+            // `Op::Ref(Ref::Var(r, n), field_typ)` — can find a matching
+            // entry in `np`/`pl` via `find_ref`'s reference-match).
+            //
+            // A full field-offset-aware slot layout for records is deferred
+            // (it requires changing `num_coeffs(Record)` and the rest of
+            // the analysis consistently); for now we register each field
+            // starting at its own offset 0 under the shared reference, and
+            // also insert the whole record as opaque in `np`.
+            Op::Record(ref fields) => {
+                self.np.insert(&pr, &Op::Record(fields.clone()));
+                for (_, sub) in fields.iter() {
+                    let sub_op = sub.get().clone();
+                    let sub_pr = PRef {
+                        typ: sub_op.typ(),
+                        index: 0,
+                        ..pr.clone()
+                    };
+                    self.add_op(sub_pr, sub_op);
                 }
             },
             op => { self.np.insert(&pr, &op); },
