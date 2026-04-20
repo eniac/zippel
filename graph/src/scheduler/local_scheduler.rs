@@ -22,7 +22,7 @@ impl LocalScheduler {
             match &dag[node] {
                 Node::Inp(_, _) | Node::Rel(_, _) => {
                     for _ in 0..1 {
-                        cost_map.insert(node, 1); 
+                        cost_map.insert(node, 1);
                     };
                 }
                 Node::Op(op, _) | Node::Transcr(op, _) => {
@@ -45,6 +45,7 @@ impl LocalScheduler {
                 }
             }
         }
+
         LocalScheduler { cost_map }
     }
 }

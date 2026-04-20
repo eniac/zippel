@@ -1,48 +1,190 @@
-use log::debug;
-use petgraph::graph::NodeIndex;
-use spongefish::{ProverState, DuplexSpongeInterface};
-use std::sync::{Arc, Mutex};
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::{Dag, Node, Op, GOp};
-use graph::scheduler::{ThreadAlloc, TDag};
-use rand::rngs::ThreadRng;
+use graph::scheduler::{TDag, ThreadAlloc};
+use graph::{Dag, GOp, Node, Op};
 use lang::ast::BinOp;
-use std::collections::HashSet;
 use lang::id::Vid;
+use log::debug;
+use petgraph::Direction;
+use petgraph::graph::NodeIndex;
+use rand::rngs::ThreadRng;
 use share::Ctx;
+use spongefish::{DuplexSpongeInterface, ProverState};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
+use crate::pool::PoolManager;
+
+/// Specifies what kind of result to collect from graph execution.
+///
+/// Prover graphs collect proof transcript values (non-challenge),
+/// while verifier graphs collect Check node values.
+#[derive(Clone, Copy)]
+pub enum ResultKind {
+    /// Collect proof transcript values in transcript order for the prover.
+    Prover,
+    /// Collect Check node values for the verifier.
+    Verifier,
+}
+
+/// Runtime information attached to each Op/Transcr node in the DAG.
+///
+/// `remaining_deps` uses atomic operations for lock-free counter-based
+/// readiness tracking: when a node's dependencies finish, they decrement
+/// its counter; when the counter reaches zero, the node is ready to execute.
 pub struct RuntimeInformation<C: ArkConfig> {
-    thread_num: usize,
+    /// Computed value of this node, set after execution.
     return_value: Mutex<Option<Value<C>>>,
-    finished_requirements: Mutex<Vec<NodeIndex>>,
-    is_challenge: Mutex<bool>,
+    /// Number of unfinished dependencies. Atomically decremented;
+    /// when it reaches zero, this node is ready to execute.
+    pub remaining_deps: AtomicUsize,
+    /// Thread allocation hint from the scheduler.
+    pub thread_num: usize,
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
     pub fn new(thread_num: usize) -> Self {
         RuntimeInformation {
-            thread_num, return_value: Mutex::new(None), finished_requirements: Mutex::new(Vec::new()), is_challenge: Mutex::new(false)
+            return_value: Mutex::new(None),
+            remaining_deps: AtomicUsize::new(0),
+            thread_num,
         }
     }
 }
-
 
 pub struct MutexGraph<C: ArkConfig> {
     mutex_graph: Dag<C, Arc<RuntimeInformation<C>>>,
 }
 
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+/// Returns true if the node requires sponge processing on the main thread.
+/// Inp, Rel, and all Transcr nodes are sync nodes.
+fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
+    match &g.mutex_graph[node_idx] {
+        Node::Inp(_, _) | Node::Transcr(_, _) => true,
+        Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => true,
+        _ => false,
+    }
+}
+
+/// Update successors of a finished node. For each unique successor,
+/// atomically decrement its `remaining_deps`. If a successor reaches
+/// zero, submit it to the pool manager (non-sync) or return (sync).
+fn update_successors<C: ArkConfig>(
+    g: &Arc<MutexGraph<C>>,
+    inputs: &Arc<Ctx<Vid, Value<C>>>,
+    pool_manager: &Arc<PoolManager>,
+    node_idx: NodeIndex,
+) {
+    // Deduplicate successors: remaining_deps is initialized from unique
+    // predecessors, so we must only decrement once per (predecessor, successor)
+    // pair regardless of how many parallel edges exist between them.
+    let successors: HashSet<NodeIndex> = g
+        .mutex_graph
+        .neighbors_directed(node_idx, Direction::Outgoing)
+        .collect();
+
+    for dependent in successors {
+        match &g.mutex_graph[dependent] {
+            Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                let prev = annotation.remaining_deps.fetch_sub(1, Ordering::SeqCst);
+                debug!(
+                    "[update_successors] node {:?} -> dependent {:?}, prev={}, is_sync={}",
+                    node_idx, dependent, prev, is_sync_node(g, dependent)
+                );
+                if prev == 1 {
+                    if is_sync_node(g, dependent) {
+                        debug!("[update_successors] node {:?} -> sync {:?} ready, pushing", node_idx, dependent);
+                        pool_manager.sync_queue().push(dependent);
+                        continue;
+                    }
+
+                    let thread_num = annotation.thread_num;
+                    let g_clone = Arc::clone(g);
+                    let inputs_clone = Arc::clone(inputs);
+                    let pm_clone = Arc::clone(pool_manager);
+                    let dep_idx = dependent;
+                    debug!(
+                        "[update_successors] node {:?} -> non-sync {:?} ready (thread_num={})",
+                        node_idx, dependent, thread_num
+                    );
+                    pool_manager.submit(
+                        thread_num,
+                        Box::new(move || {
+                            g_clone.handle_node(dep_idx, inputs_clone.clone());
+                            update_successors(&g_clone, &inputs_clone, &pm_clone, dep_idx);
+                        }),
+                    );
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Topological sort of transcript node indices.
+///
+/// Transcript nodes form a chain in the DAG. This function finds the
+/// root (no parent in the transcript list) and walks the chain.
+fn order_transcript_nodes<C: ArkConfig>(
+    transcript_indices: Vec<NodeIndex>,
+    graph: &Dag<C, Arc<RuntimeInformation<C>>>,
+) -> Vec<NodeIndex> {
+    if transcript_indices.is_empty() {
+        return Vec::new();
+    }
+
+    let transcript_set: HashSet<NodeIndex> = transcript_indices.iter().copied().collect();
+    let mut child_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+    let mut has_parent = HashSet::new();
+
+    for &node in &transcript_indices {
+        for parent in graph.neighbors_directed(node, Direction::Incoming) {
+            if transcript_set.contains(&parent) {
+                child_map.insert(parent, node);
+                has_parent.insert(node);
+            }
+        }
+    }
+
+    // Find root (no parent in transcript list).
+    let root = transcript_indices
+        .iter()
+        .find(|&&n| !has_parent.contains(&n))
+        .expect("Cycle detected in transcript nodes");
+
+    // Walk the chain.
+    let mut ordered = vec![*root];
+    let mut current = *root;
+    while let Some(&child) = child_map.get(&current) {
+        ordered.push(child);
+        current = child;
+    }
+    ordered
+}
+
+// ---------------------------------------------------------------------------
+// MutexGraph implementation
+// ---------------------------------------------------------------------------
+
 impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
         MutexGraph {
-            mutex_graph:tdag.map_annotations(&|_, nthreads: &ThreadAlloc| Arc::new(RuntimeInformation::<C>::new(
-                nthreads.get()
-            ))),
+            mutex_graph: tdag.map_annotations(&|_, nthreads: &ThreadAlloc| {
+                Arc::new(RuntimeInformation::<C>::new(nthreads.get()))
+            }),
         }
     }
 
     pub fn print_edges(&self) {
         for node in self.mutex_graph.node_indices() {
-            for neighbor in self.mutex_graph.neighbors_directed(node, petgraph::Direction::Outgoing) {
+            for neighbor in self
+                .mutex_graph
+                .neighbors_directed(node, petgraph::Direction::Outgoing)
+            {
                 debug!("Edge from {:?} to {:?}", node, neighbor);
             }
         }
@@ -52,35 +194,40 @@ impl<C: ArkConfig> MutexGraph<C> {
         let node = r.node();
 
         match &self.mutex_graph[node] {
-            Node::Op(_, annotation)
-            | Node::Transcr(_, annotation) => {
+            Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                 let return_val = annotation.return_value.lock().unwrap();
                 match &*return_val {
                     Some(val) => val.clone(),
-                    None => panic!("Value should exist")
+                    None => {
+                        dbg!(&r);
+                        panic!("Value should exist")},
                 }
-            },
+            }
             Node::Inp(_, _) | Node::Rel(_, _) => {
                 let vid = r.var().expect("Input should be a variable");
-                inputs.get(&vid)
-                .expect(format!("Value for {} should exist", vid).as_str())
-                .clone()
+                inputs
+                    .get(&vid)
+                    .expect(format!("Value for {} should exist", vid).as_str())
+                    .clone()
             }
         }
     }
 
-    pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C>{
+    pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         match operation {
             Op::Value(val) => {
                 return val.clone();
-            },
+            }
             Op::Ref(r, _atyp) => {
-               return self.get_value(r.clone(), inputs);
-            },
+                return self.get_value(r.clone(), inputs);
+            }
             Op::Vec(vec) => {
-                let value_vector: Vec<Value<C>> = vec.iter().map(|op| self.handle_op(&*op, Arc::clone(&inputs))).collect::<Vec<Value<C>>>();
-                return  Value::value_vec(value_vector);
-            },
+                let value_vector: Vec<Value<C>> = vec
+                    .iter()
+                    .map(|op| self.handle_op(&*op, Arc::clone(&inputs)))
+                    .collect::<Vec<Value<C>>>();
+                return Value::value_vec(value_vector);
+            }
             Op::Record(fields) => {
                 let mut record_values = share::Ctx::new();
                 for (name, op) in fields.iter() {
@@ -88,7 +235,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                     record_values.insert(name, &field_value);
                 }
                 return Value::Record(record_values);
-            },
+            }
             Op::Ram(v, index_val) => {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let inputs_index_val_clone = Arc::clone(&inputs);
@@ -99,7 +246,6 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Check(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-
                 return a_val;
             }
             Op::Bin(op, a, b, _typ) => {
@@ -110,46 +256,45 @@ impl<C: ArkConfig> MutexGraph<C> {
                 match op {
                     BinOp::Add => {
                         return a_val + b_val;
-                    },
+                    }
                     BinOp::Mul => {
-                        return  a_val * b_val;
-                    },
+                        return a_val * b_val;
+                    }
                     BinOp::Equ => {
                         return a_val.value_equ(&b_val);
                     }
                     BinOp::Sub => {
                         return a_val - b_val;
-                    },
+                    }
                     BinOp::Div => {
                         return a_val / b_val;
-                    },
+                    }
                     BinOp::Pow => {
                         return a_val ^ b_val;
-                    },
+                    }
                     BinOp::Dot => {
                         return a_val.dot(b_val);
-                    },
+                    }
                     BinOp::Concat => {
                         return a_val.value_concat(b_val);
-                    },
+                    }
                     BinOp::Rem => {
                         return a_val % b_val;
-                    },
+                    }
                     BinOp::And => {
                         return a_val & b_val;
                     }
-               }
-            },
+                }
+            }
             Op::Random(typ, _) => {
                 let mut rng = ThreadRng::default();
                 return Value::random(&mut rng, typ);
-
-            },
+            }
             Op::Challenge(typ, _) => {
                 let mut rng = ThreadRng::default();
-                //TODO: Implement challenge
+                // TODO: Implement challenge
                 return Value::random(&mut rng, typ);
-            },
+            }
             Op::Eval(p, x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
@@ -168,7 +313,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
                 return a_val.pair(b_val);
-            },
+            }
             Op::Poly(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
@@ -179,7 +324,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_ifft();
             }
-            Op::Fft(a)  => {
+            Op::Fft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_fft();
@@ -198,7 +343,6 @@ impl<C: ArkConfig> MutexGraph<C> {
     }
 
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
-
         let node = &self.mutex_graph[node_curr];
 
         match node {
@@ -206,230 +350,219 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let return_val = self.handle_op(&**operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
-            },
-            Node::Transcr(operation, annotation)  => {
+            }
+            Node::Transcr(operation, annotation) => {
                 let return_val = self.handle_op(&**operation, inputs);
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
-            },
-            Node:: Inp(_, _) => {
-            },
-            Node::Rel(_, _) => {
             }
+            Node::Inp(_, _) => {}
+            Node::Rel(_, _) => {}
         }
-
     }
 
-    pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(g: Arc<MutexGraph<C>>, inputs: Arc<Ctx<Vid, Value<C>>>, prover_state: &mut ProverState<H>) -> Vec<Value<C>> {
-        // add in context for the challenge
+    /// Execute all nodes in the DAG using counter-based readiness tracking
+    /// and parallel computation via a capacity-managed thread pool.
+    ///
+    /// # Readiness tracking
+    ///
+    /// Each Op/Transcr node carries an atomic `remaining_deps` counter
+    /// initialized to its number of unique predecessors. When a node
+    /// finishes execution, it atomically decrements the counters of all
+    /// its unique successors. When a successor's counter reaches zero,
+    /// it is submitted to the pool manager (for compute nodes) or notifies
+    /// the main thread (for sponge-requiring nodes).
+    ///
+    /// # Sponge synchronization
+    ///
+    /// Sync nodes (Inp, Rel, Transcr) are processed on the main thread
+    /// because they require sequential sponge state updates.
+    ///
+    /// # Thread pool
+    ///
+    /// A `PoolManager` is created with `max_thread_num` capacity (the
+    /// maximum per-node thread allocation from the scheduler). Each task
+    /// declares its cost (`thread_num`) and the pool manager ensures the
+    /// total cost of concurrently running tasks does not exceed capacity.
+    /// Per-cost thread pools are cached for reuse. Completed tasks can
+    /// submit new tasks (e.g., when successors become ready), enabling
+    /// successor-driven scheduling.
+    ///
+    /// # Returns
+    ///
+    /// - For `ResultKind::Prover`: proof transcript values in transcript order.
+    /// - For `ResultKind::Verifier`: terminal Check node values.
+    pub fn run_graph<H: DuplexSpongeInterface<U = u8>>(
+        g: Arc<MutexGraph<C>>,
+        inputs: Arc<Ctx<Vid, Value<C>>>,
+        prover_state: &mut ProverState<H>,
+        result_kind: ResultKind,
+    ) -> Vec<Value<C>> {
+        // Phase 1: Initialization.
+        //
+        // Set remaining_deps counters, collect result indices, and
+        // identify initially-ready nodes — all in one pass.
+        let mut max_thread_num: usize = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1) - 1;
+        let mut result_indices: Vec<NodeIndex> = Vec::new();
 
-        let mut final_return: Vec<Value<C>> = Vec::new();
-        let mut ready_nodes: Vec<NodeIndex> = Vec::new();
-        let mut running_nodes: Vec<NodeIndex> = Vec::new();
-
-        for node in g.mutex_graph.node_indices() {
-            if g.mutex_graph.neighbors_directed(node, petgraph::Direction::Incoming).count() == 0 {
-                ready_nodes.push(node);
-            }
-        }
-
-        let max_threads: usize = num_cpus::get();
-        let mut active_threads: usize = 1;
-
-        while !ready_nodes.is_empty() || !running_nodes.is_empty() {
-            let mut remove_from_ready: Vec<NodeIndex> = Vec::new();
-
-            for i in 0..ready_nodes.len() {
-                let node_index = ready_nodes[i];
-                let thread_num_val;
-
-                match &g.mutex_graph[node_index] {
-                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                        thread_num_val = annotation.thread_num;
-                    },
-                    Node::Inp(_, _) | Node::Rel(_, _) => {
-                        thread_num_val = 0;
-                    }
-                }
-
-                if thread_num_val <= (max_threads - active_threads) {
-                    let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(thread_num_val)
-                        .build()
-                        .unwrap();
-
-                    // check if node is a challenge node
-                    let mut challenge_node = false;
-                    let mut input_node = false;
-                    let node = &g.mutex_graph[node_index];
-                    match node {
-                        Node::Op(op, annotation) | Node::Transcr(op, annotation) => {
-                            if matches!(&**op, Op::Challenge(_, _)) {
-                                    let return_val = Value::<C>::challenge(prover_state);
-                                    let mut return_value_lock = annotation.return_value.lock().unwrap();
-                                    *return_value_lock = Some(return_val);
-                                    challenge_node = true;
-                                    let mut is_challenge_lock = annotation.is_challenge.lock().unwrap();
-                                    *is_challenge_lock = true;
-                            }
-                        },
-                        Node::Inp(_c, prefs) => {
-                            for pref in prefs.clone() {
-                                if pref.qualifier.is_public() && !pref.from_transcript {
-                                    prover_state.public_message(value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap()).unwrap().as_slice());
-                                }
-                            }
-                            input_node = true;
-                        },
-                        Node::Rel(_, _) => {}
-                    }
-
-                    if !challenge_node && !input_node {
-
-                        let graph = Arc::clone(&g);
-                        let inputs_arc = Arc::clone(&inputs);
-                        pool.spawn(move || {
-                            graph.handle_node(node_index, inputs_arc);
-                        });
-
-                    }
-                    running_nodes.push(node_index);
-                    active_threads += thread_num_val;
-                    remove_from_ready.push(node_index);
-                }
-            }
-
-            let remove_set: HashSet<NodeIndex> = remove_from_ready.into_iter().collect();
-            ready_nodes.retain(|x| !remove_set.contains(x));
-
-            let mut remove_from_running: Vec<NodeIndex> = Vec::new();
-            for i in 0..running_nodes.len() {
-                let node_index = running_nodes[i];
-
-                let finished: bool = match &g.mutex_graph[node_index] {
-                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                        let return_val = annotation.return_value.lock().unwrap();
-                        return_val.is_some()
-                    },
-                    Node::Inp(_, _) | Node::Rel(_, _) => true,
-                };
-
-                if finished {
-                    remove_from_running.push(node_index);
-                    match &g.mutex_graph[node_index] {
-                        Node::Op(_, annotation) => {
-                            active_threads -= annotation.thread_num;
-                        },
-                        Node::Transcr(_, annotation) => {
-                            active_threads -= annotation.thread_num;
-                            let serialized_return_val = value_to_bytes(&annotation.return_value.lock().unwrap().clone().unwrap()).unwrap();
-                            prover_state.public_message(serialized_return_val.as_slice());
-                        },
-                        Node::Inp(_, _) | Node::Rel(_, _) => {
-
-                        }
-                    }
-
-                    let mut fix_finished_requirements: Vec<NodeIndex> = Vec::new();
-                    let dependents = g.mutex_graph.neighbors_directed(node_index, petgraph::Direction::Outgoing);
-                    for dependent in dependents {
-                        let incoming_nodes: Vec<_> = g.mutex_graph.neighbors_directed(dependent, petgraph::Direction::Incoming).collect();
-                        let mut ready: bool = true;
-                        for income_node in &incoming_nodes {
-                            let finished_requirements_lock = match &g.mutex_graph[dependent] {
-                                Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                                    annotation.finished_requirements.lock().unwrap()
-                                },
-                                Node::Inp(_, _) | Node::Rel(_, _) => panic!("Not possible"),
-                            };
-                            if !(*income_node == node_index || *income_node == dependent || finished_requirements_lock.contains(income_node)) {
-                                ready = false;
-                                break;
-                            }
-                        }
-
-                        if ready {
-                            if !ready_nodes.contains(&dependent) {
-                                ready_nodes.push(dependent);
-                            }
-                        } else {
-                            fix_finished_requirements.push(dependent);
-                        }
-                    }
-                    for dependent in fix_finished_requirements {
-                        let node = &g.mutex_graph[dependent];
-
-                        match node {
-                            Node::Op(_, annotation) | Node::Transcr(_, annotation)  => {
-                                let mut finished_req = annotation.finished_requirements.lock().unwrap();
-                                finished_req.push(node_index);
-                            },
-                            Node:: Inp(_, _) | Node::Rel(_, _) => {
-
-                            }
-                        }
-                    }
-                }
-            }
-
-            if remove_from_running == running_nodes && ready_nodes.is_empty() {
-                // Collect values from ALL finished Op nodes, not just the first one.
-                // This ensures multiple Check node results are all returned.
-                let mut transcript_collected = false;
-                for finished_idx in &remove_from_running {
-                    let node = &g.mutex_graph[*finished_idx];
-                    match node {
-                        Node::Op(_, annotation) => {
-                            let return_val = annotation.return_value.lock().unwrap();
-                            if return_val.is_some() {
-                                final_return.push(return_val.clone().unwrap());
-                            }
-                        },
-                        Node::Transcr(_, _) => {
-                            // Only collect transcript values once even if multiple
-                            // transcript nodes finish simultaneously.
-                            if !transcript_collected {
-                                transcript_collected = true;
-                                for node_transcript in g.mutex_graph.transcript_nodes() {
-                                    let transcript_node = &g.mutex_graph[node_transcript];
-                                    match transcript_node {
-                                        Node::Transcr(_, annotation) => {
-                                            let return_val = annotation.return_value.lock().unwrap();
-                                            if return_val.is_some() && !*annotation.is_challenge.lock().unwrap() {
-                                                final_return.push(return_val.clone().unwrap());
-                                            }
-                                        },
-                                        _ => {
-                                            panic!("Not possible");
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        Node::Inp(_, _) | Node::Rel(_, _) => {}
-                    }
-                }
-            }
-            let remove_finished_set: HashSet<NodeIndex> = remove_from_running.into_iter().collect();
-            running_nodes.retain(|x| !remove_finished_set.contains(x));
-        }
-
-        // Collect any Check node values that weren't already gathered.
-        // When multiple verify statements exist, the termination condition
-        // (all running nodes finish at once) may not hold, so individual
-        // Check results can be lost. Sweep the graph once more and include
-        // every Check node's computed value.
         for node_idx in g.mutex_graph.node_indices() {
-            if let Node::Op(op, annotation) | Node::Transcr(op, annotation) = &g.mutex_graph[node_idx] {
-                if matches!(**op, Op::Check(_)) {
-                    let return_val = annotation.return_value.lock().unwrap();
-                    if let Some(ref val) = *return_val {
-                        final_return.push(val.clone());
+            // TODO: is this efficient?
+            let unique_preds: HashSet<NodeIndex> = g
+                .mutex_graph
+                .neighbors_directed(node_idx, Direction::Incoming)
+                .collect();
+            match &g.mutex_graph[node_idx] {
+                Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                    max_thread_num = max_thread_num.max(annotation.thread_num);
+                    annotation
+                        .remaining_deps
+                        .store(unique_preds.len(), Ordering::SeqCst);
+
+                    // Collect result indices inline.
+                    match (&g.mutex_graph[node_idx], result_kind) {
+                        (Node::Transcr(_, _), ResultKind::Prover) => {
+                            result_indices.push(node_idx);
+                        }
+                        (Node::Op(op, _), ResultKind::Verifier) if matches!(**op, Op::Check(_)) => {
+                            result_indices.push(node_idx);
+                        }
+                        _ => {}
                     }
                 }
+                Node::Inp(_, _) => {},
+                Node::Rel(_, _) => {}
+            }
+        }
+        let result_indices: Vec<NodeIndex> = match result_kind {
+            ResultKind::Prover => {
+                order_transcript_nodes(result_indices, &g.mutex_graph)
+            }
+            ResultKind::Verifier => result_indices,
+        };
+
+        debug!("[run_graph] max_thread_num={}", max_thread_num);
+        debug!("[run_graph] total nodes={}, result_indices count={}", g.mutex_graph.node_indices().count(), result_indices.len());
+        // for ni in g.mutex_graph.node_indices() {
+        //     match &g.mutex_graph[ni] {
+        //         Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+        //             let rd = annotation.remaining_deps.load(Ordering::SeqCst);
+        //             let is_sync = is_sync_node(&g, ni);
+        //             debug!("[run_graph] init: node {:?} remaining_deps={} is_sync={}", ni, rd, is_sync);
+        //         }
+        //         Node::Inp(_, _) => debug!("[run_graph] init: node {:?} is Inp", ni),
+        //         Node::Rel(_, _) => debug!("[run_graph] init: node {:?} is Rel", ni),
+        //     }
+        // }
+
+        // Create the pool manager with capacity = max_thread_num.
+        let pool_manager = PoolManager::new(max_thread_num);
+
+        // Push the initial sync node (the input node) onto the sync queue
+        // and submit any root Op nodes (remaining_deps == 0) that have no
+        // predecessors — e.g. random values — to the pool manager.
+        for ni in g.mutex_graph.node_indices() {
+            match &g.mutex_graph[ni] {
+                Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                    let rd = annotation.remaining_deps.load(Ordering::SeqCst);
+                    if rd == 0 {
+                        if is_sync_node(&g, ni) {
+                            debug!("[run_graph] init: pushing sync node {:?} with remaining_deps=0", ni);
+                            pool_manager.sync_queue().push(ni);
+                        } else {
+                            let thread_num = annotation.thread_num;
+                            let g_clone = Arc::clone(&g);
+                            let inputs_clone = Arc::clone(&inputs);
+                            let pm_clone = Arc::clone(&pool_manager);
+                            debug!("[run_graph] init: submitting non-sync node {:?} with remaining_deps=0 thread_num={}", ni, thread_num);
+                            pool_manager.submit(
+                                thread_num,
+                                Box::new(move || {
+                                    g_clone.handle_node(ni, inputs_clone.clone());
+                                    update_successors(&g_clone, &inputs_clone, &pm_clone, ni);
+                                }),
+                            );
+                        }
+                    }
+                }
+                Node::Inp(_, _) => {
+                    debug!("[run_graph] pushing initial sync node {:?}", ni);
+                    pool_manager.sync_queue().push(ni);
+                }
+                Node::Rel(_, _) => {}
             }
         }
 
-        final_return
+        // Phase 2: Main execution loop.
+        //
+        // Compute values for sync nodes (transcript and challenge).
+        // Dispatch other computes to the pool manager, and wait for completion.
+        let mut loop_count = 0u32;
+        while let Some(node_idx) = pool_manager.sync_queue().pop() {
+            loop_count += 1;
+            debug!("[run_graph] loop iteration {}, processing sync node {:?}", loop_count, node_idx);
+            match &g.mutex_graph[node_idx] {
+                Node::Inp(_, prefs) => {
+                    debug!("[run_graph] node {:?} is Inp with {} prefs", node_idx, prefs.len());
+                    // Send public values through the sponge.
+                    for pref in prefs.clone() {
+                        if pref.qualifier.is_public() && !pref.from_transcript {
+                            prover_state.public_message(
+                                value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap())
+                                    .unwrap()
+                                    .as_slice(),
+                            );
+                        }
+                    }
+                }
+                Node::Transcr(op, annotation) => {
+                    if matches!(**op, Op::Challenge(_, _)) {
+                        debug!("[run_graph] node {:?} is Challenge", node_idx);
+                        // Challenge node: squeeze the sponge.
+                        let return_val = Value::<C>::challenge(prover_state);
+                        *annotation.return_value.lock().unwrap() = Some(return_val);
+                    } else {
+                        debug!("[run_graph] node {:?} is Transcript", node_idx);
+                        // Proof transcript node: compute value and send
+                        // through the sponge.
+                        g.handle_node(node_idx, Arc::clone(&inputs));
+                        let return_val = annotation.return_value.lock().unwrap();
+                        let serialized = value_to_bytes(return_val.as_ref().unwrap()).unwrap();
+                        prover_state.public_message(serialized.as_slice());
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            // Update successors — pushes ready sync nodes to the sync queue
+            // and submits non-sync nodes to the pool manager.
+            debug!("[run_graph] calling update_successors for node {:?}", node_idx);
+            update_successors(&g, &inputs, &pool_manager, node_idx);
+        }
+
+        debug!("[run_graph] main loop completed after {} iterations", loop_count);
+
+        // Phase 3: Collect results from pre-collected result indices.
+        match result_kind {
+            ResultKind::Prover => result_indices
+                .into_iter()
+                .filter_map(|n| match &g.mutex_graph[n] {
+                    Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
+                        annotation.return_value.lock().unwrap().clone()
+                    }
+                    _ => None,
+                })
+                .collect(),
+            ResultKind::Verifier => result_indices
+                .into_iter()
+                .filter_map(|n| match &g.mutex_graph[n] {
+                    Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
+                        annotation.return_value.lock().unwrap().clone()
+                    }
+                    _ => None,
+                })
+                .collect(),
+        }
     }
 }
