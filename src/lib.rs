@@ -171,11 +171,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.output_pdf(&g, "concrete_protocol_graph");
 
         debug!("Projecting prover");
-        // Extract protocol subgraph and rename inner nodes
-        let g = self.get_protocol_subgraph(&gs).clone().rename_inner_nodes();
-        self.output_pdf(&g, "concrete_protocol_graph");
-
-        debug!("Projecting prover");
         let (prover, _) = g.clone().get_prover();
         self.prover_graph = Some(prover.clone());
         self.output_pdf(&prover, "prover_graph");
