@@ -734,6 +734,48 @@ mod tests {
         assert_eq!(atyp, ATyp::vpoly(3, 5));
     }
 
+    /// Phase 7 regression: `lub_mul` on `CTyp::Poly` and on the lowered
+    /// `ATyp::VPoly` must produce the same ATyp. Without this, lang-level
+    /// type inference can return a polynomial with the wrong degree
+    /// relative to what the backend expects (blocking e.g. the Gröbner
+    /// builder on `eval(a*b, xs)` for `a, b : Mle<F, N>`).
+    #[test]
+    fn lub_mul_ctyp_atyp_cross_consistency() {
+        use lang::id::Tid;
+        use lang::typ::{CKind, CTyp};
+        use lang::typ::lub::Lub as _;
+
+        let f = Tid::from("F");
+        let mut kctx = Ctx::new();
+        kctx.insert(&f, &CKind::Field);
+
+        // (vars_a, deg_a, vars_b, deg_b)
+        let cases = &[
+            (1usize, 3usize, 1usize, 4usize),   // Uni * Uni
+            (2, 1, 2, 1),                        // Mle * Mle, same vars
+            (2, 1, 3, 1),                        // Mle * Mle, different vars
+            (1, 5, 3, 1),                        // Uni * Mle
+            (2, 3, 2, 4),                        // VPoly * VPoly, same vars
+            (2, 3, 4, 2),                        // VPoly * VPoly, different vars
+        ];
+
+        for (m1, n1, m2, n2) in cases.iter().copied() {
+            let c1 = CTyp::Poly(f.clone(), m1, n1);
+            let c2 = CTyp::Poly(f.clone(), m2, n2);
+            let c_mul = CTyp::lub_mul(&c1, &c2, &kctx).unwrap();
+            let c_mul_lowered = ATyp::from_ctyp(&c_mul, &kctx).unwrap();
+
+            let a1 = ATyp::from_ctyp(&c1, &kctx).unwrap();
+            let a2 = ATyp::from_ctyp(&c2, &kctx).unwrap();
+            let a_mul = ATyp::lub_mul(&a1, &a2, &Nothing).unwrap();
+
+            assert_eq!(c_mul_lowered, a_mul,
+                "CTyp and ATyp lub_mul disagree on Poly({}, {}) * Poly({}, {}): \
+                 lowered CTyp says {}, direct ATyp says {}",
+                m1, n1, m2, n2, c_mul_lowered, a_mul);
+        }
+    }
+
     #[test]
     fn scalar_mul_vpoly_preserves() {
         let result = ATyp::lub_mul(&ATyp::scalar(), &ATyp::vpoly(3, 4), &Nothing).unwrap();
