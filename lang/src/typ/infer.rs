@@ -506,7 +506,27 @@ impl Typeable for CExp {
                             }
                             _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
                         }
-                    }
+                        if len_vec < n {
+                            return Ok(CTyp::Poly(i, n - len_vec, 1));
+                        }
+                        return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
+                        
+                    },
+                    // General multivariate polynomial Poly<F, n, m> with n>1, m>1.
+                    // len == n  -> scalar (full evaluation)
+                    // len <  n  -> Poly<F, n-len, m> (partial evaluation)
+                    // len >  n  -> too many args
+                    (CTyp::Poly(i, n, m), CTyp::Vec(b, len_vec)) => {
+                        let _ = b.to_scalar(kctx).ok_or(TypeError::eval(kctx, &vctx, p, x))?;
+                        if len_vec == n {
+                            return Ok(*b);
+                        }
+                        if len_vec < n {
+                            return Ok(CTyp::Poly(i, n - len_vec, m));
+                        }
+                        return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
+                    },
+                    _ => Err(TypeError::eval(kctx, &vctx, p, x))
                 }
             }
 
@@ -1407,12 +1427,11 @@ mod tests {
         let vec_div2 = CExp::div(CExp::varstr("v1"), CExp::varstr("v2"));
         assert!(vec_div2.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
-        // Create expression p / p
-        let uni_div = CExp::div(CExp::varstr("p"), CExp::varstr("p"));
-        assert_eq!(
-            uni_div.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 1))
-        );
+       // Create expression p / p
+        let uni_div =
+            CExp::div(CExp::varstr("p"), CExp::varstr("p"));
+        assert_eq!(uni_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 1, 0)));
     }
 
     // Test for remainder
