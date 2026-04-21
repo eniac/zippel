@@ -86,7 +86,7 @@ fn num_coeffs(typ: &ATyp) -> usize {
 
 /// Inverse of the enumeration: position of multi-index / hypercube point `k`
 /// in the canonical slot order for the given type.
-#[allow(dead_code)]
+#[cfg(test)]
 fn index_of(typ: &ATyp, k: &[usize]) -> usize {
     match typ {
         ATyp::VPoly(n, m) => multi_indices(*n, *m)
