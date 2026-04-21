@@ -2,7 +2,7 @@
 fn marginalize_from_prefix_mle<F: Field, FIXED: 1..32, TAIL: 1..32>(
     public p: Mle<F, FIXED + 1 + TAIL>,
     public fixed_prefix: [F; FIXED]
-) -> Poly<F, 1, 2> {
+) -> Poly<F, 1, 1> {
     // Build 0/1 as field elements.
     let zero = fixed_prefix[0] - fixed_prefix[0];
     let one = zero + 1;

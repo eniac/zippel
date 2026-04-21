@@ -1046,7 +1046,6 @@ mod tests {
     /// phase-7 follow-up (the off-by-one was introduced by the phase-7 fix
     /// that landed before the coef/poly/eval conventions were reconciled).
     #[test]
-    #[ignore = "blocked: CTyp::lub_div off-by-one (phase-7 follow-up, see doc comment)"]
     fn full_kzg_completeness() {
         use lang::id::Tid;
         let ex = r#"
