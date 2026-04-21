@@ -1,72 +1,76 @@
-// Self-contained compile/lowering tests for a generic non-recursive
-// Zippel-level marginalize helper.
+fn marginalize_test<F: Field>(
+    public poly: Poly<F, 2, 2>,
+    public num_variables: Fin<2>,
+    public max_degree: Fin<2>,
+    public round: Fin<3>,
+    public challenge: F
+) -> { evaluations: [F; 3], next_poly: Poly<F, 1, 2> } {
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
+    marginalize(cfg)
+}
+
+// Simple protocol that calls `marginalize` on a fixed polynomial that is the
+// product of two MLEs in variables (x, y):
 //
-// NOTE: Keep test concretization bounds narrow to avoid compile-time blowups.
+//   f(x, y) = x + y
+//   g(x, y) = 2x + 2y
+//   poly(x, y) = f(x, y) * g(x, y) = (x + y) * (2x + 2y)
+//
+// The backend marginalize implementation treats the first variable as the
+// "round" variable t and sums over the remaining Boolean variable y ∈ {0,1},
+// so for each t we get:
+//
+//   e(t) = Σ_{y∈{0,1}} poly(t, y)
+//        = 4 t^2 + 4 t + 2
+//
+// Over F17 this gives:
+//   e(0) = 2
+//   e(1) = 10
+//   e(2) = 9
+proto marginalize_proto<F: Field>
+    (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
+    where true {
 
-fn marginalize_from_prefix_mle<F: Field, FIXED: 2..6, TAIL: 1..2>(
-    public p: Mle<F, FIXED + 1 + TAIL>,
-    public fixed_prefix: [F; FIXED]
-) -> Poly<F, 1, 2> {
-    let zero = fixed_prefix[0] - fixed_prefix[0];
-    let one = zero + 1;
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
+    let out = marginalize(cfg);
 
-    let tails = [
-        [(((i / (2^j)) % 2) * one) for j in 0..TAIL]
-        for i in 0..2^TAIL
-    ];
-
-    let g0_terms = [eval(p, fixed_prefix ++ [zero] ++ tail) for tail in tails];
-    let g0 = reduce(+, g0_terms);
-
-    let g1_terms = [eval(p, fixed_prefix ++ [one] ++ tail) for tail in tails];
-    let g1 = reduce(+, g1_terms);
-
-    poly([g0, g1 - g0])
+    let expected = [2, 10, 9];
+    verify(out.evaluations == expected)
 }
 
-proto marginalize_test_fixed2<F: Field>(
-    public x: F
-) where (x == x) {
-    // MU=4, FIXED=2, TAIL=1
-    // With index order used by this compiler:
-    // q(0)=4+5=9, q(1)=6+7=13 => coeffs [9, 4]
-    let p = mle([i for i in 0..16]);
-    let q = marginalize_from_prefix_mle(p, [0, 1]);
-    let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 9 && q_coeffs[1] == 4)
+fn marginalize_test_univariate<F: Field>(
+    public poly: Poly<F, 1, 2>,
+    public num_variables: Fin<1>,
+    public max_degree: Fin<2>,
+    public round: Fin<3>,
+    public y: F,
+    public challenge: F
+) -> { evaluations: [F; 3], next_poly: Poly<F, 0, 2> } {
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
+    marginalize(cfg)
 }
 
-proto marginalize_test_fixed3<F: Field>(
-    public x: F
-) where (x == x) {
-    // MU=5, FIXED=3, TAIL=1
-    // q(0)=20+21=41, q(1)=22+23=45 => coeffs [41, 4]
-    let p = mle([i for i in 0..32]);
-    let q = marginalize_from_prefix_mle(p, [1, 0, 1]);
-    let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 41 && q_coeffs[1] == 4)
-}
+// Simple protocol that calls `marginalize` on a fixed *univariate* polynomial
+// and checks that the round evaluations
+//
+//   g(t) = poly(t) = t^2 + t + y
+//
+// match the known values for t = 0,1,2.
+//
+// NOTE: this is a separate, univariate test and is *not* the main
+// `marginalize_proto` entry used by the Rust example, which operates
+// on a bivariate polynomial built from two MLEs.
+proto marginalize_univariate_proto<F: Field>
+    (public poly: Poly<F, 1, 2>, public num_variables: Fin<1>, public max_degree: Fin<2>, public round: Fin<3>, public y: F, public challenge: F)
+    where true {
 
-proto marginalize_test_fixed4<F: Field>(
-    public x: F
-) where (x == x) {
-    // MU=6, FIXED=4, TAIL=1
-    // fixed_prefix=[1,1,0,1] => base index 52
-    // q(0)=52+53=105, q(1)=54+55=109 => coeffs [105, 4]
-    let p = mle([i for i in 0..64]);
-    let q = marginalize_from_prefix_mle(p, [1, 1, 0, 1]);
-    let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 105 && q_coeffs[1] == 4)
-}
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
+    let out = marginalize(cfg);
 
-proto marginalize_test_fixed5<F: Field>(
-    public x: F
-) where (x == x) {
-    // MU=7, FIXED=5, TAIL=1
-    // fixed_prefix=[1,0,1,1,0] => base index 88
-    // q(0)=88+89=177, q(1)=90+91=181 => coeffs [177, 4]
-    let p = mle([i for i in 0..128]);
-    let q = marginalize_from_prefix_mle(p, [1, 0, 1, 1, 0]);
-    let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 177 && q_coeffs[1] == 4)
+    // Rust side fixes `poly` to poly(x) = x^2 + x + y over F17, so:
+    //   g(0) = y
+    //   g(1) = y + 2
+    //   g(2) = y + 6
+    let expected = [y, y + 2, y + 6];
+    verify(out.evaluations == expected)
 }

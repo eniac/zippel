@@ -7,7 +7,7 @@ use zippel::*;
 
 fn main() {
     println!("=== Marginalize (ArkField17) ===");
-    let zippel_path = PathBuf::from("examples/marginalize.zippel");
+    let zippel_path = PathBuf::from("examples/marginalize/marginalize.zippel");
     let args =
         ZippelArgs::new(zippel_path.clone()).with_subgraph("marginalize_proto".to_string());
 

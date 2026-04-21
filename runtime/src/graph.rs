@@ -353,6 +353,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
 
                 if thread_num_val <= (max_threads - active_threads) {
+                    let pool = rayon::ThreadPoolBuilder::new()
+                        .num_threads(thread_num_val)
+                        .build()
+                        .unwrap();
                     // check if node is a challenge node
                     let mut challenge_node = false;
                     let mut input_node = false;
@@ -380,23 +384,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                     }
 
                     if !challenge_node && !input_node {
-                        if thread_num_val <= 1 {
-                            let graph = Arc::clone(&g);
-                            let inputs_arc = Arc::clone(&inputs);
-                            rayon::spawn(move || {
-                                graph.handle_node(node_index, inputs_arc);
-                            });
-                        } else {
-                            let pool = rayon::ThreadPoolBuilder::new()
-                                .num_threads(thread_num_val)
-                                .build()
-                                .unwrap();
-                            let graph = Arc::clone(&g);
-                            let inputs_arc = Arc::clone(&inputs);
-                            pool.spawn(move || {
-                                graph.handle_node(node_index, inputs_arc);
-                            });
-                        }
+                        let graph = Arc::clone(&g);
+                        let inputs_arc = Arc::clone(&inputs);
+                        pool.spawn(move || {
+                            graph.handle_node(node_index, inputs_arc);
+                        });
                     }
                     running_nodes.push(node_index);
                     active_threads += thread_num_val;

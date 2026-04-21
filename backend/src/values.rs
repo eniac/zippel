@@ -222,37 +222,7 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             Ok(())
         }
         Value::Poly(poly) => {
-            // Serialize `VirtualPolynomial` by first trying to get univariate coefficients,
-            // and falling back to a generic vector view if available.
-            if let Some(coeffs) = poly.to_coeffs() {
-                for f in coeffs {
-                    f.serialize_compressed(&mut *writer)?;
-                }
-                Ok(())
-            } else if let Some(vec) = poly.to_vec() {
-                for f in vec {
-                    f.serialize_compressed(&mut *writer)?;
-                }
-                Ok(())
-            } else {
-                // Fallback for arbitrary virtual polynomials (e.g. product of MLEs) so
-                // public inputs can be serialized for the transcript.
-                const VIRTUAL_POLY_TAG: u8 = 2;
-                VIRTUAL_POLY_TAG.serialize_compressed(&mut *writer)?;
-                (poly.products.len() as u64).serialize_compressed(&mut *writer)?;
-                for (coeff, indices) in &poly.products {
-                    coeff.serialize_compressed(&mut *writer)?;
-                    (indices.len() as u64).serialize_compressed(&mut *writer)?;
-                    for &idx in indices {
-                        (idx as u64).serialize_compressed(&mut *writer)?;
-                    }
-                }
-                (poly.flattened_polys.len() as u64).serialize_compressed(&mut *writer)?;
-                for poly_arc in &poly.flattened_polys {
-                    (**poly_arc).serialize_compressed(&mut *writer)?;
-                }
-                Ok(())
-            }
+            poly.serialize_compressed(&mut *writer)
         }
         Value::Record(fields) => {
             // Serialize record fields

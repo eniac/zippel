@@ -33,7 +33,7 @@ proto marginalize_test_fixed2<F: Field>(
     let p = mle([i for i in 0..16]);
     let q = marginalize_from_prefix_mle(p, [0, 1]);
     let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 9 && q_coeffs[1] == 4);
+    verify(q_coeffs[0] == 9 && q_coeffs[1] == 4)
 }
 
 proto marginalize_test_fixed3<F: Field>(
@@ -44,7 +44,7 @@ proto marginalize_test_fixed3<F: Field>(
     let p = mle([i for i in 0..32]);
     let q = marginalize_from_prefix_mle(p, [1, 0, 1]);
     let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 41 && q_coeffs[1] == 4);
+    verify(q_coeffs[0] == 41 && q_coeffs[1] == 4)
 }
 
 proto marginalize_test_fixed4<F: Field>(
@@ -56,7 +56,7 @@ proto marginalize_test_fixed4<F: Field>(
     let p = mle([i for i in 0..64]);
     let q = marginalize_from_prefix_mle(p, [1, 1, 0, 1]);
     let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 105 && q_coeffs[1] == 4);
+    verify(q_coeffs[0] == 105 && q_coeffs[1] == 4)
 }
 
 proto marginalize_test_fixed5<F: Field>(
@@ -68,5 +68,5 @@ proto marginalize_test_fixed5<F: Field>(
     let p = mle([i for i in 0..128]);
     let q = marginalize_from_prefix_mle(p, [1, 0, 1, 1, 0]);
     let q_coeffs = coef(q);
-    verify(q_coeffs[0] == 177 && q_coeffs[1] == 4);
+    verify(q_coeffs[0] == 177 && q_coeffs[1] == 4)
 }
