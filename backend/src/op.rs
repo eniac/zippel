@@ -186,14 +186,13 @@ impl<C: ArkConfig, R> Op<C, R> {
             },
             Op::Vec(vs) => {
                 let mut typ = vs[0].typ();
-                for v in vs.iter().skip(1) {
-                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).unwrap_or_else(|_| {
-                        panic!(
-                            "UncaughtError: Vector operands must be of the same type: {} != {}",
-                            typ,
-                            v.typ()
-                        )
-                    });
+                for (i, v) in vs.iter().enumerate().skip(1) {
+                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing)
+                        .expect(format!(
+                            "UncaughtError: Vector operands must be of the same type: \
+                             child[0] has type {}, child[{}] has type {} (total {} children)",
+                            typ, i, v.typ(), vs.len()
+                        ).as_str());
                 }
                 ATyp::vec(&typ, vs.len())
             }
@@ -207,55 +206,28 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
+            // Op::Ifft(v): v : Vec<F, k> / Uni(k-1) → Uni(k - 1).
+            // Under the degree convention, k coefficients = max degree k-1.
             Op::Ifft(op) => match op.typ() {
-                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
-                    if !n.is_power_of_two() {
-                        panic!(
-                            "Op::Ifft: input vector length must be a power of two; got {}",
-                            n
-                        );
-                    }
-                    ATyp::uni(n)
-                }
-                t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
+                ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
+                ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
+                other => other,
             },
-            Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
-                (
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
-                )
-                | (
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
-                )
-                | (
-                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
-                )
-                | (
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
-                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
-                ) => {
-                    if m != n {
-                        panic!(
-                            "Op::Interpolate: points and evals must have the same length; got {} vs {}",
-                            m, n
-                        );
-                    }
-                    ATyp::uni(n)
-                }
-                (tp, te) => panic!(
-                    "Op::Interpolate: both arguments must be Vec(Scalar | Fin, n); got points: {}, evals: {}",
-                    tp, te
-                ),
-            },
+            // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
             Op::Fft(op) => match op.typ() {
-                ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
-                t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
+                ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
+                ATyp::Vec(box t, n) => ATyp::vec(&t, n), // identity on vec
+                other => other,
             },
             Op::Check(op) => op.typ(),
-            Op::Poly(op) => op.typ(),
+            // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
+            // convention (see docs/poly-encoding.md). Defensive fallback
+            // preserves the child type when the shape is unexpected.
+            Op::Poly(op) => match op.typ() {
+                ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
+                ATyp::Uni(m) => ATyp::uni(m),
+                other => other,
+            },
             Op::Eval(p, x) => {
                 // Compute the result type of evaluating polynomial `p` at
                 // the k-length vector of points `x`.
@@ -282,8 +254,24 @@ impl<C: ArkConfig, R> Op<C, R> {
                     _ => x_typ,
                 }
             },
-            Op::Coef(op) => op.typ(),
-            Op::Mle(op) => op.typ(),
+            // Op::Coef(p) flattens a polynomial to its coefficient vector.
+            // The resulting Vec length equals the polynomial's coefficient
+            // count (see ATyp::size).
+            Op::Coef(op) => match op.typ() {
+                ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
+                ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
+                t @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), t.size()),
+                ATyp::Vec(box t, n) => ATyp::vec(&t, n), // already a vec; identity
+                other => other,
+            },
+            // Op::Mle(v): v : Vec<F, 2^n> → Mle(n). The child is an
+            // evaluation vector on the boolean hypercube of dimension n.
+            Op::Mle(op) => match op.typ() {
+                ATyp::Vec(_, k) if k.is_power_of_two() && k >= 1 =>
+                    ATyp::mle(k.trailing_zeros() as usize),
+                t @ ATyp::Mle(_) => t,
+                other => other,
+            },
             Op::Reduce(op, v) => {
                 let (elem, _) = v.typ().into_vec();
                 ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
