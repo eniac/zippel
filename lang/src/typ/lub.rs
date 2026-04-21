@@ -1267,6 +1267,84 @@ fn lub_typ() {
 
 }
 
+/// Phase 15: Negative / off-by-one degree regressions for Poly type rules.
+/// Locks in the phase-14 convention that `m` in `Poly<F, n, m>` is the max
+/// polynomial degree (so a univariate polynomial of degree `m` has `m + 1`
+/// coefficients). Each assertion exercises a boundary where an off-by-one
+/// on the degree parameter would silently succeed before phase 14.
+#[test]
+fn test_ctyp_poly_degree_offbyone() {
+    let f = Tid::from("F");
+    let g1 = Tid::from("G1");
+    let g2 = Tid::from("G2");
+    let ctx = Ctx::from([
+        (f.clone(), Kind::Field),
+        (g1.clone(), Kind::Group),
+        (g2.clone(), Kind::Group),
+    ]);
+    let tf = CTyp::base(&f);
+    let tg1 = CTyp::base(&g1);
+
+    // ---- lub_add / lub_sub: Poly<F,1,n> ± Vec<F,k> requires k == n + 1 ----
+    // Positive boundary: k = n + 1 succeeds.
+    assert_eq!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3)));
+    assert_eq!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3)));
+    // Off-by-one low: k = n rejected (Vec has too few coeffs for degree n).
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_add(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
+    // Off-by-one high: k = n + 2 rejected (Vec has too many coeffs).
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
+    assert!(CTyp::lub_add(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+
+    // ---- lub_mul: Vec×Vec requires matching lengths; element types enforced ----
+    // Length mismatch rejected (no off-by-one coercion for Vec×Vec).
+    assert!(CTyp::lub_mul(&CTyp::vec(&tf, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
+    // Element type mismatch rejected (field vs group base types).
+    assert!(CTyp::lub_mul(&CTyp::vec(&tf, 4), &CTyp::vec(&tg1, 4), &ctx).is_err());
+
+    // ---- lub_div: Poly<F,n1,m1> / Poly<F,n2,m2> requires m1 ≥ m2 ----
+    // Positive boundary: equal degrees yield Poly<F,_,0>.
+    assert_eq!(CTyp::lub_div(&CTyp::uni(&f, 3), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 0)));
+    // Off-by-one: divisor degree one greater than dividend is rejected.
+    assert!(CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx).is_err());
+    // General Poly/Poly: same off-by-one in multivariate.
+    assert!(CTyp::lub_div(&CTyp::Poly(f.clone(), 2, 3), &CTyp::Poly(f.clone(), 2, 4), &ctx).is_err());
+    // Far off: any m2 > m1 rejected.
+    assert!(CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx).is_err());
+
+    // ---- lub_rem: Poly<F,n1,m1> % Poly<F,n2,m2> requires m2 ≥ 1 ----
+    // Divisor of degree 0 rejected (no remainder well-defined).
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
+    // Degree-only dividend with degree-0 divisor also rejected.
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 0), &CTyp::uni(&f, 0), &ctx).is_err());
+    // m1 < m2 is still allowed: remainder degree = m2 - 1 (full dividend fits).
+    assert_eq!(CTyp::lub_rem(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 3)));
+    // Boundary m2 = 1: remainder has degree 0.
+    assert_eq!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 1), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 0)));
+
+    // ---- lub_dot: Vec<F,k> · Poly<F,1,m> requires k == m + 1 ----
+    // Positive boundary: k = m + 1.
+    assert_eq!(CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
+        Ok(tf.clone()));
+    assert_eq!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(tf.clone()));
+    // Off-by-one low: k = m rejected.
+    assert!(CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 4), &ctx).is_err());
+    assert!(CTyp::lub_dot(&CTyp::uni(&f, 4), &CTyp::vec(&tf, 4), &ctx).is_err());
+    // Off-by-one high: k = m + 2 rejected.
+    assert!(CTyp::lub_dot(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
+}
+
 #[cfg(test)]
 mod error_tests {
     use super::*;
