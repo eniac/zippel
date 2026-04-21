@@ -609,7 +609,7 @@ fn pin_log_new_transcr() {
 #[test]
 fn pin_poly() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             poly(a)
         }
     "#;
@@ -633,7 +633,7 @@ fn pin_poly() {
 #[test]
 fn pin_coef() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
             coef(a)
         }
     "#;
@@ -657,8 +657,8 @@ fn pin_coef() {
 #[test]
 fn pin_interpolate() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
-            interpolate([0,1,2,3], a)
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
+            ifft(a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -689,8 +689,8 @@ fn pin_interpolate() {
 #[test]
 fn pin_fft() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
-            eval(a)
+        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
+            fft(a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -1355,23 +1355,20 @@ fn pin_app_univariate_poly() {
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
-        fn f<F: Field>(public p: Uni<F, 2>, public x: F) -> F { p(x) }
+        fn f<F: Field>(public p: Uni<F, 1>, public x: F) -> F { p(x) }
     "#;
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let (_inp, _inp_args) = expected_inp(
-        &mut expected,
-        "f",
-        &[pub_t("p", ATyp::vpoly(1, 2)), pub_t("x", s.clone())],
-    );
-    let arg_p = _inp_args[0];
-    let arg_x = _inp_args[1];
+    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![
+        PRef::from_var(Vid::new("p"), NodeIndex::new(0), ATyp::vpoly(1, 1), 0, Qualifier::Public, Distribution::Nonuniform),
+        PRef::from_var(Vid::new("x"), NodeIndex::new(0), s.clone(), 0, Qualifier::Public, Distribution::Nonuniform),
+    ]));
 
-    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
-    let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
+    let var_p = GOp::<B>::var(&Vid::new("p"), inp, ATyp::vpoly(1, 1));
+    let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
 
     // x^0 simplifies to Value(Scalar(one)), x^1 simplifies to var_x
     let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
