@@ -128,6 +128,34 @@ impl From<Ref> for NodeIndex {
     }
 }
 
+/// Shape helper: a polynomial-producing op that consumes a
+/// coefficient vector returns the corresponding polynomial type
+/// under the phase-14 degree convention (`Vec<F, k>` ↔ `Uni(k-1)`).
+///
+/// Used by `Op::Poly::typ()` and `Op::Ifft::typ()`.
+fn poly_typ_from_vec(t: ATyp) -> ATyp {
+    match t {
+        ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
+        ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
+        other => other,                // defensive: preserve shape
+    }
+}
+
+/// Shape helper: an op that consumes a polynomial and produces its
+/// coefficient vector. Length = `t.size()` — the canonical slot count
+/// (m+1 for Uni, 2^n for Mle, C(n+m, n) for VPoly).
+///
+/// Used by `Op::Coef::typ()` and `Op::Fft::typ()`.
+fn coef_typ_from_poly(t: ATyp) -> ATyp {
+    match t {
+        ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
+        ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
+        v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.size()),
+        ATyp::Vec(box elem, n) => ATyp::vec(&elem, n), // already a vec; identity
+        other => other,                                 // defensive
+    }
+}
+
 impl<C: ArkConfig, R> Op<C, R> {
     /// Assign a unique tag to each operation
     pub fn discriminant_order(&self) -> usize {
@@ -188,11 +216,11 @@ impl<C: ArkConfig, R> Op<C, R> {
                 let mut typ = vs[0].typ();
                 for (i, v) in vs.iter().enumerate().skip(1) {
                     typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing)
-                        .expect(format!(
+                        .unwrap_or_else(|_| panic!(
                             "UncaughtError: Vector operands must be of the same type: \
                              child[0] has type {}, child[{}] has type {} (total {} children)",
                             typ, i, v.typ(), vs.len()
-                        ).as_str());
+                        ));
                 }
                 ATyp::vec(&typ, vs.len())
             }
@@ -208,26 +236,13 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(t, _) => t.clone(),
             // Op::Ifft(v): v : Vec<F, k> / Uni(k-1) → Uni(k - 1).
             // Under the degree convention, k coefficients = max degree k-1.
-            Op::Ifft(op) => match op.typ() {
-                ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
-                ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
-                other => other,
-            },
+            Op::Ifft(op) => poly_typ_from_vec(op.typ()),
             // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
-            Op::Fft(op) => match op.typ() {
-                ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
-                ATyp::Vec(box t, n) => ATyp::vec(&t, n), // identity on vec
-                other => other,
-            },
+            Op::Fft(op) => coef_typ_from_poly(op.typ()),
             Op::Check(op) => op.typ(),
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
-            // convention (see docs/poly-encoding.md). Defensive fallback
-            // preserves the child type when the shape is unexpected.
-            Op::Poly(op) => match op.typ() {
-                ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
-                ATyp::Uni(m) => ATyp::uni(m),
-                other => other,
-            },
+            // convention (see docs/poly-encoding.md).
+            Op::Poly(op) => poly_typ_from_vec(op.typ()),
             Op::Eval(p, x) => {
                 // Compute the result type of evaluating polynomial `p` at
                 // the k-length vector of points `x`.
@@ -257,13 +272,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             // Op::Coef(p) flattens a polynomial to its coefficient vector.
             // The resulting Vec length equals the polynomial's coefficient
             // count (see ATyp::size).
-            Op::Coef(op) => match op.typ() {
-                ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
-                ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
-                t @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), t.size()),
-                ATyp::Vec(box t, n) => ATyp::vec(&t, n), // already a vec; identity
-                other => other,
-            },
+            Op::Coef(op) => coef_typ_from_poly(op.typ()),
             // Op::Mle(v): v : Vec<F, 2^n> → Mle(n). The child is an
             // evaluation vector on the boolean hypercube of dimension n.
             Op::Mle(op) => match op.typ() {
