@@ -149,3 +149,7 @@ path = "examples/transcript_random/main.rs"
 [[example]]
 name = "virtual_test"
 path = "examples/virtual_test/main.rs"
+
+[[example]]
+name = "type_alias"
+path = "examples/type_alias/main.rs"

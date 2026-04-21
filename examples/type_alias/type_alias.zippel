@@ -1,0 +1,25 @@
+// Type alias for a 2D point record
+type Point = { x: F, y: F };
+
+// Schnorr-like protocol proving knowledge of x, y such that h = g*(x + y)
+// Uses both type aliases and typed let bindings
+proto point_schnorr<G: Group, F: Scalar<G>>(
+    private x: F,
+    private y: F,
+    public g: G,
+    public h: G
+) where h == g*(x + y) {
+    let p: Point = make_point(x, y);
+    let sum: F = p.x + p.y;
+    let r: F = random<F>;
+    u <- g*r;
+    c <- challenge<F*>;
+    z <- r + sum*c;
+    verify(g*z == u + h*c)
+}
+
+// Function using type alias Point in return type and typed let bindings
+fn make_point<G: Group, F: Scalar<G>>(a: F, b: F) -> Point {
+    let result: Point = {| x: a, y: b |};
+    result
+}
