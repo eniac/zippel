@@ -31,8 +31,12 @@ proto marginalize_proto<F: Field>
     (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
     where true {
 
-    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
-    let out = marginalize(cfg);
+fn marginalize_from_prefix_mle<F: Field, FIXED: 2..6, TAIL: 1..2>(
+    public p: Mle<F, FIXED + 1 + TAIL>,
+    public fixed_prefix: [F; FIXED]
+) -> Poly<F, 1, 1> {
+    let zero = fixed_prefix[0] - fixed_prefix[0];
+    let one = zero + 1;
 
     let expected = [2, 10, 9];
     verify(out.evaluations == expected)

@@ -1625,12 +1625,13 @@ impl<C: HasOpFactory> UDag<C> {
                             assert!(k.is_scalar());
                             assert_eq!(param_types.len(), 1);
 
-                            // Add the argument to the graph
-                            let x_pow = CExp::vec(
-                                (0..*n)
-                                    .map(|i| CExp::pow(params[0].clone(), i.into()))
-                                    .collect(),
-                            );
+                        // Add the argument to the graph.
+                        // Under the phase-14 "m = max degree" convention
+                        // a Poly<F,1,n> has n+1 coefficients, so we need
+                        // [x^0, x^1, ..., x^n] — inclusive of x^n.
+                        let x_pow = CExp::vec(
+                            (0..=*n).map(|i| CExp::pow(params[0].clone(), i.into()))
+                            .collect());
 
                             // Polynomial evaluation by dot-product of interpolate with [x_pow]
                             let dot_exp = CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
