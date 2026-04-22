@@ -6,12 +6,12 @@
 //!
 //! Run with: cargo bench --bench graph_execution
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use std::path::PathBuf;
 
 use ark_ff::Field;
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, ArkSecp256k1, Value, ATyp};
+use backend::{ATyp, ArkBls12_381, ArkConfig, ArkGroupOps, ArkPairingOps, ArkSecp256k1, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
 use zippel::*;
@@ -310,28 +310,36 @@ fn bench_pedersen_eq_verifier(c: &mut Criterion) {
 
 // ---------------------------------------------------------------------------
 // IPA (Inner Product Argument) — ArkSecp256k1, exercises recursive protocol
+// Instance size: 2^S elements.  Default S=10 (fast); increase to 15 for
+// a more stressful benchmark (but expect long runtimes).
 // ---------------------------------------------------------------------------
 
-fn ipa_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
+fn ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
-    let n_val_const = 64;
+    let n_val_const = 1usize << s;
 
     let u_aux_base: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
-    let g_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    let h_vec: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
-    let a_vec_witness: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
-    let b_vec_witness: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let g_vec: Value<ArkSecp256k1> =
+        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    let h_vec: Value<ArkSecp256k1> =
+        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    let a_vec_witness: Value<ArkSecp256k1> =
+        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let b_vec_witness: Value<ArkSecp256k1> =
+        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
     let ip_val_claimed: Value<ArkSecp256k1> = a_vec_witness.clone().dot(b_vec_witness.clone());
     let p_initial_commitment: Value<ArkSecp256k1> =
-        g_vec.clone().dot(a_vec_witness.clone())
-        + h_vec.clone().dot(b_vec_witness.clone());
+        g_vec.clone().dot(a_vec_witness.clone()) + h_vec.clone().dot(b_vec_witness.clone());
     let sum_vec: Value<ArkSecp256k1> =
         Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
-        (Vid("p_initial_commitment".to_string()), p_initial_commitment),
+        (
+            Vid("p_initial_commitment".to_string()),
+            p_initial_commitment,
+        ),
         (Vid("ip_val_claimed".to_string()), ip_val_claimed),
         (Vid("u_aux_base".to_string()), u_aux_base),
         (Vid("a_vec_witness".to_string()), a_vec_witness),
@@ -340,19 +348,20 @@ fn ipa_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     ])
 }
 
+const IPA_S: usize = 15;
+
 fn bench_ipa_prover(c: &mut Criterion) {
     let mut group = c.benchmark_group("ipa");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(ZippelArgs::new(
-        PathBuf::from("examples/ipa/ipa.zippel"),
-    ));
+    let mut handler: ZippelHandler<ArkSecp256k1> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel")));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &6usize);
+    sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
-    let inputs = ipa_inputs();
+    let inputs = ipa_inputs(IPA_S);
 
-    group.bench_function("prover", |b| {
+    group.bench_function(format!("prover/S={}", IPA_S).as_str(), |b| {
         b.iter(|| {
             let scheduled = handler.default_schedule_prover();
             handler.run_prover(scheduled, inputs.clone())
@@ -366,17 +375,241 @@ fn bench_ipa_verifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("ipa");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(ZippelArgs::new(
-        PathBuf::from("examples/ipa/ipa.zippel"),
-    ));
+    let mut handler: ZippelHandler<ArkSecp256k1> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel")));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &6usize);
+    sizes.insert(&Tid::new("S"), &IPA_S);
     handler.compile(&sizes);
-    let inputs = ipa_inputs();
+    let inputs = ipa_inputs(IPA_S);
     let prover_scheduled = handler.default_schedule_prover();
     let proof = handler.run_prover(prover_scheduled, inputs);
 
-    group.bench_function("verifier", |b| {
+    group.bench_function(format!("verifier/S={}", IPA_S).as_str(), |b| {
+        b.iter(|| {
+            let scheduled = handler.default_schedule_verifier();
+            handler.run_verifier(scheduled, proof.clone())
+        })
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Hyrax IPA (Log-of-Dot-Product) — ArkBls12_381
+// Instance size: 2^S elements.  Default S=10.
+// ---------------------------------------------------------------------------
+
+fn hyrax_ipa_inputs(s: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let mut rng = rand::rngs::OsRng;
+    let n_val_const = 1usize << s;
+
+    let x_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let a_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
+    let y = x_vec.clone().dot(a_vec.clone());
+
+    let r_xi = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+    let r_tau = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
+
+    let g_vec = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n_val_const));
+    let g_base = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let h_base = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+
+    let tau_val = match y.clone() {
+        Value::Scalar(y_scalar) => g_base * y_scalar + h_base * r_tau,
+        _ => unreachable!(),
+    };
+
+    let gx_dot = g_vec.clone().dot(x_vec.clone());
+    let xi_val = match gx_dot {
+        Value::G1(gx_sum) => h_base * r_xi + gx_sum,
+        _ => unreachable!(),
+    };
+
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+        (Vid("xi".to_string()), Value::G1(xi_val)),
+        (Vid("tau".to_string()), Value::G1(tau_val)),
+        (Vid("a_vec_public".to_string()), a_vec),
+        (Vid("g_vec_public".to_string()), g_vec),
+        (Vid("g_base".to_string()), Value::G1(g_base)),
+        (Vid("h_base".to_string()), Value::G1(h_base)),
+        (Vid("x_vec_private".to_string()), x_vec),
+        (Vid("y_private".to_string()), y),
+        (Vid("r_xi_private".to_string()), Value::Scalar(r_xi)),
+        (Vid("r_tau_private".to_string()), Value::Scalar(r_tau)),
+    ])
+}
+
+const HYRAX_IPA_S: usize = 15;
+
+fn bench_hyrax_ipa_prover(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hyrax_ipa");
+    group.sample_size(10);
+
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+        PathBuf::from("examples/hyrax_ipa/hyrax_ipa.zippel"),
+    ));
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
+    handler.compile(&sizes);
+    let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
+
+    group.bench_function(format!("prover/S={}", HYRAX_IPA_S).as_str(), |b| {
+        b.iter(|| {
+            let scheduled = handler.default_schedule_prover();
+            handler.run_prover(scheduled, inputs.clone())
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_hyrax_ipa_verifier(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hyrax_ipa");
+    group.sample_size(10);
+
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
+        PathBuf::from("examples/hyrax_ipa/hyrax_ipa.zippel"),
+    ));
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &HYRAX_IPA_S);
+    handler.compile(&sizes);
+    let inputs = hyrax_ipa_inputs(HYRAX_IPA_S);
+    let prover_scheduled = handler.default_schedule_prover();
+    let proof = handler.run_prover(prover_scheduled, inputs);
+
+    group.bench_function(format!("verifier/S={}", HYRAX_IPA_S).as_str(), |b| {
+        b.iter(|| {
+            let scheduled = handler.default_schedule_verifier();
+            handler.run_verifier(scheduled, proof.clone())
+        })
+    });
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Dory (Evaluation Proof with Bilinear Pairings) — ArkBls12_381
+// Instance size: 2^LOG_N elements.  Default LOG_N=10.
+// ---------------------------------------------------------------------------
+
+fn dory_inputs(log_n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
+    let mut rng = rand::rngs::OsRng;
+    let n = 1usize << log_n;
+
+    let u_vec = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
+    let g_vec = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+
+    let gamma1 = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n);
+    let gamma2 = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n);
+
+    let gamma1_prime = <ArkBls12_381 as ArkConfig>::G1Ops::vec_rand(&mut rng, n / 2);
+    let gamma2_prime = <ArkBls12_381 as ArkConfig>::G2Ops::vec_rand(&mut rng, n / 2);
+
+    let c1 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &g_vec);
+    let c2 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&u_vec, &gamma2);
+    let c3 = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&gamma1, &g_vec);
+
+    let mut hash1_l_vec = Vec::new();
+    let mut hash1_r_vec = Vec::new();
+    let mut hash2_l_vec = Vec::new();
+    let mut hash2_r_vec = Vec::new();
+    let mut gamma_pair_ipp_vec = Vec::new();
+
+    let mut current_n = n;
+    let mut cur_gamma1 = gamma1.clone();
+    let mut cur_gamma2 = gamma2.clone();
+
+    while current_n > 1 {
+        let half_n = current_n / 2;
+
+        let g1_l = cur_gamma1[0..half_n].to_vec();
+        let g1_r = cur_gamma1[half_n..current_n].to_vec();
+        let g2_l = cur_gamma2[0..half_n].to_vec();
+        let g2_r = cur_gamma2[half_n..current_n].to_vec();
+
+        let cur_g1_prime = gamma1_prime[0..half_n].to_vec();
+        let cur_g2_prime = gamma2_prime[0..half_n].to_vec();
+
+        let h1_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_l, &cur_g2_prime);
+        let h1_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&g1_r, &cur_g2_prime);
+        let h2_l = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_l);
+        let h2_r = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_g1_prime, &g2_r);
+        let ipp = <ArkBls12_381 as ArkConfig>::POps::billinear_vec_dot(&cur_gamma1, &cur_gamma2);
+
+        hash1_l_vec.push(h1_l);
+        hash1_r_vec.push(h1_r);
+        hash2_l_vec.push(h2_l);
+        hash2_r_vec.push(h2_r);
+        gamma_pair_ipp_vec.push(ipp);
+
+        cur_gamma1 = cur_g1_prime;
+        cur_gamma2 = cur_g2_prime;
+        current_n = half_n;
+    }
+
+    let final_gamma1 = cur_gamma1[0];
+    let final_gamma2 = cur_gamma2[0];
+
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+        (Vid("c1".to_string()), Value::GT(c1)),
+        (Vid("c2".to_string()), Value::GT(c2)),
+        (Vid("c3".to_string()), Value::GT(c3)),
+        (Vid("hash1_l_vec".to_string()), Value::VecGT(hash1_l_vec)),
+        (Vid("hash1_r_vec".to_string()), Value::VecGT(hash1_r_vec)),
+        (Vid("hash2_l_vec".to_string()), Value::VecGT(hash2_l_vec)),
+        (Vid("hash2_r_vec".to_string()), Value::VecGT(hash2_r_vec)),
+        (
+            Vid("gamma_pair_ipp_vec".to_string()),
+            Value::VecGT(gamma_pair_ipp_vec),
+        ),
+        (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
+        (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
+        (Vid("gamma1".to_string()), Value::VecG1(gamma1)),
+        (Vid("gamma2".to_string()), Value::VecG2(gamma2)),
+        (Vid("gamma1_prime".to_string()), Value::VecG1(gamma1_prime)),
+        (Vid("gamma2_prime".to_string()), Value::VecG2(gamma2_prime)),
+        (Vid("u_vec".to_string()), Value::VecG1(u_vec)),
+        (Vid("g_vec".to_string()), Value::VecG2(g_vec)),
+    ])
+}
+
+const DORY_LOG_N: usize = 10;
+
+fn bench_dory_prover(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dory");
+    group.sample_size(10);
+
+    let mut handler: ZippelHandler<ArkBls12_381> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel")));
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &DORY_LOG_N);
+    handler.compile(&sizes);
+    let inputs = dory_inputs(DORY_LOG_N);
+
+    group.bench_function(format!("prover/S={}", DORY_LOG_N).as_str(), |b| {
+        b.iter(|| {
+            let scheduled = handler.default_schedule_prover();
+            handler.run_prover(scheduled, inputs.clone())
+        })
+    });
+
+    group.finish();
+}
+
+fn bench_dory_verifier(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dory");
+    group.sample_size(10);
+
+    let mut handler: ZippelHandler<ArkBls12_381> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/dory/dory.zippel")));
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &DORY_LOG_N);
+    handler.compile(&sizes);
+    let inputs = dory_inputs(DORY_LOG_N);
+    let prover_scheduled = handler.default_schedule_prover();
+    let proof = handler.run_prover(prover_scheduled, inputs);
+
+    group.bench_function(format!("verifier/S={}", DORY_LOG_N).as_str(), |b| {
         b.iter(|| {
             let scheduled = handler.default_schedule_verifier();
             handler.run_verifier(scheduled, proof.clone())
@@ -408,13 +641,16 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let tau: Value<ArkBls12_381> = Value::Scalar(tau_input.clone());
 
     let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input.clone()).collect());
-    let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.clone().pow(&[i as u64])).collect());
+    let ss_index = Value::VecScalar(
+        (0..n_size)
+            .map(|i| tau_input.clone().pow(&[i as u64]))
+            .collect(),
+    );
     let ss = ss_g.clone() * ss_index.clone();
     let _s = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)) * tau.clone();
 
-    let z_val: Value<ArkBls12_381> = Value::Vec((0..n_size).map(|i| {
-        z.clone() ^ Value::Index(i)
-    }).collect());
+    let z_val: Value<ArkBls12_381> =
+        Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
     let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
     let h_val: Value<ArkBls12_381> = Value::G2(h_input.clone() * tau_input.clone());
 
@@ -433,9 +669,8 @@ fn bench_kzg_prover(c: &mut Criterion) {
     let mut group = c.benchmark_group("kzg");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
-        PathBuf::from("examples/kzg/kzg.zippel"),
-    ));
+    let mut handler: ZippelHandler<ArkBls12_381> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2usize);
     handler.compile(&sizes);
@@ -455,9 +690,8 @@ fn bench_kzg_verifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("kzg");
     group.sample_size(10);
 
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
-        PathBuf::from("examples/kzg/kzg.zippel"),
-    ));
+    let mut handler: ZippelHandler<ArkBls12_381> =
+        ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &2usize);
     handler.compile(&sizes);
@@ -475,9 +709,8 @@ fn bench_kzg_verifier(c: &mut Criterion) {
 
     group.bench_function("verifier", |b| {
         b.iter(|| {
-            let mut verifier_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
-                PathBuf::from("examples/kzg/kzg.zippel"),
-            ));
+            let mut verifier_handler: ZippelHandler<ArkBls12_381> =
+                ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
             verifier_handler.compile(&sizes);
             verifier_handler.set_public_inputs(public_inputs.clone());
             let scheduled = verifier_handler.default_schedule_verifier();
@@ -500,6 +733,10 @@ criterion_group!(
     bench_pedersen_eq_verifier,
     bench_ipa_prover,
     bench_ipa_verifier,
+    bench_hyrax_ipa_prover,
+    bench_hyrax_ipa_verifier,
+    bench_dory_prover,
+    bench_dory_verifier,
     bench_kzg_prover,
     bench_kzg_verifier,
 );
