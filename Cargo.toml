@@ -162,3 +162,7 @@ path = "examples/virtual_test/main.rs"
 [[example]]
 name = "map_comp_bench"
 path = "examples/map_comp_bench/main.rs"
+
+[[example]]
+name = "type_alias"
+path = "examples/type_alias/main.rs"

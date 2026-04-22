@@ -859,7 +859,8 @@ impl Typeable for CBody {
                 }
             },
             CBody::Func { body } =>
-                body.infer(kctx, fctx, &mut vctx.clone())
+                body.infer(kctx, fctx, &mut vctx.clone()),
+            CBody::TypeAlias => Ok(CTyp::Bool), // Type aliases have no body to check
         }
     }
 }

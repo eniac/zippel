@@ -9,13 +9,13 @@ use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
 use share::traversal::ToTraversal1;
 use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError};
+use crate::typ::{GTyp, CTyp, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError, TypeInline};
 use crate::typ::subst::SubstError;
 use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
 
 
-/// Body of Zippel declarations (protocols and functions).
+/// Body of Zippel declarations (protocols, functions, and type aliases).
 /// Specs are given either by an explicit relation on inputs (precondition)
 /// or by the return type of the function.
 /// Parametrized by `N` the type of sizes and `T` the type of types.
@@ -38,6 +38,10 @@ pub enum Body<N> {
     Func {
         body: Exp<N>
     },
+
+    /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
+    /// The aliased type is stored in the Sig's return type.
+    TypeAlias,
 }
 
 /// A zippel declaration is either a protocol or a function.
@@ -59,25 +63,28 @@ pub enum DeclError {
 
 impl<N> Body<N> {
     pub fn is_proto(&self) -> bool {
-        match self {
-            Body::Proto { .. } => true,
-            _ => false,
-        }
+        matches!(self, Body::Proto { .. })
     }
 
     pub fn is_func(&self) -> bool {
-        ! self.is_proto()
+        matches!(self, Body::Func { .. })
     }
+
+    pub fn is_type_alias(&self) -> bool {
+        matches!(self, Body::TypeAlias)
+    }
+
     pub fn body(self) -> Exp<N> {
         match self {
             Body::Proto { body, .. } => body,
             Body::Func { body } => body,
+            Body::TypeAlias => panic!("TypeAlias has no body"),
         }
     }
     pub fn relation(self) -> Option<Exp<N>> {
         match self {
             Body::Proto { relation, .. } => Some(relation),
-            Body::Func { .. } => None,
+            _ => None,
         }
     }
 }
@@ -86,7 +93,8 @@ impl FreeVars for CBody {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Body::Proto { body, relation } => body.freevars().union(relation.freevars()),
-            Body::Func { body } => body.freevars()
+            Body::Func { body } => body.freevars(),
+            Body::TypeAlias => Set::new(),
         }
     }
 }
@@ -103,7 +111,13 @@ impl<N> Decl<N> {
         let sig = Sig { name, typevars, args, ret };
         let body = Body::Func { body };
         Decl { sig, body }
-    }    
+    }
+
+    pub fn type_alias(name: Vid, typ: GTyp<N>) -> Self {
+        use crate::ast::arg::Args;
+        let sig = Sig { name, typevars: TypeVars(vec![]), args: Args(vec![]), ret: typ };
+        Decl { sig, body: Body::TypeAlias }
+    }
 }
 
 /// A collection of declarations
@@ -225,7 +239,8 @@ impl CBody {
                     Err(TypeError::decl(&sig.name,
                         TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br)).into())
                 }
-            }
+            },
+            Body::TypeAlias => Ok(()),
         }
     }
 }
@@ -244,6 +259,7 @@ impl<N: Clone> ToTraversal1<N> for Body<N> {
                 Ok(Body::Func {
                     body: body.traverse1(f)?,
                 }),
+            Body::TypeAlias => Ok(Body::TypeAlias),
         }
     }
 }
@@ -255,7 +271,8 @@ impl TidSubst for CBody {
                 relation.tid_subst(from, to);
                 body.tid_subst(from, to);
             },
-            Body::Func { body } => body.tid_subst(from, to)
+            Body::Func { body } => body.tid_subst(from, to),
+            Body::TypeAlias => {},
         }
     }
 }
@@ -272,6 +289,22 @@ impl<N: Clone> RangeTraversal<N> for Body<N> {
                 Ok(Body::Func {
                     body: body.range_traverse(f)?,
                 }),
+            Body::TypeAlias => Ok(Body::TypeAlias),
+        }
+    }
+}
+
+impl<N: Clone> TypeInline<N> for Body<N> {
+    fn type_inline(self, _ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        self
+    }
+}
+
+impl<N: Clone + Ord> TypeInline<N> for Decl<N> where Sig<N>: TypeInline<N> {
+    fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
+        Decl {
+            sig: self.sig.type_inline(ctx),
+            body: self.body.type_inline(ctx),
         }
     }
 }
@@ -304,6 +337,7 @@ where
                     allocator.line(),
                     allocator.text("}"),
                 ]),
+            Body::TypeAlias => allocator.nil(),
         }
     }
 
@@ -417,6 +451,12 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Function's body (single expression, chains via let/log continuations)
                 let body = Exp::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?;
                 Ok(Decl::func(name, typevars, args, ret, body))
+            },
+            Rule::type_decl => {
+                let mut inner = pair.into_inner();
+                let name = Vid(inner.next().unwrap().as_str().to_string());
+                let typ = GTyp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
+                Ok(Decl::type_alias(name, typ))
             },
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
         }

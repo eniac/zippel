@@ -131,6 +131,7 @@ fn pin_proto_simple() {
     let equ_ref = GOp::<B>::underscore(equ_body, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(inp, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
     let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![pref_s]));
@@ -417,6 +418,7 @@ fn pin_assert() {
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(inp, check, Dep::transcript());
 
     assert!(gs[0] == expected);
 }
@@ -449,6 +451,7 @@ fn pin_verify() {
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(inp, check, Dep::transcript());
 
     assert!(gs[0] == expected);
 }
@@ -499,6 +502,7 @@ fn pin_log_node_ref() {
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
     let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));
@@ -545,6 +549,7 @@ fn pin_log_new_transcr() {
     let equ_ref = GOp::<B>::underscore(equ_body, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
     let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));
@@ -1251,6 +1256,7 @@ fn pin_log_var_ref() {
     let equ_ref = GOp::<B>::underscore(equ, ATyp::bool());
     let check = expected.add_node(Node::check(&equ_ref));
     expected.add_edges(DepType::Data, check, equ_ref);
+    expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
     let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));

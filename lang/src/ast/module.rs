@@ -9,7 +9,7 @@ use from_pest::{ConversionError, FromPest};
 use pest::Parser;
 
 use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
-use crate::typ::Size;
+use crate::typ::{Size, UTyp, TypeInline};
 use crate::parser::*;
 
 /// Polymorphic Module, a collection of declarations indexed by their typevars and signature
@@ -73,14 +73,24 @@ impl UModule {
     /// Entry point to the zippel compiler.
     /// Parse a Zippel declarations list into a polymorphic,
     /// untyped module, with symbolic sizes.
+    /// Type aliases (`type X = T;`) are expanded inline before returning.
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         let decls = UDecls::from_pest(&mut pairs)?;
-        // Catch duplicate declarations here
+
+        // Collect type aliases from type_decl declarations
+        let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
         let mut m = Ctx::new();
         for d in decls.into_iter() {
-            m.insert_with(d.sig, d.body,
-                &|sig, _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
+            if d.body.is_type_alias() {
+                // Store the alias: name (as Tid) → aliased type (in sig.ret)
+                type_ctx.insert(&Tid::from(d.sig.name.0.as_str()), &d.sig.ret);
+            } else {
+                // Inline type aliases in the declaration
+                let d = if type_ctx.is_empty() { d } else { d.type_inline(&type_ctx) };
+                m.insert_with(d.sig, d.body,
+                    &|sig, _, _| Err(ConversionError::Malformed(InputError::DuplicateDecl(sig.clone()))))?;
+            }
         }
         Ok(Module(m))
     }
@@ -226,4 +236,46 @@ fn from_decl_subst2() {
     assert_eq!(umod.len(), 3);
     let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 16);
+}
+
+#[test]
+fn type_alias_record() {
+    let ex = concat!(
+        "type Point = { x: F, y: F };\n",
+        "fn origin<F: Field>(public zero: F) -> Point {\n",
+        "    {| x: zero, y: zero |}\n",
+        "}\n");
+    let umod = UModule::from_str(ex).unwrap();
+    // type alias is inlined, only the fn remains
+    assert_eq!(umod.len(), 1);
+    // The return type should be expanded to the record type
+    let (sig, _) = umod.iter().next().unwrap();
+    assert!(matches!(&sig.ret, crate::typ::Typ::Record(_)), "Return type should be a Record, got {:?}", sig.ret);
+}
+
+#[test]
+fn type_alias_in_args() {
+    let ex = concat!(
+        "type Vec3 = [F; 3];\n",
+        "fn dot<F: Field>(public a: Vec3, public b: Vec3) -> F {\n",
+        "    reduce(+, a * b)\n",
+        "}\n");
+    let umod = UModule::from_str(ex).unwrap();
+    assert_eq!(umod.len(), 1);
+    let (sig, _) = umod.iter().next().unwrap();
+    // First arg should be Vec(Base(F), 3), not Base(Vec3)
+    assert!(matches!(&sig.args.0[0].typ, crate::typ::Typ::Vec(_, _)), "Arg type should be Vec, got {:?}", sig.args.0[0].typ);
+}
+
+#[test]
+fn typed_let_binding() {
+    let ex = concat!(
+        "fn f<F: Field>(public a: F, public b: F) -> F {\n",
+        "    let c: F = a + b;\n",
+        "    c\n",
+        "}\n");
+    let umod = UModule::from_str(ex).unwrap();
+    assert_eq!(umod.len(), 1);
+    let cmod = umod.concretize(&Ctx::new()).unwrap();
+    assert_eq!(cmod.len(), 1);
 }
