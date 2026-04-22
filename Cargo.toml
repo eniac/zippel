@@ -22,6 +22,15 @@ ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 rand = { version = "0.8", features = ["std"] }
 spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
 
+[dev-dependencies]
+tempfile = "3.10"
+criterion = "0.5"
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+
+[[bench]]
+name = "graph_execution"
+harness = false
+
 [[example]]
 name = "mle"
 path = "examples/mle_example/main.rs"
@@ -149,6 +158,10 @@ path = "examples/transcript_random/main.rs"
 [[example]]
 name = "virtual_test"
 path = "examples/virtual_test/main.rs"
+
+[[example]]
+name = "map_comp_bench"
+path = "examples/map_comp_bench/main.rs"
 
 [[example]]
 name = "type_alias"

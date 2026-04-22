@@ -5,12 +5,9 @@ proto hadamard<F: Field, S: Size, N: 1..S>(
     public v_H: Uni<F, N>
 ) where p_A == p_A {
     let p = p_A * p_B - p_C;
-
     let q = p / v_H;
-
     r <- challenge<F>;
-    let left_hand = eval(p_A, [r]) * eval(p_B, [r]) - eval(p_C, [r]);
-    let right_hand = eval(q, [r]) * eval(v_H, [r]);
+    left_hand <- eval(p_A, [r]) * eval(p_B, [r]) - eval(p_C, [r]);
+    right_hand <- eval(q, [r]) * eval(v_H, [r]);
     verify(left_hand == right_hand)
 }
-

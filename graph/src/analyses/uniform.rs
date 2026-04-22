@@ -43,7 +43,7 @@ impl UniformityPropagation {
                 let p_ancestors = self.op_ancestors(p);
                 let x_ancestors = self.op_ancestors(x);
                 p_ancestors.union(x_ancestors)
-            }, 
+            },
             Op::Ifft(op) => self.op_ancestors(op),
             Op::Fft(op) => self.op_ancestors(op),
             Op::Mle(op) => self.op_ancestors(op),
@@ -51,7 +51,7 @@ impl UniformityPropagation {
             Op::Challenge(_, _) => Set::new(),
             Op::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| self.op_ancestors(v)).collect(),
-            Op::Pair(a, b, _) 
+            Op::Pair(a, b, _)
             | Op::Bin(_, a, b, _) => {
                 let a_ancestors = self.op_ancestors(a);
                 let b_ancestors = self.op_ancestors(b);
@@ -78,11 +78,11 @@ impl UniformityPropagation {
                 } else {
                     Some(Distribution::Nonuniform)
                 }
-            }, 
+            },
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
-            Op::Bin(BinOp::Add, a, b, _) 
+            Op::Bin(BinOp::Add, a, b, _)
             | Op::Bin(BinOp::Concat, a, b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
@@ -92,7 +92,7 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             },
-            Op::Bin(BinOp::Sub, a, b, _) 
+            Op::Bin(BinOp::Sub, a, b, _)
             | Op::Bin(BinOp::Equ, a, b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
@@ -124,7 +124,7 @@ impl UniformityPropagation {
                 }
             },
             Op::Bin(BinOp::Rem, _, _, _)
-            | Op::Bin(BinOp::Pow, _, _, _) => 
+            | Op::Bin(BinOp::Pow, _, _, _) =>
                 Some(Distribution::Nonuniform),
             Op::Vec(vs) => {
                 let mut distr = self.from_op(vs.first().unwrap())?;
@@ -141,9 +141,9 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             },
-            Op::Random(_, b) => 
+            Op::Random(_, b) =>
                 Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),
-            Op::Challenge(_, b) => 
+            Op::Challenge(_, b) =>
                 Some(if *b { Distribution::UniformNonZero } else { Distribution::Uniform }),
             Op::Reduce(op, v) => {
                 let dist_v = self.from_op(v)?;
@@ -170,7 +170,7 @@ impl UniformityPropagation {
 
     pub fn from_dag<C: ArkConfig>(&mut self, dag: &QDag<C>) -> DQDag<C> {
         // Collect the ancestors of each node
-        let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> = 
+        let mut ancestors: Ctx<NodeIndex, Set<NodeIndex>> =
             dag.node_indices()
             .map(|n| (n, dag.trc(n, Direction::Incoming)))
             .collect();
@@ -200,7 +200,7 @@ impl UniformityPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => 
+                Node::Inp(_, args) | Node::Rel(_, args) =>
                     for arg in args {
                         self.distributions.insert(&arg.reference, &arg.distribution);
                     },
@@ -245,7 +245,7 @@ mod tests {
     use lang::ast::UModule;
     use backend::ArkBls12_381;
     use crate::analyses::QualifierPropagation;
-    use crate::{UDags, Node, mk};
+    use crate::{UDags, mk};
     use share::unwrap;
     use petgraph::graph::NodeIndex;
 
@@ -444,7 +444,7 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
         let result = up.from_dag(&g);
-        
+
         assert!(result.node_count() > 0);
     }
 
@@ -454,5 +454,25 @@ mod tests {
         let s = format!("{}", up);
         assert!(s.contains("UniformityPropagation"));
     }
-}
 
+    #[test]
+    fn test_uniformity_from_dag_multiple_checks() {
+        let ex = r#"
+            proto two_checks<F: Field>(private x: F, private y: F) where true {
+                let r = random<F>;
+                a <- r * x;
+                b <- r * y;
+                verify(a == a);
+                verify(b == b)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let checks = g.find_check();
+        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+        let mut up = UniformityPropagation::new();
+        let result = up.from_dag(&g);
+
+        assert!(result.node_count() > 0);
+    }
+}

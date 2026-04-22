@@ -93,7 +93,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
                 return true;
             }
             // Remove polynomials where ALL variables are private uniform
-            let all_private_uniform = vars.iter().all(|v| 
+            let all_private_uniform = vars.iter().all(|v|
                 v.is_private() && v.is_uniform()
             );
             if all_private_uniform {
@@ -410,4 +410,53 @@ fn zk_safe_schnorr_with_blinding() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(kz.run().is_ok(), "Schnorr with proper blinding should be ZK");
+}
+
+/// Leak: the two verify statements together leak private information.
+/// Each check is a trivial self-equality on a transcript value (`a == a` and `b == b`).
+/// Since `a = s + r` and `b = t + r` reuse the same blinding value `r`, publishing both
+/// values reveals `a - b = s - t`, so the transcript leaks information about the secrets.
+#[test]
+fn zk_multiple_verify_one_safe_one_subtle_leak() {
+    let ex = r#"
+        proto mixed<F: Field>(private s: F, private t: F, public y: F) where y == y {
+            let r = random<F>;
+            a <- s + r;
+            b <- t + r;
+            verify(a == a);
+            verify(b == b)
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_err(), "One safe and one leaking verify should fail knowledge analysis");
+}
+
+/// Safe: both verify statements are properly blinded with independent random values.
+/// Each check uses a separate random blinding factor, so no private information leaks.
+#[test]
+fn zk_multiple_verify_both_safe() {
+    let ex = r#"
+        proto safe<F: Field>(private a: F, private b: F) where a == b {
+            let r = random<F>;
+            let s = random<F>;
+            x <- a * r;
+            y <- b * r;
+            u <- a * s;
+            v <- b * s;
+            verify(x == y);
+            verify(u == v)
+        }"#;
+    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(kz.run().is_ok(), "Two verify statements both properly blinded with independent randoms should pass knowledge analysis");
 }
