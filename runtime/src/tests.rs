@@ -7,7 +7,7 @@ mod runtime_tests {
 
     #[test]
     fn test_runtime_information_creation() {
-        // Just test that we can create RuntimeInformation
+        // Just test that we can create RuntimeInformation with thread_num
         let _rt_info = RuntimeInformation::<TestConfig>::new(4);
         let _rt_info2 = RuntimeInformation::<TestConfig>::new(1);
         let _rt_info3 = RuntimeInformation::<TestConfig>::new(16);

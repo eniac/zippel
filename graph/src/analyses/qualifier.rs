@@ -16,7 +16,7 @@ impl QualifierPropagation {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
             Op::Check(_) => Some(Qualifier::Public),
-            Op::Ref(r, _) => 
+            Op::Ref(r, _) =>
                 self.quals.get(&r.node()).map(|v| v.clone()),
             Op::Ram(a, _) => self.from_op(a),
             Op::Poly(a) => self.from_op(a),
@@ -183,7 +183,7 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        
+
         let check_nodes = g.find_check();
         assert!(!check_nodes.is_empty(), "Check node should exist");
         if let Node::Op(_, qual) = &g[check_nodes[0]] {
@@ -201,7 +201,7 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        
+
         let check_nodes = g.find_check();
         assert!(!check_nodes.is_empty(), "Check node should exist");
         if let Node::Op(_, qual) = &g[check_nodes[0]] {
@@ -219,7 +219,7 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        
+
         assert!(g.node_count() > 0);
     }
 
@@ -232,9 +232,82 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        
+
         let check = g.find_check();
         assert!(!check.is_empty());
+    }
+
+    #[test]
+    fn test_qualifier_from_dag_finds_multiple_checks() {
+        let ex = r#"
+            proto two_checks<F: Field>(private x: F, private y: F) where true {
+                verify(x == x);
+                verify(y == y)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let checks = g.find_check();
+        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+    }
+
+    #[test]
+    fn test_qualifier_multiple_checks_all_public() {
+        let ex = r#"
+            proto two_checks<F: Field>(public x: F, public y: F) where true {
+                verify(x == x);
+                verify(y == y)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let checks = g.find_check();
+        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+        for (i, &check_node) in checks.iter().enumerate() {
+            if let Node::Op(_, qual) = &g[check_node] {
+                assert_eq!(*qual, Qualifier::Public, "Check node {} should be Public", i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_qualifier_three_checks() {
+        let ex = r#"
+            proto three_checks<F: Field>(private x: F, private y: F, private z: F) where true {
+                verify(x == x);
+                verify(y == y);
+                verify(z == z)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let checks = g.find_check();
+        assert_eq!(checks.len(), 3, "Protocol with three verify statements should have three check nodes");
+    }
+
+    #[test]
+    fn test_qualifier_scattered_checks() {
+        let ex = r#"
+            proto scattered<F: Field>(private x: F, public y: F) where true {
+                a <- x + y;
+                verify(a == a);
+                b <- a + y;
+                verify(b == b)
+            }"#;
+        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+
+        let checks = g.find_check();
+        assert_eq!(checks.len(), 2, "Scattered verify statements should produce 2 check nodes");
+        for (i, &check_node) in checks.iter().enumerate() {
+            if let Node::Op(_, qual) = &g[check_node] {
+                assert_eq!(*qual, Qualifier::Public, "Check node {} should be Public", i);
+            }
+        }
     }
 
     #[test]

@@ -1666,6 +1666,228 @@ fn pin_find_check() {
     assert!(fn_gs[0].find_check().is_empty(), "Function should not have a check node");
 }
 
+/// find_check finds multiple Check nodes in a protocol with multiple verify statements.
+#[test]
+fn pin_find_check_multiple() {
+    // Two separate verify statements produce two Check nodes
+    let src = r#"
+        proto two_verify<F: Field>(private x: F, private y: F) where true {
+            verify(x == x);
+            verify(y == y)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let checks = gs[0].find_check();
+    assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+
+    // Three separate verify statements produce three Check nodes
+    let src3 = r#"
+        proto three_verify<F: Field>(private x: F, private y: F, private z: F) where true {
+            verify(x == x);
+            verify(y == y);
+            verify(z == z)
+        }
+    "#;
+    let gs3 = parse_and_build(src3);
+    let checks3 = gs3[0].find_check();
+    assert_eq!(checks3.len(), 3, "Protocol with three verify statements should have three check nodes");
+
+    // Single verify with && produces one Check node
+    let src_and = r#"
+        proto and_verify<F: Field>(private x: F, private y: F) where true {
+            verify(x == x && y == y)
+        }
+    "#;
+    let gs_and = parse_and_build(src_and);
+    let checks_and = gs_and[0].find_check();
+    assert_eq!(checks_and.len(), 1, "Protocol with single verify (&&) should have one check node");
+}
+
+/// get_verifier works correctly with multiple check nodes.
+/// Tests: verifier subgraph includes all check nodes from a multi-verify protocol.
+#[test]
+fn pin_get_verifier_multiple_checks() {
+    let src = r#"
+        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where true {
+            a <- s + v;
+            b <- t + v;
+            verify(a == v);
+            verify(b == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let verifier = dag.get_verifier().unwrap();
+
+    // Verifier must have one check node for each verify in this protocol
+    let checks = verifier.find_check();
+    assert!(checks.len() == 2, "Verifier should have exactly 2 check nodes for a protocol with two verify statements, got {}", checks.len());
+    // Verifier name matches
+    assert_eq!(verifier.name(), Vid::new("two_verify"));
+    // Verifier args should only include public inputs
+    let args = verifier.args();
+    assert!(args.iter().all(|a| a.is_public()));
+}
+
+/// get_prover works correctly with multiple check nodes.
+/// Tests: prover subgraph excludes all verify check nodes in a multi-verify protocol.
+#[test]
+fn pin_get_prover_multiple_checks() {
+    let src = r#"
+        proto two_verify<F: Field>(private s: F, private t: F, public v: F) where true {
+            a <- s + v;
+            b <- t + v;
+            verify(a == v);
+            verify(b == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let (prover, _node_map) = dag.get_prover();
+
+    // Prover should have computation nodes but NO verify check nodes
+    assert!(prover.find_check().is_empty(), "Prover should not have any check nodes");
+    // Prover name matches
+    assert_eq!(prover.name(), Vid::new("two_verify"));
+}
+
+/// find_check correctly identifies check nodes scattered throughout a protocol body.
+#[test]
+fn pin_find_check_scattered() {
+    let src = r#"
+        proto scattered<F: Field>(private s: F, public v: F) where true {
+            a <- s + v;
+            verify(a == a);
+            b <- a * 2;
+            verify(b == b)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let checks = dag.find_check();
+    assert_eq!(checks.len(), 2, "Scattered verify statements should produce 2 check nodes, got {}", checks.len());
+}
+
+/// find_check correctly identifies check nodes interleaved with challenge generation.
+#[test]
+fn pin_find_check_interleaved_with_challenge() {
+    let src = r#"
+        proto interleaved<F: Field>(private s: F, public v: F) where true {
+            a <- s + v;
+            verify(a == a);
+            c <- challenge<F>;
+            z <- a + c;
+            verify(z == z)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let checks = dag.find_check();
+    assert_eq!(checks.len(), 2, "Interleaved verify+challenge should produce 2 check nodes, got {}", checks.len());
+}
+
+/// Verifier subgraph from a protocol with scattered verify statements includes all
+/// necessary dependencies and all args are public.
+#[test]
+fn pin_get_verifier_scattered_checks() {
+    let src = r#"
+        proto scattered<F: Field>(private s: F, public v: F) where true {
+            a <- s + v;
+            verify(a == a);
+            b <- a * 2;
+            verify(b == b)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let verifier = dag.get_verifier().unwrap();
+    let checks = verifier.find_check();
+    assert!(checks.len() >= 2, "Verifier should have at least 2 check nodes for scattered verify statements, got {}", checks.len());
+
+    // Verifier args should only include public inputs
+    let args = verifier.args();
+    assert!(args.iter().all(|a| a.is_public()), "All verifier args should be public");
+}
+
+/// Prover subgraph from a protocol with scattered verify statements excludes ALL check nodes.
+#[test]
+fn pin_get_prover_scattered_checks() {
+    let src = r#"
+        proto scattered<F: Field>(private s: F, public v: F) where true {
+            a <- s + v;
+            verify(a == a);
+            b <- a * 2;
+            verify(b == b)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let (prover, _node_map) = dag.get_prover();
+    assert!(prover.find_check().is_empty(), "Prover should not have any check nodes, even with scattered verify statements");
+}
+
+/// Dags::protocols() and Dags::functions() correctly classify protocols with multiple
+/// verify statements versus pure functions.
+#[test]
+fn pin_dags_multiple_verify_protocols() {
+    let src = r#"
+        fn helper<F: Field>(public x: F) -> F { x }
+        fn with_verify<F: Field>(x: F) -> F {
+            verify(x == x);
+            x
+        }
+        proto two_verify<F: Field>(private s: F, public v: F) where true {
+            verify(s == s);
+            verify(v == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    let funcs = gs.functions();
+    assert_eq!(gs.protocols().len(), 1, "Should have exactly 1 protocol");
+    assert_eq!(funcs.len(), 2, "Should have exactly 2 functions (including one with verify)");
+    assert_eq!(gs.protocols()[0].find_check().len(), 2, "Protocol with two verify statements should have 2 check nodes");
+
+    // A function with verify is still a function — it has no relation node
+    let fn_with_verify = funcs.iter().find(|g| g.name() == Vid::new("with_verify")).unwrap();
+    assert!(!fn_with_verify.find_check().is_empty(), "Function with verify should have check nodes in its DAG");
+}
+
+/// Inlined verify from a function call creates a Check node that IS terminal
+/// in the full DAG — the verify result is discarded by Let(None, ...), so nothing
+/// consumes it. Both the inlined and protocol's own verify are found by find_check.
+#[test]
+fn pin_find_check_cross_function_verify() {
+    let src = r#"
+        fn with_verify<F: Field>(x: F) -> F {
+            verify(x == x);
+            x
+        }
+        proto caller<F: Field>(private s: F, public v: F) where s == v {
+            a <- with_verify(v);
+            verify(a == v)
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    let protos = gs.protocols();
+    assert_eq!(protos.len(), 1, "Should have exactly 1 protocol");
+    let proto = protos[0];
+    // Both the inlined verify and the protocol's own verify are terminal
+    assert_eq!(proto.find_check().len(), 2,
+        "Full DAG should have 2 terminal checks: one inlined from function, one from protocol");
+    // Verifier subgraph: both checks are also present
+    let verifier = proto.clone().rename_inner_nodes().get_verifier().unwrap();
+    assert!(verifier.find_check().len() >= 2,
+        "Verifier should have both inlined and protocol check nodes, got {}", verifier.find_check().len());
+}
+
 // ============================================================================
 // Group D: Graph Transformation Tests
 // ============================================================================
@@ -2125,4 +2347,3 @@ fn pin_reduce_sub() {
 
     assert!(gs[0] == expected);
 }
-

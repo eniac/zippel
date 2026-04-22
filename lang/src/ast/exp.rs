@@ -1701,6 +1701,39 @@ fn parser_verify() {
 }
 
 #[test]
+fn parser_verify_multiple() {
+    let ex = "verify(x == 2); verify(3 == 4)";
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    assert_eq!(
+        UExps::from_pest(&mut pairs),
+        Ok(Exps(vec![
+            Exp::seq(
+                Exp::verify(Exp::equ(Exp::varstr("x"), Exp::from(2))),
+                Exp::verify(Exp::equ(Exp::from(3), Exp::from(4)))
+            )
+        ]))
+    );
+}
+
+#[test]
+fn parser_verify_three() {
+    let ex = "verify(a == a); verify(b == b); verify(c == c)";
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    assert_eq!(
+        UExps::from_pest(&mut pairs),
+        Ok(Exps(vec![
+            Exp::seq(
+                Exp::verify(Exp::equ(Exp::varstr("a"), Exp::varstr("a"))),
+                Exp::seq(
+                    Exp::verify(Exp::equ(Exp::varstr("b"), Exp::varstr("b"))),
+                    Exp::verify(Exp::equ(Exp::varstr("c"), Exp::varstr("c")))
+                )
+            )
+        ]))
+    );
+}
+
+#[test]
 fn parser_map() {
     let ex = "[ss[i] == s^i for i in 0..N]";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
