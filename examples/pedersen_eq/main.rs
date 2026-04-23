@@ -38,7 +38,9 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"));
     let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
+    let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();
+    let analysis_elapsed = analysis_start.elapsed();
     match &analysis.completeness {
         Ok(()) => println!("Completeness:   ✓"),
         Err(e) => println!("Completeness:   ✗ {}", e),
@@ -47,6 +49,7 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
