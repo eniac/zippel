@@ -1606,7 +1606,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                                 // Extract the field from the record operation
                                 match record_op {
-                                    GOp::Record(record_fields) => {
+                                    Op::Record(record_fields) => {
                                         // Direct field access from Record operation
                                         record_fields.get(&field_name)
                                             .ok_or_else(|| GraphError::Type(TypeError::field_not_found(
@@ -1614,24 +1614,24 @@ impl<C: HasOpFactory> UDag<C> {
                                             )))
                                             .map(|op| (**op).clone())
                                     },
-                                    GOp::Ref(Ref::Var(vid, node), _op_typ) => {
+                                    Op::Ref(Ref::Var(vid, node), _op_typ) => {
                                         let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
                                             .ok_or_else(|| GraphError::Type(TypeError::ark(
                                                 kctx, &vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
                                             )))?;
 
                                         // The field is accessed via projection, so we return a Ref with the field type
-                                        return Ok(GOp::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
+                                        return Ok(Op::Ref(Ref::Var(vid.clone(), *node), field_typ_atyp))
                                     },
-                                    GOp::Ref(Ref::Node(node), _op_typ) => {
+                                    Op::Ref(Ref::Node(node), _op_typ) => {
                                         // Record produced by a node (e.g. marginalize); add Proj node
                                         let field_typ_atyp = ATyp::from_ctyp(field_typ_ctyp, kctx)
                                             .ok_or_else(|| GraphError::Type(TypeError::ark(
                                                 kctx, &vctx, &CExp::Var(id_clone.clone()), field_typ_ctyp
                                             )))?;
-                                        let proj_node = self.add_node(Node::proj(&record_op, &field_name, &field_typ_atyp));
+                                        let proj_node = self.add_node(Node::proj(record_op, &field_name, &field_typ_atyp));
                                         self.add_edges(edge_type, proj_node, record_op.clone());
-                                        Ok(GOp::Ref(Ref::Node(proj_node), field_typ_atyp))
+                                        Ok(Op::Ref(Ref::Node(proj_node), field_typ_atyp))
                                     },
                                     _ => {
                                         Err(GraphError::Type(TypeError::not_a_record(

@@ -2703,7 +2703,13 @@ pub fn marginalize<C: ArkConfig>(
         poly.clone()
     } else if let Some(r) = challenge {
         poly.fix_first_mle_variables_factorwise(&[r])
-            .unwrap_or_else(|_| poly.clone())
+            .unwrap_or_else(|e| {
+                panic!(
+                    "marginalize: failed to fix polynomial for round {} with challenge {:?} \
+                     (num_variables={}, max_degree={}): {:?}",
+                    round, r, num_variables, max_degree, e
+                )
+            })
     } else {
         poly.clone()
     };
