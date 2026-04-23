@@ -116,10 +116,6 @@ name = "benchmark"
 path = "examples/benchmark/main.rs"
 
 [[example]]
-name = "schnorr_or"
-path = "examples/schnorr_or/main.rs"
-
-[[example]]
 name = "schnorr_no_random"
 path = "examples/schnorr_no_random/main.rs"
 
