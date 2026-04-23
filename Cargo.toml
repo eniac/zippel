@@ -166,3 +166,7 @@ path = "examples/map_comp_bench/main.rs"
 [[example]]
 name = "type_alias"
 path = "examples/type_alias/main.rs"
+
+[[example]]
+name = "r1cs_sigma"
+path = "examples/r1cs_sigma/main.rs"
