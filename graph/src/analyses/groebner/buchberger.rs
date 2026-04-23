@@ -215,6 +215,34 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         remainder
     }
 
+    /// Reduces polynomial `p` with respect to `G \ {G[exclude]}`.
+    /// Reuses the existing cache — no rebuild needed.
+    fn reduce_excluding(&self, mut p: SparsePolynomial<F, T>, exclude: usize) -> SparsePolynomial<F, T> {
+        self.refresh_cache();
+        let cache = self.cache.read().unwrap();
+        let mut remainder = SparsePolynomial::zero();
+
+        while let Some((p_lc, p_lt)) = p.leading_term() {
+            let found = cache.basis_leading_terms
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| *idx != exclude)
+                .find(|(_, g_lt)| p_lt.is_divided(g_lt));
+
+            if let Some((idx, g_lt)) = found {
+                let multiplier_term = (p_lt / g_lt.clone())
+                    .expect("Division should succeed if is_divided is true");
+                let multiplier_scalar = p_lc * cache.basis_lc_inverses[idx];
+                let to_subtract = self.basis[idx].mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
+                p -= to_subtract;
+            } else {
+                let (lt, lc) = p.terms.pop_first().unwrap();
+                remainder.terms.insert(&lt, &lc);
+            }
+        }
+        remainder
+    }
+
     /// Group-parallel pair selection
     fn pairs_select(&self, pairs: &mut VecDeque<(usize, usize)>) -> Vec<(usize, usize)> {
         let num_threads = std::thread::available_parallelism()
@@ -436,25 +464,13 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
         // --- Step 3: Inter-reduce the basis (Full Reduction) ---
         // For each g in G, reduce it by G \ {g}.
+        // Build the cache once here; reduce_excluding reuses it for all n reductions.
+        self.refresh_cache();
         let mut g_reduced = GroebnerBasis::new(num_vars, Vec::with_capacity(self.len()));
         for i in 0..self.len() {
-            let current_g = self[i].clone();
-
-            // Create basis for reduction: G excluding current_g
-            let mut reduction_basis = GroebnerBasis::empty(num_vars);
-            for j in 0..self.len() {
-                if i != j {
-                    reduction_basis.push(self[j].clone());
-                }
-            }
-
-            // Reduce current_g by the rest of the basis
-            let reduced_g = reduction_basis.reduce(current_g);
-
-            // Add the fully reduced polynomial (it should still be monic and non-zero
-            // unless the basis was {c} -> {1} and reduction makes it 0, which we filter)
+            let reduced_g = self.reduce_excluding(self[i].clone(), i);
             if !reduced_g.is_zero() {
-                 g_reduced.push(reduced_g);
+                g_reduced.push(reduced_g);
             }
         }
 
