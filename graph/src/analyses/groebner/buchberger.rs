@@ -2,6 +2,7 @@ use ark_ff::Field;
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::ops::Index;
+use std::sync::RwLock;
 
 use crate::analyses::groebner::{Monomial, SparsePolynomial};
 use crate::PRef;
@@ -11,11 +12,61 @@ use rayon::prelude::*;
 
 #[cfg(test)] use ark_ff::AdditiveGroup;
 
+#[derive(Clone, Debug)]
+struct BasisCache<F: Field, T: Monomial> {
+    basis_lc_inverses: Vec<F>,
+    basis_leading_terms: Vec<T>,
+    cache_stale: bool,
+}
+
+impl<F: Field, T: Monomial> BasisCache<F, T> {
+    fn stale() -> Self {
+        Self { basis_lc_inverses: vec![], basis_leading_terms: vec![], cache_stale: true }
+    }
+}
+
 /// A struct representing a Gröbner basis.
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroebnerBasis<F: Field, T: Monomial> {
     pub basis: Vec<SparsePolynomial<F, T>>,
     pub num_vars: usize,
+    cache: RwLock<BasisCache<F, T>>,
+}
+
+impl<F: Field, T: Monomial> Clone for GroebnerBasis<F, T> {
+    fn clone(&self) -> Self {
+        Self {
+            basis: self.basis.clone(),
+            num_vars: self.num_vars,
+            cache: RwLock::new(self.cache.read().unwrap().clone()),
+        }
+    }
+}
+
+impl<F: Field, T: Monomial + fmt::Debug> fmt::Debug for GroebnerBasis<F, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GroebnerBasis")
+            .field("basis", &self.basis)
+            .field("num_vars", &self.num_vars)
+            .finish()
+    }
+}
+
+impl<F: Field, T: Monomial> PartialEq for GroebnerBasis<F, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.num_vars == other.num_vars && self.basis == other.basis
+    }
+}
+
+impl<F: Field, T: Monomial> Eq for GroebnerBasis<F, T> {}
+
+impl<F: Field, T: Monomial> IntoParallelIterator for GroebnerBasis<F, T> {
+    type Iter = rayon::vec::IntoIter<Self::Item>;
+
+    type Item = SparsePolynomial<F, T>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        self.basis.into_par_iter()
+    }
 }
 
 impl<F: Field, T: Monomial> Index<usize> for GroebnerBasis<F, T> {
@@ -37,14 +88,42 @@ impl<F: Field, T: Monomial> IntoIterator for GroebnerBasis<F, T> {
 
 impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     pub fn new(num_vars: usize, basis: Vec<SparsePolynomial<F, T>>) -> Self {
-        Self { basis, num_vars }
+        let basis: Vec<_> = basis.into_par_iter().filter(|b| !b.is_zero()).collect();
+        Self { basis, num_vars, cache: RwLock::new(BasisCache::stale()) }
     }
 
     pub fn empty(num_vars: usize) -> Self {
         Self {
-            basis: Vec::new(),
+            basis: vec![],
             num_vars,
+            cache: RwLock::new(BasisCache::stale()),
         }
+    }
+
+    /// Rebuild the leading-term and leading-coefficient-inverse caches if stale.
+    /// Uses double-checked locking so concurrent callers are safe.
+    fn refresh_cache(&self) {
+        {
+            if !self.cache.read().unwrap().cache_stale {
+                return;
+            }
+        }
+        let mut cache = self.cache.write().unwrap();
+        if !cache.cache_stale {
+            return; // Another thread beat us to it.
+        }
+        let mut lc_inverses = Vec::with_capacity(self.basis.len());
+        let mut leading_terms = Vec::with_capacity(self.basis.len());
+        for p in &self.basis {
+            // Invariant: basis never contains zero polynomials.
+            let (lc, lt) = p.leading_term().expect("basis element must be non-zero");
+            lc_inverses.push(lc);
+            leading_terms.push(lt);
+        }
+        ark_ff::batch_inversion(&mut lc_inverses);
+        cache.basis_lc_inverses = lc_inverses;
+        cache.basis_leading_terms = leading_terms;
+        cache.cache_stale = false;
     }
 
     pub fn contains_poly(&self, poly: &SparsePolynomial<F, T>) -> bool {
@@ -54,7 +133,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     }
 
     pub fn contains(&self, other: &Self) -> bool {
-        other.basis.iter().all(|p| self.contains_poly(p))
+        other.basis.par_iter().all(|p| self.contains_poly(p))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -69,20 +148,36 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         self.basis.iter()
     }
 
+    pub fn par_iter(&self) -> impl ParallelIterator<Item = &SparsePolynomial<F, T>> {
+        self.basis.par_iter()
+    }
+
     pub fn push(&mut self, poly: SparsePolynomial<F, T>) {
+        if poly.is_zero() { return; }
+        self.cache.get_mut().unwrap().cache_stale = true;
         self.basis.push(poly);
     }
 
     pub fn eliminate_var<FF: Fn(&PRef) -> bool>(&mut self, f: &FF) {
+        // TODO: make this faster.
+        self.cache.get_mut().unwrap().cache_stale = true;
         self.basis.retain(|p| p.vars().find(|v| f(v)).is_none());
     }
 
     pub fn eliminate_monomial<FF: Fn(&T) -> bool>(&mut self, f: &FF) {
+        // TODO: make this faster.
+        self.cache.get_mut().unwrap().cache_stale = true;
         self.basis.retain(|p| p.terms.iter().any(|(t, _)| !f(t)));
     }
 
     pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut SparsePolynomial<F, T>> {
+        self.cache.get_mut().unwrap().cache_stale = true;
         self.basis.iter_mut()
+    }
+
+    pub fn par_iter_mut<'a>(&'a mut self) -> impl ParallelIterator<Item = &'a mut SparsePolynomial<F, T>> {
+        self.cache.get_mut().unwrap().cache_stale = true;
+        self.basis.par_iter_mut()
     }
 
     pub fn vars(&self) -> Set<PRef> {
@@ -92,27 +187,23 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     /// Reduces polynomial `p` with respect to the basis `G`.
     /// Returns the remainder `r` such that `p = sum(q_i * g_i) + r`, and no term in `r`
     /// is divisible by the leading term of any `g_i` in `G`.
-    /// Assumes `G` does not contain the zero polynomial.
+    /// Invariant: `G` does not contain the zero polynomial.
     pub fn reduce(&self, mut p: SparsePolynomial<F, T>) -> SparsePolynomial<F, T> {
+        self.refresh_cache();
+        let cache = self.cache.read().unwrap();
         let mut remainder = SparsePolynomial::zero();
 
-        // The basis against which we reduce. Filter out zeros once.
-        let reducers: Vec<_> = self.basis.iter().filter(|poly| !poly.is_zero()).collect();
-
-        // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let found_divisor = reducers.par_iter().find_any(|g|
-                if let Some((_g_lc, g_lt)) = g.leading_term() {
-                    p_lt.is_divided(&g_lt)
-                } else {
-                    false
-                });
+            let found = cache.basis_leading_terms
+                .iter()
+                .enumerate()
+                .find(|(_, g_lt)| p_lt.is_divided(g_lt));
 
-            if let Some(g) = found_divisor {
-                let (g_lc, g_lt) = g.leading_term().unwrap();
-                let multiplier_term = (p_lt / g_lt).expect("Division should succeed if is_divided is true");
-                let multiplier_scalar = p_lc * g_lc.inverse().expect("Leading coefficient must be invertible");
-                let to_subtract = g.mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
+            if let Some((idx, g_lt)) = found {
+                let multiplier_term = (p_lt / g_lt.clone())
+                    .expect("Division should succeed if is_divided is true");
+                let multiplier_scalar = p_lc * cache.basis_lc_inverses[idx];
+                let to_subtract = self.basis[idx].mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
                 p -= to_subtract;
             } else {
                 // No division occurred, move LT(p) to the remainder.
@@ -170,7 +261,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         }
 
         // Initialize with non-zero polynomials
-        let basis_nonzero = self.basis.iter().filter(|p| !p.is_zero()).cloned().collect();
+        let basis_nonzero = self.basis.par_iter().filter(|p| !p.is_zero()).cloned().collect();
 
         let mut g: Self = Self::new(self.num_vars, basis_nonzero);
 
@@ -281,35 +372,35 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         let num_vars = self.num_vars;
 
         // --- Step 1: Make polynomials monic & initial cleanup ---
+        let non_zero_polys: Vec<&SparsePolynomial<F, T>> = self.basis.iter()
+            .filter(|p| !p.is_zero())
+            .collect();
+
+        let mut lc_inverses: Vec<F> = non_zero_polys.iter()
+            .map(|p| p.leading_term().unwrap().0)
+            .collect();
+        ark_ff::batch_inversion(&mut lc_inverses);
+
         let mut g_monic = GroebnerBasis::empty(num_vars);
-        for p in self.iter() {
-            if p.is_zero() { continue; } // Remove zero polynomials
-
-            if let Some((lc, _)) = p.leading_term() {
-                let lc_inv = lc.inverse().expect("Leading coefficient must be invertible in a Field for non-zero poly");
-
-                // Multiply the entire polynomial by lc_inv
-                let mut monic_p = SparsePolynomial::zero(); // Start fresh
-                for (term, coeff) in p.terms.iter() {
-                    monic_p.terms.insert(term, &(*coeff * lc_inv));
-                }
-
-                // Ensure it's still not zero after making monic (unlikely but possible with weird fields)
-                if !monic_p.is_zero() {
-                    g_monic.push(monic_p);
-                }
+        for (p, lc_inv) in non_zero_polys.iter().zip(lc_inverses.iter()) {
+            let mut monic_p = SparsePolynomial::zero();
+            for (term, coeff) in p.terms.iter() {
+                monic_p.terms.insert(term, &(*coeff * lc_inv));
             }
-            // else: p was zero, already skipped
+            if !monic_p.is_zero() {
+                g_monic.push(monic_p);
+            }
         }
-        *self = g_monic; // Replace G with the monic version
+        *self = g_monic;
 
         // Sort by leading term order (important for the next step)
         // This assumes the Ord trait on Monomial defines the term order used.
-        self.basis.sort_unstable_by(|p1, p2| {
+        self.basis.par_sort_unstable_by(|p1, p2| {
             let lt1 = p1.leading_term().map(|(_, t)| t);
             let lt2 = p2.leading_term().map(|(_, t)| t);
             lt1.cmp(&lt2) // Compare leading terms
         });
+        self.cache.get_mut().unwrap().cache_stale = true;
 
 
         // --- Step 2: Remove polynomials whose leading term is divisible by another's LT ---
@@ -367,12 +458,13 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             }
         }
 
-        // Final sort (optional, but good practice)
+        // Final sort
         g_reduced.basis.sort_unstable_by(|p1, p2| {
             let lt1 = p1.leading_term().map(|(_, t)| t);
             let lt2 = p2.leading_term().map(|(_, t)| t);
             lt1.cmp(&lt2)
         });
+        g_reduced.cache.get_mut().unwrap().cache_stale = true;
 
         *self = g_reduced;
     }
