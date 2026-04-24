@@ -1,13 +1,13 @@
+#[cfg(test)]
+use crate::WritePdf;
+use crate::analyses::error::AnalysisError;
+use crate::analyses::groebner::{ElimTerm, GroebnerBasis, GroebnerBuilder, SparsePolynomial};
+use crate::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use log::{warn};
 #[cfg(test)]
 use log::debug;
-#[cfg(test)] use crate::WritePdf;
-use crate::{DQDag, PRef};
-use crate::analyses::groebner::{ElimTerm, SparsePolynomial, GroebnerBuilder, GroebnerBasis};
-use crate::analyses::error::AnalysisError;
-
+use log::warn;
 
 /// Perform a knowledge analysis using Groebner bases.
 pub struct KnowledgeAnalysis<C: ArkConfig> {
@@ -19,7 +19,10 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
 
 impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     pub fn new(gb: GroebnerBuilder<C, ElimTerm>) -> Self {
-        Self { builder: gb, relation_basis: None }
+        Self {
+            builder: gb,
+            relation_basis: None,
+        }
     }
 
     pub fn from_input(dag: &DQDag<C>) -> Self {
@@ -39,14 +42,20 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             None
         };
 
-        Self { builder: gb, relation_basis }
+        Self {
+            builder: gb,
+            relation_basis,
+        }
     }
 
     #[cfg(test)]
     pub fn from_relation(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
         gb.add_relation(dag);
-        Self { builder: gb, relation_basis: None }
+        Self {
+            builder: gb,
+            relation_basis: None,
+        }
     }
 
     fn is_leak(p: &SparsePolynomial<C::F, ElimTerm>) -> bool {
@@ -73,29 +82,29 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn private(&self) -> Vec<PRef> {
-        self.builder.vars()
-        .into_iter()
-        .filter(|v| v.is_private())
-        .collect()
+        self.builder
+            .vars()
+            .into_iter()
+            .filter(|v| v.is_private())
+            .collect()
     }
 
     pub fn public(&self) -> Vec<PRef> {
-        self.builder.vars()
-        .into_iter()
-        .filter(|v| v.is_public())
-        .collect()
+        self.builder
+            .vars()
+            .into_iter()
+            .filter(|v| v.is_public())
+            .collect()
     }
 
-    pub fn eliminate_var(&mut self){
+    pub fn eliminate_var(&mut self) {
         self.builder.basis.basis.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
                 return true;
             }
             // Remove polynomials where ALL variables are private uniform
-            let all_private_uniform = vars.iter().all(|v| 
-                v.is_private() && v.is_uniform()
-            );
+            let all_private_uniform = vars.iter().all(|v| v.is_private() && v.is_uniform());
             if all_private_uniform {
                 return false;
             }
@@ -108,9 +117,10 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     pub fn eliminate_groups(&mut self) {
         self.builder.eliminate_monomial(&|t| {
-            let mono_sum = t.iter()
-            .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
-            .sum::<usize>();
+            let mono_sum = t
+                .iter()
+                .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
+                .sum::<usize>();
             mono_sum > 1
         });
     }
@@ -142,12 +152,18 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 }
 
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use share::unwrap;
-#[cfg(test)] use share::Ctx;
-#[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use crate::analyses::{UniformityPropagation, QualifierPropagation};
-#[cfg(test)] use crate::UDags;
+#[cfg(test)]
+use crate::UDags;
+#[cfg(test)]
+use crate::analyses::{QualifierPropagation, UniformityPropagation};
+#[cfg(test)]
+use backend::ArkBls12_381;
+#[cfg(test)]
+use lang::ast::UModule;
+#[cfg(test)]
+use share::Ctx;
+#[cfg(test)]
+use share::unwrap;
 
 #[test]
 #[ignore]
@@ -162,11 +178,17 @@ fn knowledge_foo() {
         }"#;
 
     debug!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_foo").unwrap_or_else(|e| {
-        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!(
+            "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
+            e
+        );
     });
 
     // Propagate qualifiers
@@ -175,7 +197,6 @@ fn knowledge_foo() {
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
-
     // Compute Groebner basis for the implementation
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
@@ -183,10 +204,8 @@ fn knowledge_foo() {
     assert!(kz.run().is_err());
 }
 
-
 #[test]
 fn groebner_bar() {
-
     let ex = r#"
         proto foo<F: Field>(private s: F, private s': F) where s == s' {
             let r = random<F>;
@@ -196,11 +215,17 @@ fn groebner_bar() {
         }"#;
 
     debug!("Parsing example: {}", ex);
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_bar").unwrap_or_else(|e| {
-        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!(
+            "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
+            e
+        );
     });
 
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
@@ -215,10 +240,8 @@ fn groebner_bar() {
     assert!(kz.run().is_ok());
 }
 
-
 #[test]
 fn groebner_baz() {
-
     let ex = r#"
         proto baz<F: Field, N: 4..8>(private s: [F; N], private s': F) where s[3] == s' {
             let r = random<F>;
@@ -227,11 +250,17 @@ fn groebner_baz() {
             verify(a == b)
         }"#;
 
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_baz").unwrap_or_else(|e| {
-        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!(
+            "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
+            e
+        );
     });
 
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
@@ -264,11 +293,17 @@ fn groebner_ex3() {
             d <- g * b;
             verify(c == d)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     gs.write_pdf("groebner_ex3").unwrap_or_else(|e| {
-        debug!("Error writing to PDF, maybe [dot] is not installed? \n\n {}", e);
+        debug!(
+            "Error writing to PDF, maybe [dot] is not installed? \n\n {}",
+            e
+        );
     });
 
     let g = QualifierPropagation::from_dag(&gs[0]);
@@ -283,7 +318,6 @@ fn groebner_ex3() {
     assert!(kz.run().is_err());
 }
 
-
 #[test]
 #[ignore]
 fn schnorr_zk() {
@@ -295,16 +329,21 @@ fn schnorr_zk() {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_ok(), "Schnorr protocol should be zero-knowledge");
+    assert!(
+        kz.run().is_ok(),
+        "Schnorr protocol should be zero-knowledge"
+    );
 }
-
 
 #[test]
 fn zk_regression_direct_secret_leak() {
@@ -317,7 +356,10 @@ fn zk_regression_direct_secret_leak() {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
@@ -328,7 +370,10 @@ fn zk_regression_direct_secret_leak() {
     if let Err(ref e) = result {
         eprintln!("Leak detected: {}", e);
     }
-    assert!(result.is_err(), "d <- x directly leaks private x to transcript");
+    assert!(
+        result.is_err(),
+        "d <- x directly leaks private x to transcript"
+    );
 }
 
 /// Leak: transcript contains x + public_val (no blinding).
@@ -340,14 +385,20 @@ fn zk_leak_unblinded_linear_combination() {
             d <- x + y;
             verify(d == d)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_err(), "d <- x + y leaks x (verifier knows y and d)");
+    assert!(
+        kz.run().is_err(),
+        "d <- x + y leaks x (verifier knows y and d)"
+    );
 }
 
 /// Leak: Schnorr-like protocol without random blinding.
@@ -360,14 +411,20 @@ fn zk_leak_no_random_blinding() {
             z <- x * c;
             verify(g*z == h*c)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_err(), "z <- x*c without random blinding leaks x");
+    assert!(
+        kz.run().is_err(),
+        "z <- x*c without random blinding leaks x"
+    );
 }
 
 /// Leak: two transcripts that differ only by the secret.
@@ -380,14 +437,20 @@ fn zk_leak_secret_difference_on_transcript() {
             b <- t + y;
             verify(a == b)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_err(), "a - b = s - t leaks relationship between secrets");
+    assert!(
+        kz.run().is_err(),
+        "a - b = s - t leaks relationship between secrets"
+    );
 }
 
 /// NOT a leak: proper Schnorr with random blinding.
@@ -402,12 +465,79 @@ fn zk_safe_schnorr_with_blinding() {
             z <- r + x*c;
             verify(g*z == u + h*c)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
     let mut up = UniformityPropagation::new();
     let g = up.from_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    assert!(kz.run().is_ok(), "Schnorr with proper blinding should be ZK");
+    assert!(
+        kz.run().is_ok(),
+        "Schnorr with proper blinding should be ZK"
+    );
+}
+
+/// Leak: the two verify statements together leak private information.
+/// Each check is a trivial self-equality on a transcript value (`a == a` and `b == b`).
+/// Since `a = s + r` and `b = t + r` reuse the same blinding value `r`, publishing both
+/// values reveals `a - b = s - t`, so the transcript leaks information about the secrets.
+#[test]
+fn zk_multiple_verify_one_safe_one_subtle_leak() {
+    let ex = r#"
+        proto mixed<F: Field>(private s: F, private t: F, public y: F) where y == y {
+            let r = random<F>;
+            a <- s + r;
+            b <- t + r;
+            verify(a == a);
+            verify(b == b)
+        }"#;
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(
+        kz.run().is_err(),
+        "One safe and one leaking verify should fail knowledge analysis"
+    );
+}
+
+/// Safe: both verify statements are properly blinded with independent random values.
+/// Each check uses a separate random blinding factor, so no private information leaks.
+#[test]
+fn zk_multiple_verify_both_safe() {
+    let ex = r#"
+        proto safe<F: Field>(private a: F, private b: F) where a == b {
+            let r = random<F>;
+            let s = random<F>;
+            x <- a * r;
+            y <- b * r;
+            u <- a * s;
+            v <- b * s;
+            verify(x == y);
+            verify(u == v)
+        }"#;
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let mut up = UniformityPropagation::new();
+    let g = up.from_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(
+        kz.run().is_ok(),
+        "Two verify statements both properly blinded with independent randoms should pass knowledge analysis"
+    );
 }

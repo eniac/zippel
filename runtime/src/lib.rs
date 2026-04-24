@@ -1,10 +1,8 @@
-#![feature(associated_type_defaults)]
-#![feature(trait_alias)]
 pub mod graph;
 
+mod pool;
+mod queue;
 pub use graph::MutexGraph;
 
 #[cfg(test)]
 mod tests;
-
-

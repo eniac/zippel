@@ -1,16 +1,15 @@
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use std::fmt;
-use std::ops::{Add, Sub, Mul, Div, Rem, BitXor};
-use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign};
 use rand::Rng;
+use std::fmt;
+use std::ops::{Add, BitXor, Div, Mul, Rem, Sub};
+use std::ops::{AddAssign, BitXorAssign, DivAssign, MulAssign, RemAssign, SubAssign};
 use thiserror::Error;
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator, Ctx};
-use share::traversal::ToTraversal1;
-use crate::typ::Size;
 use crate::parser::*;
-
+use crate::typ::Size;
+use share::traversal::ToTraversal1;
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Error, PartialEq, Debug)]
 pub enum RangeError {
@@ -21,14 +20,17 @@ pub enum RangeError {
 /// Represents a range of numbers
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct Range<N> {
-    pub start : N,
-    pub step : N,
-    pub end : N
+    pub start: N,
+    pub step: N,
+    pub end: N,
 }
 
 /// Implementations of this trait can modify ranges
-pub trait RangeTraversal<N> : Sized {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E>;
+pub trait RangeTraversal<N>: Sized {
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E>;
 }
 
 impl<N> ToTraversal1<N> for Range<N> {
@@ -37,20 +39,28 @@ impl<N> ToTraversal1<N> for Range<N> {
         Ok(Range {
             start: f(self.start)?,
             step: f(self.step)?,
-            end: f(self.end)?
+            end: f(self.end)?,
         })
     }
 }
 
 impl Default for Range<Size> {
     fn default() -> Self {
-        Range { start: Size::zero(), step: Size::one(), end: Size::one() }
+        Range {
+            start: Size::zero(),
+            step: Size::one(),
+            end: Size::one(),
+        }
     }
 }
 
 impl Default for CRange {
     fn default() -> Self {
-        Range { start: 0, step: 1, end: 1 }
+        Range {
+            start: 0,
+            step: 1,
+            end: 1,
+        }
     }
 }
 
@@ -60,13 +70,17 @@ impl Copy for CRange {}
 
 impl CRange {
     pub fn new(start: usize, end: usize) -> Self {
-        Range { start, step: 1, end }
+        Range {
+            start,
+            step: 1,
+            end,
+        }
     }
     /// Create a range from a start, step and end numbers, checking their order
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         // Check if the range is well formed
         let rs = Range { start, step, end };
-        if (start <= end) &&  (step > 0) && ((end - start) % step == 0) {
+        if (start <= end) && (step > 0) && ((end - start) % step == 0) {
             Ok(rs)
         } else {
             Err(RangeError::RangeOrder(start, step, end))
@@ -79,7 +93,11 @@ impl CRange {
 
     /// Create a singleton range
     pub fn singleton(start: usize) -> Self {
-        Range { start, step: 1, end: start + 1 }
+        Range {
+            start,
+            step: 1,
+            end: start + 1,
+        }
     }
 
     pub fn random<R: Rng>(&self, rng: &mut R) -> usize {
@@ -102,8 +120,8 @@ impl CRange {
             return Some(Range {
                 start: self.start,
                 step: self.step,
-                end: other.end
-            })
+                end: other.end,
+            });
         } else {
             None
         }
@@ -162,13 +180,17 @@ impl CRange {
         // and the number of elements the second range would select
         let elements_in_result = std::cmp::min(
             elements_in_first.saturating_sub(other.start),
-            elements_in_second
+            elements_in_second,
         );
 
         // Calculate the new end
         let new_end = new_start + new_step * elements_in_result;
 
-        Range { start: new_start, step:new_step, end: new_end }
+        Range {
+            start: new_start,
+            step: new_step,
+            end: new_end,
+        }
     }
 
     /// Gets the element at the specified index when the range is applied
@@ -186,10 +208,12 @@ impl CRange {
         if computed_index < self.end {
             computed_index
         } else {
-            panic!("Index out of bounds: {} not in range [{}, {})", computed_index, self.start, self.end);
+            panic!(
+                "Index out of bounds: {} not in range [{}, {})",
+                computed_index, self.start, self.end
+            );
         }
     }
-
 }
 
 impl Iterator for CRange {
@@ -236,7 +260,7 @@ impl Add for CRange {
         Range {
             start: self.start + b.start,
             step: num::integer::gcd(self.step, b.step),
-            end: (self.end - self.step) + (b.end - b.step) + 1
+            end: (self.end - self.step) + (b.end - b.step) + 1,
         }
     }
 }
@@ -248,7 +272,7 @@ impl Sub for CRange {
         Range {
             start: self.start.saturating_sub(b.end - b.step),
             step: num::integer::gcd(self.step, b.step),
-            end: (self.end - self.step) - (b.start) + 1
+            end: (self.end - self.step) - (b.start) + 1,
         }
     }
 }
@@ -273,7 +297,10 @@ impl Mul for CRange {
         let new_end = p1.max(p2).max(p3).max(p4) + 1;
 
         // Compute new step
-        let new_step = num::integer::gcd(self.step * b.step, num::integer::gcd(self.step * b.start, b.step * self.start));
+        let new_step = num::integer::gcd(
+            self.step * b.step,
+            num::integer::gcd(self.step * b.start, b.step * self.start),
+        );
 
         Range {
             start: new_start,
@@ -391,9 +418,11 @@ impl BitXorAssign for CRange {
     }
 }
 
-
 /// Display instance calls the pretty printer
-impl<'a, N> fmt::Display for Range<N> where N: Pretty<'a, BoxAllocator, ()> + Clone {
+impl<'a, N> fmt::Display for Range<N>
+where
+    N: Pretty<'a, BoxAllocator, ()> + Clone,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Range<N> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
@@ -435,39 +464,70 @@ impl<'pest> FromPest<'pest> for Range<Size> {
                 let step = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(Range { start, step, end })
-            },
+            }
             Rule::unit_r => {
                 let mut inner = pair.into_inner();
                 let start = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Range { start, step: Size::one(), end })
-            },
+                Ok(Range {
+                    start,
+                    step: Size::one(),
+                    end,
+                })
+            }
             Rule::size_ty => {
                 let mut inner = pair.into_inner();
                 let end = Size::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
-                Ok(Range { start: Size::zero(), step: Size::one(), end })
-            },
-            _ => unreachable!()
+                Ok(Range {
+                    start: Size::zero(),
+                    step: Size::one(),
+                    end,
+                })
+            }
+            _ => unreachable!(),
         }
     }
 }
 
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn range_parser() {
     let mut pairs = ZippelParser::parse(Rule::range, "0..10").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::one(), end: Size::from(10) });
+    assert_eq!(
+        Range::from_pest(&mut pairs).unwrap(),
+        Range {
+            start: Size::from(0),
+            step: Size::one(),
+            end: Size::from(10)
+        }
+    );
 
     pairs = ZippelParser::parse(Rule::range, "0, 2..2^N").unwrap();
-    assert_eq!(Range::from_pest(&mut pairs).unwrap(), Range { start: Size::from(0), step: Size::from(2), end: Size::from(2) ^ Size::from("N") });
-
+    assert_eq!(
+        Range::from_pest(&mut pairs).unwrap(),
+        Range {
+            start: Size::from(0),
+            step: Size::from(2),
+            end: Size::from(2) ^ Size::from("N")
+        }
+    );
 }
 
 #[test]
 fn range_traversal() {
-    let r = Range { start: Size::varstr("N"), step: Size::from(2), end: Size::from(10) };
+    let r = Range {
+        start: Size::varstr("N"),
+        step: Size::from(2),
+        end: Size::from(10),
+    };
     assert_eq!(
-        r.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 0))).unwrap(),
-        Range { start: 0, step: 2, end: 10 }
+        r.traverse1(&mut |x| x.eval(&Ctx::singleton("N".into(), 0)))
+            .unwrap(),
+        Range {
+            start: 0,
+            step: 2,
+            end: 10
+        }
     );
 }

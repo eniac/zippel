@@ -1,12 +1,12 @@
-use petgraph::graph::NodeIndex;
-use lang::{ast::CArg, id::Vid, typ::Distribution};
-use share::{Ctx, Pretty, DocAllocator, BoxAllocator, DocBuilder};
 use crate::{GOp, HOp, Op, Ref, mk};
 use backend::op::HasOpFactory;
-use lang::typ::{CKind, Qualifier};
 use lang::id::Tid;
+use lang::typ::{CKind, Qualifier};
+use lang::{ast::CArg, id::Vid, typ::Distribution};
+use petgraph::graph::NodeIndex;
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
-use backend::{Value, ATyp};
+use backend::{ATyp, Value};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata
@@ -21,21 +21,80 @@ pub struct PRef {
 }
 
 impl PRef {
-    pub fn new(reference: Ref, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference, index, typ, qualifier, distribution, from_transcript: false }
+    pub fn new(
+        reference: Ref,
+        typ: ATyp,
+        index: usize,
+        qualifier: Qualifier,
+        distribution: Distribution,
+    ) -> Self {
+        PRef {
+            reference,
+            index,
+            typ,
+            qualifier,
+            distribution,
+            from_transcript: false,
+        }
     }
-    pub fn from_node(node: NodeIndex, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference: Ref::Node(node), index, typ, qualifier, distribution, from_transcript: false }
+    pub fn from_node(
+        node: NodeIndex,
+        typ: ATyp,
+        index: usize,
+        qualifier: Qualifier,
+        distribution: Distribution,
+    ) -> Self {
+        PRef {
+            reference: Ref::Node(node),
+            index,
+            typ,
+            qualifier,
+            distribution,
+            from_transcript: false,
+        }
     }
-    pub fn from_var(v: Vid, node: NodeIndex, typ: ATyp, index: usize, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference: Ref::Var(v, node), index, typ, qualifier, distribution, from_transcript: false }
+    pub fn from_var(
+        v: Vid,
+        node: NodeIndex,
+        typ: ATyp,
+        index: usize,
+        qualifier: Qualifier,
+        distribution: Distribution,
+    ) -> Self {
+        PRef {
+            reference: Ref::Var(v, node),
+            index,
+            typ,
+            qualifier,
+            distribution,
+            from_transcript: false,
+        }
     }
-    pub fn from_ref(reference: Ref, typ: ATyp, qualifier: Qualifier, distribution: Distribution) -> Self {
-        PRef { reference, index: 0, typ, qualifier, distribution, from_transcript: false }
+    pub fn from_ref(
+        reference: Ref,
+        typ: ATyp,
+        qualifier: Qualifier,
+        distribution: Distribution,
+    ) -> Self {
+        PRef {
+            reference,
+            index: 0,
+            typ,
+            qualifier,
+            distribution,
+            from_transcript: false,
+        }
     }
     pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
-        Some(PRef::from_var(arg.id.clone(), node, atyp, 0, arg.qualifier, arg.distribution))
+        Some(PRef::from_var(
+            arg.id.clone(),
+            node,
+            atyp,
+            0,
+            arg.qualifier,
+            arg.distribution,
+        ))
     }
     pub fn is_public(&self) -> bool {
         self.qualifier.is_public()
@@ -48,9 +107,8 @@ impl PRef {
     }
     pub fn is_uniform(&self) -> bool {
         match self.distribution {
-            Distribution::Uniform
-            | Distribution::UniformNonZero => true,
-            Distribution::Nonuniform => false
+            Distribution::Uniform | Distribution::UniformNonZero => true,
+            Distribution::Nonuniform => false,
         }
     }
     pub fn is_uniform_nz(&self) -> bool {
@@ -70,7 +128,7 @@ impl PRef {
         self.from_transcript = flag;
         self
     }
- 
+
     pub fn node(&self) -> NodeIndex {
         match self.reference {
             Ref::Node(node) => node,
@@ -91,7 +149,10 @@ impl PRef {
     }
     pub fn into_op<C: HasOpFactory>(&self) -> HOp<C> {
         if self.typ.size() > 1 {
-            mk::<C>(GOp::Ram(mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone())), mk::<C>(Op::Value(Value::Index(self.index)))))
+            mk::<C>(GOp::Ram(
+                mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone())),
+                mk::<C>(Op::Value(Value::Index(self.index))),
+            ))
         } else {
             mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone()))
         }
@@ -110,15 +171,30 @@ impl PRef {
 
     pub fn verbose(&self) -> String {
         if self.typ.size() > 1 && self.distribution.is_uniform() {
-            format!("{} uniform {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+            format!(
+                "{} uniform {}[{}]: {}",
+                self.qualifier, self.reference, self.index, self.typ
+            )
         } else if self.typ.size() > 1 && self.distribution.is_uniform_nz() {
-            format!("{} uniform* {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+            format!(
+                "{} uniform* {}[{}]: {}",
+                self.qualifier, self.reference, self.index, self.typ
+            )
         } else if self.typ.size() > 1 {
-            format!("{} {}[{}]: {}", self.qualifier, self.reference, self.index, self.typ)
+            format!(
+                "{} {}[{}]: {}",
+                self.qualifier, self.reference, self.index, self.typ
+            )
         } else if self.distribution.is_uniform() {
-            format!("{} uniform {}: {}", self.qualifier, self.reference, self.typ)
+            format!(
+                "{} uniform {}: {}",
+                self.qualifier, self.reference, self.typ
+            )
         } else if self.distribution.is_uniform_nz() {
-            format!("{} uniform* {}: {}", self.qualifier, self.reference, self.typ)
+            format!(
+                "{} uniform* {}: {}",
+                self.qualifier, self.reference, self.typ
+            )
         } else {
             format!("{} {}: {}", self.qualifier, self.reference, self.typ)
         }

@@ -4,7 +4,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::ops::Index;
 
-use crate::pretty::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
+use crate::pretty::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use crate::traversal::Traversal;
 
 /// General ordered map context backed by im::OrdMap for O(1) structural-sharing clones
@@ -61,14 +61,18 @@ where
         allocator.concat([
             allocator.text("{"),
             allocator.hardline(),
-            allocator.intersperse(
-                self.0.iter().map(|(k, v)| {
-                    k.clone().pretty(allocator)
-                        .append(allocator.text(": "))
-                        .append(v.clone().pretty(allocator))
-                }),
-                allocator.hardline(),
-            ).group().indent(2),
+            allocator
+                .intersperse(
+                    self.0.iter().map(|(k, v)| {
+                        k.clone()
+                            .pretty(allocator)
+                            .append(allocator.text(": "))
+                            .append(v.clone().pretty(allocator))
+                    }),
+                    allocator.hardline(),
+                )
+                .group()
+                .indent(2),
             allocator.hardline(),
             allocator.text("}"),
         ])
@@ -116,7 +120,7 @@ where
 impl<'a, K, V> fmt::Display for Ctx<K, V>
 where
     K: Ord + Pretty<'a, BoxAllocator, ()> + Clone,
-    V: Pretty<'a, BoxAllocator, ()> + Clone
+    V: Pretty<'a, BoxAllocator, ()> + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Ctx<_, _> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
@@ -141,39 +145,68 @@ impl<K: Ord, V> Index<K> for Ctx<K, V> {
 
 /// Special and wrapper methods for Ctx
 impl<K, V> Ctx<K, V> {
-    pub fn new() -> Self where K: Ord {
+    pub fn new() -> Self
+    where
+        K: Ord,
+    {
         Ctx(OrdMap::new())
     }
 
-    pub fn singleton(k: K, v: V) -> Self where K: Ord + Clone, V: Clone {
+    pub fn singleton(k: K, v: V) -> Self
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         let mut m = OrdMap::new();
         m.insert(k, v);
         Ctx(m)
     }
 
-    pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)> where FF: Fn(&K, &V) -> bool, K: Ord {
+    pub fn find<FF>(&self, f: FF) -> Option<(&K, &V)>
+    where
+        FF: Fn(&K, &V) -> bool,
+        K: Ord,
+    {
         self.0.iter().find(|(k, v)| f(k, v))
     }
 
-    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y> where FF: Fn(&K, &V) -> Option<Y>, K: Ord {
+    pub fn find_map<FF, Y>(&self, f: FF) -> Option<Y>
+    where
+        FF: Fn(&K, &V) -> Option<Y>,
+        K: Ord,
+    {
         self.0.iter().find_map(|(k, v)| f(k, v))
     }
 
-    pub fn first(&self) -> Option<(&K, &V)> where K: Ord {
+    pub fn first(&self) -> Option<(&K, &V)>
+    where
+        K: Ord,
+    {
         self.0.iter().next()
     }
 
-    pub fn last(&self) -> Option<(&K, &V)> where K: Ord {
+    pub fn last(&self) -> Option<(&K, &V)>
+    where
+        K: Ord,
+    {
         self.0.iter().next_back()
     }
 
-    pub fn pop_first(&mut self) -> Option<(K, V)> where K: Ord + Clone, V: Clone {
+    pub fn pop_first(&mut self) -> Option<(K, V)>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         let (result, new_map) = self.0.without_min_with_key();
         self.0 = new_map;
         result
     }
 
-    pub fn any<FF>(&self, f: FF) -> bool where FF: Fn(&K, &V) -> bool, K: Ord {
+    pub fn any<FF>(&self, f: FF) -> bool
+    where
+        FF: Fn(&K, &V) -> bool,
+        K: Ord,
+    {
         self.find(f).is_some()
     }
     pub fn len(&self) -> usize {
@@ -183,7 +216,11 @@ impl<K, V> Ctx<K, V> {
     pub fn clear(&mut self) {
         self.0.clear();
     }
-    pub fn insert(&mut self, k: &K, v: &V) -> Option<V> where K: Ord + Clone, V: Clone {
+    pub fn insert(&mut self, k: &K, v: &V) -> Option<V>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         self.0.insert(k.clone(), v.clone())
     }
 
@@ -191,13 +228,13 @@ impl<K, V> Ctx<K, V> {
     where
         K: Ord + Clone,
         V: Clone + Eq,
-        FF: Fn(&K,&V,&V) -> Result<K, E>
+        FF: Fn(&K, &V, &V) -> Result<K, E>,
     {
         match self.0.get(&k) {
             Some(v1) => {
                 let k = f(&k, &v, &v1)?;
                 self.insert_with(k, v, f)
-            },
+            }
             None => {
                 self.0.insert(k, v);
                 Ok(())
@@ -205,7 +242,11 @@ impl<K, V> Ctx<K, V> {
         }
     }
 
-    pub fn append(&mut self, other: &Ctx<K, V>) where K: Ord + Clone, V: Clone {
+    pub fn append(&mut self, other: &Ctx<K, V>)
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         for (k, v) in other.0.iter() {
             self.0.insert(k.clone(), v.clone());
         }
@@ -221,11 +262,18 @@ impl<K, V> Ctx<K, V> {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn get(&self, k: &K) -> Option<&V> where K: Ord {
+    pub fn get(&self, k: &K) -> Option<&V>
+    where
+        K: Ord,
+    {
         self.0.get(k)
     }
 
-    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> where K: Ord + Clone, V: Clone {
+    pub fn get_mut(&mut self, k: &K) -> Option<&mut V>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         self.0.get_mut(k)
     }
 
@@ -237,23 +285,36 @@ impl<K, V> Ctx<K, V> {
         self.0.remove(k)
     }
 
-    pub fn keys(&self) -> Set<K> where K: Ord + Clone {
+    pub fn keys(&self) -> Set<K>
+    where
+        K: Ord + Clone,
+    {
         Set(self.0.keys().map(|x| x.clone()).collect::<BTreeSet<_>>())
     }
-    pub fn values(&self) -> Vec<V> where V: Clone, K: Ord {
+    pub fn values(&self) -> Vec<V>
+    where
+        V: Clone,
+        K: Ord,
+    {
         self.0.values().cloned().collect()
     }
-    pub fn contains(&self, k: &K) -> bool where K: Ord {
+    pub fn contains(&self, k: &K) -> bool
+    where
+        K: Ord,
+    {
         self.0.contains_key(k)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + DoubleEndedIterator where K: Ord {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + DoubleEndedIterator
+    where
+        K: Ord,
+    {
         self.0.iter()
     }
     pub fn modify<F>(&mut self, mut f: F)
     where
         K: Ord + Clone,
         V: Clone,
-        F: FnMut(&K, &mut V)
+        F: FnMut(&K, &mut V),
     {
         let old = std::mem::replace(&mut self.0, OrdMap::new());
         let mut new_map = OrdMap::new();
@@ -264,7 +325,11 @@ impl<K, V> Ctx<K, V> {
         }
         self.0 = new_map;
     }
-    pub fn retain(&mut self, f: impl Fn(&K, &V) -> bool) where K: Ord + Clone, V: Clone {
+    pub fn retain(&mut self, f: impl Fn(&K, &V) -> bool)
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         let old = std::mem::replace(&mut self.0, OrdMap::new());
         let mut new_map = OrdMap::new();
         for (k, v) in old {
@@ -275,7 +340,11 @@ impl<K, V> Ctx<K, V> {
         self.0 = new_map;
     }
 
-    pub fn entry(&mut self, k: K) -> im::ordmap::Entry<'_, K, V> where K: Ord + Clone, V: Clone {
+    pub fn entry(&mut self, k: K) -> im::ordmap::Entry<'_, K, V>
+    where
+        K: Ord + Clone,
+        V: Clone,
+    {
         self.0.entry(k)
     }
 
@@ -284,7 +353,12 @@ impl<K, V> Ctx<K, V> {
         K: Ord + Clone,
         V: Clone,
     {
-        let res: Vec<(K, V)> = self.0.iter().filter(|(k, v)| f(k, v)).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let res: Vec<(K, V)> = self
+            .0
+            .iter()
+            .filter(|(k, v)| f(k, v))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         if res.len() == 1 {
             Some(res[0].clone())
         } else {
@@ -315,15 +389,21 @@ impl<K: Ord, V> Default for Ctx<K, V> {
 }
 
 /// From instance
-impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone, const N: usize> From<[(X, Y); N]> for Ctx<K, V> {
+impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone, const N: usize> From<[(X, Y); N]>
+    for Ctx<K, V>
+{
     fn from(v: [(X, Y); N]) -> Self {
-        Ctx(OrdMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
+        Ctx(OrdMap::from_iter(
+            v.into_iter().map(|(k, v)| (K::from(k), V::from(v))),
+        ))
     }
 }
 
 impl<X, Y, K: From<X> + Ord + Clone, V: From<Y> + Clone> From<Vec<(X, Y)>> for Ctx<K, V> {
     fn from(v: Vec<(X, Y)>) -> Self {
-        Ctx(OrdMap::from_iter(v.into_iter().map(|(k, v)| (K::from(k), V::from(v)))))
+        Ctx(OrdMap::from_iter(
+            v.into_iter().map(|(k, v)| (K::from(k), V::from(v))),
+        ))
     }
 }
 
@@ -339,14 +419,12 @@ where
     D: DocAllocator<'a, A>,
     D::Doc: Clone,
     A: 'a + Clone,
-    V: Pretty<'a, D, A> + Clone
+    V: Pretty<'a, D, A> + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.concat([
             allocator.text("{"),
-            allocator.intersperse(
-                self.0.into_iter()
-                    .map(|k| k.pretty(allocator)), ", "),
+            allocator.intersperse(self.0.into_iter().map(|k| k.pretty(allocator)), ", "),
             allocator.text("}"),
         ])
     }
@@ -396,12 +474,12 @@ impl<V> Default for Set<V> {
 
 impl<'a, V> fmt::Display for Set<V>
 where
-    V: Pretty<'a, BoxAllocator, ()> + Clone
+    V: Pretty<'a, BoxAllocator, ()> + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Set<_> as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
-                .1
-                .render_fmt(80, f)
+            .1
+            .render_fmt(80, f)
     }
 }
 
@@ -424,7 +502,10 @@ impl<V: Ord> Into<Vec<V>> for Set<V> {
 }
 
 impl<V: Ord> Set<V> {
-    pub fn new() -> Self where V: Ord {
+    pub fn new() -> Self
+    where
+        V: Ord,
+    {
         Set(BTreeSet::new())
     }
     pub fn singleton(v: V) -> Self {
@@ -468,7 +549,10 @@ impl<V: Ord> Set<V> {
         self.0.contains(k)
     }
 
-    pub fn find<FF>(&self, f: FF) -> Option<&V> where FF: Fn(&V) -> bool {
+    pub fn find<FF>(&self, f: FF) -> Option<&V>
+    where
+        FF: Fn(&V) -> bool,
+    {
         self.0.iter().find(|v| f(v))
     }
 
@@ -479,7 +563,7 @@ impl<V: Ord> Set<V> {
     /// Union of two sets
     pub fn union(&self, other: Set<V>) -> Self
     where
-        V: Clone
+        V: Clone,
     {
         let mut c = self.clone();
         c.append(other.into_iter());
@@ -488,7 +572,7 @@ impl<V: Ord> Set<V> {
     /// Intersection of two sets
     pub fn intersection(&self, other: Set<V>) -> Self
     where
-        V: Clone
+        V: Clone,
     {
         Set(self.0.intersection(&other.0).cloned().collect())
     }
@@ -519,7 +603,7 @@ impl<V: Ord> Set<V> {
     /// Extract elements from the map that satisfy a predicate
     pub fn extract_if(&mut self, f: impl Fn(&V) -> bool) -> Set<V>
     where
-        V: Clone
+        V: Clone,
     {
         let mut s = Set::new();
         let mut to_remove = Vec::new();
@@ -579,7 +663,7 @@ mod additional_tests {
         ctx.insert(&1, &"one");
         ctx.insert(&2, &"two");
         ctx.insert(&3, &"three");
-        
+
         let result = ctx.find_map(|k, v| {
             if *k == 2 {
                 Some(v.to_uppercase())
@@ -594,14 +678,8 @@ mod additional_tests {
     fn test_ctx_find_map_not_found() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &"one");
-        
-        let result = ctx.find_map(|k, _v| {
-            if *k == 99 {
-                Some(true)
-            } else {
-                None
-            }
-        });
+
+        let result = ctx.find_map(|k, _v| if *k == 99 { Some(true) } else { None });
         assert_eq!(result, None);
     }
 
@@ -611,7 +689,7 @@ mod additional_tests {
         ctx.insert(&1, &"one");
         ctx.insert(&2, &"two");
         ctx.insert(&3, &"three");
-        
+
         let last = ctx.last();
         assert_eq!(last, Some((&3, &"three")));
     }
@@ -628,7 +706,7 @@ mod additional_tests {
         ctx.insert(&1, &"one");
         ctx.insert(&2, &"two");
         ctx.insert(&3, &"three");
-        
+
         let first = ctx.pop_first();
         assert_eq!(first, Some((1, "one")));
         assert_eq!(ctx.len(), 2);
@@ -646,7 +724,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
         ctx.insert(&3, &30);
-        
+
         assert!(ctx.any(|_k, v| *v == 20));
     }
 
@@ -655,7 +733,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        
+
         assert!(!ctx.any(|_k, v| *v == 99));
     }
 
@@ -665,7 +743,7 @@ mod additional_tests {
         ctx.insert(&1, &"one");
         ctx.insert(&2, &"two");
         assert_eq!(ctx.len(), 2);
-        
+
         ctx.clear();
         assert_eq!(ctx.len(), 0);
         assert!(ctx.is_empty());
@@ -683,7 +761,7 @@ mod additional_tests {
     fn test_ctx_insert_with_conflict() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &"original");
-        
+
         // Use a different key to avoid infinite recursion
         let result = ctx.insert_with(1, "new", &|_k, _v1, _v2| Ok::<i32, ()>(2));
         assert!(result.is_ok());
@@ -694,7 +772,7 @@ mod additional_tests {
     fn test_ctx_insert_with_error() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &"original");
-        
+
         let result = ctx.insert_with(1, "new", &|_k, _v1, _v2| Err::<i32, _>("conflict"));
         assert!(result.is_err());
     }
@@ -704,11 +782,11 @@ mod additional_tests {
         let mut ctx1 = Ctx::new();
         ctx1.insert(&1, &"one");
         ctx1.insert(&2, &"two");
-        
+
         let mut ctx2 = Ctx::new();
         ctx2.insert(&3, &"three");
         ctx2.insert(&4, &"four");
-        
+
         ctx1.append(&ctx2);
         assert_eq!(ctx1.len(), 4);
         assert_eq!(ctx1.get(&3), Some(&"three"));
@@ -719,10 +797,10 @@ mod additional_tests {
         let mut ctx1 = Ctx::new();
         ctx1.insert(&1, &"one");
         ctx1.insert(&2, &"two");
-        
+
         let mut ctx2 = Ctx::new();
         ctx2.insert(&3, &"three");
-        
+
         let ctx3 = ctx1.union(&ctx2);
         assert_eq!(ctx3.len(), 3);
         assert_eq!(ctx3.get(&1), Some(&"one"));
@@ -733,7 +811,7 @@ mod additional_tests {
     fn test_ctx_get_mut() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &42);
-        
+
         if let Some(v) = ctx.get_mut(&1) {
             *v = 100;
         }
@@ -744,7 +822,7 @@ mod additional_tests {
     fn test_ctx_get_mut_not_found() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &42);
-        
+
         assert_eq!(ctx.get_mut(&99), None);
     }
 
@@ -753,7 +831,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &"one");
         ctx.insert(&2, &"two");
-        
+
         let removed = ctx.remove(&1);
         assert_eq!(removed, Some("one"));
         assert_eq!(ctx.len(), 1);
@@ -764,7 +842,7 @@ mod additional_tests {
     fn test_ctx_remove_not_found() {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &"one");
-        
+
         let removed = ctx.remove(&99);
         assert_eq!(removed, None);
     }
@@ -775,7 +853,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
         ctx.insert(&3, &30);
-        
+
         let result = ctx.find_one(|_k, v| *v == 20);
         assert_eq!(result, Some((2, 20)));
     }
@@ -785,7 +863,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        
+
         let result = ctx.find_one(|_k, v| *v == 99);
         assert_eq!(result, None);
     }
@@ -796,7 +874,7 @@ mod additional_tests {
         ctx.insert(&1, &10);
         ctx.insert(&2, &10);
         ctx.insert(&3, &30);
-        
+
         let result = ctx.find_one(|_k, v| *v == 10);
         assert_eq!(result, None); // Multiple matches return None
     }
@@ -938,7 +1016,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        
+
         let result = CtxValueTraversal::traverse(ctx, &mut |v| Ok::<_, ()>(v * 2));
         assert!(result.is_ok());
         let ctx2 = result.unwrap();
@@ -951,7 +1029,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        
+
         let result = CtxValueTraversal::traverse(ctx, &mut |v: i32| {
             if v > 15 {
                 Err("Too large")
@@ -967,7 +1045,7 @@ mod additional_tests {
         let mut ctx = Ctx::new();
         ctx.insert(&1, &10);
         ctx.insert(&2, &20);
-        
+
         let ctx2 = CtxValueTraversal::traverse(ctx, &mut |v| Ok::<_, ()>(v * 3)).unwrap();
         assert_eq!(ctx2.get(&1), Some(&30));
         assert_eq!(ctx2.get(&2), Some(&60));

@@ -1,8 +1,8 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, Value, ATyp};
+use backend::{ATyp, ArkBls12_381, Value};
 use lang::id::Vid;
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== MLE (ArkBls12_381) ===");
@@ -17,7 +17,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -52,9 +55,10 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("x".to_string()), Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar())),
-    ]);
+    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([(
+        Vid("x".to_string()),
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar()),
+    )]);
 
     return inputs;
 }

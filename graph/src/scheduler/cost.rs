@@ -1,8 +1,8 @@
-use backend::ArkConfig;
 use crate::Op;
+use backend::ArkConfig;
 use std::fmt;
 
-use share::{Pretty, DocAllocator, DocBuilder};
+use share::{DocAllocator, DocBuilder, Pretty};
 
 /// Measures the cost of a zippel operation
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,4 +39,3 @@ impl From<f64> for Cost {
 pub trait CostModel<C: ArkConfig, R> {
     fn cost(&self, op: &Op<C, R>, nthreads: usize) -> Cost;
 }
-

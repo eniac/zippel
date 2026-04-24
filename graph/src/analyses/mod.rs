@@ -1,22 +1,22 @@
-pub mod trans_clos;
-pub mod groebner;
-pub mod uniform;
-pub mod qualifier;
 pub mod completeness;
 pub mod error;
+pub mod groebner;
+pub mod qualifier;
+pub mod trans_clos;
+pub mod uniform;
 
 pub mod knowledge;
 
-pub use trans_clos::TransClos;
-pub use groebner::{GroebnerBuilder, GroebnerBasis};
-pub use qualifier::QualifierPropagation;
-pub use uniform::UniformityPropagation;
 pub use completeness::CompletenessAnalysis;
-pub use knowledge::KnowledgeAnalysis;
 pub use error::AnalysisError;
+pub use groebner::{GroebnerBasis, GroebnerBuilder};
+pub use knowledge::KnowledgeAnalysis;
+pub use qualifier::QualifierPropagation;
+pub use trans_clos::TransClos;
+pub use uniform::UniformityPropagation;
 
-use backend::ArkConfig;
 use crate::Dag;
+use backend::ArkConfig;
 
 /// A trait for static analyses on a DAG
 pub trait StaticAnalysis<C: ArkConfig, A> {

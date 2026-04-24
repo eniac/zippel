@@ -1,10 +1,10 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkSecp256k1, ArkConfig, Value};
+use ark_std::UniformRand;
+use backend::{ArkConfig, ArkSecp256k1, Value};
 use lang::id::Vid;
 use share::Ctx;
-use ark_std::UniformRand;
 use std::ops::Mul;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== Pedersen Equality (ArkSecp256k1) ===");
@@ -19,7 +19,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkSecp256k1>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -54,16 +57,16 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
-    
+
     let m1 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
     let r1 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
-    
+
     let m2 = m1.clone();
     let r2 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
-    
+
     let g = <ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng);
     let h = <ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng);
-    
+
     let c1 = g.mul(m1) + h.mul(r1);
     let c2 = g.mul(m2) + h.mul(r2);
 

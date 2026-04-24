@@ -1,6 +1,6 @@
 use rand::Rng;
 use rayon::prelude::*;
-use spongefish::{ProverState, DuplexSpongeInterface};
+use spongefish::{DuplexSpongeInterface, ProverState};
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -17,7 +17,7 @@ use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
 use crate::nothing::{NoCurve, NoPairing};
-use crate::op::{OpFactory, HasOpFactory};
+use crate::op::{HasOpFactory, OpFactory};
 use std::sync::RwLock;
 
 /// API to Arkworks finite fields, elliptic curves, and pairings
@@ -596,7 +596,9 @@ macro_rules! impl_op_factory {
                 RwLock::new(hashconsing::HConsign::empty());
         }
         impl HasOpFactory for $config {
-            fn op_factory() -> &'static RwLock<OpFactory<Self>> { &$factory_name }
+            fn op_factory() -> &'static RwLock<OpFactory<Self>> {
+                &$factory_name
+            }
         }
     };
 }

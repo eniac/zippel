@@ -1,27 +1,25 @@
-use std::collections::HashMap;
 use backend::ArkConfig;
 use backend::op::{HasOpFactory, Ref};
 use share::Set;
+use std::collections::HashMap;
 
+use crate::analyses::error::AnalysisError;
+use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
+use crate::{DQDag, PRef};
 use log::debug;
 use petgraph::graph::NodeIndex;
-use crate::{DQDag, PRef};
-use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
-use crate::analyses::error::AnalysisError;
-
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerBuilder<C, GrevLexTerm>,
-    pub verifier: GroebnerBuilder<C, GrevLexTerm>
+    pub verifier: GroebnerBuilder<C, GrevLexTerm>,
 }
 
 /// Invert a node_map (old_dag_idx → new_subgraph_Ref) to build a PRef remapping closure.
-fn make_remap_fn(
-    node_map: &HashMap<NodeIndex, Ref>,
-) -> impl Fn(&PRef) -> PRef + '_ {
-    let inverse: HashMap<NodeIndex, (NodeIndex, Ref)> = node_map.iter()
+fn make_remap_fn(node_map: &HashMap<NodeIndex, Ref>) -> impl Fn(&PRef) -> PRef + '_ {
+    let inverse: HashMap<NodeIndex, (NodeIndex, Ref)> = node_map
+        .iter()
         .map(|(old_idx, new_ref)| (new_ref.node(), (*old_idx, new_ref.clone())))
         .collect();
 
@@ -32,7 +30,10 @@ fn make_remap_fn(
                 (Ref::Node(_), Ref::Var(v, _)) => Ref::Var(v.clone(), *old_idx),
                 (Ref::Node(_), Ref::Node(_)) => Ref::Node(*old_idx),
             };
-            PRef { reference: new_ref, ..pref.clone() }
+            PRef {
+                reference: new_ref,
+                ..pref.clone()
+            }
         } else {
             pref.clone()
         }
@@ -62,7 +63,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let mut g_impl = GroebnerBuilder::new();
         g_impl.add_input(&dag);
 
-        Self { prover: g_ps, verifier: g_impl }
+        Self {
+            prover: g_ps,
+            verifier: g_impl,
+        }
     }
 
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
@@ -74,7 +78,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         // Verifier-visible variables: prover computation nodes + public input arguments.
         // Private inputs are prover-only and not visible to the verifier.
         let prover_vars = self.prover.vars();
-        let public_args: Set<PRef> = self.verifier.args.iter()
+        let public_args: Set<PRef> = self
+            .verifier
+            .args
+            .iter()
             .filter(|a| a.is_public())
             .cloned()
             .collect();
@@ -98,13 +105,16 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analyses::groebner::{GroebnerBasis, SparsePolynomial};
+    use crate::{
+        UDags,
+        analyses::{QualifierPropagation, UniformityPropagation},
+    };
+    use backend::ArkBls12_381;
     use lang::ast::UModule;
     use lang::id::Vid;
-    use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
-    use crate::analyses::groebner::{SparsePolynomial, GroebnerBasis};
-    use share::unwrap;
     use share::Ctx;
-    use backend::ArkBls12_381;
+    use share::unwrap;
 
     #[test]
     #[ignore]
@@ -118,7 +128,10 @@ mod tests {
             }"#;
 
         debug!("Parsing example: {}", ex);
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -140,7 +153,10 @@ mod tests {
                 verify(g*z == u + h*c)
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -163,7 +179,10 @@ mod tests {
                 verify(x == y)
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
@@ -172,16 +191,157 @@ mod tests {
         let mut ca = CompletenessAnalysis::from_input(&g);
         // This only passes if the relation `a == b` is in the same namespace
         // as the prover/verifier polynomials.
-        assert!(ca.run().is_ok(), "eq_proof should be complete (relation namespace must match)");
+        assert!(
+            ca.run().is_ok(),
+            "eq_proof should be complete (relation namespace must match)"
+        );
+    }
+
+    #[test]
+    fn completeness_multiple_verify() {
+        let ex = r#"
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == x);
+                verify(x == y)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "eq_proof with two verify statements should be complete"
+        );
+    }
+
+    #[test]
+    fn completeness_multiple_verify_independent() {
+        let ex = r#"
+            proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                let s = random<F>;
+                x <- a * r;
+                y <- b * r;
+                u <- a * s;
+                v <- b * s;
+                verify(x == y);
+                verify(u == v)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "eq_proof with two independent verify statements should be complete"
+        );
+    }
+
+    /// Negative: second verify makes the protocol incomplete.
+    /// verify(x == y) is complete (follows from a == b), but
+    /// verify(x == 0) is not — x is a transcript variable (in prover vocabulary)
+    /// but nothing forces x = 0. The polynomial `x` reduces to `a*r`, not 0.
+    #[test]
+    fn completeness_multiple_verify_negative() {
+        let ex = r#"
+            proto incomplete<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                verify(x == y);
+                verify(x == 0)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_err(),
+            "verify(x == 0) is not implied by a == b, so protocol should be incomplete"
+        );
+    }
+
+    /// Cross-function boundary: a function with verify is inlined into the protocol.
+    /// The inlined verify's Check node IS terminal in the full DAG — its result is
+    /// discarded by Let(None, ...) so nothing consumes it. find_check() finds both
+    /// the inlined and protocol's own check nodes.
+    #[test]
+    fn completeness_cross_function_verify() {
+        let ex = r#"
+            fn with_check<F: Field>(x: F) -> F {
+                verify(x == x);
+                x
+            }
+            proto caller<F: Field>(private a: F, private b: F) where a == b {
+                let r = random<F>;
+                x <- a * r;
+                y <- b * r;
+                z <- with_check(y);
+                verify(z == y)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+
+        let caller = gs.protocols()[0];
+        assert_eq!(
+            caller.find_check().len(),
+            2,
+            "Full DAG should have 2 terminal checks: inlined verify from function, and protocol's own verify"
+        );
+
+        let g = QualifierPropagation::from_dag(caller);
+        let mut up = UniformityPropagation::new();
+        let g = up.from_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "Both verifies are complete: inlined verify(x==x) is trivial, verify(z==y) follows from a==b"
+        );
     }
 
     #[test]
     fn test_buchberger_spoly_produces_ux_hr() {
-        use lang::typ::{Qualifier, Distribution};
         use backend::ATyp;
+        use lang::typ::{Distribution, Qualifier};
 
         let mk_var = |name: &str, idx: usize| -> PRef {
-            PRef::from_var(Vid(name.to_string()), NodeIndex::new(idx), ATyp::scalar(), 0, Qualifier::Public, Distribution::default())
+            PRef::from_var(
+                Vid(name.to_string()),
+                NodeIndex::new(idx),
+                ATyp::scalar(),
+                0,
+                Qualifier::Public,
+                Distribution::default(),
+            )
         };
         let g_var = mk_var("g", 0);
         let x_var = mk_var("x", 1);
@@ -205,7 +365,10 @@ mod tests {
 
         let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
         let rem = gb.reduce(target);
-        assert!(rem.is_zero(), "h*r - u*x should reduce to 0 given g*x = h and g*r = u");
+        assert!(
+            rem.is_zero(),
+            "h*r - u*x should reduce to 0 given g*x = h and g*r = u"
+        );
     }
 
     /// Issue #74, case 2: verify(r == 0) is unrelated to relation a == b.
@@ -220,14 +383,20 @@ mod tests {
                 verify(r == 0)
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
         let g = up.from_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_err(), "Protocol with verify(r == 0) should be incomplete when relation is a == b");
+        assert!(
+            ca.run().is_err(),
+            "Protocol with verify(r == 0) should be incomplete when relation is a == b"
+        );
     }
 
     /// Issue #74, case 1: verify(x == y && c == 0) adds extra constraint c == 0
@@ -242,14 +411,19 @@ mod tests {
                 verify(x == y && c == 0)
             }"#;
 
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let mut up = UniformityPropagation::new();
         let g = up.from_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_err(), "Protocol with unused public input c == 0 should be incomplete");
+        assert!(
+            ca.run().is_err(),
+            "Protocol with unused public input c == 0 should be incomplete"
+        );
     }
-
 }

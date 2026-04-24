@@ -3,10 +3,10 @@ use lang::id::Vid;
 use lang::typ::Nothing;
 use share::traversal::ToTraversal2;
 
-use petgraph::graph::NodeIndex;
-use backend::op::{Ref, Op, GOp, HOp, mk, HasOpFactory};
 use crate::PRef;
+use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 use backend::{ATyp, ArkConfig};
+use petgraph::graph::NodeIndex;
 use std::fmt;
 
 /// A node in the DAG
@@ -86,8 +86,11 @@ impl<C: ArkConfig, N> Node<C, N> {
     pub fn is_proof(&self) -> bool {
         self.is_transcript() && !self.is_challenge()
     }
- 
-    pub fn set_transcript(&mut self) where N: Clone {
+
+    pub fn set_transcript(&mut self)
+    where
+        N: Clone,
+    {
         match &self {
             Node::Op(op, ann) => *self = Node::Transcr(op.clone(), ann.clone()),
             _ => {}
@@ -118,7 +121,10 @@ impl<C: ArkConfig, N> Node<C, N> {
         }
     }
 
-    pub fn add_annotation<M>(&self, ann: M) -> Node<C, (N, M)> where N: Clone {
+    pub fn add_annotation<M>(&self, ann: M) -> Node<C, (N, M)>
+    where
+        N: Clone,
+    {
         match self {
             Node::Op(op, n) => Node::Op(op.clone(), (n.clone(), ann)),
             Node::Transcr(op, n) => Node::Transcr(op.clone(), (n.clone(), ann)),
@@ -147,7 +153,10 @@ impl<C: ArkConfig, N> Node<C, N> {
 
 /// Methods requiring `HasOpFactory` (for creating new hash-consed operations)
 impl<C: HasOpFactory, N> Node<C, N> {
-    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Node<C, N> where N: Clone {
+    pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> Node<C, N>
+    where
+        N: Clone,
+    {
         match self {
             Node::Op(op, ann) => Node::Op(mk::<C>(op.map_node_indices(f)), ann.clone()),
             Node::Transcr(op, ann) => Node::Transcr(mk::<C>(op.map_node_indices(f)), ann.clone()),
@@ -156,7 +165,10 @@ impl<C: HasOpFactory, N> Node<C, N> {
         }
     }
 
-    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Node<C, N> where N: Clone {
+    pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> Node<C, N>
+    where
+        N: Clone,
+    {
         match self {
             Node::Op(op, ann) => Node::Op(mk::<C>(op.map_refs(f)), ann.clone()),
             Node::Transcr(op, ann) => Node::Transcr(mk::<C>(op.map_refs(f)), ann.clone()),
@@ -201,7 +213,10 @@ impl<C: HasOpFactory> Node<C, Nothing> {
         Node::Op(mk::<C>(GOp::mle(op.clone())), Nothing)
     }
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
-        Node::Op(mk::<C>(GOp::bin(op, a.clone(), b.clone(), typ.clone())), Nothing)
+        Node::Op(
+            mk::<C>(GOp::bin(op, a.clone(), b.clone(), typ.clone())),
+            Nothing,
+        )
     }
     pub fn challenge(typ: &ATyp, non_zero: bool) -> Self {
         Node::Transcr(mk::<C>(Op::Challenge(typ.clone(), non_zero)), Nothing)
@@ -225,7 +240,6 @@ impl<C: HasOpFactory> Node<C, Nothing> {
             _ => false,
         }
     }
-
 }
 
 impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
@@ -233,31 +247,30 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
         match self {
             Node::Inp(fid, sig) => {
                 write!(f, "Impl {} (", fid)?;
-                let v= sig.first().unwrap();
+                let v = sig.first().unwrap();
                 write!(f, "{}", v.verbose())?;
                 for r in sig.iter().skip(1) {
                     write!(f, ", {}", r.verbose())?;
                 }
                 write!(f, ")")
-            },
+            }
             Node::Rel(fid, sig) => {
                 write!(f, "Spec {} (", fid)?;
-                let v= sig.first().unwrap();
+                let v = sig.first().unwrap();
                 write!(f, "{}", v.verbose())?;
                 for r in sig.iter().skip(1) {
                     write!(f, ", {}", r.verbose())?;
                 }
                 write!(f, ")")
-            },
-            Node::Op(op, ann)
-            | Node::Transcr(op, ann) => {
+            }
+            Node::Op(op, ann) | Node::Transcr(op, ann) => {
                 let ann = ann.to_string();
                 if ann.is_empty() {
                     return write!(f, "{}", &**op);
                 } else {
                     return write!(f, "{} @ {}", &**op, ann);
                 }
-            },
+            }
         }
     }
 }
@@ -273,4 +286,3 @@ impl<C: ArkConfig, N> ToTraversal2<N> for Node<C, N> {
         }
     }
 }
-

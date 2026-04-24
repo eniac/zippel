@@ -1,24 +1,26 @@
-use ark_ec::{AffineRepr, CurveConfig, CurveGroup, PrimeGroup, VariableBaseMSM};
 use ark_ec::scalar_mul::ScalarMul;
-use ark_ff::{AdditiveGroup, PrimeField, UniformRand, Zero};
+use ark_ec::{AffineRepr, CurveConfig, CurveGroup, PrimeGroup, VariableBaseMSM};
 use ark_ff::biginteger::BigInt;
-use rand::Rng;
+use ark_ff::{AdditiveGroup, PrimeField, UniformRand, Zero};
 use ark_serialize::{
-    CanonicalSerialize, CanonicalDeserialize, CanonicalSerializeWithFlags, CanonicalDeserializeWithFlags,
-    Compress, Valid, Validate, SerializationError, Flags};
+    CanonicalDeserialize, CanonicalDeserializeWithFlags, CanonicalSerialize,
+    CanonicalSerializeWithFlags, Compress, Flags, SerializationError, Valid, Validate,
+};
+use ark_std::io::{Read, Write};
 use num_bigint::BigUint;
-use zeroize::Zeroize;
+use rand::Rng;
 use std::fmt;
 use std::iter::Sum;
-use ark_std::io::{Read, Write};
-use std::ops::{
-    Add, AddAssign, BitAnd, BitAndAssign,
-    BitOr, BitOrAssign, BitXor, BitXorAssign, Mul, MulAssign, Neg,
-    Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
-use std::str::FromStr;
 use std::marker::PhantomData;
+use std::ops::{
+    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Mul, MulAssign,
+    Neg, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+};
+use std::str::FromStr;
+use zeroize::Zeroize;
 
-const NOCURVE_ERR: &str = "NoCurve is an empty curve with no points. It cannot be used for any operations.";
+const NOCURVE_ERR: &str =
+    "NoCurve is an empty curve with no points. It cannot be used for any operations.";
 
 /// Represents the empty curve with no points.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -58,7 +60,11 @@ impl<F: PrimeField> Valid for NoCurve<F> {
 }
 
 impl<F: PrimeField> CanonicalDeserialize for NoCurve<F> {
-    fn deserialize_with_mode<R: Read>(_: R, _: Compress, _: Validate) -> Result<Self, SerializationError> {
+    fn deserialize_with_mode<R: Read>(
+        _: R,
+        _: Compress,
+        _: Validate,
+    ) -> Result<Self, SerializationError> {
         panic!("{}", NOCURVE_ERR)
     }
 }
@@ -77,7 +83,7 @@ impl<F: PrimeField> CanonicalSerializeWithFlags for NoCurve<F> {
 }
 
 impl<F: PrimeField> CanonicalDeserializeWithFlags for NoCurve<F> {
-    fn deserialize_with_flags<R: Read, FF: Flags>(_: R)-> Result<(Self, FF), SerializationError> {
+    fn deserialize_with_flags<R: Read, FF: Flags>(_: R) -> Result<(Self, FF), SerializationError> {
         panic!("{}", NOCURVE_ERR)
     }
 }
@@ -332,7 +338,6 @@ impl<'a, F: PrimeField> SubAssign<&'a mut Self> for NoCurve<F> {
     }
 }
 
-
 impl<'a, F: PrimeField> Add<&'a Self> for NoCurve<F> {
     type Output = Self;
     fn add(self, _: &'a Self) -> Self {
@@ -488,7 +493,6 @@ impl<F: PrimeField> ScalarMul for NoCurve<F> {
 }
 
 impl<F: PrimeField> VariableBaseMSM for NoCurve<F> {
-
     type Bucket = NoCurve<F>;
     const ZERO_BUCKET: Self::Bucket = NoCurve(PhantomData);
 }

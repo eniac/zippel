@@ -1,8 +1,8 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, ArkConfig, Value, ArkGroupOps, ArkPairingOps};
-use lang::id::{Vid, Tid};
+use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, ArkPairingOps, Value};
+use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     env_logger::init();
@@ -16,7 +16,6 @@ fn main() {
     handler.compile(&sizes);
     println!("Compilation successful.");
 
-
     let inputs = prover_create_inputs();
     println!("Generating default schedule for prover...");
     let prover_scheduled = handler.default_schedule_prover();
@@ -26,7 +25,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     println!("Generating default schedule for verifier...");
     let verifier_scheduled = handler.default_schedule_verifier();
@@ -118,7 +120,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("hash1_r_vec".to_string()), Value::VecGT(hash1_r_vec)),
         (Vid("hash2_l_vec".to_string()), Value::VecGT(hash2_l_vec)),
         (Vid("hash2_r_vec".to_string()), Value::VecGT(hash2_r_vec)),
-        (Vid("gamma_pair_ipp_vec".to_string()), Value::VecGT(gamma_pair_ipp_vec)),
+        (
+            Vid("gamma_pair_ipp_vec".to_string()),
+            Value::VecGT(gamma_pair_ipp_vec),
+        ),
         (Vid("final_gamma1".to_string()), Value::G1(final_gamma1)),
         (Vid("final_gamma2".to_string()), Value::G2(final_gamma2)),
         (Vid("gamma1".to_string()), Value::VecG1(gamma1)),

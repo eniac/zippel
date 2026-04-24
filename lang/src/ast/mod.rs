@@ -1,11 +1,11 @@
-pub mod module;
-pub mod exp;
-pub mod decl;
 pub mod arg;
+pub mod decl;
+pub mod exp;
+pub mod module;
 pub mod sig;
 
-pub use exp::{Exp, Exps, FreeVars, CExp, CExps, UExp, UExps, BinOp};
 pub use arg::{Arg, Args, CArg, CArgs, GArg, GArgs};
-pub use sig::{Sig, CSig};
 pub use decl::{Body, CBody};
-pub use module::{Module, CModule, UModule};
+pub use exp::{BinOp, CExp, CExps, Exp, Exps, FreeVars, UExp, UExps};
+pub use module::{CModule, Module, UModule};
+pub use sig::{CSig, Sig};

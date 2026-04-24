@@ -1,19 +1,19 @@
-use std::ops::{Add, Div, Mul, Sub, Rem, BitXor, BitAnd, Index};
-use share::Ctx;
 use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use lazy_static::lazy_static;
-use std::fmt;
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
+use share::Ctx;
+use std::fmt;
+use std::ops::{Add, BitAnd, BitXor, Div, Index, Mul, Rem, Sub};
 
 use share::traversal::ToTraversal1;
 
-use share::{Set, BoxAllocator, Pretty, DocAllocator, DocBuilder};
-use crate::typ::Size;
-use crate::typ::GTyp;
-use crate::typ::range::{Range, RangeTraversal};
 use crate::id::{Tid, TidSubst, Vid};
+use crate::typ::range::{Range, RangeTraversal};
+use crate::typ::GTyp;
+use crate::typ::Size;
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 
 /// Represents binary operations in the Zippel language.
 /// Each variant corresponds to a different kind of binary operation that can be performed on arithmetic expressions.
@@ -81,7 +81,7 @@ pub enum BinOp {
     ///     ```zippel
     ///     assert(true && false);
     ///     ```
-    And
+    And,
 }
 
 /// Represents arithmetic expressions in the Zippel language.
@@ -309,59 +309,63 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
             Exp::Var(v) => Ok(Exp::Var(v)),
             Exp::Ifft(box p) => Ok(Exp::Ifft(Box::new(p.traverse1(f)?))),
             Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
-            Exp::Eval(box p, box x) => Ok(Exp::Eval(Box::new(p.traverse1(f)?), Box::new(x.traverse1(f)?))),
+            Exp::Eval(box p, box x) => Ok(Exp::Eval(
+                Box::new(p.traverse1(f)?),
+                Box::new(x.traverse1(f)?),
+            )),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
-            Exp::Pair(box x, box y) =>
-                Ok(Exp::Pair(Box::new(x.traverse1(f)?), Box::new(y.traverse1(f)?))),
-            Exp::Vec(v) =>
-                Ok(Exp::Vec(v.traverse1(f)?)),
-            Exp::App(x, ts) =>
-                Ok(Exp::App(x, ts.traverse1(f)?)),
-            Exp::Bin(op, box x, box y) =>
-                Ok(Exp::Bin(
-                    op,
-                    Box::new(x.traverse1(f)?),
-                    Box::new(y.traverse1(f)?),
-                )),
-            Exp::Map(box x, id, box r) =>
-                Ok(Exp::Map(Box::new(x.traverse1(f)?), id, Box::new(r.traverse1(f)?))),
-            Exp::Reduce(op, box x) =>
-                Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
+            Exp::Pair(box x, box y) => Ok(Exp::Pair(
+                Box::new(x.traverse1(f)?),
+                Box::new(y.traverse1(f)?),
+            )),
+            Exp::Vec(v) => Ok(Exp::Vec(v.traverse1(f)?)),
+            Exp::App(x, ts) => Ok(Exp::App(x, ts.traverse1(f)?)),
+            Exp::Bin(op, box x, box y) => Ok(Exp::Bin(
+                op,
+                Box::new(x.traverse1(f)?),
+                Box::new(y.traverse1(f)?),
+            )),
+            Exp::Map(box x, id, box r) => Ok(Exp::Map(
+                Box::new(x.traverse1(f)?),
+                id,
+                Box::new(r.traverse1(f)?),
+            )),
+            Exp::Reduce(op, box x) => Ok(Exp::Reduce(op, Box::new(x.traverse1(f)?))),
             Exp::Challenge(t, b) => Ok(Exp::Challenge(t, b)),
             Exp::Random(t, b) => Ok(Exp::Random(t, b)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Fft(box x) =>
-                Ok(Exp::Fft(Box::new(x.traverse1(f)?))),
-            Exp::Ram(box x, box i) =>
-                Ok(Exp::Ram(
-                        Box::new(x.traverse1(f)?),
-                        Box::new(i.traverse1(f)?)
-                )),
-            Exp::Let(x, box a, box b) =>
-                Ok(Exp::Let(x, Box::new(a.traverse1(f)?), Box::new(b.traverse1(f)?))),
-            Exp::Log(x, box a, box b) =>
-                Ok(Exp::Log(x, Box::new(a.traverse1(f)?), Box::new(b.traverse1(f)?))),
-            Exp::Assert(box x) =>
-                Ok(Exp::Assert(Box::new(x.traverse1(f)?))),
-            Exp::Verify(box x) =>
-                Ok(Exp::Verify(Box::new(x.traverse1(f)?))),
-            Exp::Fun(vars, box body) =>
-                Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
+            Exp::Fft(box x) => Ok(Exp::Fft(Box::new(x.traverse1(f)?))),
+            Exp::Ram(box x, box i) => Ok(Exp::Ram(
+                Box::new(x.traverse1(f)?),
+                Box::new(i.traverse1(f)?),
+            )),
+            Exp::Let(x, box a, box b) => Ok(Exp::Let(
+                x,
+                Box::new(a.traverse1(f)?),
+                Box::new(b.traverse1(f)?),
+            )),
+            Exp::Log(x, box a, box b) => Ok(Exp::Log(
+                x,
+                Box::new(a.traverse1(f)?),
+                Box::new(b.traverse1(f)?),
+            )),
+            Exp::Assert(box x) => Ok(Exp::Assert(Box::new(x.traverse1(f)?))),
+            Exp::Verify(box x) => Ok(Exp::Verify(Box::new(x.traverse1(f)?))),
+            Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.traverse1(f)?))),
             Exp::Record(fields) => {
-                let pairs: Vec<_> = fields.into_iter()
+                let pairs: Vec<_> = fields
+                    .into_iter()
                     .map(|(name, exp)| exp.traverse1(f).map(|new_exp| (name, new_exp)))
                     .collect::<Result<_, _>>()?;
                 Ok(Exp::Record(Ctx::from_iter(pairs)))
-            },
-            Exp::Proj(box exp, field) =>
-                Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
-            Exp::SetRecord(box record, field, box value) =>
-                Ok(Exp::SetRecord(
-                    Box::new(record.traverse1(f)?),
-                    field,
-                    Box::new(value.traverse1(f)?),
-                )),
+            }
+            Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.traverse1(f)?), field)),
+            Exp::SetRecord(box record, field, box value) => Ok(Exp::SetRecord(
+                Box::new(record.traverse1(f)?),
+                field,
+                Box::new(value.traverse1(f)?),
+            )),
         }
     }
 }
@@ -370,7 +374,12 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
 impl<N: Clone> ToTraversal1<N> for Exps<N> {
     type Output<Z> = Exps<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Exps<Z>, E> {
-        Ok(Exps(self.0.into_iter().map(|x| x.traverse1(f)).collect::<Result<_, _>>()?))
+        Ok(Exps(
+            self.0
+                .into_iter()
+                .map(|x| x.traverse1(f))
+                .collect::<Result<_, _>>()?,
+        ))
     }
 }
 
@@ -388,8 +397,7 @@ impl TidSubst for CExp {
             | Exp::Reduce(_, box p)
             | Exp::Coef(box p)
             | Exp::Fft(box p) => p.tid_subst(from, to),
-            Exp::Vec(v)
-            | Exp::App(_, v) => v.tid_subst(from, to),
+            Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Eval(box a, box b)
@@ -399,20 +407,24 @@ impl TidSubst for CExp {
             | Exp::Pair(box a, box b) => {
                 a.tid_subst(from, to);
                 b.tid_subst(from, to);
-            },
+            }
             Exp::Fun(_, box body) => body.tid_subst(from, to),
             Exp::Record(fields) => {
                 fields.modify(|_, field_exp| {
                     field_exp.tid_subst(from, to);
                 });
-            },
+            }
             Exp::Proj(box exp, _) => exp.tid_subst(from, to),
             Exp::SetRecord(box record, _, box value) => {
                 record.tid_subst(from, to);
                 value.tid_subst(from, to);
-            },
-            Exp::Lit(_) | Exp::Var(_) | Exp::Range(_) | Exp::Bool(_)
-            | Exp::Challenge(_, _) | Exp::Random(_, _) => {}
+            }
+            Exp::Lit(_)
+            | Exp::Var(_)
+            | Exp::Range(_)
+            | Exp::Bool(_)
+            | Exp::Challenge(_, _)
+            | Exp::Random(_, _) => {}
         }
     }
 }
@@ -427,8 +439,11 @@ impl FreeVars for CExp {
     fn freevars(&self) -> Set<Vid> {
         match self {
             Exp::Var(id) => Set::singleton(id.clone()),
-            Exp::Bool(_) | Exp::Challenge(_, _) | Exp::Random(_, _)
-            | Exp::Lit(_) | Exp::Range(_) => Set::new(),
+            Exp::Bool(_)
+            | Exp::Challenge(_, _)
+            | Exp::Random(_, _)
+            | Exp::Lit(_)
+            | Exp::Range(_) => Set::new(),
             Exp::Ifft(box p)
             | Exp::Mle(box p)
             | Exp::Poly(box p)
@@ -447,77 +462,89 @@ impl FreeVars for CExp {
             | Exp::Log(_, box a, box b) => a.freevars().union(b.freevars()),
             Exp::Fun(vars, box body) => {
                 let bound_vars: Set<Vid> = vars.iter().cloned().collect();
-                body.freevars().into_iter()
+                body.freevars()
+                    .into_iter()
                     .filter(|v| !bound_vars.iter().any(|bv| bv == v))
                     .collect()
-            },
-            Exp::Record(fields) => {
-                fields.iter().map(|(_, exp)| exp.freevars())
-                    .fold(Set::new(), |acc, x| acc.union(x))
-            },
+            }
+            Exp::Record(fields) => fields
+                .iter()
+                .map(|(_, exp)| exp.freevars())
+                .fold(Set::new(), |acc, x| acc.union(x)),
             Exp::Proj(box exp, _) => exp.freevars(),
-            Exp::SetRecord(box record, _, box value) =>
-                record.freevars().union(value.freevars()),
+            Exp::SetRecord(box record, _, box value) => record.freevars().union(value.freevars()),
         }
     }
 }
 
 impl FreeVars for CExps {
     fn freevars(&self) -> Set<Vid> {
-        self.0.iter().map(|x| x.freevars()).fold(Set::new(), |acc, x| acc.union(x))
+        self.0
+            .iter()
+            .map(|x| x.freevars())
+            .fold(Set::new(), |acc, x| acc.union(x))
     }
 }
 
 /// How to traverse [Range] inside an [Exp]
 impl<N: Clone> RangeTraversal<N> for Exp<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
             Exp::Ifft(box p) => Ok(Exp::ifft(p.range_traverse(f)?)),
             Exp::Poly(box p) => Ok(Exp::poly(p.range_traverse(f)?)),
             Exp::Mle(box p) => Ok(Exp::mle(p.range_traverse(f)?)),
-            Exp::Vec(v) =>
-                Ok(Exp::Vec(v.range_traverse(f)?)),
-            Exp::Eval(box p, box x) =>
-                Ok(Exp::eval(p.range_traverse(f)?, x.range_traverse(f)?)),
-            Exp::Bin(op, box x, box y) =>
-                Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?)),
-            Exp::Map(box x, id, box r) =>
-                Ok(Exp::map(x.range_traverse(f)?, id,r.range_traverse(f)?)),
-            Exp::Ram(box x, box i) =>
-                Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
-            Exp::Fft(box x) =>
-                Ok(Exp::fft(x.range_traverse(f)?)),
-            Exp::Coef(box x) =>
-                Ok(Exp::coef(x.range_traverse(f)?)),
-            Exp::Let(Some(x), box t, box e) => Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
-            Exp::Log(x, box t, box e) => Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?)),
-            Exp::Let(None, box t, box e) => Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?)),
+            Exp::Vec(v) => Ok(Exp::Vec(v.range_traverse(f)?)),
+            Exp::Eval(box p, box x) => Ok(Exp::eval(p.range_traverse(f)?, x.range_traverse(f)?)),
+            Exp::Bin(op, box x, box y) => {
+                Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?))
+            }
+            Exp::Map(box x, id, box r) => {
+                Ok(Exp::map(x.range_traverse(f)?, id, r.range_traverse(f)?))
+            }
+            Exp::Ram(box x, box i) => Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
+            Exp::Fft(box x) => Ok(Exp::fft(x.range_traverse(f)?)),
+            Exp::Coef(box x) => Ok(Exp::coef(x.range_traverse(f)?)),
+            Exp::Let(Some(x), box t, box e) => {
+                Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?))
+            }
+            Exp::Log(x, box t, box e) => {
+                Ok(Exp::logx(x, t.range_traverse(f)?, e.range_traverse(f)?))
+            }
+            Exp::Let(None, box t, box e) => {
+                Ok(Exp::seq(t.range_traverse(f)?, e.range_traverse(f)?))
+            }
             Exp::Pair(box t, box e) => Ok(Exp::pair(t.range_traverse(f)?, e.range_traverse(f)?)),
             Exp::Assert(box x) => Ok(Exp::assert(x.range_traverse(f)?)),
             Exp::Verify(box x) => Ok(Exp::verify(x.range_traverse(f)?)),
             Exp::App(x, ts) => Ok(Exp::app(x, ts.range_traverse(f)?)),
             Exp::Fun(vars, box body) => Ok(Exp::Fun(vars, Box::new(body.range_traverse(f)?))),
             Exp::Record(fields) => {
-                let pairs: Vec<_> = fields.into_iter()
+                let pairs: Vec<_> = fields
+                    .into_iter()
                     .map(|(name, exp)| exp.range_traverse(f).map(|new_exp| (name, new_exp)))
                     .collect::<Result<_, _>>()?;
                 Ok(Exp::Record(Ctx::from_iter(pairs)))
-            },
+            }
             Exp::Proj(box exp, field) => Ok(Exp::Proj(Box::new(exp.range_traverse(f)?), field)),
-            Exp::SetRecord(box record, field, box value) =>
-                Ok(Exp::SetRecord(
-                    Box::new(record.range_traverse(f)?),
-                    field,
-                    Box::new(value.range_traverse(f)?),
-                )),
-            other => Ok(other)
+            Exp::SetRecord(box record, field, box value) => Ok(Exp::SetRecord(
+                Box::new(record.range_traverse(f)?),
+                field,
+                Box::new(value.range_traverse(f)?),
+            )),
+            other => Ok(other),
         }
     }
 }
 
 impl<N: Clone> RangeTraversal<N> for Exps<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
         Ok(Exps(self.0.traverse1(&mut |x| x.range_traverse(f))?))
     }
 }
@@ -568,7 +595,10 @@ impl<T> Index<usize> for Exps<T> {
 
 /// Construct untyped expressions
 impl<N> Exp<N> {
-    pub fn from_vec(a: Self, ts: &[Self]) -> Self where N: Clone {
+    pub fn from_vec(a: Self, ts: &[Self]) -> Self
+    where
+        N: Clone,
+    {
         ts.into_iter().fold(a, |acc, a| Exp::seq(acc, a.clone()))
     }
     /// Annotated constructors
@@ -725,11 +755,7 @@ impl<N> Exp<N> {
 
 impl CExp {
     pub fn zeroes(n: usize) -> Self {
-        Exp::map(
-            Exp::lit(0),
-            Vid::from("_"),
-            Exp::range(Range::new(0, n)),
-        )
+        Exp::map(Exp::lit(0), Vid::from("_"), Exp::range(Range::new(0, n)))
     }
 }
 
@@ -838,19 +864,25 @@ where
                 (*a).pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Var(x) => allocator.concat([
-                x.pretty(allocator),
-            ]),
+            Exp::Var(x) => allocator.concat([x.pretty(allocator)]),
             Exp::Challenge(t, b) => allocator.concat([
                 allocator.text("challenge<"),
                 t.pretty(allocator),
-                if b { allocator.text("*") } else { allocator.text("") },
+                if b {
+                    allocator.text("*")
+                } else {
+                    allocator.text("")
+                },
                 allocator.text(">"),
             ]),
             Exp::Random(t, b) => allocator.concat([
                 allocator.text("random<"),
                 t.pretty(allocator),
-                if b { allocator.text("*") } else { allocator.text("") },
+                if b {
+                    allocator.text("*")
+                } else {
+                    allocator.text("")
+                },
                 allocator.text(">"),
             ]),
             Exp::Pair(box t, box e) => allocator.concat([
@@ -859,9 +891,7 @@ where
                 e.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Range(r) => allocator.concat([
-                r.pretty(allocator),
-            ]),
+            Exp::Range(r) => allocator.concat([r.pretty(allocator)]),
             Exp::App(x, d) => allocator.concat([
                 x.pretty(allocator),
                 allocator.text("("),
@@ -871,7 +901,7 @@ where
             Exp::Fft(b) => allocator.concat([
                 allocator.text("fft("),
                 (*b).pretty(allocator),
-                allocator.text(")")
+                allocator.text(")"),
             ]),
             Exp::Ram(x, i) => allocator.concat([
                 (*x).pretty(allocator),
@@ -913,32 +943,39 @@ where
                 allocator.text(")"),
             ]),
             Exp::Fun(vars, body) => {
-                let vars_str = vars.iter().map(|v| v.0.as_str()).collect::<Vec<_>>().join(", ");
+                let vars_str = vars
+                    .iter()
+                    .map(|v| v.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 allocator.concat([
                     allocator.text("fun "),
                     allocator.text(vars_str),
                     allocator.text(" => "),
                     (*body).pretty(allocator),
                 ])
-            },
+            }
             Exp::Record(fields) => {
                 let mut docs = Vec::new();
                 docs.push(allocator.text("{|"));
-                let field_docs: Vec<_> = fields.into_iter().map(|(name, exp)| {
-                    allocator.concat([
-                        allocator.text(name),
-                        allocator.text(": "),
-                        exp.pretty(allocator)
-                    ])
-                }).collect();
+                let field_docs: Vec<_> = fields
+                    .into_iter()
+                    .map(|(name, exp)| {
+                        allocator.concat([
+                            allocator.text(name),
+                            allocator.text(": "),
+                            exp.pretty(allocator),
+                        ])
+                    })
+                    .collect();
                 docs.push(allocator.intersperse(field_docs.into_iter(), ", "));
                 docs.push(allocator.text("|}"));
                 allocator.concat(docs)
-            },
+            }
             Exp::Proj(box exp, field) => allocator.concat([
                 exp.pretty(allocator),
                 allocator.text("."),
-                allocator.text(field)
+                allocator.text(field),
             ]),
             Exp::SetRecord(box record, field, box value) => allocator.concat([
                 record.pretty(allocator),
@@ -946,8 +983,8 @@ where
                 allocator.text(field),
                 allocator.text(", "),
                 value.pretty(allocator),
-                allocator.text(")")
-            ])
+                allocator.text(")"),
+            ]),
         }
     }
 
@@ -964,8 +1001,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(
-            self.0.into_iter().map(|x| x.pretty(allocator)), ", ")
+        allocator.intersperse(self.0.into_iter().map(|x| x.pretty(allocator)), ", ")
     }
     fn is_nil(&self) -> bool {
         self.0.is_empty()
@@ -1126,7 +1162,7 @@ impl<'pest> FromPest<'pest> for BinOp {
             Rule::concat_op => Ok(BinOp::Concat),
             Rule::eq_op => Ok(BinOp::Equ),
             Rule::and_op => Ok(BinOp::And),
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
 }
@@ -1149,7 +1185,7 @@ impl<'pest> FromPest<'pest> for UExp {
                     } else {
                         Ok(Exp::Var(Vid(name)))
                     }
-                },
+                }
                 Rule::positive => Ok(Exp::lit(Size::from_pest(&mut Pairs::single(pair))?)),
                 Rule::fun_exp => {
                     let mut inner = pair.into_inner();
@@ -1166,7 +1202,7 @@ impl<'pest> FromPest<'pest> for UExp {
                             vars.push(Vid(next.as_str().to_string()));
                         }
                     }
-                },
+                }
                 Rule::fft_exp => Ok(Exp::fft(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::ifft_exp => Ok(Exp::ifft(Exp::from_pest(&mut pair.into_inner())?)),
@@ -1178,19 +1214,19 @@ impl<'pest> FromPest<'pest> for UExp {
                     let op = BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let exp = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     Ok(Exp::bin(op, Exp::lit(Size::zero()), exp))
-                },
+                }
                 Rule::challenge_exp => {
                     let mut inner = pair.into_inner();
                     let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let b = inner.next().is_some();
                     Ok(Exp::Challenge(tid, b))
-                },
+                }
                 Rule::random_exp => {
                     let mut inner = pair.into_inner();
                     let tid = Tid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     let b = inner.next().is_some();
                     Ok(Exp::Random(tid, b))
-                },
+                }
                 Rule::vec_exp => {
                     let inner = pair.into_inner();
                     let mut ve = Vec::new();
@@ -1198,50 +1234,50 @@ impl<'pest> FromPest<'pest> for UExp {
                         ve.push(Exp::from_pest(&mut Pairs::single(x))?);
                     }
                     Ok(Exp::vec(ve))
-                },
+                }
                 Rule::map_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::map(
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::reduce_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::reduce(
                         BinOp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::ram_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::ram(
                         Exp::Var(Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?),
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::pair_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::pair(
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::eval_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::eval(
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::dot_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::dot(
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::app_exp => {
                     let mut inner = pair.into_inner();
                     // Call a function
@@ -1249,23 +1285,29 @@ impl<'pest> FromPest<'pest> for UExp {
                     // Arguments
                     let params = Exps::from_pest(&mut inner)?;
                     Ok(Exp::app(func, params))
-                },
+                }
                 Rule::assert_exp => {
                     let mut inner = pair.into_inner();
                     let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     match inner.next() {
-                        Some(rest) => Ok(Exp::seq(Exp::assert(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        Some(rest) => Ok(Exp::seq(
+                            Exp::assert(cond),
+                            UExp::from_pest(&mut Pairs::single(rest))?,
+                        )),
                         None => Ok(Exp::assert(cond)),
                     }
-                },
+                }
                 Rule::verify_exp => {
                     let mut inner = pair.into_inner();
                     let cond = UExp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                     match inner.next() {
-                        Some(rest) => Ok(Exp::seq(Exp::verify(cond), UExp::from_pest(&mut Pairs::single(rest))?)),
+                        Some(rest) => Ok(Exp::seq(
+                            Exp::verify(cond),
+                            UExp::from_pest(&mut Pairs::single(rest))?,
+                        )),
                         None => Ok(Exp::verify(cond)),
                     }
-                },
+                }
                 Rule::let_exp => {
                     let mut inner = pair.into_inner();
                     let var = Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
@@ -1284,15 +1326,15 @@ impl<'pest> FromPest<'pest> for UExp {
                     // Type annotation is checked during type inference, not stored in AST
                     let _ = typ_ann;
                     Ok(Exp::letx(var, val, body))
-                },
+                }
                 Rule::log_exp => {
                     let mut inner = pair.into_inner();
                     Ok(Exp::logx(
                         Vid::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                         Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?
+                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
                     ))
-                },
+                }
                 Rule::record_exp => {
                     let mut inner = pair.into_inner();
                     let mut fields = Ctx::new();
@@ -1305,43 +1347,43 @@ impl<'pest> FromPest<'pest> for UExp {
                         }
                     }
                     Ok(Exp::Record(fields))
-                },
+                }
                 Rule::exp => Exp::from_pest(&mut pair.into_inner()),
-                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
             })
-            .map_infix(|lhs, op, rhs|
-                match op.clone().as_rule() {
-                    Rule::and_op => Ok(Exp::and(lhs?, rhs?)),
-                    Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
-                    Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
-                    Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
-                    Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
-                    Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
-                    Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
-                    Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
-                    Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
-                    _ => unreachable!(),
-                })
+            .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
+                Rule::and_op => Ok(Exp::and(lhs?, rhs?)),
+                Rule::add_op => Ok(Exp::add(lhs?, rhs?)),
+                Rule::sub_op => Ok(Exp::sub(lhs?, rhs?)),
+                Rule::mul_op => Ok(Exp::mul(lhs?, rhs?)),
+                Rule::div_op => Ok(Exp::div(lhs?, rhs?)),
+                Rule::pow_op => Ok(Exp::pow(lhs?, rhs?)),
+                Rule::rem_op => Ok(Exp::rem(lhs?, rhs?)),
+                Rule::concat_op => Ok(Exp::concat(lhs?, rhs?)),
+                Rule::eq_op => Ok(Exp::equ(lhs?, rhs?)),
+                _ => unreachable!(),
+            })
             .map_prefix(|op, rhs| match op.as_rule() {
                 Rule::unary_minus => Ok(Exp::sub(Exp::lit(Size::zero()), rhs?)),
                 _ => unreachable!(),
             })
-            .map_postfix(|lhs, op| {
-                match op.as_rule() {
-                    Rule::record_set_op => {
-                        let mut inner = op.into_inner();
-                        let field_name = Vid::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?.0;
-                        let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
-                        let value = Exp::from_pest(&mut Pairs::single(value_pair))?;
-                        Ok(Exp::set_record(lhs?, field_name, value))
-                    },
-                    Rule::proj_op => {
-                        let mut inner = op.into_inner();
-                        let field_name = Vid::from_pest(&mut inner)?.0;
-                        Ok(Exp::proj(lhs?, field_name))
-                    },
-                    _ => unreachable!(),
+            .map_postfix(|lhs, op| match op.as_rule() {
+                Rule::record_set_op => {
+                    let mut inner = op.into_inner();
+                    let field_name = Vid::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?
+                    .0;
+                    let value_pair = inner.next().ok_or(ConversionError::NoMatch)?;
+                    let value = Exp::from_pest(&mut Pairs::single(value_pair))?;
+                    Ok(Exp::set_record(lhs?, field_name, value))
                 }
+                Rule::proj_op => {
+                    let mut inner = op.into_inner();
+                    let field_name = Vid::from_pest(&mut inner)?.0;
+                    Ok(Exp::proj(lhs?, field_name))
+                }
+                _ => unreachable!(),
             })
             .parse(expression)
     }
@@ -1362,7 +1404,7 @@ impl<'pest> FromPest<'pest> for UExps {
                     exps.push(UExp::from_pest(&mut Pairs::single(pair))?);
                 }
                 Ok(Exps(exps))
-            },
+            }
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
@@ -1371,7 +1413,8 @@ impl<'pest> FromPest<'pest> for UExps {
 ////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn parser_lit() {
     let ex = "2";
@@ -1461,7 +1504,11 @@ fn parser_coef() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::coef(Exp::poly(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)]))))
+        Ok(Exp::coef(Exp::poly(Exp::vec(vec![
+            Exp::from(1),
+            Exp::from(2),
+            Exp::from(3)
+        ]))))
     );
 }
 
@@ -1471,7 +1518,11 @@ fn parser_ifft() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::ifft(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
+        Ok(Exp::ifft(Exp::vec(vec![
+            Exp::from(1),
+            Exp::from(2),
+            Exp::from(3)
+        ])))
     );
 }
 
@@ -1491,7 +1542,11 @@ fn parser_poly() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::poly(Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)])))
+        Ok(Exp::poly(Exp::vec(vec![
+            Exp::from(1),
+            Exp::from(2),
+            Exp::from(3)
+        ])))
     );
 }
 
@@ -1514,14 +1569,22 @@ fn parser_range() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
+        Ok(Exp::range(Range {
+            start: Size::from(0),
+            step: Size::from(1),
+            end: Size::from("N")
+        }))
     );
 
     let ex = "(N/2)..N";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::range(Range { start: Size::from("N").div(Size::from(2)), step: Size::from(1), end: Size::from("N") }))
+        Ok(Exp::range(Range {
+            start: Size::from("N").div(Size::from(2)),
+            step: Size::from(1),
+            end: Size::from("N")
+        }))
     );
 }
 
@@ -1534,15 +1597,23 @@ fn parser_for() {
         Ok(Exp::map(
             Exp::pow(Exp::from(3), Exp::varstr("i")),
             Vid::from("i"),
-            Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") }))
-        ));
+            Exp::range(Range {
+                start: Size::from(0),
+                step: Size::from(1),
+                end: Size::from("N")
+            })
+        ))
+    );
 }
 
 #[test]
 fn parser_pair() {
     let ex = "pair(x, y)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::pair(Exp::varstr("x"), Exp::varstr("y"))));
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::pair(Exp::varstr("x"), Exp::varstr("y")))
+    );
 }
 
 #[test]
@@ -1562,17 +1633,17 @@ fn parser_reduce() {
 fn parser_random() {
     let ex = "random<A>";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-    assert_eq!(
-        UExp::from_pest(&mut pairs),
-        Ok(Exp::random(Tid::from("A")))
-    );
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::random(Tid::from("A"))));
 }
 
 #[test]
 fn parser_challenge() {
     let ex = "challenge<F>";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::challenge(Tid::from("F"))));
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::challenge(Tid::from("F")))
+    );
 }
 
 #[test]
@@ -1594,11 +1665,7 @@ fn parser_let() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::letx(
-            Vid::from("x"),
-            Exp::from(2),
-            Exp::from(3)
-        ))
+        Ok(Exp::letx(Vid::from("x"), Exp::from(2), Exp::from(3)))
     );
 }
 
@@ -1608,11 +1675,7 @@ fn parser_log() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::logx(
-            Vid::from("x"),
-            Exp::from(2),
-            Exp::from(4)
-        ))
+        Ok(Exp::logx(Vid::from("x"), Exp::from(2), Exp::from(4)))
     );
 }
 
@@ -1622,11 +1685,10 @@ fn parser_assert() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::assert(
-            Exp::and(
-                Exp::equ(Exp::varstr("x"), Exp::from(2)),
-                Exp::bool(false))
-        ))
+        Ok(Exp::assert(Exp::and(
+            Exp::equ(Exp::varstr("x"), Exp::from(2)),
+            Exp::bool(false)
+        )))
     );
 }
 
@@ -1636,11 +1698,39 @@ fn parser_verify() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::verify(
-            Exp::and(
-                Exp::equ(Exp::varstr("x"), Exp::from(2)),
-                Exp::equ(Exp::from(3), Exp::from(4)))
-        ))
+        Ok(Exp::verify(Exp::and(
+            Exp::equ(Exp::varstr("x"), Exp::from(2)),
+            Exp::equ(Exp::from(3), Exp::from(4))
+        )))
+    );
+}
+
+#[test]
+fn parser_verify_multiple() {
+    let ex = "verify(x == 2); verify(3 == 4)";
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    assert_eq!(
+        UExps::from_pest(&mut pairs),
+        Ok(Exps(vec![Exp::seq(
+            Exp::verify(Exp::equ(Exp::varstr("x"), Exp::from(2))),
+            Exp::verify(Exp::equ(Exp::from(3), Exp::from(4)))
+        )]))
+    );
+}
+
+#[test]
+fn parser_verify_three() {
+    let ex = "verify(a == a); verify(b == b); verify(c == c)";
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    assert_eq!(
+        UExps::from_pest(&mut pairs),
+        Ok(Exps(vec![Exp::seq(
+            Exp::verify(Exp::equ(Exp::varstr("a"), Exp::varstr("a"))),
+            Exp::seq(
+                Exp::verify(Exp::equ(Exp::varstr("b"), Exp::varstr("b"))),
+                Exp::verify(Exp::equ(Exp::varstr("c"), Exp::varstr("c")))
+            )
+        )]))
     );
 }
 
@@ -1656,7 +1746,11 @@ fn parser_map() {
                 Exp::pow(Exp::varstr("s"), Exp::varstr("i"))
             ),
             Vid::from("i"),
-            Exp::range(Range { start: Size::from(0), step: Size::from(1), end: Size::from("N") })
+            Exp::range(Range {
+                start: Size::from(0),
+                step: Size::from(1),
+                end: Size::from("N")
+            })
         ))
     );
 }
@@ -1667,12 +1761,15 @@ fn parser_seq() {
     let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
     assert_eq!(
         UExps::from_pest(&mut pairs),
-        Ok(Exps(vec![
-            Exp::logx(Vid::from("x"), Exp::from(2),
-                Exp::logx(Vid::from("y"), Exp::from(3),
-                    Exp::letx(Vid::from("x"), Exp::from(2) * Exp::from(4),
-                        Exp::from(2))))
-        ]))
+        Ok(Exps(vec![Exp::logx(
+            Vid::from("x"),
+            Exp::from(2),
+            Exp::logx(
+                Vid::from("y"),
+                Exp::from(3),
+                Exp::letx(Vid::from("x"), Exp::from(2) * Exp::from(4), Exp::from(2))
+            )
+        )]))
     );
 }
 
@@ -1709,7 +1806,7 @@ fn parser_fun_univariate() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     let expected = Exp::fun(
         vec![Vid::from("x")],
-        (Exp::varstr("x") ^ Exp::from(2)) + (Exp::from(2) * Exp::varstr("x")) + Exp::from(3)
+        (Exp::varstr("x") ^ Exp::from(2)) + (Exp::from(2) * Exp::varstr("x")) + Exp::from(3),
     );
     assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
 }
@@ -1721,9 +1818,9 @@ fn parser_fun_multivariate() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     let expected = Exp::fun(
         vec![Vid::from("x"), Vid::from("y"), Vid::from("z")],
-        Exp::from(3) * Exp::varstr("x") + 
-        Exp::from(4) * Exp::varstr("y") + 
-        Exp::from(5) * Exp::varstr("x") * Exp::varstr("z")
+        Exp::from(3) * Exp::varstr("x")
+            + Exp::from(4) * Exp::varstr("y")
+            + Exp::from(5) * Exp::varstr("x") * Exp::varstr("z"),
     );
     assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
 }
@@ -1733,9 +1830,6 @@ fn parser_fun_simple() {
     // Test: fun x => x
     let ex = "fun x => x";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-    let expected = Exp::fun(
-        vec![Vid::from("x")],
-        Exp::varstr("x")
-    );
+    let expected = Exp::fun(vec![Vid::from("x")], Exp::varstr("x"));
     assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
 }

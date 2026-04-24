@@ -1,6 +1,6 @@
+use crate::analyses::groebner::{ElimTerm, GrevLexTerm, SparsePolynomial};
 use backend::ArkConfig;
 use thiserror::Error;
-use crate::analyses::groebner::{SparsePolynomial, GrevLexTerm, ElimTerm};
 
 /// Errors from static protocol analyses.
 #[derive(Error, Debug, Clone)]

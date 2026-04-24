@@ -41,8 +41,9 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args =
-            ZippelArgs::new(PathBuf::from("examples/schnorr_and_two_verify/schnorr_and_two_verify.zippel"));
+        let analysis_args = ZippelArgs::new(PathBuf::from(
+            "examples/schnorr_and_two_verify/schnorr_and_two_verify.zippel",
+        ));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });

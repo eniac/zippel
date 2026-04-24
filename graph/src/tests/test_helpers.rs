@@ -1,17 +1,16 @@
 /// Test helpers for graph operations testing
-/// 
+///
 /// This module provides utilities for creating and executing graphs
 /// to test algebraic properties and semantic correctness.
-
-use crate::{UDag, Node, Op, GOp, Ref, PRef, mk};
+use crate::{GOp, Node, Op, PRef, Ref, UDag, mk};
 use backend::op::HasOpFactory;
-use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
+use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
 use lang::id::Vid;
-use lang::typ::{Nothing, Qualifier, Distribution};
+use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use share::Ctx;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
@@ -36,12 +35,12 @@ impl<C: HasOpFactory> GraphBuilder<C> {
         match &mut self.dag[self.input_node] {
             Node::Inp(_, args) => {
                 let pref = PRef::from_var(
-                    vid.clone(), 
-                    self.input_node, 
-                    typ.clone(), 
-                    0, 
-                    Qualifier::Private, 
-                    Distribution::Nonuniform
+                    vid.clone(),
+                    self.input_node,
+                    typ.clone(),
+                    0,
+                    Qualifier::Private,
+                    Distribution::Nonuniform,
                 );
                 args.push(pref);
             }
@@ -73,15 +72,15 @@ pub fn execute_graph<C: HasOpFactory>(
     inputs: Ctx<Vid, Value<C>>,
 ) -> Option<Value<C>> {
     use petgraph::visit::Topo;
-    
+
     let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
     let inputs_arc = Arc::new(inputs);
-    
+
     // Get topological order using petgraph's Topo iterator
     let graph = dag.inner_graph();
     let mut topo = Topo::new(graph);
     let mut last_op_value = None;
-    
+
     while let Some(node_idx) = topo.next(graph) {
         match &dag[node_idx] {
             Node::Inp(_, _) | Node::Rel(_, _) => {
@@ -94,8 +93,35 @@ pub fn execute_graph<C: HasOpFactory>(
             }
         }
     }
-    
+
     last_op_value
+}
+
+/// Execute a graph with given inputs and return all computed node values.
+/// This is useful for inspecting individual node results (e.g. multiple Check nodes).
+pub fn execute_graph_all<C: HasOpFactory>(
+    dag: &UDag<C>,
+    inputs: Ctx<Vid, Value<C>>,
+) -> HashMap<NodeIndex, Value<C>> {
+    use petgraph::visit::Topo;
+
+    let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
+    let inputs_arc = Arc::new(inputs);
+
+    let graph = dag.inner_graph();
+    let mut topo = Topo::new(graph);
+
+    while let Some(node_idx) = topo.next(graph) {
+        match &dag[node_idx] {
+            Node::Inp(_, _) | Node::Rel(_, _) => {}
+            Node::Op(op, _) | Node::Transcr(op, _) => {
+                let value = evaluate_op(&**op, &computed, &inputs_arc);
+                computed.insert(node_idx, value);
+            }
+        }
+    }
+
+    computed
 }
 
 /// Evaluate an operation recursively
@@ -108,7 +134,16 @@ fn evaluate_op<C: HasOpFactory>(
         Op::Value(v) => v.clone(),
         Op::Ref(r, _) => match r {
             Ref::Node(n) => computed.get(n).expect("Node should be computed").clone(),
-            Ref::Var(vid, _) => inputs.get(vid).expect("Variable should exist").clone(),
+            Ref::Var(vid, node_idx) => {
+                // Resolves by `node_idx` first to ensure variable shadowing works.
+                if let Some(v) = computed.get(node_idx) {
+                    v.clone()
+                } else if let Some(v) = inputs.get(vid) {
+                    v.clone()
+                } else {
+                    panic!("Variable should be computed or provided as input")
+                }
+            }
         },
         Op::Bin(binop, a, b, _typ) => {
             let a_val = evaluate_op(a, computed, inputs);
@@ -128,7 +163,8 @@ fn evaluate_op<C: HasOpFactory>(
             }
         }
         Op::Vec(ops) => {
-            let values: Vec<Value<C>> = ops.iter()
+            let values: Vec<Value<C>> = ops
+                .iter()
                 .map(|o| evaluate_op(o, computed, inputs))
                 .collect();
             Value::value_vec(values)
@@ -156,13 +192,13 @@ fn evaluate_op<C: HasOpFactory>(
             Value::random(&mut rng, typ)
         }
         Op::Record(fields) => {
-            let evaluated_fields: Ctx<String, Value<C>> = fields.iter()
+            let evaluated_fields: Ctx<String, Value<C>> = fields
+                .iter()
                 .map(|(k, v)| (k.clone(), evaluate_op(v, computed, inputs)))
                 .collect();
             Value::Record(evaluated_fields)
         }
-        Op::Ifft(_) | Op::Fft(_) | Op::Poly(_) | Op::Mle(_) | 
-        Op::Coef(_) | Op::Eval(_, _) => {
+        Op::Ifft(_) | Op::Fft(_) | Op::Poly(_) | Op::Mle(_) | Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
         Op::Reduce(binop, v) => {
@@ -193,11 +229,7 @@ pub fn test_inputs<C: ArkConfig>() -> Ctx<Vid, Value<C>> {
 }
 
 /// Add a scalar input to context
-pub fn add_scalar_input<C: ArkConfig>(
-    ctx: &mut Ctx<Vid, Value<C>>,
-    name: &str,
-    value: u64,
-) {
+pub fn add_scalar_input<C: ArkConfig>(ctx: &mut Ctx<Vid, Value<C>>, name: &str, value: u64) {
     ctx.insert(&Vid::from(name), &scalar(value));
 }
 
@@ -236,7 +268,7 @@ mod tests {
         let mut builder = GraphBuilder::<TestConfig>::new();
         let _a_ref = builder.add_input("a", ATyp::scalar());
         let _b_ref = builder.add_input("b", ATyp::scalar());
-        
+
         let dag = builder.build();
         assert_eq!(dag.node_count(), 1); // Only input node
     }
@@ -246,7 +278,7 @@ mod tests {
         let s: Value<TestConfig> = scalar(42);
         let zero: Value<TestConfig> = zero_scalar();
         let one: Value<TestConfig> = one_scalar();
-        
+
         assert!(!values_equal(&s, &zero));
         assert!(!values_equal(&s, &one));
     }
@@ -256,24 +288,316 @@ mod tests {
         let mut builder = GraphBuilder::<TestConfig>::new();
         let a_ref = builder.add_input("a", ATyp::scalar());
         let b_ref = builder.add_input("b", ATyp::scalar());
-        
+
         let add_op = Op::add(
             Op::Ref(a_ref, ATyp::scalar()),
             Op::Ref(b_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(add_op);
-        
+
         let dag = builder.build();
-        
+
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "a", 3);
         add_scalar_input(&mut inputs, "b", 4);
-        
+
         let result = execute_graph(&dag, inputs);
         assert!(result.is_some());
-        
+
         let expected: Value<TestConfig> = scalar(7);
         assert!(values_equal(&result.unwrap(), &expected));
+    }
+
+    #[test]
+    fn test_execute_multiple_checks() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // Protocol with two separate verify statements → two Check nodes
+        let src = r#"
+            proto two_checks<F: Field>(public x: F, public y: F) where true {
+                verify(x == x);
+                verify(y == y)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(
+            checks.len(),
+            2,
+            "Protocol with two verify statements should have two check nodes"
+        );
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 5);
+        add_scalar_input(&mut inputs, "y", 7);
+        let computed = execute_graph_all(dag, inputs);
+
+        // Verify both check nodes produce Bool(true)
+        for (i, &check_idx) in checks.iter().enumerate() {
+            match computed.get(&check_idx) {
+                Some(Value::Bool(true)) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Bool(true)", i, v),
+                None => panic!("Check node {} was not computed", i),
+            }
+        }
+    }
+
+    #[test]
+    fn test_execute_single_check_conjunction() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // Protocol with single verify using && → one Check node
+        let src = r#"
+            proto and_check<F: Field>(public x: F, public y: F) where true {
+                verify(x == x && y == y)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(
+            checks.len(),
+            1,
+            "Protocol with single verify (&&) should have one check node"
+        );
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 5);
+        add_scalar_input(&mut inputs, "y", 7);
+        let computed = execute_graph_all(dag, inputs);
+
+        // The single check node should produce Bool(true)
+        match computed.get(&checks[0]) {
+            Some(Value::Bool(true)) => {}
+            Some(v) => panic!("Check node produced {:?}, expected Bool(true)", v),
+            None => panic!("Check node was not computed"),
+        }
+    }
+
+    #[test]
+    fn test_execute_scattered_checks() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // Protocol with scattered verify statements throughout the body
+        let src = r#"
+            proto scattered<F: Field>(public x: F, public y: F) where true {
+                a <- x + y;
+                verify(a == a);
+                b <- a + x;
+                verify(b == b)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(
+            checks.len(),
+            2,
+            "Scattered verify statements should produce 2 check nodes"
+        );
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 3);
+        add_scalar_input(&mut inputs, "y", 7);
+        let computed = execute_graph_all(dag, inputs);
+
+        // Verify all check nodes produce Bool(true)
+        for (i, &check_idx) in checks.iter().enumerate() {
+            match computed.get(&check_idx) {
+                Some(Value::Bool(true)) => {}
+                Some(v) => panic!("Check node {} produced {:?}, expected Bool(true)", i, v),
+                None => panic!("Check node {} was not computed", i),
+            }
+        }
+    }
+
+    #[test]
+    fn test_execute_checks_negative_second_fails() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // Second verify has a false condition (x != y)
+        let src = r#"
+            proto neg<F: Field>(public x: F, public y: F) where true {
+                verify(x == x);
+                verify(x == y)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(checks.len(), 2, "Should have 2 check nodes");
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 3);
+        add_scalar_input(&mut inputs, "y", 7);
+        let computed = execute_graph_all(dag, inputs);
+
+        // The second check should produce Bool(false)
+        match computed.get(&checks[1]) {
+            Some(Value::Bool(false)) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Bool(false)", v),
+            None => panic!("Second check node was not computed"),
+        }
+    }
+
+    #[test]
+    fn test_execute_checks_negative_first_fails() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // First verify has a false condition (x != y)
+        let src = r#"
+            proto neg2<F: Field>(public x: F, public y: F) where true {
+                verify(x == y);
+                verify(y == y)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let checks = dag.find_check();
+        assert_eq!(checks.len(), 2, "Should have 2 check nodes");
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 3);
+        add_scalar_input(&mut inputs, "y", 7);
+        let computed = execute_graph_all(dag, inputs);
+
+        // The first check should produce Bool(false)
+        match computed.get(&checks[0]) {
+            Some(Value::Bool(false)) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Bool(false)", v),
+            None => panic!("First check node was not computed"),
+        }
+    }
+
+    /// Cross-function boundary: inlined verify from a called function passes.
+    /// fn checked(x) { verify(x == x); x } inlined into protocol → both checks true.
+    #[test]
+    fn test_execute_cross_fn_verify_positive() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        let src = r#"
+            fn checked<F: Field>(x: F) -> F {
+                verify(x == x);
+                x
+            }
+            proto caller<F: Field>(public v: F) where v == v {
+                a <- checked(v);
+                verify(a == v)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+
+        let proto = gs.protocols()[0];
+        let checks = proto.find_check();
+        assert_eq!(
+            checks.len(),
+            2,
+            "Should have 2 check nodes (inlined + protocol)"
+        );
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "v", 5);
+        let computed = execute_graph_all(proto, inputs);
+
+        for (i, &idx) in checks.iter().enumerate() {
+            match computed.get(&idx) {
+                Some(Value::Bool(true)) => {}
+                Some(v) => panic!("Check {} produced {:?}, expected Bool(true)", i, v),
+                None => panic!("Check {} was not computed", i),
+            }
+        }
+    }
+
+    /// Cross-function boundary: inlined verify from a called function fails.
+    /// fn checked(x, y) { verify(x == y); x } — when x ≠ y the inlined check fails.
+    #[test]
+    fn test_execute_cross_fn_verify_negative() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        let src = r#"
+            fn checked<F: Field>(x: F, y: F) -> F {
+                verify(x == y);
+                x
+            }
+            proto caller<F: Field>(public a: F, public b: F) where a == a {
+                r <- checked(a, b);
+                verify(r == a)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+
+        let proto = gs.protocols()[0];
+        let checks = proto.find_check();
+        assert_eq!(
+            checks.len(),
+            2,
+            "Should have 2 check nodes (inlined + protocol)"
+        );
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "a", 3);
+        add_scalar_input(&mut inputs, "b", 7);
+        let computed = execute_graph_all(proto, inputs);
+
+        // The inlined verify(a == b) should fail; the protocol's own verify(r == a) passes.
+        match computed.get(&checks[0]) {
+            Some(Value::Bool(false)) => {}
+            Some(v) => panic!("First check node produced {:?}, expected Bool(false)", v),
+            None => panic!("First check node was not computed"),
+        }
+        match computed.get(&checks[1]) {
+            Some(Value::Bool(true)) => {}
+            Some(v) => panic!("Second check node produced {:?}, expected Bool(true)", v),
+            None => panic!("Second check node was not computed"),
+        }
     }
 }

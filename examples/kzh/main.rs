@@ -93,10 +93,12 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_y_size = 1usize << NY;
     let d_x_size = 1usize << NX;
 
-    let g_cols: Vec<<ArkBls12_381 as ArkConfig>::G1> =
-        (0..h_y_size).map(|_| <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)).collect();
-    let tau_rows: Vec<<ArkBls12_381 as ArkConfig>::F> =
-        (0..d_x_size).map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng)).collect();
+    let g_cols: Vec<<ArkBls12_381 as ArkConfig>::G1> = (0..h_y_size)
+        .map(|_| <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng))
+        .collect();
+    let tau_rows: Vec<<ArkBls12_381 as ArkConfig>::F> = (0..d_x_size)
+        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .collect();
 
     let h_xy_vals: Vec<_> = (0..h_xy_size)
         .map(|k| {
@@ -128,10 +130,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_evals".to_string()), Value::VecScalar(f_evals)),
-        (Vid("h_xy".to_string()),    Value::VecG1(h_xy_vals)),
-        (Vid("h_y".to_string()),     Value::VecG1(h_y_vals)),
-        (Vid("d_x".to_string()),     Value::VecG1(d_x_vals)),
+        (Vid("h_xy".to_string()), Value::VecG1(h_xy_vals)),
+        (Vid("h_y".to_string()), Value::VecG1(h_y_vals)),
+        (Vid("d_x".to_string()), Value::VecG1(d_x_vals)),
         (Vid("v_prime".to_string()), Value::G2(v_prime)),
-        (Vid("v_x".to_string()),     Value::VecG2(v_x_vals)),
+        (Vid("v_x".to_string()), Value::VecG2(v_x_vals)),
     ])
 }

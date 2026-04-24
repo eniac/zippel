@@ -1,11 +1,11 @@
 use crate::id::Tid;
-use share::{Pretty, DocAllocator, Set, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
+use crate::parser::*;
 use crate::typ::range::{Range, RangeTraversal};
 use crate::typ::Size;
-use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 
@@ -55,21 +55,26 @@ impl<N> Kind<N> {
     pub fn is_group(&self) -> bool {
         match self {
             Kind::Group | Kind::Pairing(_, _) => true,
-            _  => false,
+            _ => false,
         }
     }
     pub fn is_pairing(&self, a: &Tid, b: &Tid) -> bool {
         match self {
-            Kind::Pairing(x, y) =>
-                (x == a && y == b) || (y == a && x == b),
-            _ => false
+            Kind::Pairing(x, y) => (x == a && y == b) || (y == a && x == b),
+            _ => false,
         }
     }
 
     pub fn get_pairing_of(&self, a: &Tid) -> Option<(Tid, Tid)> {
         match self {
-            Kind::Pairing(x, y) => if x == a || y == a { Some((x.clone(), y.clone())) } else { None }
-            _ => None
+            Kind::Pairing(x, y) => {
+                if x == a || y == a {
+                    Some((x.clone(), y.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -91,14 +96,16 @@ impl<N> ToTraversal1<N> for Kind<N> {
 
 /// Range traversal for Kind
 impl<N: Clone> RangeTraversal<N> for Kind<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
         match self {
             Kind::Range(r) => Ok(Kind::Range(f(r)?)),
             _ => Ok(self),
         }
     }
 }
-
 
 impl<'a, D, A, N> Pretty<'a, D, A> for Kind<N>
 where
@@ -111,12 +118,11 @@ where
         match self {
             Kind::Field => allocator.text("Field"),
             Kind::Group => allocator.text(format!("Group")),
-            Kind::Scalar(f) =>
-                allocator.concat([
-                    allocator.text("Scalar<"),
-                    allocator.intersperse(f.iter().map(|t| allocator.text(format!("{}", t))), ", "),
-                    allocator.text(">"),
-                ]),
+            Kind::Scalar(f) => allocator.concat([
+                allocator.text("Scalar<"),
+                allocator.intersperse(f.iter().map(|t| allocator.text(format!("{}", t))), ", "),
+                allocator.text(">"),
+            ]),
             Kind::Pairing(g1, g2) => allocator.text(format!("Pairing<{}, {}>", g1, g2)),
             Kind::Range(r) => r.pretty(allocator),
             Kind::SizeVar => allocator.text("Size"),
@@ -167,13 +173,13 @@ impl<'pest> FromPest<'pest> for UKind {
                     )));
                 }
                 Ok(Kind::Scalar(set))
-            },
+            }
             Rule::pairing_ty => {
                 let mut inner = pair.into_inner();
                 let g1 = Tid::from_pest(&mut inner)?;
                 let g2 = Tid::from_pest(&mut inner)?;
                 Ok(Kind::Pairing(g1, g2))
-            },
+            }
             Rule::range_ty => Ok(Kind::Range(Range::from_pest(&mut pair.into_inner())?)),
             Rule::positive => {
                 let n: u32 = pair.as_str().parse().unwrap();
@@ -182,7 +188,7 @@ impl<'pest> FromPest<'pest> for UKind {
                     step: Size::one(),
                     end: Size::Lit(n + 1),
                 }))
-            },
+            }
             Rule::size_var_ty => Ok(Kind::SizeVar),
             Rule::size_ref_ty => {
                 let size = Size::from_pest(&mut pair.into_inner())?;
@@ -191,7 +197,7 @@ impl<'pest> FromPest<'pest> for UKind {
                     step: Size::one(),
                     end: size + Size::one(),
                 }))
-            },
+            }
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }

@@ -1,13 +1,13 @@
 use from_pest::ConversionError;
-use thiserror::Error;
 use pest::iterators::Pair;
+use thiserror::Error;
 
-use crate::id::{Vid, Tid};
-use crate::ast::sig::USig;
 use crate::ast::arg::UArgs;
+use crate::ast::sig::USig;
+use crate::id::{Tid, Vid};
 use crate::parser::Rule;
-use crate::typ::{Size, UKind, EvalError, UTypeVars};
 use crate::typ::range::RangeError;
+use crate::typ::{EvalError, Size, UKind, UTypeVars};
 use share::Set;
 
 #[derive(Error, PartialEq, Debug)]
@@ -37,7 +37,7 @@ pub enum InputError<'pest> {
     #[error("ReservedType: Bool is a reserved type")]
     ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
-    EmptyDecl(Vid, UTypeVars, UArgs)
+    EmptyDecl(Vid, UTypeVars, UArgs),
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {
