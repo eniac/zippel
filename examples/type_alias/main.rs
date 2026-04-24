@@ -39,8 +39,7 @@ fn main() {
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
     let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args =
-            ZippelArgs::new(PathBuf::from("examples/type_alias/type_alias.zippel"));
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/type_alias/type_alias.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });

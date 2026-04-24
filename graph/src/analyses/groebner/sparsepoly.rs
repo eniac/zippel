@@ -1,13 +1,14 @@
-use ark_ff::Field;
 use crate::PRef;
 use crate::analyses::groebner::monomial::Monomial;
-use core::ops::{Add, Neg, Sub, Mul, AddAssign, MulAssign, SubAssign};
-use std::iter::Sum;
-use share::{Ctx, Set, Pretty, DocAllocator, DocBuilder};
-use std::fmt::Debug;
+use ark_ff::Field;
+use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
+use std::fmt::Debug;
+use std::iter::Sum;
 
-#[cfg(test)] use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
+#[cfg(test)]
+use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
 
 /// A sparse polynomial is a polynomial represented as a map from terms to their coefficients.
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.
@@ -122,7 +123,7 @@ impl<F: Field, T: Monomial> Mul for SparsePolynomial<F, T> {
 }
 
 impl<F: Field, T: Monomial> Sum for SparsePolynomial<F, T> {
-    fn sum<I: Iterator<Item=Self>>(iter: I) -> Self {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         let mut s = SparsePolynomial::zero();
         for x in iter {
             s += x;
@@ -157,7 +158,7 @@ impl<F: Field, T: Monomial> fmt::Display for SparsePolynomial<F, T> {
                 } else if coeff.is_one() {
                     terms.push(format!("+ {}", term));
                 } else if coeff.is_zero() {
-                    continue
+                    continue;
                 } else if coeff.clone().neg().is_one() {
                     terms.push(format!("- {}", term));
                     first = false;
@@ -178,9 +179,7 @@ impl<F: Field, T: Monomial> fmt::Display for SparsePolynomial<F, T> {
 /// Ad-hoc interface to SparsePolynomial with vector field coefficients
 impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     pub fn zero() -> Self {
-        SparsePolynomial {
-            terms: Ctx::new()
-        }
+        SparsePolynomial { terms: Ctx::new() }
     }
 
     pub fn is_zero(&self) -> bool {
@@ -190,21 +189,21 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     pub fn lit(f: &F) -> SparsePolynomial<F, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![]), f);
-        SparsePolynomial {
-            terms
-        }
+        SparsePolynomial { terms }
     }
 
     pub fn var(v: &PRef) -> SparsePolynomial<F, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![(v.clone(), 1)]), &F::one());
-        SparsePolynomial {
-            terms
-        }
+        SparsePolynomial { terms }
     }
 
     pub fn degree(&self) -> usize {
-        self.terms.iter().map(|(t, _)| t.degree()).max().unwrap_or(0)
+        self.terms
+            .iter()
+            .map(|(t, _)| t.degree())
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn is_constant(&self) -> bool {
@@ -245,7 +244,11 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     }
 
     pub fn vars(&self) -> Set<PRef> {
-        self.terms.keys().into_iter().flat_map(|t| t.vars()).collect()
+        self.terms
+            .keys()
+            .into_iter()
+            .flat_map(|t| t.vars())
+            .collect()
     }
 
     pub fn flat_map_vars<FF: Fn(PRef) -> Self>(self, f: &FF) -> SparsePolynomial<F, T> {
@@ -264,11 +267,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         new_poly
     }
 
-    pub fn mul_by_term_and_scalar(
-        &self,
-        scalar: F,
-        term: &T,
-    ) -> SparsePolynomial<F, T> {
+    pub fn mul_by_term_and_scalar(&self, scalar: F, term: &T) -> SparsePolynomial<F, T> {
         if scalar.is_zero() {
             return SparsePolynomial::zero();
         }
@@ -286,16 +285,13 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         combined_terms.retain(|_, c| !c.is_zero()); // Remove zero coefficients
 
         SparsePolynomial {
-            terms: combined_terms
+            terms: combined_terms,
         }
     }
 
     /// Compute the "syzygy" polynomial of two sparse polynomials
     /// for Buchberger's algorithm.
-    pub fn s_poly(
-        &self,
-        other: &SparsePolynomial<F, T>,
-    ) -> SparsePolynomial<F, T> {
+    pub fn s_poly(&self, other: &SparsePolynomial<F, T>) -> SparsePolynomial<F, T> {
         if self.is_zero() || other.is_zero() {
             return SparsePolynomial::zero();
         }
@@ -312,15 +308,23 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         let lcm_t = term_self.lcm(term_other);
 
         // Multiplier for self: (lcm_t / term_self) * (1 / coeff_self)
-        let multiplier_term_self = (lcm_t.clone() / term_self.clone()).expect("Term division failed for LCM/LT");
-        let multiplier_scalar_self = coeff_self.inverse().expect("Leading coefficient must be non-zero");
+        let multiplier_term_self =
+            (lcm_t.clone() / term_self.clone()).expect("Term division failed for LCM/LT");
+        let multiplier_scalar_self = coeff_self
+            .inverse()
+            .expect("Leading coefficient must be non-zero");
 
         // Multiplier for other: (lcm_t / term_other) * (1 / coeff_other)
-        let multiplier_term_other = (lcm_t.clone() / term_other.clone()).expect("Term division failed for LCM/LT");
-        let multiplier_scalar_other = coeff_other.inverse().expect("Leading coefficient must be non-zero");
+        let multiplier_term_other =
+            (lcm_t.clone() / term_other.clone()).expect("Term division failed for LCM/LT");
+        let multiplier_scalar_other = coeff_other
+            .inverse()
+            .expect("Leading coefficient must be non-zero");
 
-        let mut poly_self_scaled = self.mul_by_term_and_scalar(multiplier_scalar_self, &multiplier_term_self);
-        let poly_other_scaled = other.mul_by_term_and_scalar(multiplier_scalar_other, &multiplier_term_other);
+        let mut poly_self_scaled =
+            self.mul_by_term_and_scalar(multiplier_scalar_self, &multiplier_term_self);
+        let poly_other_scaled =
+            other.mul_by_term_and_scalar(multiplier_scalar_other, &multiplier_term_other);
 
         // S = poly_self_scaled - poly_other_scaled
         poly_self_scaled -= poly_other_scaled;
@@ -340,7 +344,10 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     /// - `lhs`: The factored polynomial part with `eliminate=true` variables.
     /// - `rhs`: The negated polynomial part with `eliminate=false` variables.
     /// - `divided_vars`: A `HashSet` of variables present in the `M_gcd` that was factored out.
-    pub fn isolate_elimination_vars<FF: Fn(&PRef)->bool>(&self, factor: &FF) -> (Self, Self, Set<PRef>) {
+    pub fn isolate_elimination_vars<FF: Fn(&PRef) -> bool>(
+        &self,
+        factor: &FF,
+    ) -> (Self, Self, Set<PRef>) {
         let mut tmp_lhs_terms: Ctx<T, F> = Ctx::new();
         let mut tmp_rhs_terms: Ctx<T, F> = Ctx::new();
 
@@ -365,7 +372,6 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             .reduce(|acc, item| acc.gcd(&item)) // Use the gcd method
             .unwrap_or_default(); // Default to constant if tmp_lhs_terms is empty
 
-
         // 2.5: Remove factored variables from gcd by dividing
         for pv in tmp_lhs_terms.keys().iter().flat_map(|pv| pv.vars()) {
             let m_pv = T::from(vec![(pv.clone(), 1)]);
@@ -383,8 +389,9 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             for (monomial, coefficient) in tmp_lhs_terms.into_iter() {
                 // Perform division: monomial / m_gcd
                 match monomial.div(m_gcd.clone()) {
-                    Some(factored_monomial) =>
-                        final_lhs_terms.insert(&factored_monomial, &coefficient),
+                    Some(factored_monomial) => {
+                        final_lhs_terms.insert(&factored_monomial, &coefficient)
+                    }
                     None => panic!("Failed to divide monomial by GCD"),
                 };
             }
@@ -429,17 +436,29 @@ where
     }
 }
 
-#[cfg(test)] pub fn elim_sparse_poly<F: Field>(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, ElimTerm> {
+#[cfg(test)]
+pub fn elim_sparse_poly<F: Field>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, ElimTerm> {
     let mut vars = Set::new();
 
-    let processed_terms =
-        terms.into_iter()
-        .map(|(coeff, term_vec)|
-            (ElimTerm::from(term_vec.into_iter().map(|(k, v)| {
-                let var = k.clone();
-                vars.insert(var.clone());
-                (var, v)
-            }).collect::<Vec<_>>()), coeff.into()))
+    let processed_terms = terms
+        .into_iter()
+        .map(|(coeff, term_vec)| {
+            (
+                ElimTerm::from(
+                    term_vec
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let var = k.clone();
+                            vars.insert(var.clone());
+                            (var, v)
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                coeff.into(),
+            )
+        })
         .collect();
 
     SparsePolynomial {
@@ -447,17 +466,29 @@ where
     }
 }
 
-#[cfg(test)] pub fn grevlex_sparse_poly<F: Field>(terms: Vec<(F, Vec<(&PRef, usize)>)>) -> SparsePolynomial<F, GrevLexTerm> {
+#[cfg(test)]
+pub fn grevlex_sparse_poly<F: Field>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, GrevLexTerm> {
     let mut vars = Set::new();
 
-    let processed_terms =
-        terms.into_iter()
-        .map(|(coeff, term_vec)|
-            (GrevLexTerm::from(term_vec.into_iter().map(|(k, v)| {
-                let var = k.clone();
-                vars.insert(var.clone());
-                (var, v)
-            }).collect::<Vec<_>>()), coeff.into()))
+    let processed_terms = terms
+        .into_iter()
+        .map(|(coeff, term_vec)| {
+            (
+                GrevLexTerm::from(
+                    term_vec
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let var = k.clone();
+                            vars.insert(var.clone());
+                            (var, v)
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                coeff.into(),
+            )
+        })
         .collect();
 
     SparsePolynomial {

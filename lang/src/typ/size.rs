@@ -1,15 +1,15 @@
 use from_pest::{ConversionError, FromPest};
+use lazy_static::lazy_static;
 use pest::iterators::Pairs;
 use pest::pratt_parser::{Assoc, Op, PrattParser};
-use std::ops::{Add, Sub, Mul, Div, BitXor};
 use std::fmt;
-use lazy_static::lazy_static;
+use std::ops::{Add, BitXor, Div, Mul, Sub};
 use thiserror::Error;
 
 use crate::id::Tid;
 use crate::parser::*;
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use share::{Ctx, Set};
-use share::{Pretty, DocBuilder, DocAllocator, BoxAllocator};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Size {
@@ -81,8 +81,8 @@ impl Size {
 
     pub fn eval(&self, ctx: &Ctx<Tid, usize>) -> Result<usize, EvalError> {
         match self {
-            Size::Var(id) =>
-                ctx.get(id)
+            Size::Var(id) => ctx
+                .get(id)
                 .map_or(Err(EvalError::VariableNotFound(id.clone())), |x| Ok(*x)),
             Size::Lit(i) => Ok(*i as usize),
             Size::Add(box a, box b) => {
@@ -348,13 +348,38 @@ where
         match self {
             Size::Var(id) => id.pretty(allocator),
             Size::Lit(n) => allocator.text(n.to_string()),
-            Size::Add(box a, box b) => a.pretty(allocator).append(allocator.text(" + ")).append(b.pretty(allocator)),
-            Size::Sub(box a, box b) => a.pretty(allocator).append(allocator.text(" - ")).append(b.pretty(allocator)),
-            Size::Mul(box a, box b) => a.pretty(allocator).append(allocator.text(" * ")).append(b.pretty(allocator)),
-            Size::Div(box a, box b) => a.pretty(allocator).append(allocator.text(" / ")).append(b.pretty(allocator)),
-            Size::Pow(box a, box b) => a.pretty(allocator).append(allocator.text(" ^ ")).append(b.pretty(allocator)),
-            Size::Max(box a, box b) => allocator.text("max(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
-            Size::Min(box a, box b) => allocator.text("min(").append(a.pretty(allocator)).append(allocator.text(", ")).append(b.pretty(allocator)).append(allocator.text(")")),
+            Size::Add(box a, box b) => a
+                .pretty(allocator)
+                .append(allocator.text(" + "))
+                .append(b.pretty(allocator)),
+            Size::Sub(box a, box b) => a
+                .pretty(allocator)
+                .append(allocator.text(" - "))
+                .append(b.pretty(allocator)),
+            Size::Mul(box a, box b) => a
+                .pretty(allocator)
+                .append(allocator.text(" * "))
+                .append(b.pretty(allocator)),
+            Size::Div(box a, box b) => a
+                .pretty(allocator)
+                .append(allocator.text(" / "))
+                .append(b.pretty(allocator)),
+            Size::Pow(box a, box b) => a
+                .pretty(allocator)
+                .append(allocator.text(" ^ "))
+                .append(b.pretty(allocator)),
+            Size::Max(box a, box b) => allocator
+                .text("max(")
+                .append(a.pretty(allocator))
+                .append(allocator.text(", "))
+                .append(b.pretty(allocator))
+                .append(allocator.text(")")),
+            Size::Min(box a, box b) => allocator
+                .text("min(")
+                .append(a.pretty(allocator))
+                .append(allocator.text(", "))
+                .append(b.pretty(allocator))
+                .append(allocator.text(")")),
         }
     }
 
@@ -392,34 +417,31 @@ impl<'pest> FromPest<'pest> for Size {
         expression: &mut Pairs<'pest, Self::Rule>,
     ) -> Result<Self, ConversionError<Self::FatalError>> {
         SIZE_PARSER
-            .map_primary(|pair|
-                match pair.as_rule() {
-                    Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
-                    Rule::size_var => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
-                    Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
-                    _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
-                })
-            .map_infix(|lhs, op, rhs|
-                match op.clone().as_rule() {
-                    Rule::add_op => Ok(lhs? + rhs?),
-                    Rule::sub_op => Ok(lhs? - rhs?),
-                    Rule::mul_op => Ok(lhs? * rhs?),
-                    Rule::div_op => Ok(lhs? / rhs?),
-                    Rule::pow_op => Ok(lhs? ^ rhs?),
-                    _ => unreachable!(),
-                })
+            .map_primary(|pair| match pair.as_rule() {
+                Rule::size_ty => Size::from_pest(&mut pair.into_inner()),
+                Rule::size_var => Ok(Size::var(Tid::from_pest(&mut pair.into_inner())?)),
+                Rule::positive => Ok(Size::Lit(pair.as_str().parse().unwrap())),
+                _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
+            })
+            .map_infix(|lhs, op, rhs| match op.clone().as_rule() {
+                Rule::add_op => Ok(lhs? + rhs?),
+                Rule::sub_op => Ok(lhs? - rhs?),
+                Rule::mul_op => Ok(lhs? * rhs?),
+                Rule::div_op => Ok(lhs? / rhs?),
+                Rule::pow_op => Ok(lhs? ^ rhs?),
+                _ => unreachable!(),
+            })
             .parse(expression)
     }
 }
 
 /// Arbitrary instance for Size
-#[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
+#[cfg(test)]
+use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
 impl<'a> Arbitrary<'a> for Size {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let variant = u.choose(&[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-        ])?;
+        let variant = u.choose(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9])?;
 
         Ok(match variant {
             0 => Size::Var(u.arbitrary()?),
@@ -439,20 +461,30 @@ impl<'a> Arbitrary<'a> for Size {
 ////////////////////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////////////////////
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn size_parser() {
     let mut pairs = ZippelParser::parse(Rule::size_ty, "N+1").unwrap();
     assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::varstr("N") + 1);
 
     pairs = ZippelParser::parse(Rule::size_ty, "2*N+1").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), Size::from(2) * Size::varstr("N") + 1);
+    assert_eq!(
+        Size::from_pest(&mut pairs).unwrap(),
+        Size::from(2) * Size::varstr("N") + 1
+    );
 
     pairs = ZippelParser::parse(Rule::size_ty, "2^N*2").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ Size::varstr("N")) * 2);
+    assert_eq!(
+        Size::from_pest(&mut pairs).unwrap(),
+        (Size::from(2) ^ Size::varstr("N")) * 2
+    );
 
     pairs = ZippelParser::parse(Rule::size_ty, "2^(N-1) / N").unwrap();
-    assert_eq!(Size::from_pest(&mut pairs).unwrap(), (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N"));
+    assert_eq!(
+        Size::from_pest(&mut pairs).unwrap(),
+        (Size::from(2) ^ (Size::varstr("N") - 1)) / Size::varstr("N")
+    );
 }
 
 #[cfg(test)]
@@ -487,7 +519,10 @@ mod tests {
     #[test]
     fn test_size_neg() {
         let size = Size::Lit(5).neg();
-        assert_eq!(size, Size::Sub(Box::new(Size::Lit(0)), Box::new(Size::Lit(5))));
+        assert_eq!(
+            size,
+            Size::Sub(Box::new(Size::Lit(0)), Box::new(Size::Lit(5)))
+        );
     }
 
     #[test]
@@ -580,7 +615,10 @@ mod tests {
         let size = Size::Lit(3) - Size::Lit(10);
         let ctx = Ctx::new();
         let result = size.eval(&ctx);
-        assert!(matches!(result, Err(EvalError::UnderflowBySubtraction(_, _))));
+        assert!(matches!(
+            result,
+            Err(EvalError::UnderflowBySubtraction(_, _))
+        ));
     }
 
     #[test]
@@ -638,7 +676,10 @@ mod tests {
     #[test]
     fn test_add_u32() {
         let size = Size::Lit(5) + 10u32;
-        assert_eq!(size, Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+        assert_eq!(
+            size,
+            Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
+        );
     }
 
     #[test]
@@ -646,7 +687,10 @@ mod tests {
         let a = Size::Lit(5);
         let b = Size::Lit(10);
         let size = &a + &b;
-        assert_eq!(size, Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+        assert_eq!(
+            size,
+            Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
+        );
     }
 
     #[test]
@@ -658,7 +702,10 @@ mod tests {
     #[test]
     fn test_sub_u32() {
         let size = Size::Lit(10) - 5u32;
-        assert_eq!(size, Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5))));
+        assert_eq!(
+            size,
+            Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5)))
+        );
     }
 
     #[test]
@@ -666,7 +713,10 @@ mod tests {
         let a = Size::Lit(10);
         let b = Size::Lit(5);
         let size = &a - &b;
-        assert_eq!(size, Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5))));
+        assert_eq!(
+            size,
+            Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5)))
+        );
     }
 
     #[test]
@@ -678,7 +728,10 @@ mod tests {
     #[test]
     fn test_mul_u32() {
         let size = Size::Lit(5) * 10u32;
-        assert_eq!(size, Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+        assert_eq!(
+            size,
+            Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
+        );
     }
 
     #[test]
@@ -686,7 +739,10 @@ mod tests {
         let a = Size::Lit(5);
         let b = Size::Lit(10);
         let size = &a * &b;
-        assert_eq!(size, Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10))));
+        assert_eq!(
+            size,
+            Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
+        );
     }
 
     #[test]
@@ -698,7 +754,10 @@ mod tests {
     #[test]
     fn test_div_u32() {
         let size = Size::Lit(20) / 4u32;
-        assert_eq!(size, Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4))));
+        assert_eq!(
+            size,
+            Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4)))
+        );
     }
 
     #[test]
@@ -706,7 +765,10 @@ mod tests {
         let a = Size::Lit(20);
         let b = Size::Lit(4);
         let size = &a / &b;
-        assert_eq!(size, Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4))));
+        assert_eq!(
+            size,
+            Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4)))
+        );
     }
 
     #[test]
@@ -718,7 +780,10 @@ mod tests {
     #[test]
     fn test_pow_u32() {
         let size = Size::Lit(2) ^ 5u32;
-        assert_eq!(size, Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5))));
+        assert_eq!(
+            size,
+            Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5)))
+        );
     }
 
     #[test]
@@ -726,7 +791,10 @@ mod tests {
         let a = Size::Lit(2);
         let b = Size::Lit(5);
         let size = &a ^ &b;
-        assert_eq!(size, Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5))));
+        assert_eq!(
+            size,
+            Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5)))
+        );
     }
 
     #[test]

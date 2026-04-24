@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod op_construction {
     use crate::tests::test_helpers::*;
-    use crate::{Op, GOp};
+    use crate::{GOp, Op};
     use backend::{ATyp, Value};
     use lang::ast::BinOp;
 
@@ -20,7 +20,7 @@ mod op_construction {
     fn test_op_value_scalar() {
         let val = scalar::<C>(42);
         let op: GOp<C> = Op::Value(val.clone());
-        
+
         match op {
             Op::Value(v) => assert!(values_equal(&v, &val)),
             _ => panic!("Expected Value operation"),
@@ -31,7 +31,7 @@ mod op_construction {
     fn test_op_value_zero() {
         let zero = zero_scalar::<C>();
         let op: GOp<C> = Op::Value(zero.clone());
-        
+
         match &op {
             Op::Value(v) => assert!(values_equal(v, &zero)),
             _ => panic!("Expected Value operation"),
@@ -42,7 +42,7 @@ mod op_construction {
     fn test_op_value_one() {
         let one = one_scalar::<C>();
         let op: GOp<C> = Op::Value(one.clone());
-        
+
         match &op {
             Op::Value(v) => assert!(values_equal(v, &one)),
             _ => panic!("Expected Value operation"),
@@ -58,13 +58,9 @@ mod op_construction {
         // 0 + v should simplify to v
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::add(
-            Op::Value(zero),
-            Op::Value(v.clone()),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::add(Op::Value(zero), Op::Value(v.clone()), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -76,13 +72,9 @@ mod op_construction {
         // v + 0 should simplify to v
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::add(
-            Op::Value(v.clone()),
-            Op::Value(zero),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::add(Op::Value(v.clone()), Op::Value(zero), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -95,13 +87,9 @@ mod op_construction {
         let v1 = scalar::<C>(3);
         let v2 = scalar::<C>(4);
         let expected = scalar::<C>(7);
-        
-        let op: GOp<C> = Op::add(
-            Op::Value(v1),
-            Op::Value(v2),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::add(Op::Value(v1), Op::Value(v2), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &expected)),
             _ => panic!("Expected Value after addition"),
@@ -117,13 +105,9 @@ mod op_construction {
         // v - 0 should simplify to v
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::sub(
-            Op::Value(v.clone()),
-            Op::Value(zero),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::sub(Op::Value(v.clone()), Op::Value(zero), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -136,13 +120,9 @@ mod op_construction {
         let v1 = scalar::<C>(10);
         let v2 = scalar::<C>(3);
         let expected = scalar::<C>(7);
-        
-        let op: GOp<C> = Op::sub(
-            Op::Value(v1),
-            Op::Value(v2),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::sub(Op::Value(v1), Op::Value(v2), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &expected)),
             _ => panic!("Expected Value after subtraction"),
@@ -158,13 +138,9 @@ mod op_construction {
         // 0 * v should simplify to 0
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::mul(
-            Op::Value(zero.clone()),
-            Op::Value(v),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::mul(Op::Value(zero.clone()), Op::Value(v), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &zero)),
             _ => panic!("Expected simplification to zero"),
@@ -176,13 +152,9 @@ mod op_construction {
         // v * 0 should simplify to 0
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::mul(
-            Op::Value(v),
-            Op::Value(zero.clone()),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::mul(Op::Value(v), Op::Value(zero.clone()), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &zero)),
             _ => panic!("Expected simplification to zero"),
@@ -194,13 +166,9 @@ mod op_construction {
         // 1 * v should simplify to v
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
-        
-        let op: GOp<C> = Op::mul(
-            Op::Value(one),
-            Op::Value(v.clone()),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::mul(Op::Value(one), Op::Value(v.clone()), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -212,13 +180,9 @@ mod op_construction {
         // v * 1 should simplify to v
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
-        
-        let op: GOp<C> = Op::mul(
-            Op::Value(v.clone()),
-            Op::Value(one),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::mul(Op::Value(v.clone()), Op::Value(one), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -231,13 +195,9 @@ mod op_construction {
         let v1 = scalar::<C>(3);
         let v2 = scalar::<C>(4);
         let expected = scalar::<C>(12);
-        
-        let op: GOp<C> = Op::mul(
-            Op::Value(v1),
-            Op::Value(v2),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::mul(Op::Value(v1), Op::Value(v2), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &expected)),
             _ => panic!("Expected Value after multiplication"),
@@ -253,13 +213,9 @@ mod op_construction {
         // 0 / v should simplify to 0
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let op: GOp<C> = Op::div(
-            Op::Value(zero.clone()),
-            Op::Value(v),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::div(Op::Value(zero.clone()), Op::Value(v), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &zero)),
             _ => panic!("Expected simplification to zero"),
@@ -271,13 +227,9 @@ mod op_construction {
         // v / 1 should simplify to v
         let v = scalar::<C>(42);
         let one = one_scalar::<C>();
-        
-        let op: GOp<C> = Op::div(
-            Op::Value(v.clone()),
-            Op::Value(one),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::div(Op::Value(v.clone()), Op::Value(one), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &v)),
             _ => panic!("Expected simplification to Value"),
@@ -290,13 +242,9 @@ mod op_construction {
         let v1 = scalar::<C>(12);
         let v2 = scalar::<C>(3);
         let expected = scalar::<C>(4);
-        
-        let op: GOp<C> = Op::div(
-            Op::Value(v1),
-            Op::Value(v2),
-            ATyp::scalar(),
-        );
-        
+
+        let op: GOp<C> = Op::div(Op::Value(v1), Op::Value(v2), ATyp::scalar());
+
         match op {
             Op::Value(result) => assert!(values_equal(&result, &expected)),
             _ => panic!("Expected Value after division"),
@@ -308,12 +256,8 @@ mod op_construction {
     fn test_op_div_by_zero() {
         let v = scalar::<C>(42);
         let zero = zero_scalar::<C>();
-        
-        let _op: GOp<C> = Op::div(
-            Op::Value(v),
-            Op::Value(zero),
-            ATyp::scalar(),
-        );
+
+        let _op: GOp<C> = Op::div(Op::Value(v), Op::Value(zero), ATyp::scalar());
     }
 
     // ============================================================================
@@ -325,13 +269,9 @@ mod op_construction {
         let v1 = scalar::<C>(1);
         let v2 = scalar::<C>(2);
         let v3 = scalar::<C>(3);
-        
-        let op: GOp<C> = Op::vec(vec![
-            Op::Value(v1),
-            Op::Value(v2),
-            Op::Value(v3),
-        ]);
-        
+
+        let op: GOp<C> = Op::vec(vec![Op::Value(v1), Op::Value(v2), Op::Value(v3)]);
+
         match op {
             Op::Vec(elements) => assert_eq!(elements.len(), 3),
             _ => panic!("Expected Vec operation"),
@@ -340,19 +280,13 @@ mod op_construction {
 
     #[test]
     fn test_op_vec_add() {
-        let vec1 = Op::vec(vec![
-            Op::Value(scalar::<C>(1)),
-            Op::Value(scalar::<C>(2)),
-        ]);
-        
-        let vec2 = Op::vec(vec![
-            Op::Value(scalar::<C>(3)),
-            Op::Value(scalar::<C>(4)),
-        ]);
-        
+        let vec1 = Op::vec(vec![Op::Value(scalar::<C>(1)), Op::Value(scalar::<C>(2))]);
+
+        let vec2 = Op::vec(vec![Op::Value(scalar::<C>(3)), Op::Value(scalar::<C>(4))]);
+
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let op: GOp<C> = Op::add(vec1, vec2, vec_typ);
-        
+
         match op {
             Op::Vec(elements) => {
                 assert_eq!(elements.len(), 2);
@@ -371,14 +305,11 @@ mod op_construction {
     #[test]
     fn test_op_vec_scalar_mul() {
         let scalar_val = Op::Value(scalar::<C>(2));
-        let vec = Op::vec(vec![
-            Op::Value(scalar::<C>(3)),
-            Op::Value(scalar::<C>(4)),
-        ]);
-        
+        let vec = Op::vec(vec![Op::Value(scalar::<C>(3)), Op::Value(scalar::<C>(4))]);
+
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let op: GOp<C> = Op::mul(scalar_val, vec, vec_typ);
-        
+
         match op {
             Op::Vec(elements) => {
                 assert_eq!(elements.len(), 2);
@@ -393,19 +324,13 @@ mod op_construction {
 
     #[test]
     fn test_op_concat_vectors() {
-        let vec1 = Op::vec(vec![
-            Op::Value(scalar::<C>(1)),
-            Op::Value(scalar::<C>(2)),
-        ]);
-        
-        let vec2 = Op::vec(vec![
-            Op::Value(scalar::<C>(3)),
-            Op::Value(scalar::<C>(4)),
-        ]);
-        
+        let vec1 = Op::vec(vec![Op::Value(scalar::<C>(1)), Op::Value(scalar::<C>(2))]);
+
+        let vec2 = Op::vec(vec![Op::Value(scalar::<C>(3)), Op::Value(scalar::<C>(4))]);
+
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 4);
         let op: GOp<C> = Op::concat(vec1, vec2, vec_typ);
-        
+
         match op {
             Op::Vec(elements) => {
                 assert_eq!(elements.len(), 4);
@@ -427,9 +352,9 @@ mod op_construction {
             Op::Value(scalar::<C>(40)),
         ]);
         let idx = Op::Value(Value::Index(2));
-        
+
         let op: GOp<C> = Op::ram(vec, idx);
-        
+
         // RAM operation should be created (may be simplified)
         // Just verify it doesn't panic
         match op {
@@ -443,8 +368,8 @@ mod op_construction {
 
 #[cfg(test)]
 mod op_integration {
-    use crate::tests::test_helpers::*;
     use crate::Op;
+    use crate::tests::test_helpers::*;
     use backend::{ATyp, Value};
 
     type C = TestConfig;
@@ -457,21 +382,21 @@ mod op_integration {
         let b = builder.add_input("b", ATyp::scalar());
         let c = builder.add_input("c", ATyp::scalar());
         let d = builder.add_input("d", ATyp::scalar());
-        
+
         let ab = Op::add(
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder.add_op(ab);
-        
+
         let abc = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
             Op::Ref(c.clone(), ATyp::scalar()),
             ATyp::scalar(),
         );
         let abc_ref = builder.add_op(abc);
-        
+
         let result = Op::sub(
             Op::Ref(abc_ref, ATyp::scalar()),
             Op::Ref(d.clone(), ATyp::scalar()),
@@ -502,21 +427,21 @@ mod op_integration {
         let mut builder = GraphBuilder::<C>::new();
         let a = builder.add_input("a", ATyp::scalar());
         let b = builder.add_input("b", ATyp::scalar());
-        
+
         let add_result = Op::add(
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
             ATyp::scalar(),
         );
         let add_ref = builder.add_op(add_result);
-        
+
         let mul_result = Op::mul(
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
             ATyp::scalar(),
         );
         let mul_ref = builder.add_op(mul_result);
-        
+
         // Create a vector with both results
         let vec_result = Op::vec(vec![
             Op::Ref(add_ref, ATyp::scalar()),
@@ -530,7 +455,7 @@ mod op_integration {
         add_scalar_input(&mut inputs, "b", 5);
 
         let result = execute_graph(&dag, inputs).unwrap();
-        
+
         // Expected: [3+5, 3*5] = [8, 15]
         let expected = Value::value_vec(vec![scalar::<C>(8), scalar::<C>(15)]);
 
@@ -548,7 +473,7 @@ mod op_integration {
         let b = builder.add_input("b", ATyp::scalar());
         let c = builder.add_input("c", ATyp::scalar());
         let d = builder.add_input("d", ATyp::scalar());
-        
+
         // Compute a*b once
         let ab = Op::mul(
             Op::Ref(a.clone(), ATyp::scalar()),
@@ -556,7 +481,7 @@ mod op_integration {
             ATyp::scalar(),
         );
         let ab_ref = builder.add_op(ab);
-        
+
         // Use it in two places
         let ab_plus_c = Op::add(
             Op::Ref(ab_ref.clone(), ATyp::scalar()),
@@ -564,14 +489,14 @@ mod op_integration {
             ATyp::scalar(),
         );
         let left_ref = builder.add_op(ab_plus_c);
-        
+
         let ab_times_d = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
             Op::Ref(d.clone(), ATyp::scalar()),
             ATyp::scalar(),
         );
         let right_ref = builder.add_op(ab_times_d);
-        
+
         // Final result: (a*b+c) * (a*b*d)
         let final_result = Op::mul(
             Op::Ref(left_ref, ATyp::scalar()),
@@ -604,13 +529,13 @@ mod op_integration {
         let a = builder.add_input("a", ATyp::scalar());
         let b = builder.add_input("b", ATyp::scalar());
         let c = builder.add_input("c", ATyp::scalar());
-        
+
         // Create vector [a, b]
         let vec1 = Op::vec(vec![
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Ref(b.clone(), ATyp::scalar()),
         ]);
-        
+
         // Multiply vector by scalar c
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
         let scaled = Op::mul(Op::Ref(c.clone(), ATyp::scalar()), vec1, vec_typ);
@@ -638,7 +563,7 @@ mod op_integration {
         let mut builder = GraphBuilder::<C>::new();
         let a = builder.add_input("a", ATyp::scalar());
         let b = builder.add_input("b", ATyp::scalar());
-        
+
         let a_plus_0 = Op::add(
             Op::Ref(a.clone(), ATyp::scalar()),
             Op::Value(zero_scalar()),
@@ -646,7 +571,7 @@ mod op_integration {
         );
         // This should simplify to just a
         let a_ref = builder.add_op(a_plus_0);
-        
+
         let b_plus_0 = Op::add(
             Op::Ref(b.clone(), ATyp::scalar()),
             Op::Value(zero_scalar()),
@@ -654,7 +579,7 @@ mod op_integration {
         );
         // This should simplify to just b
         let b_ref = builder.add_op(b_plus_0);
-        
+
         let result = Op::mul(
             Op::Ref(a_ref, ATyp::scalar()),
             Op::Ref(b_ref, ATyp::scalar()),

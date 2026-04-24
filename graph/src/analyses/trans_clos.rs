@@ -1,13 +1,14 @@
+use crate::{DQDag, Dag, GOp, Node, Op, PRef, Ref, StaticAnalysis, mk};
+use backend::ArkConfig;
+use backend::op::HasOpFactory;
+use lang::typ::{Distribution, Qualifier};
 #[cfg(test)]
 use log::debug;
-use crate::{Dag, GOp, Node, Op, PRef, DQDag, Ref, StaticAnalysis, mk};
-use backend::op::HasOpFactory;
 use petgraph::graph::NodeIndex;
 use std::fmt;
-use lang::typ::{Distribution, Qualifier};
-use backend::ArkConfig;
 
-#[cfg(test)] use backend::ATyp;
+#[cfg(test)]
+use backend::ATyp;
 
 /// Transitive closure on a DAG
 #[derive(Clone)]
@@ -60,13 +61,15 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     /// Rebuild the transcript operations (public nodes)
     pub fn transcript(&self) -> Vec<(PRef, GOp<C>)> {
-        self.clos.iter()
-            .filter_map(|(rf, op)|
+        self.clos
+            .iter()
+            .filter_map(|(rf, op)| {
                 if rf.is_public() {
                     Some((rf.clone(), op.clone()))
                 } else {
                     None
-                })
+                }
+            })
             .collect()
     }
 
@@ -85,33 +88,35 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 let oa = self.trans_clos_op(dag, a.get().clone());
                 let ob = self.trans_clos_op(dag, b.get().clone());
                 Op::bin(op, oa, ob, typ.clone())
-            },
+            }
             Op::Ram(a, b) => {
                 let oa = self.trans_clos_op(dag, a.get().clone());
                 let ob = self.trans_clos_op(dag, b.get().clone());
                 Op::Ram(mk::<C>(oa), mk::<C>(ob))
-            },
+            }
             Op::Value(v) => Op::Value(v),
-            Op::Vec(vs) =>
-                Op::Vec(vs.into_iter().map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone())))
-                    .collect::<Vec<_>>()),
+            Op::Vec(vs) => Op::Vec(
+                vs.into_iter()
+                    .map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone())))
+                    .collect::<Vec<_>>(),
+            ),
             Op::Check(op) => self.trans_clos_op(dag, op.get().clone()),
             Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Reduce(op, v) => Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
-            op => op
+            op => op,
         }
     }
 
     pub fn find(&self, r: &Ref) -> Option<&GOp<C>> {
-        self.clos.iter()
+        self.clos
+            .iter()
             .find(|(n, _)| &n.reference == r)
             .map(|(_, op)| op)
     }
 
     pub fn last(&self) -> Option<(PRef, GOp<C>)> {
-        self.clos.last()
-            .map(|(n, op)| (n.clone(), op.clone()))
+        self.clos.last().map(|(n, op)| (n.clone(), op.clone()))
     }
 
     /// Find a node and return it, or insert it if it doesn't exist
@@ -137,34 +142,48 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         match &dag[r.node()] {
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution))
-              if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) => {
+                if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
+            {
                 let inner = op.get();
                 let pref = PRef::from_ref(r.clone(), inner.typ(), *qualifier, *distribution);
                 self.insert(pref, inner.clone());
                 Op::Ref(r, inner.typ())
-            },
+            }
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution)) => {
                 let obin = self.trans_clos_op(dag, op.get().clone());
-                self.insert(PRef::from_ref(r, op.typ(), *qualifier, *distribution), obin.clone())
-            },
-            Node::Inp(_, args) | Node::Rel(_, args) =>
+                self.insert(
+                    PRef::from_ref(r, op.typ(), *qualifier, *distribution),
+                    obin.clone(),
+                )
+            }
+            Node::Inp(_, args) | Node::Rel(_, args) => {
                 if let Some(ref v) = r.var() {
                     let pref = args.iter().find(|pr| pr.has_var(v)).unwrap();
                     Op::Ref(r, pref.typ.clone())
                 } else {
                     unreachable!("Input and relation node should only have variable dependencies")
-                },
+                }
+            }
         }
     }
 }
 
 impl<C: ArkConfig> fmt::Display for TransClos<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Args: {}\n", self.args.iter().map(|n| n.verbose()).collect::<Vec<_>>().join(", "))?;
+        write!(
+            f,
+            "Args: {}\n",
+            self.args
+                .iter()
+                .map(|n| n.verbose())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
         write!(f, "\nTC: \n")?;
-        self.clos.iter().map(|(n, op)|
-            write!(f, "\t{}   |   {} \n", n.verbose(), op))
+        self.clos
+            .iter()
+            .map(|(n, op)| write!(f, "\t{}   |   {} \n", n.verbose(), op))
             .collect::<fmt::Result>()
     }
 }
@@ -182,12 +201,19 @@ impl<C: ArkConfig + HasOpFactory> StaticAnalysis<C, (Qualifier, Distribution)> f
     }
 }
 
-
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use lang::typ::Range;
-#[cfg(test)] use crate::{analyses::{QualifierPropagation, UniformityPropagation}, UDags};
-#[cfg(test)] use share::{Ctx, assert_deq, unwrap};
-#[cfg(test)] use backend::{Value, ArkBls12_381};
+#[cfg(test)]
+use crate::{
+    UDags,
+    analyses::{QualifierPropagation, UniformityPropagation},
+};
+#[cfg(test)]
+use backend::{ArkBls12_381, Value};
+#[cfg(test)]
+use lang::ast::UModule;
+#[cfg(test)]
+use lang::typ::Range;
+#[cfg(test)]
+use share::{Ctx, assert_deq, unwrap};
 #[test]
 fn trans_clos_simple() {
     let ex = r#"
@@ -197,7 +223,10 @@ fn trans_clos_simple() {
             b <- r * s';
             verify(a == b)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
@@ -211,16 +240,22 @@ fn trans_clos_simple() {
     let tc = TransClos::from_input(&g);
 
     for (_, op) in tc.clos.iter() {
-        assert!(! matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
-        assert!(! matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
+        assert!(!matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
+        assert!(!matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 
     // Check that inlining works
     let last_op = tc.last().unwrap().1;
-    let ref_vars = 
-        tc.clos.into_iter().map(|(r, op)| (r.reference, op)).collect::<Ctx<_, _>>();
+    let ref_vars = tc
+        .clos
+        .into_iter()
+        .map(|(r, op)| (r.reference, op))
+        .collect::<Ctx<_, _>>();
     assert_deq!(
-        last_op.inline(&ref_vars, &|r, _| matches!(r, Ref::Var(v, _) if v == &"r".into())),
+        last_op.inline(
+            &ref_vars,
+            &|r, _| matches!(r, Ref::Var(v, _) if v == &"r".into())
+        ),
         Op::equ(
             Op::mul(
                 Op::var(&"r".into(), NodeIndex::new(1), ATyp::scalar()),
@@ -241,7 +276,6 @@ fn trans_clos_simple() {
             )
         )
     )
-
 }
 
 #[test]
@@ -253,7 +287,10 @@ fn trans_clos_many() {
             b <- r * s';
             verify(a == b)
         }"#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
     // Propagate qualifiers
@@ -268,8 +305,7 @@ fn trans_clos_many() {
 
     debug!("{}", tc);
     for (_, op) in tc.clos.iter() {
-        assert!(! matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
-        assert!(! matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
+        assert!(!matches!(op, Op::Bin(_, a, _, _) if matches!(a.get(), Op::Bin(_, _, _, _))));
+        assert!(!matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 }
-

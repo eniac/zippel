@@ -1,29 +1,34 @@
-use ark_ff::{SqrtPrecomputation, FftField, AdditiveGroup, CyclotomicMultSubgroup, Field, LegendreSymbol, One, PrimeField, UniformRand, Zero};
 use ark_ff::biginteger::BigInt;
-use num_bigint::BigUint;
+use ark_ff::{
+    AdditiveGroup, CyclotomicMultSubgroup, FftField, Field, LegendreSymbol, One, PrimeField,
+    SqrtPrecomputation, UniformRand, Zero,
+};
 use ark_serialize::{
-    CanonicalSerialize, CanonicalDeserialize, CanonicalSerializeWithFlags, CanonicalDeserializeWithFlags,
-    Compress, Valid, Validate, SerializationError, Flags};
-use zeroize::Zeroize;
-use std::fmt;
-use rand::Rng;
-use std::iter::{Product, Sum};
+    CanonicalDeserialize, CanonicalDeserializeWithFlags, CanonicalSerialize,
+    CanonicalSerializeWithFlags, Compress, Flags, SerializationError, Valid, Validate,
+};
 use ark_std::io::{Read, Write};
+use num_bigint::BigUint;
+use rand::Rng;
+use std::fmt;
+use std::iter::{Product, Sum};
 use std::ops::{
-    Add, AddAssign, BitAnd, BitAndAssign,
-    BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign, Neg,
-    Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign};
+    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
+    Mul, MulAssign, Neg, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
+};
 use std::str::FromStr;
+use zeroize::Zeroize;
 
 /// Represents the empty field
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NoField {}
 
-const NOFIELD_ERR: &str = "NoField is an empty curve with no points. It cannot be used for any operations.";
+const NOFIELD_ERR: &str =
+    "NoField is an empty curve with no points. It cannot be used for any operations.";
 
 impl AdditiveGroup for NoField {
     type Scalar = NoField;
-    const ZERO: Self = NoField{};
+    const ZERO: Self = NoField {};
 }
 
 impl UniformRand for NoField {
@@ -60,7 +65,11 @@ impl Valid for NoField {
 }
 
 impl CanonicalDeserialize for NoField {
-    fn deserialize_with_mode<R: Read>(_: R, _: Compress, _: Validate) -> Result<Self, SerializationError> {
+    fn deserialize_with_mode<R: Read>(
+        _: R,
+        _: Compress,
+        _: Validate,
+    ) -> Result<Self, SerializationError> {
         panic!("{}", NOFIELD_ERR)
     }
 }
@@ -79,7 +88,7 @@ impl CanonicalSerializeWithFlags for NoField {
 }
 
 impl CanonicalDeserializeWithFlags for NoField {
-    fn deserialize_with_flags<R: Read, FF: Flags>(_: R)-> Result<(Self, FF), SerializationError> {
+    fn deserialize_with_flags<R: Read, FF: Flags>(_: R) -> Result<(Self, FF), SerializationError> {
         panic!("{}", NOFIELD_ERR)
     }
 }
@@ -334,7 +343,6 @@ impl<'a> SubAssign<&'a mut Self> for NoField {
     }
 }
 
-
 impl<'a> Add<&'a Self> for NoField {
     type Output = Self;
     fn add(self, _: &'a Self) -> Self {
@@ -507,16 +515,14 @@ impl<'a> Product<&'a NoField> for NoField {
 impl Field for NoField {
     type BasePrimeField = Self;
     const SQRT_PRECOMP: Option<SqrtPrecomputation<Self>> = None;
-    const ONE: Self = NoField{};
-    const NEG_ONE: Self = NoField{};
+    const ONE: Self = NoField {};
+    const NEG_ONE: Self = NoField {};
 
     // Required methods
     fn extension_degree() -> u64 {
         panic!("{}", NOFIELD_ERR)
     }
-    fn to_base_prime_field_elements(
-        &self,
-    ) -> impl Iterator<Item = Self::BasePrimeField> {
+    fn to_base_prime_field_elements(&self) -> impl Iterator<Item = Self::BasePrimeField> {
         std::iter::empty()
     }
     fn from_base_prime_field_elems(
@@ -554,9 +560,9 @@ impl Field for NoField {
 }
 
 impl FftField for NoField {
-    const GENERATOR: Self = NoField{};
+    const GENERATOR: Self = NoField {};
     const TWO_ADICITY: u32 = 0;
-    const TWO_ADIC_ROOT_OF_UNITY: Self = NoField{};
+    const TWO_ADIC_ROOT_OF_UNITY: Self = NoField {};
     const SMALL_SUBGROUP_BASE: Option<u32> = None;
     const SMALL_SUBGROUP_BASE_ADICITY: Option<u32> = None;
     const LARGE_SUBGROUP_ROOT_OF_UNITY: Option<Self> = None;
@@ -564,11 +570,11 @@ impl FftField for NoField {
 
 impl PrimeField for NoField {
     type BigInt = BigInt<1>;
-    const MODULUS: Self::BigInt = BigInt([0;1]);
+    const MODULUS: Self::BigInt = BigInt([0; 1]);
     const MODULUS_BIT_SIZE: u32 = 0;
-    const TRACE: Self::BigInt = BigInt([0;1]);
-    const TRACE_MINUS_ONE_DIV_TWO: Self::BigInt = BigInt([0;1]);
-    const MODULUS_MINUS_ONE_DIV_TWO: Self::BigInt = BigInt([0;1]);
+    const TRACE: Self::BigInt = BigInt([0; 1]);
+    const TRACE_MINUS_ONE_DIV_TWO: Self::BigInt = BigInt([0; 1]);
+    const MODULUS_MINUS_ONE_DIV_TWO: Self::BigInt = BigInt([0; 1]);
 
     fn from_bigint(_: Self::BigInt) -> Option<Self> {
         panic!("{}", NOFIELD_ERR);
@@ -581,4 +587,3 @@ impl PrimeField for NoField {
 impl CyclotomicMultSubgroup for NoField {
     const INVERSE_IS_FAST: bool = false;
 }
-

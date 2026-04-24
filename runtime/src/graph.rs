@@ -102,11 +102,17 @@ fn update_successors<C: ArkConfig>(
                 let prev = annotation.remaining_deps.fetch_sub(1, Ordering::SeqCst);
                 debug!(
                     "[update_successors] node {:?} -> dependent {:?}, prev={}, is_sync={}",
-                    node_idx, dependent, prev, is_sync_node(g, dependent)
+                    node_idx,
+                    dependent,
+                    prev,
+                    is_sync_node(g, dependent)
                 );
                 if prev == 1 {
                     if is_sync_node(g, dependent) {
-                        debug!("[update_successors] node {:?} -> sync {:?} ready, pushing", node_idx, dependent);
+                        debug!(
+                            "[update_successors] node {:?} -> sync {:?} ready, pushing",
+                            node_idx, dependent
+                        );
                         tx.push(dependent);
                         continue;
                     }
@@ -421,7 +427,9 @@ impl<C: ArkConfig> MutexGraph<C> {
         // pool capacity is at least 1.
         let mut max_thread_num: usize = std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(1).max(2) - 1;
+            .unwrap_or(1)
+            .max(2)
+            - 1;
         let mut result_indices: Vec<NodeIndex> = Vec::new();
         // Capacity of 1 is enough: sync nodes are connected in the DAG,
         // meaning that at any time, only one sync node can be processed.
@@ -450,19 +458,21 @@ impl<C: ArkConfig> MutexGraph<C> {
                         _ => {}
                     }
                 }
-                Node::Inp(_, _) => {},
+                Node::Inp(_, _) => {}
                 Node::Rel(_, _) => {}
             }
         }
         let result_indices: Vec<NodeIndex> = match result_kind {
-            ResultKind::Prover => {
-                order_transcript_nodes(result_indices, &g.mutex_graph)
-            }
+            ResultKind::Prover => order_transcript_nodes(result_indices, &g.mutex_graph),
             ResultKind::Verifier => result_indices,
         };
 
         debug!("[run_graph] max_thread_num={}", max_thread_num);
-        debug!("[run_graph] total nodes={}, result_indices count={}", g.mutex_graph.node_indices().count(), result_indices.len());
+        debug!(
+            "[run_graph] total nodes={}, result_indices count={}",
+            g.mutex_graph.node_indices().count(),
+            result_indices.len()
+        );
         // for ni in g.mutex_graph.node_indices() {
         //     match &g.mutex_graph[ni] {
         //         Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -487,7 +497,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                     let rd = annotation.remaining_deps.load(Ordering::SeqCst);
                     if rd == 0 {
                         if is_sync_node(&g, ni) {
-                            debug!("[run_graph] init: pushing sync node {:?} with remaining_deps=0", ni);
+                            debug!(
+                                "[run_graph] init: pushing sync node {:?} with remaining_deps=0",
+                                ni
+                            );
                             tx.push(ni);
                         } else {
                             let thread_num = annotation.thread_num;
@@ -495,7 +508,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                             let inputs_clone = Arc::clone(&inputs);
                             let pm_clone = Arc::clone(&pool_manager);
                             let tx = tx.clone();
-                            debug!("[run_graph] init: submitting non-sync node {:?} with remaining_deps=0 thread_num={}", ni, thread_num);
+                            debug!(
+                                "[run_graph] init: submitting non-sync node {:?} with remaining_deps=0 thread_num={}",
+                                ni, thread_num
+                            );
                             pool_manager.submit(
                                 thread_num,
                                 Box::new(move || {
@@ -524,11 +540,18 @@ impl<C: ArkConfig> MutexGraph<C> {
         while let Some(SyncMessage { node_idx, tx }) = rx.pop() {
             loop_count += 1;
 
-            debug!("[run_graph] loop iteration {}, processing sync node {:?}", loop_count, node_idx);
+            debug!(
+                "[run_graph] loop iteration {}, processing sync node {:?}",
+                loop_count, node_idx
+            );
 
             match &g.mutex_graph[node_idx] {
                 Node::Inp(_, prefs) => {
-                    debug!("[run_graph] node {:?} is Inp/Rel with {} prefs", node_idx, prefs.len());
+                    debug!(
+                        "[run_graph] node {:?} is Inp/Rel with {} prefs",
+                        node_idx,
+                        prefs.len()
+                    );
                     // Send public values through the sponge.
                     for pref in prefs.clone() {
                         if pref.qualifier.is_public() && !pref.from_transcript {
@@ -565,11 +588,17 @@ impl<C: ArkConfig> MutexGraph<C> {
 
             // Update successors — pushes ready sync nodes to the sync queue
             // and submits non-sync nodes to the pool manager.
-            debug!("[run_graph] calling update_successors for node {:?}", node_idx);
+            debug!(
+                "[run_graph] calling update_successors for node {:?}",
+                node_idx
+            );
             update_successors(&g, &inputs, &pool_manager, tx, node_idx);
         }
 
-        debug!("[run_graph] main loop completed after {} iterations", loop_count);
+        debug!(
+            "[run_graph] main loop completed after {} iterations",
+            loop_count
+        );
 
         // Phase 3: Collect results from pre-collected result indices.
         match result_kind {

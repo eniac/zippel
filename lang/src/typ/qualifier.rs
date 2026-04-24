@@ -3,14 +3,14 @@ use pest::iterators::Pairs;
 use std::cmp::Ordering;
 use std::fmt;
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::parser::*;
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Qualifier {
     Private,
     Local,
-    Public
+    Public,
 }
 
 impl Qualifier {
@@ -82,7 +82,6 @@ impl<'a> fmt::Display for Qualifier {
     }
 }
 
-
 impl<'pest> FromPest<'pest> for Qualifier {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -95,12 +94,13 @@ impl<'pest> FromPest<'pest> for Qualifier {
             Rule::qualifier => Qualifier::from_pest(&mut pair.into_inner()),
             Rule::private => Ok(Qualifier::Private),
             Rule::public => Ok(Qualifier::Public),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
 
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn qualifier_parser() {
     let mut pairs = ZippelParser::parse(Rule::qualifier, "private").unwrap();
@@ -123,11 +123,23 @@ fn qualifier_join_lattice_consistency() {
         for &b in &all {
             let j = a.join(&b);
             // join(a,b) == min(a,b) in the ordering
-            assert_eq!(j, a.min(b),
-                "join({:?}, {:?}) = {:?}, expected {:?}", a, b, j, a.min(b));
+            assert_eq!(
+                j,
+                a.min(b),
+                "join({:?}, {:?}) = {:?}, expected {:?}",
+                a,
+                b,
+                j,
+                a.min(b)
+            );
             // Commutativity
-            assert_eq!(a.join(&b), b.join(&a),
-                "join is not commutative for {:?}, {:?}", a, b);
+            assert_eq!(
+                a.join(&b),
+                b.join(&a),
+                "join is not commutative for {:?}, {:?}",
+                a,
+                b
+            );
         }
     }
 }

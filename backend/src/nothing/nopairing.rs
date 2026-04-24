@@ -1,6 +1,6 @@
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_ec::pairing::{MillerLoopOutput, Pairing, PairingOutput};
+use ark_ff::PrimeField;
 use std::marker::PhantomData;
 
 pub use crate::nothing::NoField;
@@ -11,7 +11,10 @@ const NOPAIR_ERR: &str = "NoPairing is an empty pairing. It cannot be used for a
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct NoPairing<G: CurveGroup>(PhantomData<G>);
 
-impl<G: CurveGroup> Pairing for NoPairing<G> where G::BaseField : PrimeField {
+impl<G: CurveGroup> Pairing for NoPairing<G>
+where
+    G::BaseField: PrimeField,
+{
     type BaseField = G::BaseField;
     type ScalarField = G::ScalarField;
     type G1 = G;
@@ -31,9 +34,7 @@ impl<G: CurveGroup> Pairing for NoPairing<G> where G::BaseField : PrimeField {
         panic!("{}", NOPAIR_ERR);
     }
 
-    fn final_exponentiation(
-        _: MillerLoopOutput<Self>,
-    ) -> Option<PairingOutput<Self>> {
+    fn final_exponentiation(_: MillerLoopOutput<Self>) -> Option<PairingOutput<Self>> {
         panic!("{}", NOPAIR_ERR);
     }
 }

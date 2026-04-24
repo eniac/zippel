@@ -1,17 +1,20 @@
+use crate::{Dag, PRef};
+use backend::ArkConfig;
 #[cfg(test)]
 use log::debug;
-use backend::ArkConfig;
-use spongefish::{
-    domain_separator, session_id_from_str, Encoding,
-};
-use crate::{Dag, PRef};
+use spongefish::{Encoding, domain_separator, session_id_from_str};
 use std::marker::PhantomData;
 
-#[cfg(test)] use backend::ArkBls12_381;
-#[cfg(test)] use lang::ast::UModule;
-#[cfg(test)] use share::unwrap;
-#[cfg(test)] use share::Ctx;
-#[cfg(test)] use crate::UDags;
+#[cfg(test)]
+use crate::UDags;
+#[cfg(test)]
+use backend::ArkBls12_381;
+#[cfg(test)]
+use lang::ast::UModule;
+#[cfg(test)]
+use share::Ctx;
+#[cfg(test)]
+use share::unwrap;
 
 /// Wrapper to make Vec<u8> implement Encoding for use as domain separator instance
 struct InstanceBytes(Vec<u8>);
@@ -30,44 +33,41 @@ pub struct ZippelDomainSeparator<C: ArkConfig> {
 
 impl<C: ArkConfig> ZippelDomainSeparator<C> {
     pub fn new<A>(domsep: &str, _dag: &Dag<C, A>) -> Self {
-        Self { 
+        Self {
             session: domsep.to_string(),
-            instance_bytes: Vec::new(), 
+            instance_bytes: Vec::new(),
             _phantom: PhantomData,
         }
     }
 
-    pub fn new_zippel_domain_seperator<A>(
-        session: &str, 
-        dag: &Dag<C, A>,
-    ) -> Self {
-        let mut public_args: Vec<PRef> = dag.args().iter()
+    pub fn new_zippel_domain_seperator<A>(session: &str, dag: &Dag<C, A>) -> Self {
+        let mut public_args: Vec<PRef> = dag
+            .args()
+            .iter()
             .filter(|arg| arg.is_public() && !arg.from_transcript)
             .cloned()
             .collect();
-        
-        public_args.sort_by_key(|arg| {
-            arg.var().map(|v| v.0.clone()).unwrap_or_default()
-        });
-        
+
+        public_args.sort_by_key(|arg| arg.var().map(|v| v.0.clone()).unwrap_or_default());
+
         let mut instance_buf = Vec::new();
         for arg in public_args {
             if let Some(vid) = arg.var() {
                 let vid_bytes = vid.0.as_bytes();
                 instance_buf.extend_from_slice(vid_bytes);
-                
+
                 let type_size = arg.typ.size();
                 instance_buf.extend_from_slice(&(type_size as u64).to_le_bytes());
             }
         }
-        
-        Self { 
+
+        Self {
             session: session.to_string(),
             instance_bytes: instance_buf,
             _phantom: PhantomData,
         }
     }
-    
+
     pub fn std_prover(&self) -> spongefish::ProverState {
         let session_bytes = session_id_from_str(&self.session);
         let instance = InstanceBytes(self.instance_bytes.clone());
@@ -89,12 +89,12 @@ fn test_domain_separator() {
         verify(g*z == u + h*c)
     }
 "#;
-    let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-    let domain_seperator = ZippelDomainSeparator::new(
-        "test_domain_separator",
-        &gs[0],
-    );
+    let domain_seperator = ZippelDomainSeparator::new("test_domain_separator", &gs[0]);
     let _prover = domain_seperator.std_prover();
     debug!("Domain Seperator created successfully");
 }

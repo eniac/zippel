@@ -3,13 +3,14 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::ops::Index;
 
-use crate::analyses::groebner::{Monomial, SparsePolynomial};
 use crate::PRef;
-use share::Set;
+use crate::analyses::groebner::{Monomial, SparsePolynomial};
 use log::debug;
 use rayon::prelude::*;
+use share::Set;
 
-#[cfg(test)] use ark_ff::AdditiveGroup;
+#[cfg(test)]
+use ark_ff::AdditiveGroup;
 
 /// A struct representing a Gröbner basis.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,7 +87,10 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     }
 
     pub fn vars(&self) -> Set<PRef> {
-        self.basis.iter().flat_map(|p| p.vars().into_iter()).collect()
+        self.basis
+            .iter()
+            .flat_map(|p| p.vars().into_iter())
+            .collect()
     }
 
     /// Reduces polynomial `p` with respect to the basis `G`.
@@ -101,17 +105,22 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let found_divisor = reducers.par_iter().find_any(|g|
+            let found_divisor = reducers.par_iter().find_any(|g| {
                 if let Some((_g_lc, g_lt)) = g.leading_term() {
                     p_lt.is_divided(&g_lt)
                 } else {
                     false
-                });
+                }
+            });
 
             if let Some(g) = found_divisor {
                 let (g_lc, g_lt) = g.leading_term().unwrap();
-                let multiplier_term = (p_lt / g_lt).expect("Division should succeed if is_divided is true");
-                let multiplier_scalar = p_lc * g_lc.inverse().expect("Leading coefficient must be invertible");
+                let multiplier_term =
+                    (p_lt / g_lt).expect("Division should succeed if is_divided is true");
+                let multiplier_scalar = p_lc
+                    * g_lc
+                        .inverse()
+                        .expect("Leading coefficient must be invertible");
                 let to_subtract = g.mul_by_term_and_scalar(multiplier_scalar, &multiplier_term);
                 p -= to_subtract;
             } else {
@@ -170,7 +179,12 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         }
 
         // Initialize with non-zero polynomials
-        let basis_nonzero = self.basis.iter().filter(|p| !p.is_zero()).cloned().collect();
+        let basis_nonzero = self
+            .basis
+            .iter()
+            .filter(|p| !p.is_zero())
+            .cloned()
+            .collect();
 
         let mut g: Self = Self::new(self.num_vars, basis_nonzero);
 
@@ -193,40 +207,40 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             seen.extend(ps.iter().map(|(i, j)| (*i, *j)));
 
             let reduced_ps: Vec<SparsePolynomial<F, T>> = ps
-              .par_iter()
-              .filter_map(|&(i, j)| {
+                .par_iter()
+                .filter_map(|&(i, j)| {
+                    // Ensure indices are still valid (G might grow)
+                    if i >= g.len() || j >= g.len() {
+                        return None;
+                    }
 
-                // Ensure indices are still valid (G might grow)
-                if i >= g.len() || j >= g.len() {
-                    return None;
-                }
+                    let g_i = &g[i];
+                    let g_j = &g[j];
 
-                let g_i = &g[i];
-                let g_j = &g[j];
+                    debug!("Processing pair ({}, {})", i, j); // Debug output
 
-                debug!("Processing pair ({}, {})", i, j); // Debug output
+                    // Compute S-polynomial
+                    let s_poly = g_i.s_poly(g_j);
 
-                // Compute S-polynomial
-                let s_poly = g_i.s_poly(g_j);
+                    if s_poly.is_zero() {
+                        // S-polynomial reduced to zero immediately
+                        debug!("  S(G[{}], G[{}]) = 0", i, j);
+                        return None;
+                    }
 
-                if s_poly.is_zero() {
-                    // S-polynomial reduced to zero immediately
-                    debug!("  S(G[{}], G[{}]) = 0", i, j);
-                    return None;
-                }
+                    // Reduce the S-polynomial with respect to the current basis G
+                    let s_reduced = g.reduce(s_poly);
 
-                // Reduce the S-polynomial with respect to the current basis G
-                let s_reduced = g.reduce(s_poly);
-
-                // If the reduced S-polynomial is not zero, return it
-                if !s_reduced.is_zero() {
-                    debug!("  S(G[{}], G[{}]) reduces to non-zero polynomial.", i, j);
-                    return Some(s_reduced);
-                } else {
-                    debug!("  S(G[{}], G[{}]) reduces to 0", i, j);
-                    return None;
-                }
-            }).collect();
+                    // If the reduced S-polynomial is not zero, return it
+                    if !s_reduced.is_zero() {
+                        debug!("  S(G[{}], G[{}]) reduces to non-zero polynomial.", i, j);
+                        return Some(s_reduced);
+                    } else {
+                        debug!("  S(G[{}], G[{}]) reduces to 0", i, j);
+                        return None;
+                    }
+                })
+                .collect();
 
             // Add new polynomials and generate pairs
             for s_reduced in reduced_ps {
@@ -248,7 +262,12 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     }
 
     /// Buchberger's criteria (https://www.andrew.cmu.edu/course/15-355/lectures/lecture11.pdf)
-    fn skip_pair(l: usize, k: usize, g: &GroebnerBasis<F, T>, seen: &HashSet<(usize, usize)>) -> bool {
+    fn skip_pair(
+        l: usize,
+        k: usize,
+        g: &GroebnerBasis<F, T>,
+        seen: &HashSet<(usize, usize)>,
+    ) -> bool {
         // Buchberger's first criterion: skip pairs (l, k) if their leading monomials are coprime (LCM is product)
         let lt_l = g[l].leading_term().map(|(_, m)| m);
         let lt_k = g[k].leading_term().map(|(_, m)| m);
@@ -262,7 +281,10 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             // and (l, i) and (i, k) have been seen before
             return (0..g.len()).into_par_iter().any(|i| {
                 if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m) {
-                    if ml.lcm(&mk).is_divided(&lt_i) && seen.contains(&(l, i)) && seen.contains(&(i, k)) {
+                    if ml.lcm(&mk).is_divided(&lt_i)
+                        && seen.contains(&(l, i))
+                        && seen.contains(&(i, k))
+                    {
                         return true;
                     }
                 }
@@ -283,10 +305,14 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         // --- Step 1: Make polynomials monic & initial cleanup ---
         let mut g_monic = GroebnerBasis::empty(num_vars);
         for p in self.iter() {
-            if p.is_zero() { continue; } // Remove zero polynomials
+            if p.is_zero() {
+                continue;
+            } // Remove zero polynomials
 
             if let Some((lc, _)) = p.leading_term() {
-                let lc_inv = lc.inverse().expect("Leading coefficient must be invertible in a Field for non-zero poly");
+                let lc_inv = lc
+                    .inverse()
+                    .expect("Leading coefficient must be invertible in a Field for non-zero poly");
 
                 // Multiply the entire polynomial by lc_inv
                 let mut monic_p = SparsePolynomial::zero(); // Start fresh
@@ -311,18 +337,21 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             lt1.cmp(&lt2) // Compare leading terms
         });
 
-
         // --- Step 2: Remove polynomials whose leading term is divisible by another's LT ---
         // This step creates a "minimal" basis (but not yet "reduced")
         let mut g_minimal = GroebnerBasis::empty(num_vars);
         let mut discarded = vec![false; self.len()];
 
         for i in 0..self.len() {
-            if discarded[i] { continue; }
+            if discarded[i] {
+                continue;
+            }
             let lt_i = self[i].leading_term().unwrap().1; // Safe unwrap: non-zero polys
 
             for j in (i + 1)..self.len() {
-                if discarded[j] { continue; }
+                if discarded[j] {
+                    continue;
+                }
                 let lt_j = self[j].leading_term().unwrap().1;
 
                 // If LT(j) is_divided LT(i), mark j for removal (since G is sorted by LT)
@@ -363,7 +392,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             // Add the fully reduced polynomial (it should still be monic and non-zero
             // unless the basis was {c} -> {1} and reduction makes it 0, which we filter)
             if !reduced_g.is_zero() {
-                 g_reduced.push(reduced_g);
+                g_reduced.push(reduced_g);
             }
         }
 
@@ -394,29 +423,63 @@ impl<F: Field, T: Monomial> fmt::Display for GroebnerBasis<F, T> {
 }
 
 // --- Example Usage ---
-#[cfg(test)] use ark_bls12_381::Fr as Fp; // Using a prime field
-#[cfg(test)] use ark_ff::One;
-#[cfg(test)] use share::assert_deq;
-#[cfg(test)] use crate::analyses::groebner::{ElimTerm, GrevLexTerm};
-#[cfg(test)] use lang::typ::{Qualifier, Distribution};
-#[cfg(test)] use lang::id::Vid;
-#[cfg(test)] use petgraph::graph::NodeIndex;
-#[cfg(test)] use backend::ATyp;
+#[cfg(test)]
+use crate::analyses::groebner::{ElimTerm, GrevLexTerm};
+#[cfg(test)]
+use ark_bls12_381::Fr as Fp; // Using a prime field
+#[cfg(test)]
+use ark_ff::One;
+#[cfg(test)]
+use backend::ATyp;
+#[cfg(test)]
+use lang::id::Vid;
+#[cfg(test)]
+use lang::typ::{Distribution, Qualifier};
+#[cfg(test)]
+use petgraph::graph::NodeIndex;
+#[cfg(test)]
+use share::assert_deq;
 
-#[cfg(test)] fn elim_var<'a>(name: &'a str) -> PRef {
-    PRef::from_var(Vid::new(name), NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Private, Distribution::Uniform)
+#[cfg(test)]
+fn elim_var<'a>(name: &'a str) -> PRef {
+    PRef::from_var(
+        Vid::new(name),
+        NodeIndex::new(0),
+        ATyp::scalar(),
+        0,
+        Qualifier::Private,
+        Distribution::Uniform,
+    )
 }
 
-#[cfg(test)] fn noelim_var<'a>(name: &'a str) -> PRef {
-    PRef::from_var(Vid::new(name), NodeIndex::new(0), ATyp::scalar(), 0, Qualifier::Public, Distribution::Nonuniform)
+#[cfg(test)]
+fn noelim_var<'a>(name: &'a str) -> PRef {
+    PRef::from_var(
+        Vid::new(name),
+        NodeIndex::new(0),
+        ATyp::scalar(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    )
 }
 
-#[cfg(test)] fn elim_term(vars: Vec<(&PRef, usize)>) -> ElimTerm {
-    ElimTerm::from(vars.into_iter().map(|(v, i)| (v.clone(), i)).collect::<Vec<_>>())
+#[cfg(test)]
+fn elim_term(vars: Vec<(&PRef, usize)>) -> ElimTerm {
+    ElimTerm::from(
+        vars.into_iter()
+            .map(|(v, i)| (v.clone(), i))
+            .collect::<Vec<_>>(),
+    )
 }
 
-#[cfg(test)] fn grevlex_term(vars: Vec<(&PRef, usize)>) -> GrevLexTerm {
-    GrevLexTerm::from(vars.into_iter().map(|(v, i)| (v.clone(), i)).collect::<Vec<_>>())
+#[cfg(test)]
+fn grevlex_term(vars: Vec<(&PRef, usize)>) -> GrevLexTerm {
+    GrevLexTerm::from(
+        vars.into_iter()
+            .map(|(v, i)| (v.clone(), i))
+            .collect::<Vec<_>>(),
+    )
 }
 
 #[test]
@@ -461,13 +524,13 @@ fn test_s_polynomial() {
     let y = elim_var("y");
 
     let f: SparsePolynomial<Fp, ElimTerm> = elim_sparse_poly(vec![
-        (Fp::one(), vec![(&x, 2)]), // x^2
+        (Fp::one(), vec![(&x, 2)]),  // x^2
         (-Fp::one(), vec![(&y, 1)]), // -y
     ]); // x^2 - y
 
     let g = elim_sparse_poly(vec![
         (Fp::one(), vec![(&x, 1), (&y, 1)]), // xy
-        (Fp::one(), vec![]), // +1
+        (Fp::one(), vec![]),                 // +1
     ]); // xy + 1
 
     // LT(f) = x^2, LT(g) = xy
@@ -489,7 +552,8 @@ fn test_s_polynomial() {
     assert_deq!(s, expected_s);
 }
 
-#[cfg(test)] use crate::analyses::groebner::sparsepoly::{elim_sparse_poly, grevlex_sparse_poly};
+#[cfg(test)]
+use crate::analyses::groebner::sparsepoly::{elim_sparse_poly, grevlex_sparse_poly};
 
 #[test]
 fn test_grevlex_ordering() {
@@ -536,7 +600,7 @@ fn test_linear() {
     let f2 = grevlex_sparse_poly(vec![
         (-Fp::one(), vec![(&b, 1)]), // -b
         (Fp::one(), vec![(&s2, 1)]), // s2
-        (Fp::one(), vec![(&r, 1)]), // r
+        (Fp::one(), vec![(&r, 1)]),  // r
     ]);
 
     let initial_basis = GroebnerBasis::new(num_vars, vec![f1, f2]);
@@ -562,16 +626,16 @@ fn test_maple() {
 
     // Ideal
     let f1: SparsePolynomial<Fp, ElimTerm> = elim_sparse_poly(vec![
-        (Fp::one(), vec![(&t, 2), (&y,1)]), // t^2 y
-        (-Fp::one().double(), vec![(&t,1)]), // -2t
-        (Fp::one(), vec![(&y,1)]),      // +y
+        (Fp::one(), vec![(&t, 2), (&y, 1)]),  // t^2 y
+        (-Fp::one().double(), vec![(&t, 1)]), // -2t
+        (Fp::one(), vec![(&y, 1)]),           // +y
     ]);
 
     let f2 = elim_sparse_poly(vec![
         (Fp::one(), vec![(&t, 2), (&x, 1)]), // t^2 x
-        (Fp::one(), vec![(&t, 2)]), // t^2
-        (Fp::one(), vec![(&x, 1)]), // x
-        (-Fp::one(), vec![]),      // -1
+        (Fp::one(), vec![(&t, 2)]),          // t^2
+        (Fp::one(), vec![(&x, 1)]),          // x
+        (-Fp::one(), vec![]),                // -1
     ]);
 
     let initial_basis = GroebnerBasis::new(num_vars, vec![f1, f2]);
@@ -583,21 +647,24 @@ fn test_maple() {
     // x^2 + y^2 - 1
     let g1 = elim_sparse_poly(vec![
         (Fp::one(), vec![(&t, 1), (&x, 1)]), // tx
-        (Fp::one(), vec![(&t, 1)]), // t
-        (-Fp::one(), vec![(&y, 1)]), // -y
+        (Fp::one(), vec![(&t, 1)]),          // t
+        (-Fp::one(), vec![(&y, 1)]),         // -y
     ]);
 
     let g2 = elim_sparse_poly(vec![
         (Fp::one(), vec![(&t, 1), (&y, 1)]), // ty
-        (Fp::one(), vec![(&x, 1)]), // x
-        (-Fp::one(), vec![]),      // -1
+        (Fp::one(), vec![(&x, 1)]),          // x
+        (-Fp::one(), vec![]),                // -1
     ]);
 
     let g3 = elim_sparse_poly(vec![
         (Fp::one(), vec![(&x, 2)]), // x^2
         (Fp::one(), vec![(&y, 2)]), // y^2
-        (-Fp::one(), vec![]),      // -1
+        (-Fp::one(), vec![]),       // -1
     ]);
 
-    assert_eq!(groebner_basis, GroebnerBasis::new(num_vars, vec![g1, g2, g3]));
+    assert_eq!(
+        groebner_basis,
+        GroebnerBasis::new(num_vars, vec![g1, g2, g3])
+    );
 }

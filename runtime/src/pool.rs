@@ -94,11 +94,7 @@ impl PoolManager {
     /// under the state lock and spawned after releasing it, so that
     /// pool creation (which may be slow) does not block other
     /// submitters.
-    pub fn submit(
-        self: &Arc<Self>,
-        cost: usize,
-        task: Box<dyn FnOnce() + Send>,
-    ) {
+    pub fn submit(self: &Arc<Self>, cost: usize, task: Box<dyn FnOnce() + Send>) {
         // Fast path: atomically reserve capacity and start immediately.
         if self.try_reserve(cost) {
             self.spawn_task(cost, task);
@@ -123,11 +119,7 @@ impl PoolManager {
     /// The caller must have already reserved `cost` units in `used`
     /// via `try_reserve`. This method does NOT increment `used` —
     /// the reservation is already accounted for.
-    fn spawn_task(
-        self: &Arc<Self>,
-        cost: usize,
-        task: Box<dyn FnOnce() + Send>,
-    ) {
+    fn spawn_task(self: &Arc<Self>, cost: usize, task: Box<dyn FnOnce() + Send>) {
         let pool = self.get_or_create_pool(cost);
         let pm = Arc::clone(self);
         let closure_pool = Arc::clone(&pool);
@@ -159,10 +151,7 @@ impl PoolManager {
     /// tasks that were successfully reserved, with their queue entries
     /// removed. The caller should drop the state lock before spawning
     /// these tasks to avoid holding the mutex during pool creation.
-    fn drain_pending_locked(
-        self: &Arc<Self>,
-        state: &mut PoolState,
-    ) -> Vec<PendingTask> {
+    fn drain_pending_locked(self: &Arc<Self>, state: &mut PoolState) -> Vec<PendingTask> {
         let mut to_spawn = Vec::new();
         while let Some(pending) = state.queue.front() {
             if self.try_reserve(pending.cost) {

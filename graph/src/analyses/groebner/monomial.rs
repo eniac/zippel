@@ -1,11 +1,11 @@
-use ark_ff::Field;
-use lang::typ::Qualifier;
 use crate::PRef;
+use ark_ff::Field;
 use core::cmp::Ordering;
-use core::ops::{Mul, Div, MulAssign};
+use core::ops::{Div, Mul, MulAssign};
+use lang::typ::Qualifier;
 use share::Ctx;
-use std::fmt::Debug;
 use std::fmt;
+use std::fmt::Debug;
 
 /// A monomial trait that represents a term in a polynomial.
 pub trait Monomial:
@@ -13,15 +13,15 @@ pub trait Monomial:
     + PartialEq
     + Eq
     + Default
-    + Send  
+    + Send
     + Sync
     + fmt::Display
     + MulAssign
     + Mul<Output = Self>
     + Div<Output = Option<Self>>
     + From<Vec<(PRef, usize)>>
-    + Ord {
-
+    + Ord
+{
     fn vars(&self) -> Vec<PRef>;
     fn powers(&self) -> Vec<usize>;
     fn degree(&self) -> usize {
@@ -40,7 +40,6 @@ pub trait Monomial:
     fn lcm(&self, other: &Self) -> Self;
     fn gcd(&self, other: &Self) -> Self;
 }
-
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
 pub struct MonoTerm(Ctx<PRef, usize>); // (var index, power)
@@ -108,7 +107,8 @@ impl MonoTerm {
     }
 
     fn lcm(&self, other: &Self) -> Self {
-        let mut lcm_powers: Vec<(PRef, usize)> = self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
+        let mut lcm_powers: Vec<(PRef, usize)> =
+            self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
         for (var, power2) in other.0.iter() {
             match lcm_powers.iter_mut().find(|(v, _)| v == var) {
                 Some((_, power1)) => *power1 = (*power1).max(*power2),
@@ -136,7 +136,11 @@ impl MonoTerm {
             return None;
         }
 
-        let mut powers1 = self.0.iter().map(|(v, p)| (v.clone(), *p)).collect::<Vec<_>>();
+        let mut powers1 = self
+            .0
+            .iter()
+            .map(|(v, p)| (v.clone(), *p))
+            .collect::<Vec<_>>();
         for (var, power2) in other.0.iter() {
             // We know var is in powers1 with sufficient power because term_is_divided was true
             if let Some(power1) = powers1.iter_mut().find(|(v, _)| v == var) {
@@ -144,7 +148,9 @@ impl MonoTerm {
             }
         }
 
-        Some(MonoTerm(powers1.into_iter().filter(|(_, p)| *p > 0).collect()))
+        Some(MonoTerm(
+            powers1.into_iter().filter(|(_, p)| *p > 0).collect(),
+        ))
     }
 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -170,7 +176,7 @@ impl MonoTerm {
     fn grevlex(&self, other: &Self) -> Ordering {
         // Compare total degrees of the monomials
         match self.degree().cmp(&other.degree()) {
-            Ordering::Equal => {},
+            Ordering::Equal => {}
             order => return order.reverse(),
         };
 
@@ -179,13 +185,13 @@ impl MonoTerm {
             match (v1.cmp(v2), p1.cmp(p2)) {
                 (Ordering::Equal, Ordering::Equal) => continue,
                 (Ordering::Equal, order) => return order.reverse(),
-                (order, _) => return order
+                (order, _) => return order,
             }
         }
         Ordering::Equal
     }
 
-    fn iter(&self) -> impl Iterator<Item=(&PRef, &usize)> {
+    fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
         self.0.iter()
     }
 }
@@ -196,7 +202,7 @@ impl GrevLexTerm {
         GrevLexTerm(MonoTerm(vars))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=(&PRef, &usize)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
         self.0.iter()
     }
 }
@@ -212,14 +218,14 @@ impl ElimTerm {
     /// (random masks) are eliminated.
     pub fn eliminate_var(v: &PRef) -> bool {
         v.qualifier == Qualifier::Local
-        || (v.qualifier == Qualifier::Private && v.distribution.is_uniform())
+            || (v.qualifier == Qualifier::Private && v.distribution.is_uniform())
     }
 
     pub fn eliminate(&self) -> bool {
         self.0.iter().any(|(v, _)| Self::eliminate_var(v))
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=(&PRef, &usize)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
         self.0.iter()
     }
 }
@@ -249,7 +255,7 @@ impl MulAssign for ElimTerm {
 
 impl MulAssign for GrevLexTerm {
     fn mul_assign(&mut self, other: Self) {
-        for (var, power) in other.0.iter() {   
+        for (var, power) in other.0.iter() {
             *self.0.0.entry(var.clone()).or_insert(0) += power;
         }
     }
@@ -411,34 +417,49 @@ impl Monomial for ElimTerm {
 /// Define elimination order comparison. First, we compare principals such that if any variable has
 /// Principal::Any > Principal::Verifier and Principal::Any > Principal::Prover, then the same is true for MonoTerm.
 /// If the principals are equal, then perform a grevlex comparison on the powers of the variables (graded, reverse lexicographic order).
+#[allow(clippy::derive_ord_xor_partial_ord)]
 impl Ord for ElimTerm {
     fn cmp(&self, other: &Self) -> Ordering {
-        let elim_self = MonoTerm(self.0.iter()
+        let elim_self = MonoTerm(
+            self.0
+                .iter()
                 .filter(|(var, _)| ElimTerm::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>());
+                .collect::<Ctx<PRef, usize>>(),
+        );
 
-        let elim_other = MonoTerm(other.0.iter()
+        let elim_other = MonoTerm(
+            other
+                .0
+                .iter()
                 .filter(|(var, _)| ElimTerm::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>());
+                .collect::<Ctx<PRef, usize>>(),
+        );
 
         // Compare the variables we prefer to eliminate first, using the grevlex monomial order
         match elim_self.grevlex(&elim_other) {
-            Ordering::Equal => {},
-            order => return order
+            Ordering::Equal => {}
+            order => return order,
         };
 
         // If they are equal, compare the remaining variables
-        let other_self = MonoTerm(self.0.iter()
+        let other_self = MonoTerm(
+            self.0
+                .iter()
                 .filter(|(var, _)| !ElimTerm::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>());
+                .collect::<Ctx<PRef, usize>>(),
+        );
 
-        let other_other = MonoTerm(other.0.iter()
+        let other_other = MonoTerm(
+            other
+                .0
+                .iter()
                 .filter(|(var, _)| !ElimTerm::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>());
+                .collect::<Ctx<PRef, usize>>(),
+        );
 
         // If they are equal, compare the remaining variables
         other_self.grevlex(&other_other)
@@ -446,6 +467,7 @@ impl Ord for ElimTerm {
 }
 
 /// Define grevlex order comparison.
+#[allow(clippy::derive_ord_xor_partial_ord)]
 impl Ord for GrevLexTerm {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.grevlex(&other.0)

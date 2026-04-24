@@ -7,4 +7,3 @@ use pest_derive::Parser;
 #[derive(Parser)]
 #[grammar = "parser/zippel.pest"] // relative to src
 pub struct ZippelParser;
-

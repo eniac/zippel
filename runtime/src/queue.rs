@@ -1,5 +1,5 @@
-use petgraph::graph::NodeIndex;
 use crossbeam_channel as channel;
+use petgraph::graph::NodeIndex;
 
 // ---------------------------------------------------------------------------
 // SyncSender / SyncReceiver — MPSC channel for sync (sponge-requiring) nodes
@@ -12,12 +12,12 @@ use crossbeam_channel as channel;
 /// node.  When all sender clones are dropped — meaning no pool
 /// tasks remain — the channel closes and `pop()` returns `None`,
 /// signalling that the pool is idle.
-pub struct SyncMessage{
+pub struct SyncMessage {
     /// A sync node ready for sequential sponge processing,
     /// together with a sender clone that keeps the channel open
     /// until the node has been consumed.
     pub node_idx: NodeIndex,
-    pub tx: SyncSender
+    pub tx: SyncSender,
 }
 
 /// Sender half of the sync channel.
@@ -37,7 +37,14 @@ impl SyncSender {
     /// the channel stays open until the receiver has consumed it.
     /// Safe to call from any thread.
     pub fn push(&self, node_idx: NodeIndex) {
-        self.tx.send(SyncMessage { node_idx, tx: SyncSender{ tx: self.tx.clone() } }).ok();
+        self.tx
+            .send(SyncMessage {
+                node_idx,
+                tx: SyncSender {
+                    tx: self.tx.clone(),
+                },
+            })
+            .ok();
     }
 }
 

@@ -1,10 +1,10 @@
 use itertools::Itertools;
 
-use share::{Ctx, Set};
 use crate::id::{Tid, TidSubst};
-use crate::typ::{Kind, UTypeVars};
 use crate::typ::range::Range;
+use crate::typ::{Kind, UTypeVars};
 use share::traversal::ToTraversal1;
+use share::{Ctx, Set};
 use thiserror::Error;
 
 #[derive(Error, PartialEq, Debug)]
@@ -54,27 +54,27 @@ impl<T: Clone> FromIterator<(Tid, T)> for Substs<T> {
 }
 
 impl SizeSubsts {
-
     // Collect all sized type variables, for example [N: 0..10, M: 3,2..7]
     // and take all possible combinations of sizes.
     // If `sizes` provides a value for a Range typevar, pin to that value
     // (generate only the singleton) after validating it's within range.
     // Warning: exponential, the idea is there are few sizes (or even 1)
     pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Result<Set<Self>, SubstError> {
-        let typevar_ranges: Vec<(Tid, Range<usize>)> =
-            tv.clone()
-                .into_iter()
-                .filter_map(|tv|
-                    match tv.kind {
-                        Kind::Range(r) => {
-                            let cr = r.traverse1(&mut |s| s.eval(sizes)).ok()?;
-                            Some((tv.id.clone(), cr))
-                        },
-                        _ => None
-                    }).collect();
+        let typevar_ranges: Vec<(Tid, Range<usize>)> = tv
+            .clone()
+            .into_iter()
+            .filter_map(|tv| match tv.kind {
+                Kind::Range(r) => {
+                    let cr = r.traverse1(&mut |s| s.eval(sizes)).ok()?;
+                    Some((tv.id.clone(), cr))
+                }
+                _ => None,
+            })
+            .collect();
 
         // Pin ranges that have an explicit value in `sizes`
-        let pinned_ranges: Vec<(Tid, Range<usize>)> = typevar_ranges.into_iter()
+        let pinned_ranges: Vec<(Tid, Range<usize>)> = typevar_ranges
+            .into_iter()
             .map(|(tid, range)| {
                 if let Some(&pinned) = sizes.get(&tid) {
                     if range.contains(pinned) {
@@ -95,9 +95,9 @@ impl SizeSubsts {
 
         // Take the multi_cartesian_product of all ranges to get all possible size
         // substitutions
-        Ok(pinned_ranges.into_iter()
-            .map(|(tid, r)|
-                r.into_iter().map(|i| (tid.clone(), i)).collect::<Vec<_>>())
+        Ok(pinned_ranges
+            .into_iter()
+            .map(|(tid, r)| r.into_iter().map(|i| (tid.clone(), i)).collect::<Vec<_>>())
             .multi_cartesian_product()
             .map(Substs::from)
             .collect::<Set<SizeSubsts>>())
@@ -116,12 +116,12 @@ impl AliasSubsts {
         let mut eqclass = Set::from([a.clone(), b.clone()]);
 
         // Add equivalence classes of [a] into [eqclass]
-        for v in self.0.get(a).map(|x|x.clone()).unwrap_or(Set::new()) {
+        for v in self.0.get(a).map(|x| x.clone()).unwrap_or(Set::new()) {
             eqclass.insert(v.clone());
         }
 
         // Add equivalence classes of [b] into [eqclass]
-        for v in self.0.get(b).map(|x|x.clone()).unwrap_or(Set::new()) {
+        for v in self.0.get(b).map(|x| x.clone()).unwrap_or(Set::new()) {
             eqclass.insert(v.clone());
         }
 
@@ -171,7 +171,6 @@ impl AliasSubsts {
             on.tid_subst(&k, &self.get_repr(&k).unwrap());
         }
     }
-
 }
 
 impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
@@ -180,11 +179,13 @@ impl<T: Clone> From<Vec<(Tid, T)>> for Substs<T> {
     }
 }
 
-#[cfg(test)] use crate::ast::decl::Decl;
+#[cfg(test)]
+use crate::ast::decl::Decl;
 #[test]
 fn size_substs_from_typevars() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
-    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap(),
+    assert_eq!(
+        SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap(),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 0), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 1)]),
@@ -194,7 +195,8 @@ fn size_substs_from_typevars() {
             SizeSubsts::from(vec![(Tid::from("N"), 1), (Tid::from("M"), 2)]),
             SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 2)]),
             SizeSubsts::from(vec![(Tid::from("N"), 3), (Tid::from("M"), 2)])
-        ]));
+        ])
+    );
 }
 
 #[test]
@@ -203,11 +205,13 @@ fn size_substs_pinning() {
     let decl = Decl::from_str("fn test<N: 0..4, M: 1..3>(public a: N) -> N { 1 }").unwrap();
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::from("N"), &2);
-    assert_eq!(SizeSubsts::from_typevars(&decl.sig.typevars, &sizes).unwrap(),
+    assert_eq!(
+        SizeSubsts::from_typevars(&decl.sig.typevars, &sizes).unwrap(),
         Set::from(vec![
             SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 1)]),
             SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 2)]),
-        ]));
+        ])
+    );
 }
 
 #[test]
@@ -229,11 +233,26 @@ fn alias_substs_equ_clos() {
     alias.add_equ(&Tid::from("B"), &Tid::from("C"));
     alias.add_equ(&Tid::from("D"), &Tid::from("E"));
 
-    assert_eq!(alias.get_equivalents(&Tid::from("A")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("B")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("C")), Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("D")), Set::from(vec![Tid::from("D"), Tid::from("E")]));
-    assert_eq!(alias.get_equivalents(&Tid::from("E")), Set::from(vec![Tid::from("D"), Tid::from("E")]));
+    assert_eq!(
+        alias.get_equivalents(&Tid::from("A")),
+        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
+    );
+    assert_eq!(
+        alias.get_equivalents(&Tid::from("B")),
+        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
+    );
+    assert_eq!(
+        alias.get_equivalents(&Tid::from("C")),
+        Set::from(vec![Tid::from("A"), Tid::from("B"), Tid::from("C")])
+    );
+    assert_eq!(
+        alias.get_equivalents(&Tid::from("D")),
+        Set::from(vec![Tid::from("D"), Tid::from("E")])
+    );
+    assert_eq!(
+        alias.get_equivalents(&Tid::from("E")),
+        Set::from(vec![Tid::from("D"), Tid::from("E")])
+    );
 
     assert_eq!(alias.get_repr(&Tid::from("B")), Some(Tid::from("A")));
     assert_eq!(alias.get_repr(&Tid::from("C")), Some(Tid::from("A")));

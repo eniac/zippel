@@ -1,36 +1,24 @@
 #![feature(box_patterns)]
 #![feature(associated_type_defaults)]
 pub mod config;
-pub mod poly_variant;
-pub mod virtual_polynomial;
-pub mod values;
-pub mod types;
 pub mod nothing;
 pub mod op;
+pub mod poly_variant;
+pub mod types;
+pub mod values;
+pub mod virtual_polynomial;
 
-pub use nothing::{NoField, NoCurve, NoPairing};
-pub use values::{Value, value_to_bytes};
-pub use types::{ABase, ATyp};
-pub use op::{Op, Ref, GOp, HasOpFactory};
-pub use virtual_polynomial::VirtualPolynomial;
-pub use poly_variant::{PolyVariant, PolyError};
 pub use config::{
-    ArkScalarOps,
-    ArkGroupOps,
-    ArkPairingOps,
-    ArkConfig,
-    ArkBls12_381,
-    ArkBn254,
-    ArkMNT4_298,
-    ArkCurve25519,
-    ArkSecp256k1,
-    ArkPallas,
+    ArkBls12_381, ArkBn254, ArkConfig, ArkCurve25519, ArkEd25519, ArkField17, ArkField65537,
+    ArkFieldN, ArkGroupOps, ArkMNT4_298, ArkPairingOps, ArkPallas, ArkScalarOps, ArkSecp256k1,
     ArkVesta,
-    ArkEd25519,
-    ArkFieldN,
-    ArkField17,
-    ArkField65537
 };
+pub use nothing::{NoCurve, NoField, NoPairing};
+pub use op::{GOp, HasOpFactory, Op, Ref};
+pub use poly_variant::{PolyError, PolyVariant};
+pub use types::{ABase, ATyp};
+pub use values::{Value, value_to_bytes};
+pub use virtual_polynomial::VirtualPolynomial;
 
 #[cfg(test)]
 mod tests;

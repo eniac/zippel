@@ -1,9 +1,9 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkConfig, ArkSecp256k1, Value, ATyp};
 use ark_ff::{One, Zero};
+use backend::{ATyp, ArkConfig, ArkSecp256k1, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== Hadamard (ArkSecp256k1) ===");
@@ -20,7 +20,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkSecp256k1>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -69,12 +72,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut p_b_coeffs = Vec::with_capacity(n_val_const);
     let mut p_c_coeffs = Vec::with_capacity(n_val_const);
     for _ in 0..n_val_const {
-        let a_i: Value<ArkSecp256k1> =
-            Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
-        let b_i: Value<ArkSecp256k1> =
-            Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
-        let c_i: Value<ArkSecp256k1> =
-            Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+        let a_i: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+        let b_i: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+        let c_i: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
         p_a_coeffs.push(a_i.into_scalar());
         p_b_coeffs.push(b_i.into_scalar());
         p_c_coeffs.push(c_i.into_scalar());
@@ -100,4 +100,3 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("v_H".to_string()), v_H),
     ])
 }
-
