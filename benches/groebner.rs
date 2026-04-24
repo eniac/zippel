@@ -19,7 +19,7 @@
 //!   * `proc kat_var(int i, int n)` — polylib.lib line 310
 //!
 //! Upstream reference:
-//!   https://github.com/Singular/Singular/blob/spielwiese/Singular/LIB/polylib.lib
+//!   <https://github.com/Singular/Singular/blob/spielwiese/Singular/LIB/polylib.lib>
 //!
 //! We port only the algorithmic shape (loop structure) and the standard
 //! mathematical definitions; we do not copy source. Correctness is
@@ -28,116 +28,127 @@
 //! `tests/groebner_sage.rs`).
 //!
 //! Run with: `cargo bench --bench groebner`
-//!
-//! Note on sizes: Buchberger under ElimTerm on Katsura-5 / Cyclic-5 can take
-//! many minutes in debug builds. Filter with e.g.
-//! `cargo bench --bench groebner -- gb_katsura_grevlex/3`.
+//! Filter  : `cargo bench --bench groebner gb_katsura_grevlex/3`
 
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use graph::analyses::groebner::{ElimTerm, GrevLexTerm};
+use ark_bls12_381::Fr;
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use graph::analyses::groebner::{ElimTerm, GrevLexTerm, GroebnerBasis, Monomial};
 
 #[path = "groebner_shared.rs"]
 mod shared;
 use shared::{cyclic_basis, katsura_basis};
 
-/// Katsura-n sizes under GrevLex / inclusion (all manageable at release).
-const KATSURA_SIZES: &[usize] = &[3, 4, 5];
-/// Katsura-n sizes under ElimTerm. Katsura-5 lex is intractable for our
-/// pure-Rust Buchberger (multi-hour); cap at 4.
-const KATSURA_ELIM_SIZES: &[usize] = &[3, 4];
-/// Cyclic-n sizes under GrevLex / inclusion. Cyclic-5 is the classic
-/// SymbolicData hard case — intractable even under GrevLex for our
-/// implementation — so we cap at 4.
-const CYCLIC_SIZES: &[usize] = &[4];
-/// Cyclic-n sizes under ElimTerm (same cap as GrevLex).
-const CYCLIC_ELIM_SIZES: &[usize] = &[4];
+// ---------------------------------------------------------------------------
+// Sizes — empirical caps for our pure-Rust Buchberger (release mode).
+// ---------------------------------------------------------------------------
 
-fn bench_gb_katsura_elim(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_katsura_elim");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in KATSURA_ELIM_SIZES {
-        let sys = katsura_basis::<ElimTerm>(n);
+/// Katsura-n under GrevLex and inclusion — tractable through n=5.
+const KATSURA_GREVLEX_SIZES: &[usize] = &[3, 4, 5];
+/// Katsura-n under ElimTerm — n=5 did not complete in >10 min.
+const KATSURA_ELIM_SIZES: &[usize] = &[3, 4];
+/// Cyclic-n — n=5 is the classic SymbolicData hard case, intractable
+/// under both orderings for our implementation.
+const CYCLIC_SIZES: &[usize] = &[4];
+
+const SAMPLE_SIZE: usize = 10;
+const MEASUREMENT_TIME: Duration = Duration::from_secs(30);
+
+// ---------------------------------------------------------------------------
+// Generic helpers — one per measurement kind.
+// ---------------------------------------------------------------------------
+
+/// Time `buchberger()` on bases produced by `build(n)` for each `n` in `sizes`.
+/// Uses `iter_batched` so the per-iter `.clone()` (Buchberger consumes `self`)
+/// is excluded from the measurement.
+fn bench_buchberger<T: Monomial, F>(c: &mut Criterion, group_name: &str, sizes: &[usize], build: F)
+where
+    F: Fn(usize) -> GroebnerBasis<Fr, T>,
+{
+    let mut group = c.benchmark_group(group_name);
+    group.sample_size(SAMPLE_SIZE);
+    group.measurement_time(MEASUREMENT_TIME);
+    for &n in sizes {
+        let sys = build(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter(|| sys.clone().buchberger())
+            b.iter_batched(|| sys.clone(), |s| s.buchberger(), BatchSize::SmallInput)
         });
     }
     group.finish();
+}
+
+/// Time `contains(&input)` for each `n` in `sizes`. Pre-computes the reduced
+/// Gröbner basis once outside the iter loop; each iter reduces every input
+/// generator modulo that basis (exercising `contains_poly`).
+fn bench_inclusion<T: Monomial, F>(c: &mut Criterion, group_name: &str, sizes: &[usize], build: F)
+where
+    F: Fn(usize) -> GroebnerBasis<Fr, T>,
+{
+    let mut group = c.benchmark_group(group_name);
+    group.sample_size(SAMPLE_SIZE);
+    group.measurement_time(MEASUREMENT_TIME);
+    for &n in sizes {
+        let input = build(n);
+        let g = input.clone().buchberger();
+        group.bench_with_input(BenchmarkId::from_parameter(n), &(g, input), |b, (g, i)| {
+            b.iter(|| g.contains(i))
+        });
+    }
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Bench entry points — one line of wiring per (family × kind).
+// ---------------------------------------------------------------------------
+
+fn bench_gb_katsura_elim(c: &mut Criterion) {
+    bench_buchberger(
+        c,
+        "gb_katsura_elim",
+        KATSURA_ELIM_SIZES,
+        katsura_basis::<ElimTerm>,
+    );
 }
 
 fn bench_gb_katsura_grevlex(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_katsura_grevlex");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in KATSURA_SIZES {
-        let sys = katsura_basis::<GrevLexTerm>(n);
-        group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter(|| sys.clone().buchberger())
-        });
-    }
-    group.finish();
+    bench_buchberger(
+        c,
+        "gb_katsura_grevlex",
+        KATSURA_GREVLEX_SIZES,
+        katsura_basis::<GrevLexTerm>,
+    );
 }
 
 fn bench_gb_cyclic_elim(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_cyclic_elim");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in CYCLIC_ELIM_SIZES {
-        let sys = cyclic_basis::<ElimTerm>(n);
-        group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter(|| sys.clone().buchberger())
-        });
-    }
-    group.finish();
+    bench_buchberger(c, "gb_cyclic_elim", CYCLIC_SIZES, cyclic_basis::<ElimTerm>);
 }
 
 fn bench_gb_cyclic_grevlex(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_cyclic_grevlex");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in CYCLIC_SIZES {
-        let sys = cyclic_basis::<GrevLexTerm>(n);
-        group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter(|| sys.clone().buchberger())
-        });
-    }
-    group.finish();
+    bench_buchberger(
+        c,
+        "gb_cyclic_grevlex",
+        CYCLIC_SIZES,
+        cyclic_basis::<GrevLexTerm>,
+    );
 }
 
-/// Inclusion (basis containment): given a computed Gröbner basis `g` and the
-/// original ideal generators `input`, time `g.contains(&input)` (each input
-/// generator is reduced modulo `g` and must reduce to zero). This exercises
-/// the same `contains_poly` / reduction path Zippel's analysis uses for ideal
-/// membership. GrevLex order so the `buchberger()` pre-computation stays
-/// cheap relative to the contains call.
 fn bench_gb_inclusion_katsura(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_inclusion_katsura");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in KATSURA_SIZES {
-        let input = katsura_basis::<GrevLexTerm>(n);
-        let g = input.clone().buchberger();
-        group.bench_with_input(BenchmarkId::from_parameter(n), &(g, input), |b, (g, i)| {
-            b.iter(|| g.contains(i))
-        });
-    }
-    group.finish();
+    bench_inclusion(
+        c,
+        "gb_inclusion_katsura",
+        KATSURA_GREVLEX_SIZES,
+        katsura_basis::<GrevLexTerm>,
+    );
 }
 
 fn bench_gb_inclusion_cyclic(c: &mut Criterion) {
-    let mut group = c.benchmark_group("gb_inclusion_cyclic");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(30));
-    for &n in CYCLIC_SIZES {
-        let input = cyclic_basis::<GrevLexTerm>(n);
-        let g = input.clone().buchberger();
-        group.bench_with_input(BenchmarkId::from_parameter(n), &(g, input), |b, (g, i)| {
-            b.iter(|| g.contains(i))
-        });
-    }
-    group.finish();
+    bench_inclusion(
+        c,
+        "gb_inclusion_cyclic",
+        CYCLIC_SIZES,
+        cyclic_basis::<GrevLexTerm>,
+    );
 }
 
 criterion_group!(

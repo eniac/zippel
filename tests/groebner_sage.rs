@@ -4,7 +4,6 @@
 //! and `benches/groebner.rs` for the upstream provenance.
 
 use ark_bls12_381::Fr;
-use ark_ff::One;
 use graph::PRef;
 use graph::analyses::groebner::{GrevLexTerm, SparsePolynomial};
 
@@ -103,5 +102,4 @@ fn generator_counts() {
         let vars = mk_vars("c", n);
         assert_eq!(cyclic_polys::<GrevLexTerm>(&vars).len(), n);
     }
-    let _ = Fr::one();
 }
