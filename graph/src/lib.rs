@@ -1,5 +1,4 @@
 #![feature(box_patterns)]
-#![feature(trait_alias)]
 pub mod analyses;
 mod dep;
 pub mod domain_seperator;

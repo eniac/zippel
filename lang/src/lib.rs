@@ -1,5 +1,4 @@
 #![feature(box_patterns)]
-#![feature(step_trait)]
 
 use lazy_static::lazy_static;
 
