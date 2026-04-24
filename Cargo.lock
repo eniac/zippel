@@ -2430,6 +2430,7 @@ dependencies = [
 name = "zippel"
 version = "0.1.0"
 dependencies = [
+ "ark-bls12-381",
  "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
@@ -2439,6 +2440,7 @@ dependencies = [
  "graph",
  "lang",
  "log",
+ "petgraph",
  "rand 0.8.5",
  "runtime",
  "share",
