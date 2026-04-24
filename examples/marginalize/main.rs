@@ -1,7 +1,7 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
 use backend::ArkBls12_381;
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== Marginalize (ArkBls12_381, compile-only) ===");
