@@ -1529,7 +1529,7 @@ fn pin_fun_lit() {
 
     let mut expected = UDag::<B>::new();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
+    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
 
     // fun x => x → DensePolynomial [0, 1] representing the identity
     let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
@@ -2551,7 +2551,7 @@ fn pin_reduce_add() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(
@@ -2575,7 +2575,7 @@ fn pin_reduce_mul() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(
@@ -2599,7 +2599,7 @@ fn pin_reduce_sub() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(

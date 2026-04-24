@@ -44,11 +44,13 @@ fn main() {
 
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/vpoly/vpoly.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
+    let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
         Ok(analysis) => {
             match &analysis.completeness {
@@ -62,6 +64,7 @@ fn main() {
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
