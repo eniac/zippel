@@ -8,6 +8,12 @@
 //!   * **Katsura-n** — symmetric system from non-linear wave physics.
 //!   * **Cyclic-n**  — cyclic-roots system.
 //!
+//! The suite reports BOTH raw Buchberger (`gb_*`) and Buchberger-then-reduce
+//! (`gb_*_reduced`). Published CAS timings (Singular/Maple/Magma) are for the
+//! *reduced* Gröbner basis, so the `_reduced` variants are the right
+//! comparison point against the literature; the raw variants are retained to
+//! break out where time is spent (main loop vs inter-reduction).
+//!
 //! # Source of generators
 //!
 //! The Katsura / Cyclic generators (in `groebner_shared.rs`) are direct ports
@@ -78,6 +84,33 @@ where
     group.finish();
 }
 
+/// Time `buchberger_and_reduce()` — the *reduced* Gröbner basis, which is
+/// what Singular/Maple/Magma benchmarks report. Always ≥ the corresponding
+/// raw `bench_buchberger` time (interreduction is non-negative work).
+fn bench_buchberger_reduced<T: Monomial, F>(
+    c: &mut Criterion,
+    group_name: &str,
+    sizes: &[usize],
+    build: F,
+) where
+    F: Fn(usize) -> GroebnerBasis<Fr, T>,
+{
+    let mut group = c.benchmark_group(group_name);
+    group.sample_size(SAMPLE_SIZE);
+    group.measurement_time(MEASUREMENT_TIME);
+    for &n in sizes {
+        let sys = build(n);
+        group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
+            b.iter_batched(
+                || sys.clone(),
+                |s| s.buchberger_and_reduce(),
+                BatchSize::SmallInput,
+            )
+        });
+    }
+    group.finish();
+}
+
 /// Time `contains(&input)` for each `n` in `sizes`. Pre-computes the reduced
 /// Gröbner basis once outside the iter loop; each iter reduces every input
 /// generator modulo that basis (exercising `contains_poly`).
@@ -133,6 +166,42 @@ fn bench_gb_cyclic_grevlex(c: &mut Criterion) {
     );
 }
 
+fn bench_gb_katsura_elim_reduced(c: &mut Criterion) {
+    bench_buchberger_reduced(
+        c,
+        "gb_katsura_elim_reduced",
+        KATSURA_ELIM_SIZES,
+        katsura_basis::<ElimTerm>,
+    );
+}
+
+fn bench_gb_katsura_grevlex_reduced(c: &mut Criterion) {
+    bench_buchberger_reduced(
+        c,
+        "gb_katsura_grevlex_reduced",
+        KATSURA_GREVLEX_SIZES,
+        katsura_basis::<GrevLexTerm>,
+    );
+}
+
+fn bench_gb_cyclic_elim_reduced(c: &mut Criterion) {
+    bench_buchberger_reduced(
+        c,
+        "gb_cyclic_elim_reduced",
+        CYCLIC_SIZES,
+        cyclic_basis::<ElimTerm>,
+    );
+}
+
+fn bench_gb_cyclic_grevlex_reduced(c: &mut Criterion) {
+    bench_buchberger_reduced(
+        c,
+        "gb_cyclic_grevlex_reduced",
+        CYCLIC_SIZES,
+        cyclic_basis::<GrevLexTerm>,
+    );
+}
+
 fn bench_gb_inclusion_katsura(c: &mut Criterion) {
     bench_inclusion(
         c,
@@ -157,6 +226,10 @@ criterion_group!(
     bench_gb_katsura_grevlex,
     bench_gb_cyclic_elim,
     bench_gb_cyclic_grevlex,
+    bench_gb_katsura_elim_reduced,
+    bench_gb_katsura_grevlex_reduced,
+    bench_gb_cyclic_elim_reduced,
+    bench_gb_cyclic_grevlex_reduced,
     bench_gb_inclusion_katsura,
     bench_gb_inclusion_cyclic,
 );
