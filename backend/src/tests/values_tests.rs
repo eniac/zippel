@@ -83,13 +83,17 @@ fn test_mul_comm() {
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
-    let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_fft().value_ifft();
-    assert_deq!(&c, &a);
 
+    // Vec(F, 8) -[ifft]-> Poly(F, 1, 8) -[fft]-> Vec(F, 8) round-trips.
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
     let c = a.value_ifft().value_fft();
     assert_deq!(&c, &a);
+
+    // Poly(F, 1, 8) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 8) round-trips.
+    // Compare via coefficient vectors to avoid wrapper-shape sensitivity.
+    let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(8));
+    let p2 = p.value_fft().value_ifft();
+    assert_deq!(&p2.value_coef(), &p.value_coef());
 }
 
 // Equivalence relation tests for value_equ

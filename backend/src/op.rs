@@ -195,8 +195,15 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
-            Op::Ifft(op) => op.typ(),
-            Op::Fft(op) => op.typ(),
+            Op::Ifft(op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::vpoly(1, n),
+                t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
+            },
+            Op::Fft(op) => match op.typ() {
+                ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
+                t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
+            },
             Op::Check(op) => op.typ(),
             Op::Poly(op) => op.typ(),
             Op::Eval(_p, x) => x.typ(),

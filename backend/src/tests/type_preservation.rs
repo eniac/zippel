@@ -210,7 +210,7 @@ mod scaffolding {
 
     #[test]
     fn random_inhabits_uni() {
-        // The generator currently uses degree 2; ensure it inhabits Uni(n) for n>=2.
+        // `Value::random(Uni(n))` must produce `Value::Poly` per spec.
         let mut rng = test_rng();
         let t = ATyp::uni(8);
         let v: V = Value::random(&mut rng, &t);
@@ -219,6 +219,21 @@ mod scaffolding {
             "Value::random(Uni(8)) produced {} (expected Uni-shape, max deg 8)",
             vty(&v)
         );
+    }
+
+    #[test]
+    fn random_inhabits_mle() {
+        // `Value::random(Mle(k))` must respect the supplied num_vars.
+        let mut rng = test_rng();
+        for k in 1..=4usize {
+            let t = ATyp::Mle(k);
+            let v: V = Value::random(&mut rng, &t);
+            assert!(
+                has_atyp(&v, &t),
+                "Value::random(Mle({k})) produced {} (expected Mle with {k} vars)",
+                vty(&v)
+            );
+        }
     }
 
     #[test]
@@ -467,57 +482,49 @@ mod vec_ops {
 // =============================================================================
 // Polynomial ops (Ifft, Fft, Poly, Coef, Mle, Eval)
 //
-// These are the prime suspects: `infer.rs` types Ifft/Poly as
-// `Poly(F, 1, n)` (lowering to `VPoly(1, n)`), but the runtime returns
-// `VecScalar`. Tests stay red as documented regression pins.
+// `infer.rs` is authoritative:
+//   - `Ifft : Vec(F, n) -> Poly(F, 1, n)`         (lowered: `VPoly(1, n)`)
+//   - `Fft  : Poly(F, 1, n) -> Vec(F, n)`          (univariate arm)
+// Both require `n` to be a power of two (enforced in `infer.rs`).
 // =============================================================================
 
 mod poly_ops {
     use super::*;
 
-    /// **EXPECTED FAILURE** — bug pinned by user.
-    ///
-    /// Spec: `Ifft : Vec(F, n) -> Poly(F, 1, n)` (`infer.rs:342`).
-    /// Lowering: `Poly(F, 1, n)` -> `ATyp::VPoly(1, n)` (`types.rs:169`).
-    /// Runtime: `Value::value_ifft` returns `Value::VecScalar` (`values.rs:2508`).
-    /// Mismatch: variant family — `VecScalar` does not inhabit `VPoly`.
+    /// Spec: `Ifft : Vec(F, n) -> Poly(F, 1, n)` (`infer.rs:342`),
+    /// lowering to `VPoly(1, n)`.
     #[test]
     fn pbt_ifft_returns_poly_per_spec() {
         arbtest::arbtest(|u| {
-            let n: usize = u.int_in_range(1..=6)?;
+            // Pow2 sizes only — `infer.rs` rejects non-pow2 Ifft.
+            let n: usize = *u.choose(&[1usize, 2, 4, 8])?;
             let mut rng = test_rng();
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
             let r = v.value_ifft();
             let expected = ATyp::vpoly(1, n);
             assert!(
                 has_atyp(&r, &expected),
-                "BUG (infer.rs:342 vs values.rs:2508): \
-                 ifft(vec_scalar({n})) -> {} (expected {expected})",
+                "ifft(vec_scalar({n})) -> {} (expected {expected})",
                 vty(&r)
             );
             Ok(())
         });
     }
 
-    /// **EXPECTED FAILURE** — same pattern as Ifft. `Op::Fft` typing in
-    /// `infer.rs` (audit pending in this test suite); the runtime
-    /// (`values.rs:2524`) returns `VecScalar`. The most defensible spec for
-    /// FFT is `Vec(F, n) -> Vec(F, n)` (it's an evaluation rebasis) — if so,
-    /// this test should PASS. But if `infer.rs` types it differently, this
-    /// test will surface that. We assert the runtime-shape (Vec → Vec) here
-    /// and add a TODO to cross-check with `infer.rs`.
+    /// Spec: `Fft : Poly(F, 1, n) -> Vec(F, n)` (`infer.rs:692-706`).
+    /// The runtime now takes `Value::Poly` only.
     #[test]
-    fn pbt_fft_returns_vec_runtime_shape() {
+    fn pbt_fft_poly_to_vec_per_spec() {
         arbtest::arbtest(|u| {
-            let n: usize = u.int_in_range(1..=6)?;
+            // Pow2 sizes only — `infer.rs` rejects non-pow2 Fft.
+            let n: usize = *u.choose(&[1usize, 2, 4, 8])?;
             let mut rng = test_rng();
-            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
+            let v: V = Value::random(&mut rng, &ATyp::uni(n));
             let r = v.value_fft();
             let expected = ATyp::vec_scalar(n);
             assert!(
                 has_atyp(&r, &expected),
-                "fft(vec_scalar({n})) -> {} (runtime expected {expected}; \
-                 cross-check with infer.rs)",
+                "fft(uni({n})) -> {} (expected {expected})",
                 vty(&r)
             );
             Ok(())
@@ -584,20 +591,14 @@ mod poly_ops {
 mod regression {
     use super::*;
 
-    /// **EXPECTED FAILURE**.
-    ///
     /// Per `lang/src/typ/infer.rs:342`, the type rule for `Ifft` is
-    /// `Vec(F, n) -> Poly(F, 1, n)`. Per `backend/src/types.rs:169`,
-    /// `Poly(F, 1, n)` lowers to `ATyp::VPoly(1, n)`. Per
-    /// `backend/src/values.rs:2508`, `value_ifft` on a `Vec(F, 4)` returns
-    /// `Value::VecScalar(_)` of length 4, whose runtime ATyp is
-    /// `Vec(Scalar, 4)`. These do not agree.
+    /// `Vec(F, n) -> Poly(F, 1, n)`. Per `backend/src/types.rs`,
+    /// `Poly(F, 1, n)` lowers to `ATyp::VPoly(1, n)`. The runtime
+    /// (`backend/src/values.rs::value_ifft`) must produce `Value::Poly`
+    /// (DenseUni) so that `has_atyp(_, VPoly(1, n))` holds.
     ///
-    /// This test pins that disagreement. Fixing it requires *either*
-    /// changing `value_ifft` to return `Value::Poly(univariate_from_coeffs)`
-    /// (matching the spec) *or* changing `infer.rs` to type Ifft as
-    /// `Vec(F, n)` (matching the runtime). The user's preference is to
-    /// trust `infer.rs`, so the runtime is the buggy side.
+    /// Originally pinned as a known disagreement; now a forward-looking
+    /// regression pin against re-introducing the variant mismatch.
     #[test]
     fn ifft_returns_poly_per_spec_fixed_size_4() {
         let mut rng = test_rng();
@@ -607,11 +608,8 @@ mod regression {
         let actual = vty(&r);
         assert!(
             has_atyp(&r, &expected),
-            "BUG: ifft(Vec(F, 4)) should produce a value of type {expected} \
-             per infer.rs:342, but got value of type {actual}. \
-             value_ifft (values.rs:2508) returns VecScalar; spec says Poly. \
-             Fix one of: value_ifft returns Value::Poly(univariate), or \
-             infer.rs:342 returns CTyp::Vec(_, n) instead of CTyp::Poly(_,1,n)."
+            "ifft(Vec(F, 4)) should produce a value of type {expected} \
+             per infer.rs:342, but got value of type {actual}."
         );
     }
 }
