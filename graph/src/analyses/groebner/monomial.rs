@@ -169,26 +169,69 @@ impl MonoTerm {
         }
     }
 
-    // Graded reverse lexicographic order (grevlex, or degrevlex for degree reverse lexicographic order)
-    // compares the total degree first, then uses a lexicographic order as tie-breaker, but it reverses
-    // the outcome of the lexicographic comparison so that lexicographically larger monomials of the same
-    // degree are considered to be degrevlex smaller.
+    // Graded reverse-lexicographic order (degrevlex).
+    //
+    // Convention in this codebase: the BTreeMap keyed by `Ord` yields the
+    // *leading* term via `BTreeMap::first` (see `SparsePolynomial::leading_term`),
+    // so the Ord we return treats "leading" (the mathematically largest
+    // monomial) as `Ordering::Less` ("first in the map").
+    //
+    // Textbook degrevlex rule for same-degree monomials:
+    //     at the rightmost variable where exponents differ, the monomial with
+    //     the SMALLER exponent is the LARGER (= leading) monomial.
+    //
+    // Variable ordering: textbook convention is that the *leftmost*-named
+    // variable is the "largest". In this codebase `PRef` is Ord by underlying
+    // `Vid` (alphabetical), so PRef-smallest = textbook-largest variable, and
+    // PRef-LARGEST = textbook-RIGHTMOST. We therefore walk both BTreeMaps in
+    // reverse (descending PRef) to visit the rightmost coordinate first.
+    //
+    // Concretely, for vars a < b < c (PRef order), "rightmost" = c:
+    //   `a^2 > b*c` because `b*c` has a larger exponent (1) than `a^2` (0) on
+    //   the rightmost var c; `a^2` is leading, so `a^2.cmp(&b*c) = Less`.
     fn grevlex(&self, other: &Self) -> Ordering {
-        // Compare total degrees of the monomials
+        // 1. Total degree first — higher degree is leading (Ord::Less).
         match self.degree().cmp(&other.degree()) {
             Ordering::Equal => {}
             order => return order.reverse(),
         };
 
-        // Compare powers in reverse lexicographic order
-        for ((v1, p1), (v2, p2)) in self.0.iter().zip(other.0.iter()) {
-            match (v1.cmp(v2), p1.cmp(p2)) {
-                (Ordering::Equal, Ordering::Equal) => continue,
-                (Ordering::Equal, order) => return order.reverse(),
-                (order, _) => return order,
+        // 2. Merge-walk both maps from largest PRef to smallest, treating
+        //    absent keys as exponent 0. `Ctx::iter()` is DoubleEndedIterator.
+        let mut a = self.0.iter().rev().peekable();
+        let mut b = other.0.iter().rev().peekable();
+        loop {
+            match (a.peek(), b.peek()) {
+                (None, None) => return Ordering::Equal,
+                // Self still has vars at smaller PRefs; other has none left.
+                // At the current rightmost-unvisited coordinate (va): self
+                // has pa > 0, other has 0 => self has LARGER exp => self is
+                // the SMALLER monomial (textbook) => self is NOT leading =>
+                // self.cmp(other) = Ord::Greater.
+                (Some(_), None) => return Ordering::Greater,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(&(va, _pa)), Some(&(vb, _pb))) => match va.cmp(vb) {
+                    // va is a larger PRef than vb, so va is rightmost and
+                    // `other` has 0 on it; self has pa > 0 => self larger
+                    // exp on rightmost differing => self smaller monomial
+                    // => self.cmp(other) = Ord::Greater.
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Equal => {
+                        // Same variable, same degree so far — compare exps
+                        // at this (rightmost-unvisited) coordinate. Larger
+                        // exp = smaller monomial, so self.cmp(other) is
+                        // *directly* pa.cmp(pb).
+                        let (_, pa) = a.next().unwrap();
+                        let (_, pb) = b.next().unwrap();
+                        match pa.cmp(pb) {
+                            Ordering::Equal => continue,
+                            order => return order,
+                        }
+                    }
+                },
             }
         }
-        Ordering::Equal
     }
 
     fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {

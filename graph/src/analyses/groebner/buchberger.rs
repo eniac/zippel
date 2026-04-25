@@ -554,6 +554,8 @@ fn test_s_polynomial() {
 
 #[cfg(test)]
 use crate::analyses::groebner::sparsepoly::{elim_sparse_poly, grevlex_sparse_poly};
+#[cfg(test)]
+use core::cmp::Ordering;
 
 #[test]
 fn test_grevlex_ordering() {
@@ -569,14 +571,54 @@ fn test_grevlex_ordering() {
     let f6 = grevlex_term(vec![(&x3, 2)]); // x3^2
     let f7 = grevlex_term(vec![]); // 1
 
-    // Test with a random permutation
+    // Textbook degrevlex with variable ordering x1 > x2 > x3 (i.e. x3 is the
+    // "rightmost" / smallest variable). Largest monomial first, then tied on
+    // degree => smallest exponent on x3, then x2. Leading (= largest) sorts
+    // FIRST under this `Ord` (see `leading_term` / `BTreeMap::first`):
+    //   x1^2  >  x1*x2  >  x2^2  >  x1*x3  >  x2*x3  >  x3^2  >  1
     let mut terms = vec![&f3, &f4, &f1, &f5, &f6, &f2, &f7]
         .into_iter()
         .map(|t| t.clone())
         .collect::<Vec<_>>();
 
     terms.sort_unstable_by(|a, b| a.cmp(b));
-    assert_eq!(terms, vec![f1, f2, f3, f4, f5, f6, f7]);
+    assert_eq!(terms, vec![f1, f2, f4, f3, f5, f6, f7]);
+}
+
+/// Textbook degrevlex counterexamples that caught the old left-to-right
+/// tie-breaker. With PRef ordering x1 < x2 < x3, "rightmost" = x3.
+/// Under "leading = Ord::Less" convention: the larger monomial returns `Less`.
+#[test]
+fn test_grevlex_degrevlex_counterexamples() {
+    let x1 = elim_var("x1");
+    let x2 = elim_var("x2");
+    let x3 = elim_var("x3");
+
+    // x1^2 vs x2*x3 (both deg 2). Rightmost differing var is x3: x1^2 has
+    // exp 0, x2*x3 has exp 1. Larger exp on x3 => smaller monomial; so
+    // x1^2 > x2*x3, i.e. x1^2 is leading => Ord::Less.
+    let a = grevlex_term(vec![(&x1, 2)]);
+    let b = grevlex_term(vec![(&x2, 1), (&x3, 1)]);
+    assert_eq!(a.cmp(&b), Ordering::Less, "x1^2 > x2*x3 in degrevlex");
+
+    // x1^2 vs x1*x2. Rightmost differing is x2: x1^2 has 0, x1*x2 has 1.
+    // x1^2 leading => Ord::Less.
+    let a = grevlex_term(vec![(&x1, 2)]);
+    let b = grevlex_term(vec![(&x1, 1), (&x2, 1)]);
+    assert_eq!(a.cmp(&b), Ordering::Less, "x1^2 > x1*x2 in degrevlex");
+
+    // x2^2 vs x1*x3. Both deg 2. Rightmost differing is x3: x2^2 has 0,
+    // x1*x3 has 1. x2^2 leading => Ord::Less. (This specifically distinguishes
+    // degrevlex from graded-lex, which would say x1*x3 > x2^2.)
+    let a = grevlex_term(vec![(&x2, 2)]);
+    let b = grevlex_term(vec![(&x1, 1), (&x3, 1)]);
+    assert_eq!(a.cmp(&b), Ordering::Less, "x2^2 > x1*x3 in degrevlex");
+
+    // Degree dominates: x1 (deg 1) < x3^2 (deg 2) in "leading" sense means
+    // x3^2 leading => x3^2.cmp(x1) = Less.
+    let a = grevlex_term(vec![(&x3, 2)]);
+    let b = grevlex_term(vec![(&x1, 1)]);
+    assert_eq!(a.cmp(&b), Ordering::Less, "higher degree is leading");
 }
 
 // A simple test case for a linear system, this should work as Gaussian elimination
