@@ -49,6 +49,11 @@ pub enum TypeError {
     #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
     Ifft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
+    #[error(
+        "IfftError: Argument to [ifft] must be a vector whose length is a power of two; got n={3}:\n\t{0}, {1} |- ifft {2}"
+    )]
+    IfftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
+
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
     Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
@@ -92,6 +97,11 @@ pub enum TypeError {
 
     #[error("FftError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- fft ( {2}: {3})")]
     Fft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
+    #[error(
+        "FftError: Univariate [fft] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- fft ( {2}: {4})"
+    )]
+    FftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
 
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
@@ -166,6 +176,23 @@ impl<'a> TypeError {
     }
     pub fn ifft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn ifft_not_pow2(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        e: &CExp,
+        n: usize,
+    ) -> Self {
+        TypeError::IfftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n)
+    }
+    pub fn fft_not_pow2(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        e: &CExp,
+        n: usize,
+        t: &CTyp,
+    ) -> Self {
+        TypeError::FftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n, t.clone())
     }
     pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
@@ -339,6 +366,9 @@ impl Typeable for CExp {
                         let i = b
                             .to_scalar(kctx)
                             .ok_or(TypeError::ifft(kctx, &vctx, self))?;
+                        if !n.is_power_of_two() {
+                            return Err(TypeError::ifft_not_pow2(kctx, vctx, self, n));
+                        }
                         Ok(CTyp::Poly(i, 1, n))
                     }
                     _ => Err(TypeError::ifft(kctx, &vctx, self)),
@@ -702,11 +732,13 @@ impl Typeable for CExp {
                             LubError::kind_not_found(&tid),
                         ))?;
                         // Only field elements can be evaluated
-                        if k.is_scalar() {
-                            Ok(CTyp::vec(&CTyp::Base(tid), n))
-                        } else {
-                            Err(TypeError::fft(kctx, vctx, &a, &t))
+                        if !k.is_scalar() {
+                            return Err(TypeError::fft(kctx, vctx, &a, &t));
                         }
+                        if !n.is_power_of_two() {
+                            return Err(TypeError::fft_not_pow2(kctx, vctx, &a, n, &t));
+                        }
+                        Ok(CTyp::vec(&CTyp::Base(tid), n))
                     }
                     CTyp::Poly(tid, n, 1) => {
                         let k = kctx.get(&tid).ok_or(TypeError::lub(
@@ -1485,21 +1517,30 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an interpolation expressionin ifft([1, 2, 3], [1, 2, 3])
+        // Pow2 length required by the spec (radix-2 FFT).
         let interp1 = CExp::ifft(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
+            CExp::lit(5),
         ]));
 
         assert_eq!(
             interp1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 3))
+            Ok(CTyp::Poly(Tid::from("F"), 1, 4))
         );
 
         let interp_bad = CExp::ifft(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
 
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+
+        // Non-power-of-two length is rejected.
+        let interp_non_pow2 = CExp::ifft(CExp::vec(vec![
+            CExp::varstr("f1"),
+            CExp::lit(2),
+            CExp::lit(3),
+        ]));
+        assert!(interp_non_pow2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
     #[test]
@@ -1547,16 +1588,17 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an evaluation expression eval(ifft([f1,2,3]))
+        // Pow2 length required by the spec (radix-2 FFT).
         let eval1 = CExp::fft(CExp::ifft(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
+            CExp::lit(5),
         ])));
 
         assert_eq!(
             eval1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3))
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
 
         let eval_bad = CExp::fft(CExp::vec(vec![CExp::varstr("f1")]));

@@ -6,7 +6,7 @@ use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
 use ark_ff::{PrimeField, Zero};
-use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
+use ark_poly::{DenseMultilinearExtension, univariate::DensePolynomial};
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
 use lang::ast::BinOp;
@@ -2070,20 +2070,41 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-            ATyp::Uni(n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
-            ATyp::Mle(_n) => {
-                // For MLE random, create a random univariate polynomial first, then convert
-                // Actually, we should create a random MLE - but for now use a simple approach
-                let num_vars = 1; // Minimum 1 variable
-                let evals = C::FOps::vec_rand(rng, 1 << num_vars);
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
+            ATyp::Uni(n) => {
+                let coeffs = C::FOps::vec_rand(rng, *n);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                    DensePolynomial { coeffs },
                 )))
             }
-            ATyp::VPoly(_, _) => {
-                // For Virtual random, create a random univariate polynomial wrapped in virtual
-                let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(p)))
+            ATyp::Mle(k) => {
+                // `Mle(k)` is a multilinear polynomial in `k` variables, with
+                // 2^k evaluations.
+                let evals = C::FOps::vec_rand(rng, 1 << *k);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::from_evaluations_vec(*k, evals),
+                )))
+            }
+            ATyp::VPoly(m, n) => {
+                // Univariate (m == 1) → DenseUni of size n.
+                // Multilinear-shaped (n == 1) → DenseMle with m vars.
+                // Other shapes are not used by the current spec; punt with a
+                // size-n univariate as a placeholder.
+                if *m == 1 {
+                    let coeffs = C::FOps::vec_rand(rng, *n);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                        DensePolynomial { coeffs },
+                    )))
+                } else if *n == 1 {
+                    let evals = C::FOps::vec_rand(rng, 1 << *m);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                        DenseMultilinearExtension::from_evaluations_vec(*m, evals),
+                    )))
+                } else {
+                    let coeffs = C::FOps::vec_rand(rng, *n);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                        DensePolynomial { coeffs },
+                    )))
+                }
             }
             ATyp::Record(fields) => {
                 let mut record_fields = Ctx::new();
@@ -2506,35 +2527,49 @@ impl<C: ArkConfig> Value<C> {
     }
 
     pub fn value_ifft(&self) -> Self {
-        match self {
-            Value::VecScalar(v) => {
-                let mut v = v.clone();
-                C::FOps::vec_ifft(&mut v);
-                Value::VecScalar(v)
-            }
-            Value::VecIndex(v) => {
-                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
-                C::FOps::vec_ifft(&mut v);
-                Value::VecScalar(v)
-            }
-            _ => panic!("Expected vec scalar or vec index, found {}", self),
-        }
+        let mut coeffs: Vec<C::F> = match self {
+            Value::VecScalar(v) => v.clone(),
+            Value::VecIndex(v) => v.par_iter().map(|i| C::FOps::from_usize(*i)).collect(),
+            _ => panic!(
+                "value_ifft: expected vec scalar or vec index, found {}",
+                self
+            ),
+        };
+        assert!(
+            coeffs.len().is_power_of_two(),
+            "value_ifft: input length must be a power of two; got {}",
+            coeffs.len()
+        );
+        C::FOps::vec_ifft(&mut coeffs);
+        // Preserve length by constructing DensePolynomial directly (bypass
+        // `from_coefficients_vec`, which strips trailing zeros).
+        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            DensePolynomial { coeffs },
+        )))
     }
 
     pub fn value_fft(&self) -> Self {
-        match self {
-            Value::VecScalar(v) => {
-                let mut v = v.clone();
-                C::FOps::vec_fft(&mut v);
-                Value::VecScalar(v)
-            }
-            Value::VecIndex(v) => {
-                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
-                C::FOps::vec_fft(&mut v);
-                Value::VecScalar(v)
-            }
-            _ => panic!("Expected vec scalar or vec index, found {}", self),
+        let mut evals: Vec<C::F> = match self {
+            Value::Poly(p) => p
+                .to_coeffs()
+                .expect("value_fft: input must be a univariate polynomial"),
+            _ => panic!("value_fft: expected Value::Poly, found {}", self),
+        };
+        // `to_coeffs()` may strip trailing zeros (via `from_coefficients_vec`).
+        // The spec requires the input poly's coefficient-vector length to be a
+        // power of two; pad up to the next power of two so the round-trip
+        // Poly -> Vec -> Poly preserves length, and assert the result is pow2.
+        if !evals.len().is_power_of_two() {
+            let target = evals.len().next_power_of_two().max(1);
+            evals.resize(target, C::F::zero());
         }
+        assert!(
+            evals.len().is_power_of_two(),
+            "value_fft: poly coefficient count must be a power of two; got {}",
+            evals.len()
+        );
+        C::FOps::vec_fft(&mut evals);
+        Value::VecScalar(evals)
     }
 
     /// Reduce a vector using a binary operation.
