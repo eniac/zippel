@@ -17,18 +17,29 @@ use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
 // ---------------------------------------------------------------------------
-// Bench sizes — shared between the Criterion bench and the correctness
-// regression suite (`tests/groebner_correctness.rs`) so both run on the
-// exact same problem instances.
+// Bench sizes — used by the Criterion bench (`benches/groebner.rs`).
+//
+// Sizes are the largest n for which a single Buchberger run terminates in
+// under a few minutes on a developer workstation (release build, BLS12-381
+// scalar field). Going one step higher in any family takes ≫10 min:
+//
+//   * Katsura-6 grevlex did not complete in 10 min (probed).
+//   * Cyclic-6 / Cyclic-5 lex are intractable for our implementation.
+//
+// At these sizes a full `cargo bench --bench groebner` takes on the order
+// of an hour because Criterion's default `MEASUREMENT_TIME` (30s) is small
+// vs. one Buchberger iteration (≥1 min for n=5), forcing it to fall back
+// to `SAMPLE_SIZE`-many single-iter samples.
 // ---------------------------------------------------------------------------
 
-/// Katsura-n under GrevLex and inclusion — tractable through n=5.
+/// Katsura-n under GrevLex — n=5 single-iter ≈ 60–100s in release;
+/// n=6 did not complete in 10 min.
 pub const KATSURA_GREVLEX_SIZES: &[usize] = &[3, 4, 5];
-/// Katsura-n under ElimTerm — n=5 did not complete in >10 min.
-pub const KATSURA_ELIM_SIZES: &[usize] = &[3, 4];
-/// Cyclic-n — n=5 is the classic SymbolicData hard case, intractable
-/// under both orderings for our implementation.
-pub const CYCLIC_SIZES: &[usize] = &[4];
+/// Katsura-n under ElimTerm — n=5 single-iter ≈ 124s in release.
+pub const KATSURA_ELIM_SIZES: &[usize] = &[3, 4, 5];
+/// Cyclic-n — n=5 single-iter ≈ 135s (grevlex), 201s (elim) in release.
+/// n=6 is the classic SymbolicData hard case and is intractable for us.
+pub const CYCLIC_SIZES: &[usize] = &[4, 5];
 
 // ---------------------------------------------------------------------------
 // Variable + polynomial construction helpers (inline clones of the

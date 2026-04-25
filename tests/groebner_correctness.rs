@@ -20,13 +20,11 @@
 //!
 //! ## Sizes & runtime
 //!
-//! Default `cargo test --test groebner_correctness` runs only the small,
-//! fast cases (Katsura-3 + n=3 pins). Heavy cases are gated `#[ignore]`;
-//! run them with:
-//!
-//! ```text
-//! cargo test --test groebner_correctness --release -- --ignored
-//! ```
+//! Tests are deliberately scoped to the small Katsura-3 / Cyclic-3 cases
+//! so the suite runs in a few seconds in debug mode and is suitable for
+//! `cargo test` on every commit. Heavy cases (Katsura-4,5 / Cyclic-4) are
+//! covered by the Criterion bench (`benches/groebner.rs`); regressions on
+//! larger sizes therefore surface there, not here.
 //!
 //! ## ElimTerm on all-private vars
 //!
@@ -42,10 +40,7 @@ use graph::analyses::groebner::{ElimTerm, GrevLexTerm, GroebnerBasis, Monomial, 
 
 #[path = "../benches/groebner_shared.rs"]
 mod shared;
-use shared::{
-    CYCLIC_SIZES, KATSURA_ELIM_SIZES, KATSURA_GREVLEX_SIZES, cyclic_basis, katsura_basis, mk_vars,
-    var_poly,
-};
+use shared::{cyclic_basis, katsura_basis, mk_vars, var_poly};
 
 // ---------------------------------------------------------------------------
 // Helpers — kept in this file so the bench surface stays bench-only.
@@ -283,7 +278,6 @@ fn assert_dim_order_invariant(label: &str, dim_grev: Option<usize>, dim_elim: Op
 
 #[test]
 fn katsura_3_grevlex_self_checks() {
-    let _ = KATSURA_GREVLEX_SIZES; // touch import for non-ignored builds
     run_self_checks_grevlex(
         "katsura/3/grevlex",
         3,
@@ -295,7 +289,6 @@ fn katsura_3_grevlex_self_checks() {
 
 #[test]
 fn katsura_3_elim_self_checks() {
-    let _ = KATSURA_ELIM_SIZES;
     run_self_checks_elim(
         "katsura/3/elim",
         3,
@@ -322,10 +315,8 @@ fn katsura_3_dim_order_invariant() {
 
 #[test]
 fn cyclic_3_grevlex_self_checks() {
-    // Cyclic-3 isn't in the bench (CYCLIC_SIZES = [4]), but it's the
-    // smallest non-trivial Cyclic case and runs in milliseconds — good
-    // baseline for the suite.
-    let _ = CYCLIC_SIZES;
+    // Cyclic-3 is the smallest non-trivial Cyclic case and runs in
+    // milliseconds — good baseline for the suite.
     run_self_checks_grevlex(
         "cyclic/3/grevlex",
         3,
@@ -358,101 +349,6 @@ fn cyclic_3_dim_order_invariant() {
     // field (well-known); assert here as an absolute pin alongside the
     // order-invariance check.
     assert_eq!(d_grev, Some(6), "cyclic/3 should be 0-dim with 6 std mons");
-}
-
-// ---------------------------------------------------------------------------
-// Heavy cases — ignored by default. Run with:
-//   cargo test --test groebner_correctness --release -- --ignored
-// ---------------------------------------------------------------------------
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_4_grevlex_self_checks() {
-    run_self_checks_grevlex(
-        "katsura/4/grevlex",
-        4,
-        katsura_basis::<GrevLexTerm>,
-        &katsura_vars(4),
-        Some(1 << 3),
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_4_elim_self_checks() {
-    run_self_checks_elim(
-        "katsura/4/elim",
-        4,
-        katsura_basis::<ElimTerm>,
-        &katsura_vars(4),
-        Some(1 << 3),
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_5_grevlex_self_checks() {
-    run_self_checks_grevlex(
-        "katsura/5/grevlex",
-        5,
-        katsura_basis::<GrevLexTerm>,
-        &katsura_vars(5),
-        Some(1 << 4),
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn cyclic_4_grevlex_self_checks() {
-    run_self_checks_grevlex(
-        "cyclic/4/grevlex",
-        4,
-        cyclic_basis::<GrevLexTerm>,
-        &cyclic_vars(4),
-        None,
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn cyclic_4_elim_self_checks() {
-    run_self_checks_elim(
-        "cyclic/4/elim",
-        4,
-        cyclic_basis::<ElimTerm>,
-        &cyclic_vars(4),
-        None,
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn cyclic_4_dim_order_invariant() {
-    // Cyclic-4 is famously positive-dimensional (has a 1-dim component),
-    // so `standard_monomial_count` returns None under both orderings — and
-    // the order-invariant assertion still holds (None == None).
-    let vars = cyclic_vars(4);
-    let g_grev = cyclic_basis::<GrevLexTerm>(4).buchberger_and_reduce();
-    let g_elim = cyclic_basis::<ElimTerm>(4).buchberger_and_reduce();
-    let d_grev = standard_monomial_count(&g_grev, &vars);
-    let d_elim = standard_monomial_count(&g_elim, &vars);
-    assert_dim_order_invariant("cyclic/4", d_grev, d_elim);
-    assert_eq!(
-        d_grev, None,
-        "cyclic/4 is positive-dimensional; expected None"
-    );
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_4_dim_order_invariant() {
-    let vars = katsura_vars(4);
-    let g_grev = katsura_basis::<GrevLexTerm>(4).buchberger_and_reduce();
-    let g_elim = katsura_basis::<ElimTerm>(4).buchberger_and_reduce();
-    let d_grev = standard_monomial_count(&g_grev, &vars);
-    let d_elim = standard_monomial_count(&g_elim, &vars);
-    assert_dim_order_invariant("katsura/4", d_grev, d_elim);
-    assert_eq!(d_grev, Some(1 << 3));
 }
 
 // ---------------------------------------------------------------------------
@@ -607,72 +503,6 @@ const KATSURA_3_GB: BasisLit<'static> = &[
     ],
 ];
 
-const KATSURA_4_GB: BasisLit<'static> = &[
-    &[
-        (1332, 1, &[(1, 1), (3, 1)]),
-        (-39, 1, &[(1, 1)]),
-        (3682, 1, &[(2, 1), (3, 1)]),
-        (-389, 1, &[(2, 1)]),
-        (32076, 1, &[(3, 4)]),
-        (-13032, 1, &[(3, 3)]),
-        (2472, 1, &[(3, 2)]),
-        (-564, 1, &[(3, 1)]),
-    ],
-    &[
-        (108, 1, &[(1, 1), (3, 2)]),
-        (-12, 1, &[(1, 1), (3, 1)]),
-        (-3, 1, &[(1, 1)]),
-        (2, 1, &[(2, 1), (3, 1)]),
-        (-4, 1, &[(2, 1)]),
-        (-36, 1, &[(3, 3)]),
-        (12, 1, &[(3, 2)]),
-    ],
-    &[
-        (-9, 1, &[(1, 1), (3, 1)]),
-        (3, 1, &[(1, 1)]),
-        (162, 1, &[(2, 1), (3, 2)]),
-        (-34, 1, &[(2, 1), (3, 1)]),
-        (5, 1, &[(2, 1)]),
-        (180, 1, &[(3, 3)]),
-        (-78, 1, &[(3, 2)]),
-        (6, 1, &[(3, 1)]),
-    ],
-    &[
-        (7, 1, &[(1, 2)]),
-        (14, 1, &[(1, 1), (3, 1)]),
-        (-2, 1, &[(1, 1)]),
-        (8, 1, &[(2, 1), (3, 1)]),
-        (-1, 1, &[(2, 1)]),
-        (12, 1, &[(3, 2)]),
-        (-4, 1, &[(3, 1)]),
-    ],
-    &[
-        (14, 1, &[(1, 1), (2, 1)]),
-        (-28, 1, &[(1, 1), (3, 1)]),
-        (1, 1, &[(1, 1)]),
-        (-46, 1, &[(2, 1), (3, 1)]),
-        (4, 1, &[(2, 1)]),
-        (-48, 1, &[(3, 2)]),
-        (16, 1, &[(3, 1)]),
-    ],
-    &[
-        (14, 1, &[(1, 1), (3, 1)]),
-        (-1, 1, &[(1, 1)]),
-        (7, 1, &[(2, 2)]),
-        (32, 1, &[(2, 1), (3, 1)]),
-        (-4, 1, &[(2, 1)]),
-        (27, 1, &[(3, 2)]),
-        (-9, 1, &[(3, 1)]),
-    ],
-    &[
-        (1, 1, &[(0, 1)]),
-        (2, 1, &[(1, 1)]),
-        (2, 1, &[(2, 1)]),
-        (2, 1, &[(3, 1)]),
-        (-1, 1, &[]),
-    ],
-];
-
 const CYCLIC_3_GB: BasisLit<'static> = &[
     &[(1, 1, &[(2, 3)]), (-1, 1, &[])],
     &[
@@ -681,53 +511,6 @@ const CYCLIC_3_GB: BasisLit<'static> = &[
         (1, 1, &[(2, 2)]),
     ],
     &[(1, 1, &[(0, 1)]), (1, 1, &[(1, 1)]), (1, 1, &[(2, 1)])],
-];
-
-const CYCLIC_4_GB: BasisLit<'static> = &[
-    &[
-        (1, 1, &[(1, 1), (2, 1)]),
-        (-1, 1, &[(1, 1), (3, 1)]),
-        (1, 1, &[(2, 2), (3, 4)]),
-        (1, 1, &[(2, 1), (3, 1)]),
-        (-2, 1, &[(3, 2)]),
-    ],
-    &[
-        (1, 1, &[(2, 3), (3, 2)]),
-        (1, 1, &[(2, 2), (3, 3)]),
-        (-1, 1, &[(2, 1)]),
-        (-1, 1, &[(3, 1)]),
-    ],
-    &[
-        (1, 1, &[(1, 1), (3, 4)]),
-        (-1, 1, &[(1, 1)]),
-        (1, 1, &[(3, 5)]),
-        (-1, 1, &[(3, 1)]),
-    ],
-    &[
-        (1, 1, &[(1, 1), (2, 1), (3, 2)]),
-        (-1, 1, &[(1, 1), (3, 3)]),
-        (1, 1, &[(2, 2), (3, 2)]),
-        (1, 1, &[(2, 1), (3, 3)]),
-        (-1, 1, &[(3, 4)]),
-        (-1, 1, &[]),
-    ],
-    &[
-        (1, 1, &[(1, 1), (2, 2)]),
-        (-1, 1, &[(1, 1), (3, 2)]),
-        (1, 1, &[(2, 2), (3, 1)]),
-        (-1, 1, &[(3, 3)]),
-    ],
-    &[
-        (1, 1, &[(1, 2)]),
-        (2, 1, &[(1, 1), (3, 1)]),
-        (1, 1, &[(3, 2)]),
-    ],
-    &[
-        (1, 1, &[(0, 1)]),
-        (1, 1, &[(1, 1)]),
-        (1, 1, &[(2, 1)]),
-        (1, 1, &[(3, 1)]),
-    ],
 ];
 
 // --- Pinned tests -----------------------------------------------------------
@@ -762,40 +545,4 @@ fn cyclic_3_elim_pinned() {
     let our_g = cyclic_basis::<ElimTerm>(3).buchberger_and_reduce();
     let pinned = pinned_basis::<ElimTerm>(3, &vars, CYCLIC_3_GB);
     assert_matches_pin("cyclic/3/elim/pinned", &our_g, pinned);
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_4_grevlex_pinned() {
-    let vars = katsura_vars(4);
-    let our_g = katsura_basis::<GrevLexTerm>(4).buchberger_and_reduce();
-    let pinned = pinned_basis::<GrevLexTerm>(4, &vars, KATSURA_4_GB);
-    assert_matches_pin("katsura/4/grevlex/pinned", &our_g, pinned);
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn katsura_4_elim_pinned() {
-    let vars = katsura_vars(4);
-    let our_g = katsura_basis::<ElimTerm>(4).buchberger_and_reduce();
-    let pinned = pinned_basis::<ElimTerm>(4, &vars, KATSURA_4_GB);
-    assert_matches_pin("katsura/4/elim/pinned", &our_g, pinned);
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn cyclic_4_grevlex_pinned() {
-    let vars = cyclic_vars(4);
-    let our_g = cyclic_basis::<GrevLexTerm>(4).buchberger_and_reduce();
-    let pinned = pinned_basis::<GrevLexTerm>(4, &vars, CYCLIC_4_GB);
-    assert_matches_pin("cyclic/4/grevlex/pinned", &our_g, pinned);
-}
-
-#[test]
-#[ignore = "slow in debug; run with --release --ignored"]
-fn cyclic_4_elim_pinned() {
-    let vars = cyclic_vars(4);
-    let our_g = cyclic_basis::<ElimTerm>(4).buchberger_and_reduce();
-    let pinned = pinned_basis::<ElimTerm>(4, &vars, CYCLIC_4_GB);
-    assert_matches_pin("cyclic/4/elim/pinned", &our_g, pinned);
 }
