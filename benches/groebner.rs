@@ -44,19 +44,13 @@ use graph::analyses::groebner::{ElimTerm, GrevLexTerm, GroebnerBasis, Monomial};
 
 #[path = "groebner_shared.rs"]
 mod shared;
-use shared::{cyclic_basis, katsura_basis};
+use shared::{
+    CYCLIC_SIZES, KATSURA_ELIM_SIZES, KATSURA_GREVLEX_SIZES, cyclic_basis, katsura_basis,
+};
 
 // ---------------------------------------------------------------------------
-// Sizes — empirical caps for our pure-Rust Buchberger (release mode).
+// Criterion knobs.
 // ---------------------------------------------------------------------------
-
-/// Katsura-n under GrevLex and inclusion — tractable through n=5.
-const KATSURA_GREVLEX_SIZES: &[usize] = &[3, 4, 5];
-/// Katsura-n under ElimTerm — n=5 did not complete in >10 min.
-const KATSURA_ELIM_SIZES: &[usize] = &[3, 4];
-/// Cyclic-n — n=5 is the classic SymbolicData hard case, intractable
-/// under both orderings for our implementation.
-const CYCLIC_SIZES: &[usize] = &[4];
 
 const SAMPLE_SIZE: usize = 10;
 const MEASUREMENT_TIME: Duration = Duration::from_secs(30);

@@ -17,6 +17,20 @@ use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
 // ---------------------------------------------------------------------------
+// Bench sizes — shared between the Criterion bench and the correctness
+// regression suite (`tests/groebner_correctness.rs`) so both run on the
+// exact same problem instances.
+// ---------------------------------------------------------------------------
+
+/// Katsura-n under GrevLex and inclusion — tractable through n=5.
+pub const KATSURA_GREVLEX_SIZES: &[usize] = &[3, 4, 5];
+/// Katsura-n under ElimTerm — n=5 did not complete in >10 min.
+pub const KATSURA_ELIM_SIZES: &[usize] = &[3, 4];
+/// Cyclic-n — n=5 is the classic SymbolicData hard case, intractable
+/// under both orderings for our implementation.
+pub const CYCLIC_SIZES: &[usize] = &[4];
+
+// ---------------------------------------------------------------------------
 // Variable + polynomial construction helpers (inline clones of the
 // `#[cfg(test)]` helpers in graph/src/analyses/groebner/buchberger.rs).
 // ---------------------------------------------------------------------------
