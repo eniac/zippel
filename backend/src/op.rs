@@ -197,7 +197,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(t, _) => t.clone(),
             Op::Ifft(op) => match op.typ() {
                 ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::vpoly(1, n),
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
                 t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
             },
             Op::Fft(op) => match op.typ() {

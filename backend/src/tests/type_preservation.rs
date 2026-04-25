@@ -491,8 +491,7 @@ mod vec_ops {
 mod poly_ops {
     use super::*;
 
-    /// Spec: `Ifft : Vec(F, n) -> Poly(F, 1, n)` (`infer.rs:342`),
-    /// lowering to `VPoly(1, n)`.
+    /// Spec: `Ifft : Vec(F, n) -> Uni(n)`.
     #[test]
     fn pbt_ifft_returns_poly_per_spec() {
         arbtest::arbtest(|u| {
@@ -501,7 +500,7 @@ mod poly_ops {
             let mut rng = test_rng();
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
             let r = v.value_ifft();
-            let expected = ATyp::vpoly(1, n);
+            let expected = ATyp::uni(n);
             assert!(
                 has_atyp(&r, &expected),
                 "ifft(vec_scalar({n})) -> {} (expected {expected})",
