@@ -3,6 +3,8 @@ use ark_poly::{
     univariate::DensePolynomial,
     DenseMultilinearExtension,
     DenseUVPolynomial,
+    EvaluationDomain,
+    GeneralEvaluationDomain,
 };
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
@@ -2523,30 +2525,56 @@ impl<C: ArkConfig> Value<C> {
             Value::VecScalar(v) => {
                 let mut v = v.clone();
                 C::FOps::vec_ifft(&mut v);
-                Value::VecScalar(v)
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(v)))
             },
             Value::VecIndex(v) => {
                 let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
                 C::FOps::vec_ifft(&mut v);
-                Value::VecScalar(v)
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(v)))
             },
             _ => panic!("Expected vec scalar or vec index, found {}", self),
         }
     }
 
+    /// Interpolate a univariate polynomial from evaluations at `points`.
+    ///
+    /// Fast path: if `points` are exactly the size-`n` FFT domain roots of unity,
+    /// use IFFT.
+    /// Fallback: otherwise interpolate over arbitrary points.
+    pub fn value_interpolate_with_points(&self, points: &Self) -> Self {
+        let evals = value_as_scalar_vec::<C>(self);
+        let xs = value_as_scalar_vec::<C>(points);
+        assert_eq!(
+            xs.len(),
+            evals.len(),
+            "interpolate expects points and evaluations with same length"
+        );
+        assert!(!xs.is_empty(), "interpolate expects non-empty inputs");
+
+        if are_fft_domain_points::<C>(&xs) {
+            let mut coeffs = evals;
+            C::FOps::vec_ifft(&mut coeffs);
+            return Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)));
+        }
+
+        let coeffs = interpolate_univariate_from_points::<C::F>(&xs, &evals);
+        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)))
+    }
+
     pub fn value_fft(&self) -> Self {
         match self {
-            Value::VecScalar(v) => {
-                let mut v = v.clone();
-                C::FOps::vec_fft(&mut v);
-                Value::VecScalar(v)
+            Value::Poly(p) => {
+                let poly = p.normalize().expect("Failed to normalize polynomial for fft");
+                match poly {
+                    PolyVariant::DenseMle(mle) => Value::VecScalar(mle.evaluations),
+                    _ => {
+                        let mut coeffs = poly.to_coeffs().expect("Can only fft univariate polynomial or mle");
+                        C::FOps::vec_fft(&mut coeffs);
+                        Value::VecScalar(coeffs)
+                    },
+                }
             },
-            Value::VecIndex(v) => {
-                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
-                C::FOps::vec_fft(&mut v);
-                Value::VecScalar(v)
-            },
-            _ => panic!("Expected vec scalar or vec index, found {}", self),
+            _ => panic!("Expected polynomial value, found {}", self),
         }
     }
 
@@ -2655,6 +2683,75 @@ pub fn round_univariate_from_marginalize_evals<F: PrimeField>(evals: &[F]) -> Vi
     }
     let coeffs: Vec<F> = (0..n).map(|i| aug[i][n]).collect();
     VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(coeffs)))
+}
+
+fn value_as_scalar_vec<C: ArkConfig>(v: &Value<C>) -> Vec<C::F> {
+    match v {
+        Value::VecScalar(xs) => xs.clone(),
+        Value::VecIndex(xs) => xs.iter().map(|i| C::FOps::from_usize(*i)).collect(),
+        _ => panic!("Expected scalar vector, found {}", v),
+    }
+}
+
+fn are_fft_domain_points<C: ArkConfig>(points: &[C::F]) -> bool {
+    let Some(domain) = GeneralEvaluationDomain::<C::F>::new(points.len()) else {
+        return false;
+    };
+    domain.elements().zip(points.iter()).all(|(a, b)| a == *b)
+}
+
+/// O(n^2) interpolation from arbitrary distinct points using:
+/// P(x) = prod_j (x - x_j), and
+/// f(x) = sum_i y_i / P'(x_i) * P(x)/(x - x_i).
+fn interpolate_univariate_from_points<F: PrimeField>(points: &[F], evals: &[F]) -> Vec<F> {
+    let n = points.len();
+    assert_eq!(n, evals.len(), "point/eval length mismatch");
+    assert!(n > 0, "cannot interpolate empty point set");
+
+    let mut prod = vec![F::one()];
+    for &x in points {
+        let mut next = vec![F::zero(); prod.len() + 1];
+        for (i, &c) in prod.iter().enumerate() {
+            next[i] -= c * x;
+            next[i + 1] += c;
+        }
+        prod = next;
+    }
+
+    let mut coeffs = vec![F::zero(); n];
+    for i in 0..n {
+        let xi = points[i];
+        let mut denom = F::one();
+        for (j, &xj) in points.iter().enumerate() {
+            if i != j {
+                denom *= xi - xj;
+            }
+        }
+        assert!(
+            !denom.is_zero(),
+            "interpolation points must be distinct"
+        );
+
+        let qi = divide_by_x_minus_a(&prod, xi);
+        let scale = evals[i] * denom.inverse().unwrap();
+        for (k, qk) in qi.iter().enumerate() {
+            coeffs[k] += *qk * scale;
+        }
+    }
+
+    coeffs
+}
+
+/// Divide ascending-coefficient polynomial `p` by `(x - a)`.
+fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
+    assert!(p.len() >= 2, "polynomial degree must be at least 1");
+    let n = p.len() - 1;
+    let mut q = vec![F::zero(); n];
+    q[n - 1] = p[n];
+    for k in (1..n).rev() {
+        q[k - 1] = p[k] + a * q[k];
+    }
+    q
 }
 
 pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {

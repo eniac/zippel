@@ -37,8 +37,8 @@ pub enum TypeError {
     #[error("VecTypeError: Vector elements must have the same type: {0}, {1} |- {2} != {3} \n\n\t{4}")]
     Vec(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
 
-    #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
-    Ifft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    #[error("InterpolateError: Arguments to [interpolate] must be vectors of fields:\n\t{0}, {1} |- interpolate {2}")]
+    Interpolate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
     Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
@@ -141,8 +141,8 @@ impl<'a> TypeError {
     pub fn vec(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CTyp, t: &CTyp, r: TypeError) -> Self {
         TypeError::Vec(kctx.clone(), vctx.clone(), e.clone(), t.clone(), Box::new(r))
     }
-    pub fn ifft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
+    pub fn interpolate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::Interpolate(kctx.clone(), vctx.clone(), e.clone())
     }
     pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
@@ -223,19 +223,23 @@ impl Typeable for CExp {
             // Booleans
             CExp::Bool(_) => Ok(CTyp::Bool),
 
-            // Infer the type of a univariate polynomial from ifft
-            CExp::Ifft(box v) => {
-                // Infer the type of its argument
-                let typ = v.infer(kctx, fctx, vctx)
-                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+            // Infer the type of a univariate polynomial from interpolate
+            CExp::Interpolate(box points, box evals) => {
+                let points_typ = points.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                let evals_typ = evals.infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // It must be a vector of fields, or a vector of Fin
-                match typ {
-                    CTyp::Vec(box b, n) => {
-                        let i = b.to_scalar(kctx).ok_or(TypeError::ifft(kctx, &vctx, self))?;
-                        Ok(CTyp::Poly(i, 1, n))
-                    }, 
-                    _ => Err(TypeError::ifft(kctx, &vctx, self))
+                match (points_typ, evals_typ) {
+                    (CTyp::Vec(box bp, np), CTyp::Vec(box be, ne)) if np == ne => {
+                        let ip = bp.to_scalar(kctx).ok_or(TypeError::interpolate(kctx, &vctx, self))?;
+                        let ie = be.to_scalar(kctx).ok_or(TypeError::interpolate(kctx, &vctx, self))?;
+                        if ip != ie {
+                            return Err(TypeError::interpolate(kctx, &vctx, self));
+                        }
+                        Ok(CTyp::Poly(ie, 1, ne))
+                    },
+                    _ => Err(TypeError::interpolate(kctx, &vctx, self))
                 }
             }
             
@@ -379,33 +383,6 @@ impl Typeable for CExp {
                 out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, out_degree));
 
                 Ok(CTyp::Record(out_fields))
-            },
-
-            CExp::Interpolate0dEval(box evals, box d) => {
-                let tevals = evals
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let td = d
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                match (tevals, td) {
-                    (CTyp::Vec(box inner, n), CTyp::Fin(r)) => {
-                        if let CTyp::Base(e_tid) = inner {
-                            if !(r.step == 1 && r.end == r.start + 1) {
-                                return Err(TypeError::interp(kctx, vctx, &d, &CTyp::Fin(r)));
-                            }
-                            let degree = r.start;
-                            if n < degree + 1 {
-                                return Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&CTyp::Base(e_tid), n)));
-                            }
-                            Ok(CTyp::Poly(e_tid, 1, degree))
-                        } else {
-                            Err(TypeError::interp(kctx, vctx, &evals, &CTyp::vec(&inner, n)))
-                        }
-                    }
-                    (tevals, _) => Err(TypeError::interp(kctx, vctx, &evals, &tevals)),
-                }
             },
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
@@ -1380,12 +1357,13 @@ mod tests {
 
     // Test interpolate
     #[test]
-    fn test_ifft() {
+    fn test_interpolate() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an interpolation expressionin ifft([1, 2, 3], [1, 2, 3])
-        let interp1 = CExp::ifft(
+        // Create an interpolation expression interpolate([1, 2, 3], [1, 2, 3])
+        let interp1 = CExp::interpolate(
+            CExp::vec(vec![CExp::lit(0), CExp::lit(1), CExp::lit(2)]),
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::lit(2),
@@ -1395,7 +1373,8 @@ mod tests {
         assert_eq!(interp1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 1, 3)));
 
-        let interp_bad = CExp::ifft(
+        let interp_bad = CExp::interpolate(
+            CExp::vec(vec![CExp::lit(0), CExp::lit(1)]),
             CExp::vec(vec![
                 CExp::varstr("f1"),
                 CExp::varstr("g1"),
@@ -1451,9 +1430,10 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an evaluation expression eval(ifft([f1,2,3]))
+        // Create an evaluation expression eval(interpolate([f1,2,3]))
         let eval1 = CExp::fft(
-            CExp::ifft(
+            CExp::interpolate(
+                CExp::vec(vec![CExp::lit(0), CExp::lit(1), CExp::lit(2)]),
                 CExp::vec(
                     vec![
                         CExp::varstr("f1"),

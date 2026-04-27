@@ -2,9 +2,8 @@ use log::debug;
 use petgraph::graph::NodeIndex;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::sync::{Arc, Mutex};
-use backend::{ArkConfig, Value, value_to_bytes, ArkScalarOps};
+use backend::{ArkConfig, Value, value_to_bytes};
 use backend::values::marginalize as backend_marginalize;
-use backend::values::round_univariate_from_marginalize_evals as backend_round_univariate_from_marginalize_evals;
 use graph::{Dag, Node, Op, GOp};
 use graph::scheduler::{ThreadAlloc, TDag};
 use rand::rngs::ThreadRng;
@@ -333,10 +332,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_poly();
             }
-            Op::Ifft(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_ifft();
+            Op::Interpolate(points, evals) => {
+                let inputs_points_clone = Arc::clone(&inputs);
+                let inputs_evals_clone = Arc::clone(&inputs);
+                let points_val: Value<C> = self.handle_op(&*points, inputs_points_clone);
+                let evals_val: Value<C> = self.handle_op(&*evals, inputs_evals_clone);
+                return evals_val.value_interpolate_with_points(&points_val);
             }
             Op::Fft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
@@ -420,31 +421,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return Value::Record(out_fields);
             }
 
-            Op::Interpolate0dEval(evals, d) => {
-                let inputs_evals_clone = Arc::clone(&inputs);
-                let evals_val: Value<C> = self.handle_op(evals, inputs_evals_clone);
-                let d_val: Value<C> = self.handle_op(d, Arc::clone(&inputs));
-
-                let mut evals: Vec<C::F> = match evals_val {
-                    Value::VecScalar(v) => v,
-                    v => v
-                        .into_vec_index()
-                        .iter()
-                        .map(|i| C::FOps::from_usize(*i))
-                        .collect(),
-                };
-
-                let degree = d_val.into_index();
-                assert!(
-                    evals.len() >= degree + 1,
-                    "interpolate0d expects at least d+1 evaluations, got {} for d={}",
-                    evals.len(),
-                    degree
-                );
-                evals.truncate(degree + 1);
-                let poly = backend_round_univariate_from_marginalize_evals::<C::F>(&evals);
-                return Value::Poly(poly);
-            }
             Op::Proj(record_op, field_name, _) => {
                 let inputs_rec = Arc::clone(&inputs);
                 let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);

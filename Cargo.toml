@@ -65,6 +65,10 @@ name = "sumcheck"
 path = "examples/sumcheck/main.rs"
 
 [[example]]
+name = "fft_interpolate"
+path = "examples/fft_interpolate/main.rs"
+
+[[example]]
 name = "zerocheck"
 path = "examples/zerocheck/main.rs"
 

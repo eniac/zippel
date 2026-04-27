@@ -77,46 +77,49 @@ mod op_construction_tests {
     }
     
     #[test]
-    fn test_ifft_construction() {
+    fn test_interpolate_construction() {
         let val = GOp::<C>::value(&scalar::<C>(42));
-        let ifft_op = Op::ifft(val);
+        let points = GOp::<C>::vec(vec![GOp::<C>::index(0)]);
+        let interpolate_op = Op::interpolate(points, val);
         
-        match ifft_op {
-            Op::Ifft(inner) => {
+        match interpolate_op {
+            Op::Interpolate(_, inner) => {
                 match &*inner {
                     Op::Value(_) => (),
-                    _ => panic!("Expected Value inside Ifft"),
+                    _ => panic!("Expected Value inside Interpolate"),
                 }
             }
-            _ => panic!("Expected Ifft operation"),
+            _ => panic!("Expected Interpolate operation"),
         }
     }
     
     #[test]
-    fn test_fft_ifft_cancellation() {
-        // ifft(fft(x)) should return x
+    fn test_fft_interpolate_cancellation() {
+        // interpolate(fft(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
         let fft_op = Op::fft(val.clone());
-        let result = Op::ifft(fft_op);
+        let points = GOp::<C>::vec(vec![GOp::<C>::index(0)]);
+        let result = Op::interpolate(points, fft_op);
         
         // Should cancel out and return original
         match result {
             Op::Value(_) => (),
-            _ => panic!("Expected FFT/IFFT to cancel"),
+            _ => panic!("Expected FFT/Interpolate to cancel"),
         }
     }
     
     #[test]
-    fn test_ifft_fft_cancellation() {
-        // fft(ifft(x)) should return x
+    fn test_interpolate_fft_cancellation() {
+        // fft(interpolate(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
-        let ifft_op = Op::ifft(val.clone());
-        let result = Op::fft(ifft_op);
+        let points = GOp::<C>::vec(vec![GOp::<C>::index(0)]);
+        let interpolate_op = Op::interpolate(points, val.clone());
+        let result = Op::fft(interpolate_op);
         
         // Should cancel out and return original
         match result {
             Op::Value(_) => (),
-            _ => panic!("Expected IFFT/FFT to cancel"),
+            _ => panic!("Expected Interpolate/FFT to cancel"),
         }
     }
     
@@ -698,17 +701,17 @@ mod op_additional_tests {
     }
     
     #[test]
-    fn test_op_sub_commutative_ifft() {
+    fn test_op_sub_commutative_interpolate() {
         let a = GOp::<C>::value(&scalar::<C>(5));
         let b = GOp::<C>::value(&scalar::<C>(2));
-        let ifft_a = Op::Ifft(mk::<C>(a));
-        let ifft_b = Op::Ifft(mk::<C>(b));
+        let interpolate_a = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(a));
+        let interpolate_b = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(b));
         let typ = ATyp::scalar();
-        let result = Op::sub(ifft_a, ifft_b, typ);
+        let result = Op::sub(interpolate_a, interpolate_b, typ);
         
         match result {
-            Op::Ifft(_) => (),
-            _ => panic!("Expected Ifft wrapper for sub of ifft values"),
+            Op::Interpolate(_, _) => (),
+            _ => panic!("Expected Interpolate wrapper for sub of interpolate values"),
         }
     }
 }

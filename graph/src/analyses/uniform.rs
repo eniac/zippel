@@ -44,12 +44,10 @@ impl UniformityPropagation {
                 let x_ancestors = self.op_ancestors(x);
                 p_ancestors.union(x_ancestors)
             },
-            Op::Ifft(op) => self.op_ancestors(op),
+            Op::Interpolate(points, evals) => self.op_ancestors(points).union(self.op_ancestors(evals)),
             Op::Fft(op) => self.op_ancestors(op),
             Op::Mle(op) => self.op_ancestors(op),
             Op::Marginalize(op) => self.op_ancestors(op),
-            Op::Interpolate0dEval(op, d) =>
-                self.op_ancestors(op).union(self.op_ancestors(d)),
             Op::Proj(op, _, _) => self.op_ancestors(op),
             Op::Random(_, _) => Set::new(),
             Op::Challenge(_, _) => Set::new(),
@@ -83,14 +81,14 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             },
-            Op::Ifft(a) => self.from_op(a),
+            Op::Interpolate(points, evals) => {
+                let dist_points = self.from_op(points)?;
+                let dist_evals = self.from_op(evals)?;
+                Some(dist_points.add(&dist_evals))
+            },
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),
-            Op::Interpolate0dEval(a, d) => {
-                let _ = self.from_op(d)?;
-                self.from_op(a)
-            },
             Op::Proj(a, _, _) => self.from_op(a),
             Op::Bin(BinOp::Add, a, b, _)
             | Op::Bin(BinOp::Concat, a, b, _) => {
@@ -388,10 +386,10 @@ mod tests {
     }
 
     #[test]
-    fn test_uniformity_from_op_ifft() {
+    fn test_uniformity_from_op_interpolate() {
         let up = UniformityPropagation::new();
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Ifft(mk::<ArkBls12_381>(inner));
+        let op = Op::Interpolate(mk::<ArkBls12_381>(GOp::index(0)), mk::<ArkBls12_381>(inner));
         let dist = up.from_op(&op);
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }

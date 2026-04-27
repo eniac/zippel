@@ -1135,15 +1135,15 @@ impl<C: HasOpFactory> UDag<C> {
                 })?))
             },
 
-            // Create a new [ifft], [fft] or [mle] node
-            CExp::Ifft(box v) => {
-                // Add child first
-                let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+            // Create a new [interpolate], [fft] or [mle] node
+            CExp::Interpolate(box points, box evals) => {
+                let points_op = self.add_exp(points, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                let evals_op = self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                 // Add new node
-                let nifft = self.add_node(Node::ifft(&child));
+                let nifft = self.add_node(Node::interpolate(&points_op, &evals_op));
 
-                // Add edge from [nifft] to [child]
-                self.add_edges(edge_type, nifft, child);
+                self.add_edges(edge_type, nifft, points_op);
+                self.add_edges(edge_type, nifft, evals_op);
 
                 return Ok(GOp::underscore(nifft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
@@ -1205,13 +1205,6 @@ impl<C: HasOpFactory> UDag<C> {
                         TypeError::ark(kctx, &vctx, &exp, &typ),
                     )
                 })?))
-            },
-
-            CExp::Interpolate0dEval(box evals, box d) => {
-                // Interpolate g from evals on points 0..(n-1) (i.e. 0..d), returning g as a univariate polynomial.
-                let ve = self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                let vd = self.add_exp(d, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                return Ok(GOp::Interpolate0dEval(mk::<C>(ve), mk::<C>(vd)))
             },
 
             // Billinear pairing
@@ -1346,7 +1339,7 @@ impl<C: HasOpFactory> UDag<C> {
                             (0..*n).map(|i| CExp::pow(params[0].clone(), i.into()))
                             .collect());
 
-                        // Polynomial evaluation by dot-product of ifft with [x_pow]
+                        // Polynomial evaluation by dot-product of interpolate with [x_pow]
                         let dot_exp =
                             CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
                         // Trampoline

@@ -6,7 +6,7 @@
 use crate::{UDag, Node, Op, GOp, Ref, PRef, mk};
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
-use backend::values::{marginalize as backend_marginalize, round_univariate_from_marginalize_evals};
+use backend::values::marginalize as backend_marginalize;
 use lang::id::Vid;
 use lang::typ::{Nothing, Qualifier, Distribution};
 use petgraph::graph::NodeIndex;
@@ -252,29 +252,12 @@ fn evaluate_op<C: HasOpFactory>(
             out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
             Value::Record(out_fields)
         }
-        Op::Interpolate0dEval(evals, d) => {
-            let evals_val = evaluate_op(evals, computed, inputs);
-            let d_val = evaluate_op(d, computed, inputs);
-            let mut evals_vec: Vec<C::F> = match evals_val {
-                Value::VecScalar(v) => v,
-                v => v.into_vec_index().iter().map(|i| C::FOps::from_usize(*i)).collect(),
-            };
-            let degree = d_val.into_index();
-            assert!(
-                evals_vec.len() >= degree + 1,
-                "interpolate0d expects at least d+1 evaluations, got {} for d={}",
-                evals_vec.len(),
-                degree
-            );
-            evals_vec.truncate(degree + 1);
-            Value::Poly(round_univariate_from_marginalize_evals::<C::F>(&evals_vec))
-        }
         Op::Proj(record_op, field_name, _) => {
             let rec_val = evaluate_op(record_op, computed, inputs);
             let Value::Record(record) = rec_val else { unreachable!() };
             record.get(&field_name).cloned().unwrap()
         }
-        Op::Ifft(_) | Op::Fft(_) | Op::Mle(_) |
+        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) |
         Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
@@ -403,26 +386,6 @@ mod tests {
         let dag = builder.build();
         let result = execute_graph(&dag, test_inputs()).expect("expected projection result");
         assert!(values_equal(&result, &scalar::<TestConfig>(7)));
-    }
-
-    #[test]
-    fn test_interpolate_0d_eval_op() {
-        let mut builder = GraphBuilder::<TestConfig>::new();
-        let evals = Op::Value(Value::VecScalar(vec![
-            <TestConfig as ArkConfig>::FOps::from_usize(2),
-            <TestConfig as ArkConfig>::FOps::from_usize(10),
-            <TestConfig as ArkConfig>::FOps::from_usize(9),
-        ]));
-        let degree = Op::Value(Value::Index(2));
-        let interp = Op::Interpolate0dEval(mk(evals), mk(degree));
-        builder.add_op(interp);
-
-        let dag = builder.build();
-        let result = execute_graph(&dag, test_inputs()).expect("expected interpolation result");
-        match result {
-            Value::Poly(_) => {}
-            other => panic!("expected Value::Poly, got {other:?}"),
-        }
     }
 
     #[test]

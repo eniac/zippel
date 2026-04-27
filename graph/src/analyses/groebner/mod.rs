@@ -324,7 +324,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Check(a) => self.add_op(pr, a.get().clone()),
             Op::Challenge(t, b) => { let op = Op::Challenge(t, b); self.np.insert(&pr, &op); },
             Op::Random(t, b) => { let op = Op::Random(t, b); self.np.insert(&pr, &op); },
-            Op::Ifft(a) => { let op = Op::Ifft(a); self.np.insert(&pr, &op); },
+            Op::Interpolate(points, evals) => { let op = Op::Interpolate(points, evals); self.np.insert(&pr, &op); },
             Op::Fft(a) => { let op = Op::Fft(a); self.np.insert(&pr, &op); },
             Op::Vec(vs) => {
                 for (i, v) in vs.into_iter().enumerate() {

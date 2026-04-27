@@ -3,6 +3,7 @@
 fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
     public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - V],
     public prev_eval: F,
     public challenge: F,
@@ -15,19 +16,20 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
     evs <- out.evaluations;
     let round_ok = prev_eval == evs[0] + evs[1];
 
-    let g = interpolate0d(evs, MAX_DEGREE_CONST);
+    let g = interpolate(points, evs);
     r_next <- challenge<F>;
     let next_prev_vec = eval(g, [r_next]);
     let next_prev = next_prev_vec[0];
 
     let next_challenges = challenges ++ [r_next];
-    let tail_ok = sumcheck_round(orig_poly, pi, next_challenges, next_prev, r_next, curr_round + 1);
+    let tail_ok = sumcheck_round(orig_poly, pi, points, next_challenges, next_prev, r_next, curr_round + 1);
     round_ok && tail_ok
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
     public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - 1],
     public prev_eval: F,
     public challenge: F,
@@ -38,7 +40,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     evs <- out.evaluations;
     let round_ok = prev_eval == evs[0] + evs[1];
 
-    let g = interpolate0d(evs, MAX_DEGREE_CONST);
+    let g = interpolate(points, evs);
     r_final <- challenge<F>;
     let full_challenges = challenges ++ [r_final];
     let from_round_vec = eval(g, [r_final]);
@@ -63,8 +65,9 @@ proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     evs0 <- out0.evaluations;
     let round1_ok = claimed_sum == evs0[0] + evs0[1];
     r1 <- challenge<F>;
-    let g = interpolate0d(evs0, MAX_DEGREE_CONST);
+    let points = [i for i in 0..MAX_DEGREE_CONST + 1];
+    let g = interpolate(points, evs0);
     let prev_vec = eval(g, [r1]);
     let prev = prev_vec[0];
-    verify(round1_ok && sumcheck_round(poly, out0.next_poly, [r1], prev, r1, 1))
+    verify(round1_ok && sumcheck_round(poly, out0.next_poly, points, [r1], prev, r1, 1))
 }

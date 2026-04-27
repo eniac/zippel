@@ -28,12 +28,11 @@ impl QualifierPropagation {
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             },
-            Op::Interpolate0dEval(evals, d) => {
+            Op::Interpolate(points, evals) => {
+                let q_points = self.from_op(points)?;
                 let q_evals = self.from_op(evals)?;
-                let q_d = self.from_op(d)?;
-                Some(q_evals.join(&q_d))
+                Some(q_points.join(&q_evals))
             },
-            Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),
             Op::Proj(a, _, _) => self.from_op(a),
@@ -360,7 +359,7 @@ mod tests {
     fn test_qualifier_ifft_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Ifft(mk::<ArkBls12_381>(inner));
+        let op = Op::Interpolate(mk::<ArkBls12_381>(GOp::index(0)), mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }

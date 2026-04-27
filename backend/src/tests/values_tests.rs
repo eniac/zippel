@@ -83,13 +83,35 @@ fn test_mul_comm() {
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
-    let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_fft().value_ifft();
-    assert_deq!(&c, &a);
+    let coeffs = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
+    let poly = coeffs.value_poly();
+    let recovered_poly = poly.value_fft().value_ifft();
+    assert_deq!(&recovered_poly, &poly);
 
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
     let c = a.value_ifft().value_fft();
     assert_deq!(&c, &a);
+}
+
+#[test]
+fn interpolate_with_points_uses_general_interpolation() {
+    let coeffs = Value::<TestConfig>::VecScalar(vec![
+        Fr::from(3u64),
+        Fr::from(2u64),
+        Fr::from(5u64),
+        Fr::from(7u64),
+    ]);
+    let poly = coeffs.value_poly();
+    let points = Value::<TestConfig>::VecScalar(vec![
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(4u64),
+        Fr::from(8u64),
+    ]);
+    let evals = poly.clone().value_eval(points.clone());
+
+    let recovered_poly = evals.value_interpolate_with_points(&points);
+    assert_deq!(&recovered_poly, &poly);
 }
 
 // Equivalence relation tests for value_equ

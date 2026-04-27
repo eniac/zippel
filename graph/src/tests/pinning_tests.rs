@@ -620,13 +620,13 @@ fn pin_coef() {
     assert!(gs[0] == expected);
 }
 
-/// Ifft operation: vector → polynomial (interpolation).
-/// Tests: CExp::Ifft, Node::ifft.
+/// Interpolate operation: vector → polynomial (interpolation).
+/// Tests: CExp::Interpolate, Node::interpolate.
 #[test]
-fn pin_ifft() {
+fn pin_interpolate() {
     let src = r#"
         fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
-            ifft(a)
+            interpolate([0,1,2,3], a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -638,8 +638,10 @@ fn pin_ifft() {
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vec_typ);
 
-    let ifft_node = expected.add_node(Node::ifft(&var_a));
-    expected.add_edges(DepType::Data, ifft_node, var_a);
+    let points = GOp::<B>::vec(vec![GOp::index(0), GOp::index(1), GOp::index(2), GOp::index(3)]);
+    let interpolate_node = expected.add_node(Node::interpolate(&points, &var_a));
+    expected.add_edges(DepType::Data, interpolate_node, points);
+    expected.add_edges(DepType::Data, interpolate_node, var_a);
 
     assert!(gs[0] == expected);
 }

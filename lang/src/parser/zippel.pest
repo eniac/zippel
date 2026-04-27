@@ -62,12 +62,11 @@ exp_term  = _{
          range_exp
          | "(" ~ exp ~ ")"
          | fun_exp
-         | ifft_exp
+         | interpolate_exp
          | mle_exp
          | fft_exp
          | poly_exp
          | eval_exp
-         | interpolate0d_exp
          | dot_exp
          | coef_exp
          | challenge_exp
@@ -90,8 +89,8 @@ exp_term  = _{
          | id
     }
     proj_op   = { "." ~ id }
-    fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                  // Polynomial function definition
-    ifft_exp      = { "ifft" ~ "(" ~ exp ~ ")"  }                 // Coefficient form (IFFT) univariate polynomial
+    fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                      // Polynomial function definition
+    interpolate_exp = { "interpolate" ~ "(" ~ exp ~ "," ~ exp ~ ")"  }// Interpolate polynomial from points and evaluations
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point
@@ -99,7 +98,6 @@ exp_term  = _{
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
     marginalize_exp = { "marginalize" ~ "(" ~ exp ~ ")" }             // Sum-check round marginalization helper
-    interpolate0d_exp = { "interpolate0d" ~ "(" ~ exp ~ "," ~ exp ~ ")" }  // Interpolate from evals using degree d
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension
@@ -108,8 +106,8 @@ exp_term  = _{
     ram_exp       = { id ~ "[" ~ exp ~ "]" }                          // Randm access into a vector
     pair_exp      = { "pair" ~ "(" ~ exp ~ "," ~ exp ~")" }           // Billinear pairing operation
     range_exp     = { range }                                         // Range expression
-    assert_exp    = { "assert" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Prover) expression
-    verify_exp    = { "verify" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }    // Assertion (Verifier) expression
+    assert_exp    = { "assert" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }     // Assertion (Prover) expression
+    verify_exp    = { "verify" ~ "(" ~ exp ~ ")" ~ (";" ~ exp)? }     // Assertion (Verifier) expression
     app_exp       = { id ~ "(" ~ exps ~ ")" }                         // Function application
     let_exp       = { "let" ~ id ~ (":" ~ typ)? ~ "=" ~ exp ~ ";" ~ exp }  // Let expression (optional type annotation)
     log_exp       = { id ~ "<-" ~ exp ~ ";" ~ exp }                   // Transcript log expression

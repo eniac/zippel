@@ -166,7 +166,7 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Record(fields) =>
                 cost += fields.iter().fold(0.0, |acc, (_, v)| { acc + self.cost(v, nthreads).0 }) / nthreads as f64,
             Op::Challenge(t, _) => cost += Self::SCALAR_ADD * t.size() as f64,
-            Op::Ifft(op) | Op::Fft(op) => {
+            Op::Interpolate(_, op) | Op::Fft(op) => {
                 let n = op.typ().size() as f64;
                 cost += self.cost(op, nthreads).0 +
                     (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
@@ -182,11 +182,6 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             },
             Op::Marginalize(op) => cost += self.cost(op, nthreads).0,
             Op::Proj(op, _, _) => cost += self.cost(op, nthreads).0,
-            Op::Interpolate0dEval(evals, d) => {
-                cost += self.cost(evals, nthreads).0;
-                cost += self.cost(d, nthreads).0;
-                cost += 1.0;
-            },
         };
         cost.into()
     }

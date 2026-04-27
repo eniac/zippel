@@ -191,8 +191,8 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     pub fn coef(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::coef(op.clone())), Nothing)
     }
-    pub fn ifft(op: &GOp<C>) -> Self {
-        Node::Op(mk::<C>(GOp::ifft(op.clone())), Nothing)
+    pub fn interpolate(points: &GOp<C>, evals: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::interpolate(points.clone(), evals.clone())), Nothing)
     }
     pub fn fft(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::fft(op.clone())), Nothing)
