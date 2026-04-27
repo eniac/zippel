@@ -2535,11 +2535,6 @@ impl<C: ArkConfig> Value<C> {
                 self
             ),
         };
-        assert!(
-            coeffs.len().is_power_of_two(),
-            "value_ifft: input length must be a power of two; got {}",
-            coeffs.len()
-        );
         C::FOps::vec_ifft(&mut coeffs);
         // Preserve length by constructing DensePolynomial directly (bypass
         // `from_coefficients_vec`, which strips trailing zeros).
@@ -2555,19 +2550,6 @@ impl<C: ArkConfig> Value<C> {
                 .expect("value_fft: input must be a univariate polynomial"),
             _ => panic!("value_fft: expected Value::Poly, found {}", self),
         };
-        // `to_coeffs()` may strip trailing zeros (via `from_coefficients_vec`).
-        // The spec requires the input poly's coefficient-vector length to be a
-        // power of two; pad up to the next power of two so the round-trip
-        // Poly -> Vec -> Poly preserves length, and assert the result is pow2.
-        if !evals.len().is_power_of_two() {
-            let target = evals.len().next_power_of_two().max(1);
-            evals.resize(target, C::F::zero());
-        }
-        assert!(
-            evals.len().is_power_of_two(),
-            "value_fft: poly coefficient count must be a power of two; got {}",
-            evals.len()
-        );
         C::FOps::vec_fft(&mut evals);
         Value::VecScalar(evals)
     }
@@ -3453,7 +3435,6 @@ mod value_tests {
 
     #[test]
     fn test_g1_additive_identity() {
-        use ark_ec::CurveGroup;
         let a = random_g1();
         let zero = TestValue::G1(G1Projective::zero());
         assert_eq!(a.clone() + zero.clone(), a.clone());
@@ -3462,7 +3443,6 @@ mod value_tests {
 
     #[test]
     fn test_g2_additive_identity() {
-        use ark_ec::CurveGroup;
         let a = random_g2();
         let zero = TestValue::G2(G2Projective::zero());
         assert_eq!(a.clone() + zero.clone(), a.clone());

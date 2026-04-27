@@ -737,18 +737,20 @@ impl Typeable for CExp {
                         }
                         Ok(CTyp::vec(&CTyp::Base(tid), n))
                     }
-                    CTyp::Poly(tid, n, 1) => {
-                        let k = kctx.get(&tid).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(&tid),
-                        ))?;
-                        // Only field elements can be evaluated
-                        if k.is_scalar() {
-                            Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
-                        } else {
-                            Err(TypeError::fft(kctx, vctx, &a, &t))
-                        }
-                    }
+                    // TODO: decide on runtime behavior before uncommenting this
+                    //
+                    // CTyp::Poly(tid, n, 1) => {
+                    //     let k = kctx.get(&tid).ok_or(TypeError::lub(
+                    //         TypeError::exp(kctx, vctx, self),
+                    //         LubError::kind_not_found(&tid),
+                    //     ))?;
+                    //     // Only field elements can be evaluated
+                    //     if k.is_scalar() {
+                    //         Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
+                    //     } else {
+                    //         Err(TypeError::fft(kctx, vctx, &a, &t))
+                    //     }
+                    // }
                     _ => Err(TypeError::fft(kctx, vctx, &a, &t)),
                 }
             }
