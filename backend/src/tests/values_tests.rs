@@ -1141,7 +1141,7 @@ fn test_div_by_product_of_constants() {
 #[should_panic(expected = "Cannot divide by non-constant polynomial")]
 fn test_div_by_non_constant_poly_panics() {
     use crate::VirtualPolynomial;
-    use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
+    use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 
     // Create a non-constant polynomial: 1 + 2x
     let poly = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
@@ -1163,7 +1163,7 @@ fn test_div_by_non_constant_poly_panics() {
 mod test_into_scalar {
     use ark_bls12_381::Fr;
     use ark_ff::Zero;
-    use ark_poly::{univariate::DensePolynomial, DenseMultilinearExtension, DenseUVPolynomial};
+    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use std::sync::Arc;
 
     #[test]
