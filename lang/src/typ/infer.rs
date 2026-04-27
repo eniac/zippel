@@ -2,6 +2,7 @@
 use crate::ast::sig::CSig;
 use crate::ast::{BinOp, CBody, CExp, CExps};
 use crate::id::{Tid, Vid};
+use crate::typ::backend::BackendConfig;
 use crate::typ::lub::{Lub, LubError};
 use crate::typ::range::{Range, RangeError};
 use crate::typ::unify::UnifyError;
@@ -11,7 +12,7 @@ use thiserror::Error;
 
 pub trait Typeable {
     type Context;
-    fn infer(
+    fn infer<C: BackendConfig>(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
@@ -48,11 +49,6 @@ pub enum TypeError {
 
     #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
     Ifft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
-
-    #[error(
-        "IfftError: Argument to [ifft] must be a vector whose length is a power of two; got n={3}:\n\t{0}, {1} |- ifft {2}"
-    )]
-    IfftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
 
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
     Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
@@ -98,11 +94,6 @@ pub enum TypeError {
     #[error("FftError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- fft ( {2}: {3})")]
     Fft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error(
-        "FftError: Univariate [fft] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- fft ( {2}: {4})"
-    )]
-    FftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
-
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
 
@@ -118,8 +109,14 @@ pub enum TypeError {
     #[error("FuncRetError: The return type of function {3} must be {4} but is found:\n\t{0}, {1} |- {2} : {5}")]
     FuncRet(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, Vid, CTyp, CTyp),
 
-    #[error("PairError: Expected group pairing between two pairing-friendly curves:\n\t{0}, {1} |- pair({2}: {3}, {4} : {5})")]
+    #[error("PairError: Pairing is not supported by the backend:\n\t{0}, {1} |- pair({2}: {3}, {4} : {5})")]
     Pair(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
+
+    #[error("FftError: FFT is not supported by the backend for the given domain size:\n\t{0}, {1} |- fft ( {2}: {3})")]
+    FftNotSupported(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+
+    #[error("IfftError: IFFT is not supported by the backend for the given domain size:\n\t{0}, {1} |- ifft {2}")]
+    IfftNotSupported(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error("RecordError: Field {3} not found in record:\n\t{0}, {1} |- {2}.{3}")]
     FieldNotFound(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, String),
@@ -176,23 +173,6 @@ impl<'a> TypeError {
     }
     pub fn ifft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
-    }
-    pub fn ifft_not_pow2(
-        kctx: &Ctx<Tid, CKind>,
-        vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
-        n: usize,
-    ) -> Self {
-        TypeError::IfftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n)
-    }
-    pub fn fft_not_pow2(
-        kctx: &Ctx<Tid, CKind>,
-        vctx: &Ctx<Vid, CTyp>,
-        e: &CExp,
-        n: usize,
-        t: &CTyp,
-    ) -> Self {
-        TypeError::FftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n, t.clone())
     }
     pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
@@ -335,12 +315,23 @@ impl<'a> TypeError {
     pub fn not_a_record(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp, t: &CTyp) -> Self {
         TypeError::NotARecord(kctx.clone(), vctx.clone(), e.clone(), t.clone())
     }
+    pub fn fft_not_supported(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        e: &CExp,
+        t: &CTyp,
+    ) -> Self {
+        TypeError::FftNotSupported(kctx.clone(), vctx.clone(), e.clone(), t.clone())
+    }
+    pub fn ifft_not_supported(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::IfftNotSupported(kctx.clone(), vctx.clone(), e.clone())
+    }
 }
 
 /// Type inference for [CExp]
 impl Typeable for CExp {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(
+    fn infer<C: BackendConfig>(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
@@ -357,18 +348,18 @@ impl Typeable for CExp {
             CExp::Ifft(box v) => {
                 // Infer the type of its argument
                 let typ = v
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // It must be a vector of fields, or a vector of Fin
                 match typ {
                     CTyp::Vec(box b, n) => {
+                        if !C::supports_fft_domain(n) {
+                            return Err(TypeError::ifft_not_supported(kctx, vctx, self));
+                        }
                         let i = b
                             .to_scalar(kctx)
                             .ok_or(TypeError::ifft(kctx, &vctx, self))?;
-                        if !n.is_power_of_two() {
-                            return Err(TypeError::ifft_not_pow2(kctx, vctx, self, n));
-                        }
                         Ok(CTyp::Poly(i, 1, n))
                     }
                     _ => Err(TypeError::ifft(kctx, &vctx, self)),
@@ -377,7 +368,7 @@ impl Typeable for CExp {
 
             CExp::Poly(box v) => {
                 let typ = v
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -393,7 +384,7 @@ impl Typeable for CExp {
 
             CExp::Coef(box p) => {
                 let typ = p
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -415,10 +406,10 @@ impl Typeable for CExp {
 
             CExp::Eval(box p, box x) => {
                 let p_typ = p
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let x_typ = x
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match (p_typ, x_typ) {
@@ -448,13 +439,9 @@ impl Typeable for CExp {
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
             CExp::Mle(box v) => {
                 // Infer the type of its argument
-                let _typ = v
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
                 // It must be a vector of fields, or a vector of Fin
                 let typ = v
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
@@ -476,7 +463,7 @@ impl Typeable for CExp {
             CExp::Vec(v) => {
                 let ts: CTyps = v
                     .iter()
-                    .map(|aexp| aexp.infer(kctx, fctx, vctx))
+                    .map(|aexp| aexp.infer::<C>(kctx, fctx, vctx))
                     .collect::<Result<_, _>>()
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
@@ -502,11 +489,21 @@ impl Typeable for CExp {
             }
 
             CExp::Pair(box t, box e) => {
+                if !C::supports_pairing() {
+                    let ta = t
+                        .infer::<C>(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    let tb = e
+                        .infer::<C>(kctx, fctx, vctx)
+                        .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+                    return Err(TypeError::pair(kctx, vctx, t, &ta, e, &tb));
+                }
+
                 let ta = t
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = e
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_pair(&ta, &tb, kctx)
@@ -516,10 +513,10 @@ impl Typeable for CExp {
             // Handle +
             CExp::Bin(BinOp::Add, box a, box b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_add(&ta, &tb, kctx)
@@ -529,10 +526,10 @@ impl Typeable for CExp {
             // Handle -
             CExp::Bin(BinOp::Sub, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_sub(&ta, &tb, kctx)
@@ -542,10 +539,10 @@ impl Typeable for CExp {
             // Handle *
             CExp::Bin(BinOp::Mul, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_mul(&ta, &tb, kctx)
@@ -555,10 +552,10 @@ impl Typeable for CExp {
             // Handle /
             CExp::Bin(BinOp::Div, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_div(&ta, &tb, kctx)
@@ -568,10 +565,10 @@ impl Typeable for CExp {
             // Handle ^
             CExp::Bin(BinOp::Pow, box a, box b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_pow(&ta, &tb, kctx)
@@ -581,10 +578,10 @@ impl Typeable for CExp {
             // Handle .
             CExp::Bin(BinOp::Dot, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_dot(&ta, &tb, kctx)
@@ -594,10 +591,10 @@ impl Typeable for CExp {
             // Handle %
             CExp::Bin(BinOp::Rem, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_rem(&ta, &tb, kctx)
@@ -606,10 +603,10 @@ impl Typeable for CExp {
             // Handle ++
             CExp::Bin(BinOp::Concat, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 CTyp::lub_concat(&ta, &tb, kctx)
@@ -618,10 +615,10 @@ impl Typeable for CExp {
 
             CExp::Bin(BinOp::Equ, a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Values are equal when their types are equal (with unification)
@@ -632,10 +629,10 @@ impl Typeable for CExp {
 
             CExp::Bin(BinOp::And, box a, box b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Types [ta] and [tb] must be equal and boolean
@@ -661,7 +658,7 @@ impl Typeable for CExp {
             CExp::Map(box x, id, box r) => {
                 // Type infer the range expression
                 let tr = r
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tr {
@@ -674,7 +671,7 @@ impl Typeable for CExp {
 
                         // Type infer the expression [x] with the new context
                         let tx = x
-                            .infer(kctx, fctx, &mut innerctx)
+                            .infer::<C>(kctx, fctx, &mut innerctx)
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         Ok(CTyp::vec(&tx, n))
@@ -686,7 +683,7 @@ impl Typeable for CExp {
             CExp::Reduce(op, box v) => {
                 // Type infer the vector expression
                 let tv = v
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
@@ -721,7 +718,7 @@ impl Typeable for CExp {
             // Convert a polynomial to its fft form
             CExp::Fft(box a) => {
                 let t = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Only univariate and MLE polynomials can be evaluated
@@ -735,8 +732,8 @@ impl Typeable for CExp {
                         if !k.is_scalar() {
                             return Err(TypeError::fft(kctx, vctx, &a, &t));
                         }
-                        if !n.is_power_of_two() {
-                            return Err(TypeError::fft_not_pow2(kctx, vctx, &a, n, &t));
+                        if !C::supports_fft_domain(n) {
+                            return Err(TypeError::fft_not_supported(kctx, vctx, &a, &t));
                         }
                         Ok(CTyp::vec(&CTyp::Base(tid), n))
                     }
@@ -759,10 +756,10 @@ impl Typeable for CExp {
             // Random access into vectors
             CExp::Ram(a, b) => {
                 let ta = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let tb = b
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 // Must be a vector, Uni, MLE and a Fin type
@@ -818,7 +815,7 @@ impl Typeable for CExp {
                 // type inference for each parameter
                 let param_types: CTyps = params
                     .iter()
-                    .map(|p| p.infer(kctx, fctx, vctx))
+                    .map(|p| p.infer::<C>(kctx, fctx, vctx))
                     .collect::<Result<_, _>>()
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
@@ -908,7 +905,7 @@ impl Typeable for CExp {
 
             CExp::Assert(box a) | CExp::Verify(box a) => {
                 let t = a
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 if t == CTyp::Bool {
@@ -919,15 +916,15 @@ impl Typeable for CExp {
             }
 
             CExp::Let(Some(var), box left, box right) | CExp::Log(var, box left, box right) => {
-                let tleft = left.infer(kctx, fctx, vctx)?;
+                let tleft = left.infer::<C>(kctx, fctx, vctx)?;
                 let mut vctx = vctx.clone();
                 vctx.insert(&var, &tleft);
-                let tright = right.infer(kctx, fctx, &vctx)?;
+                let tright = right.infer::<C>(kctx, fctx, &vctx)?;
                 Ok(tright)
             }
             CExp::Let(None, box left, box right) => {
-                left.infer(kctx, fctx, vctx)?;
-                right.infer(kctx, fctx, vctx)
+                left.infer::<C>(kctx, fctx, vctx)?;
+                right.infer::<C>(kctx, fctx, vctx)
             }
 
             CExp::Fun(vars, box body) => {
@@ -949,7 +946,7 @@ impl Typeable for CExp {
                     }
 
                     // Infer the type of the body - should get Poly(F, 1, N) where N is the degree
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
+                    let body_type = body.infer::<C>(kctx, fctx, &new_vctx)?;
 
                     // Extract the degree from the inferred type
                     match body_type {
@@ -963,7 +960,7 @@ impl Typeable for CExp {
                         new_vctx.insert(var, &CTyp::Base(field_tid.clone()));
                     }
 
-                    let body_type = body.infer(kctx, fctx, &new_vctx)?;
+                    let body_type = body.infer::<C>(kctx, fctx, &new_vctx)?;
 
                     match body_type {
                         CTyp::Base(tid)
@@ -984,7 +981,7 @@ impl Typeable for CExp {
                 // Infer the type of each field
                 for (field_name, field_exp) in fields.iter() {
                     let field_typ = field_exp
-                        .infer(kctx, fctx, vctx)
+                        .infer::<C>(kctx, fctx, vctx)
                         .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                     field_types.insert(field_name, &field_typ);
                 }
@@ -995,7 +992,7 @@ impl Typeable for CExp {
             CExp::Proj(box record_exp, field_name) => {
                 // Infer the type of the record expression
                 let record_typ = record_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match record_typ {
@@ -1024,7 +1021,7 @@ impl Typeable for CExp {
             CExp::SetRecord(box record_exp, field_name, box value_exp) => {
                 // Infer the type of the record expression (must be a record)
                 let record_typ = record_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let CTyp::Record(fields) = &record_typ else {
                     return Err(TypeError::next(
@@ -1040,7 +1037,7 @@ impl Typeable for CExp {
                     )
                 })?;
                 let value_typ = value_exp
-                    .infer(kctx, fctx, vctx)
+                    .infer::<C>(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
                 let _ = CTyp::lub_equ(&value_typ, field_typ, kctx).map_err(|e| {
                     TypeError::next(
@@ -1058,7 +1055,7 @@ impl Typeable for CExp {
 /// Type inference for [Body]
 impl Typeable for CBody {
     type Context = Ctx<Vid, CTyp>;
-    fn infer(
+    fn infer<C: BackendConfig>(
         &self,
         kctx: &Ctx<Tid, CKind>,
         fctx: &Set<CSig>,
@@ -1068,13 +1065,13 @@ impl Typeable for CBody {
         match self {
             CBody::Proto { relation, body } => {
                 // First the relation
-                let tr = relation.infer(kctx, fctx, &mut vctx.clone())?;
+                let tr = relation.infer::<C>(kctx, fctx, &mut vctx.clone())?;
                 if tr != CTyp::Bool {
                     return Err(TypeError::bool(kctx, vctx, &relation));
                 }
 
                 // Then the body
-                let tbody = body.infer(kctx, fctx, &mut vctx.clone())?;
+                let tbody = body.infer::<C>(kctx, fctx, &mut vctx.clone())?;
 
                 if tbody != CTyp::Bool {
                     return Err(TypeError::bool(kctx, vctx, &body));
@@ -1082,7 +1079,7 @@ impl Typeable for CBody {
                     Ok(CTyp::Bool)
                 }
             }
-            CBody::Func { body } => body.infer(kctx, fctx, &mut vctx.clone()),
+            CBody::Func { body } => body.infer::<C>(kctx, fctx, &mut vctx.clone()),
             CBody::TypeAlias => Ok(CTyp::Bool), // Type aliases have no body to check
         }
     }
@@ -1098,6 +1095,36 @@ mod tests {
     use crate::typ::{CTyp, Kind, TypeVar, TypeVars};
     use lazy_static::lazy_static;
     use share::{Ctx, Set};
+
+    struct TestConfig;
+    impl BackendConfig for TestConfig {
+        fn supports_fft_domain(_deg: usize) -> bool {
+            true
+        }
+        fn supports_pairing() -> bool {
+            true
+        }
+    }
+
+    struct NoPairingConfig;
+    impl BackendConfig for NoPairingConfig {
+        fn supports_fft_domain(_deg: usize) -> bool {
+            true
+        }
+        fn supports_pairing() -> bool {
+            false
+        }
+    }
+
+    struct NoFftConfig;
+    impl BackendConfig for NoFftConfig {
+        fn supports_fft_domain(_deg: usize) -> bool {
+            false
+        }
+        fn supports_pairing() -> bool {
+            true
+        }
+    }
 
     lazy_static! {
         static ref KIND_CTX: Ctx<Tid, CKind> = {
@@ -1148,7 +1175,7 @@ mod tests {
 
         // Run type inference
         assert_eq!(
-            lit.infer(&KIND_CTX, &fctx, &mut vctx),
+            lit.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Fin(Range::singleton(5)))
         );
     }
@@ -1163,34 +1190,36 @@ mod tests {
         let field_add = CExp::add(CExp::varstr("f1"), CExp::varstr("f2"));
 
         assert_eq!(
-            field_add.infer(&KIND_CTX, &fctx, &mut vctx),
+            field_add.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression g1 + g2
         let group_add = CExp::add(CExp::varstr("g1"), CExp::varstr("g2"));
         assert_eq!(
-            group_add.infer(&KIND_CTX, &fctx, &mut vctx),
+            group_add.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G")))
         );
 
         // Create expression s1 + s2
         let mult_group_add = CExp::add(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(
-            mult_group_add.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_add.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("S")))
         );
 
         // Create expression v1 + v1
         let vec_add1 = CExp::add(CExp::varstr("v1"), CExp::varstr("v1"));
         assert_eq!(
-            vec_add1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_add1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 5))
         );
 
         // Create expression v1 + v2
         let vec_add2 = CExp::add(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_add2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_add2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for subtraction
@@ -1203,34 +1232,36 @@ mod tests {
         let field_sub = CExp::sub(CExp::varstr("f1"), CExp::varstr("f2"));
 
         assert_eq!(
-            field_sub.infer(&KIND_CTX, &fctx, &mut vctx),
+            field_sub.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression g1 - g2
         let group_sub = CExp::sub(CExp::varstr("g1"), CExp::varstr("g2"));
         assert_eq!(
-            group_sub.infer(&KIND_CTX, &fctx, &mut vctx),
+            group_sub.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G")))
         );
 
         // Create expression s1 - s2
         let mult_group_sub = CExp::sub(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(
-            mult_group_sub.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_sub.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("S")))
         );
 
         // Create expression v1 - v1
         let vec_sub1 = CExp::sub(CExp::varstr("v1"), CExp::varstr("v1"));
         assert_eq!(
-            vec_sub1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_sub1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 5))
         );
 
         // Create expression v1 - v2
         let vec_sub2 = CExp::sub(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_sub2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_sub2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for multiplication
@@ -1243,31 +1274,35 @@ mod tests {
         let field_mul = CExp::mul(CExp::varstr("f1"), CExp::varstr("f2"));
 
         assert_eq!(
-            field_mul.infer(&KIND_CTX, &fctx, &mut vctx),
+            field_mul.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression g1 * g2
         let group_mul = CExp::mul(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert!(group_mul.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(group_mul
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression s1 * s2
         let mult_group_mul = CExp::mul(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(
-            mult_group_mul.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_mul.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("S")))
         );
 
         // Create expression v1 * v1
         let vec_mul1 = CExp::mul(CExp::varstr("v1"), CExp::varstr("v1"));
         assert_eq!(
-            vec_mul1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_mul1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 5))
         );
 
         // Create expression v1 * v2
         let vec_mul2 = CExp::mul(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_mul2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_mul2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for division
@@ -1280,36 +1315,40 @@ mod tests {
         let field_div = CExp::div(CExp::varstr("f1"), CExp::varstr("f2"));
 
         assert_eq!(
-            field_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            field_div.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression g1 / g2
         let group_div = CExp::div(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert!(group_div.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(group_div
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression s1 / s2
         let mult_group_div = CExp::div(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(
-            mult_group_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_div.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("S")))
         );
 
         // Create expression v1 / v1
         let vec_div1 = CExp::div(CExp::varstr("v1"), CExp::varstr("v1"));
         assert_eq!(
-            vec_div1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_div1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 5))
         );
 
         // Create expression v1 / v2
         let vec_div2 = CExp::div(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_div2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_div2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression p / p
         let uni_div = CExp::div(CExp::varstr("p"), CExp::varstr("p"));
         assert_eq!(
-            uni_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            uni_div.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 1, 1))
         );
     }
@@ -1324,20 +1363,26 @@ mod tests {
         let field_rem = CExp::rem(CExp::varstr("f1"), CExp::varstr("f2"));
 
         // fields have no modulo
-        assert!(field_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(field_rem
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression g1 % g2, groups have no modulo
         let group_rem = CExp::rem(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert!(group_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(group_rem
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression s1 % s2
         let mult_group_rem = CExp::rem(CExp::varstr("s1"), CExp::varstr("s2"));
-        assert!(mult_group_rem.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(mult_group_rem
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression p % p
         let uni_rem = CExp::rem(CExp::varstr("p"), CExp::varstr("p"));
         assert_eq!(
-            uni_rem.infer(&KIND_CTX, &fctx, &mut vctx),
+            uni_rem.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 1, 4))
         );
     }
@@ -1352,35 +1397,41 @@ mod tests {
         let field_pow = CExp::pow(CExp::varstr("f1"), CExp::lit(2));
 
         assert_eq!(
-            field_pow.infer(&KIND_CTX, &fctx, &mut vctx),
+            field_pow.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression g1 ^ g2
         let group_pow = CExp::pow(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert!(group_pow.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(group_pow
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression s1 ^ s2
         let mult_group_pow1 = CExp::pow(CExp::varstr("s1"), CExp::lit(2));
         assert_eq!(
-            mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_pow1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("S")))
         );
 
         // Create expression s1 ^ f1
         let mult_group_pow1 = CExp::pow(CExp::varstr("s1"), CExp::varstr("f1"));
-        assert!(mult_group_pow1.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(mult_group_pow1
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression v1 ^ v1
         let vec_pow1 = CExp::pow(CExp::varstr("v1"), CExp::vec(vec![CExp::lit(1); 5]));
         assert_eq!(
-            vec_pow1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_pow1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 5))
         );
 
         // Create expression v1 ^ v2
         let vec_pow2 = CExp::pow(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_pow2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_pow2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for dot product
@@ -1392,26 +1443,34 @@ mod tests {
         // Create expression x . y
         let field_dot = CExp::dot(CExp::varstr("f1"), CExp::varstr("f2"));
         // Only vectors and polynomials can be dotted
-        assert!(field_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(field_dot
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression g1 . g2
         let group_dot = CExp::dot(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert!(group_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(group_dot
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression s1 . s2
         let mult_group_dot = CExp::dot(CExp::varstr("s1"), CExp::varstr("s2"));
-        assert!(mult_group_dot.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(mult_group_dot
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // Create expression v1 . v1
         let vec_dot1 = CExp::dot(CExp::varstr("v1"), CExp::varstr("v1"));
         assert_eq!(
-            vec_dot1.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_dot1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         // Create expression v1 . v2
         let vec_dot2 = CExp::dot(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_dot2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_dot2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for concatenation
@@ -1424,7 +1483,7 @@ mod tests {
         let vec_concat = CExp::concat(CExp::varstr("v1"), CExp::varstr("v2"));
 
         assert_eq!(
-            vec_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            vec_concat.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 9))
         );
 
@@ -1432,14 +1491,14 @@ mod tests {
         let fv1_concat = CExp::concat(CExp::varstr("v1"), CExp::varstr("f1"));
 
         assert_eq!(
-            fv1_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            fv1_concat.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 6))
         );
 
         // Create expression f2 ++ v1
         let fv2_concat = CExp::concat(CExp::varstr("f2"), CExp::varstr("v2"));
         assert_eq!(
-            fv2_concat.infer(&KIND_CTX, &fctx, &mut vctx),
+            fv2_concat.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 5))
         );
     }
@@ -1452,26 +1511,37 @@ mod tests {
 
         // Create expression x == y
         let field_equ = CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"));
-        assert_eq!(field_equ.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
+        assert_eq!(
+            field_equ.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Bool)
+        );
 
         // Create expression g1 == g2
         let group_equ = CExp::equ(CExp::varstr("g1"), CExp::varstr("g2"));
-        assert_eq!(group_equ.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
+        assert_eq!(
+            group_equ.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Bool)
+        );
 
         // Create expression s1 == s2
         let mult_group_equ = CExp::equ(CExp::varstr("s1"), CExp::varstr("s2"));
         assert_eq!(
-            mult_group_equ.infer(&KIND_CTX, &fctx, &mut vctx),
+            mult_group_equ.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Bool)
         );
 
         // Create expression v1 == v1
         let vec_equ1 = CExp::equ(CExp::varstr("v1"), CExp::varstr("v1"));
-        assert_eq!(vec_equ1.infer(&KIND_CTX, &fctx, &mut vctx), Ok(CTyp::Bool));
+        assert_eq!(
+            vec_equ1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Bool)
+        );
 
         // Create expression v1 == v2
         let vec_equ2 = CExp::equ(CExp::varstr("v1"), CExp::varstr("v2"));
-        assert!(vec_equ2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(vec_equ2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for vector creation
@@ -1483,20 +1553,22 @@ mod tests {
         // Create a vector expression [1, 2, 3]
         let lit_vec = CExp::vec(vec![CExp::lit(1), CExp::lit(2), CExp::lit(3)]);
         assert_eq!(
-            lit_vec.infer(&KIND_CTX, &fctx, &mut vctx),
+            lit_vec.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Fin(Range::new(1, 4)), 3))
         );
 
         // Create a vector expression [1, f1, 3]
         let lit_vec2 = CExp::vec(vec![CExp::lit(1), CExp::varstr("f1"), CExp::lit(3)]);
         assert_eq!(
-            lit_vec2.infer(&KIND_CTX, &fctx, &mut vctx),
+            lit_vec2.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 3))
         );
 
         // Create a vector expression [1, f1, g1]
         let lit_vec_bad = CExp::vec(vec![CExp::lit(1), CExp::varstr("f1"), CExp::varstr("g1")]);
-        assert!(lit_vec_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(lit_vec_bad
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for error: empty vector
@@ -1508,7 +1580,9 @@ mod tests {
         // Create an empty vector expression []
         let empty = CExp::vec(vec![]);
 
-        assert!(empty.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(empty
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test interpolate
@@ -1526,21 +1600,15 @@ mod tests {
         ]));
 
         assert_eq!(
-            interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            interp1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 1, 4))
         );
 
         let interp_bad = CExp::ifft(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
 
-        assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
-
-        // Non-power-of-two length is rejected.
-        let interp_non_pow2 = CExp::ifft(CExp::vec(vec![
-            CExp::varstr("f1"),
-            CExp::lit(2),
-            CExp::lit(3),
-        ]));
-        assert!(interp_non_pow2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(interp_bad
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     #[test]
@@ -1556,13 +1624,15 @@ mod tests {
         ]));
 
         assert_eq!(
-            interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            interp1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 1, 3))
         );
 
         let interp_bad = CExp::poly(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
 
-        assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(interp_bad
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     #[test]
@@ -1577,7 +1647,7 @@ mod tests {
         ])));
 
         assert_eq!(
-            interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            interp1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3))
         );
     }
@@ -1597,13 +1667,15 @@ mod tests {
         ])));
 
         assert_eq!(
-            eval1.infer(&KIND_CTX, &fctx, &mut vctx),
+            eval1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
 
         let eval_bad = CExp::fft(CExp::vec(vec![CExp::varstr("f1")]));
 
-        assert!(eval_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(eval_bad
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 
     // Test for function application
@@ -1631,36 +1703,42 @@ mod tests {
             Exps::from([CExp::lit(2), CExp::varstr("f1"), CExp::varstr("g1")]),
         );
 
-        assert!(app1.infer(&KIND_CTX, &Set::new(), &mut vctx).is_err());
+        assert!(app1
+            .infer::<TestConfig>(&KIND_CTX, &Set::new(), &mut vctx)
+            .is_err());
         assert_eq!(
-            app1.infer(&KIND_CTX, &fctx, &mut vctx),
+            app1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("G")))
         );
 
         // Create a function application fun(1, 2)
         let app2 = CExp::app("fun".into(), Exps::from([CExp::lit(1), CExp::lit(2)]));
-        assert!(app2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(app2
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // A polynomial application to scalar
         let uni_app = CExp::app("p".into(), Exps::from([CExp::lit(1)]));
         assert_eq!(
-            uni_app.infer(&KIND_CTX, &fctx, &mut vctx),
+            uni_app.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
         let uni_app_vec = CExp::app("p".into(), Exps::from([CExp::varstr("v1")]));
-        assert!(uni_app_vec.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+        assert!(uni_app_vec
+            .infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
 
         // A MLE application to scalar and vector of scalars
         let mle_app = CExp::app("m".into(), Exps::from([CExp::lit(1)]));
         assert_eq!(
-            mle_app.infer(&KIND_CTX, &fctx, &mut vctx),
+            mle_app.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 7, 1))
         );
 
         let mle_app_vec = CExp::app("m".into(), Exps::from([CExp::varstr("v1")]));
         assert_eq!(
-            mle_app_vec.infer(&KIND_CTX, &fctx, &mut vctx),
+            mle_app_vec.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Poly(Tid::from("F"), 3, 1))
         );
     }
@@ -1675,7 +1753,7 @@ mod tests {
         let ram1 = CExp::ram(CExp::varstr("v1"), CExp::lit(2));
 
         assert_eq!(
-            ram1.infer(&KIND_CTX, &fctx, &mut vctx),
+            ram1.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::Base(Tid::from("F")))
         );
 
@@ -1683,8 +1761,75 @@ mod tests {
         let ram2 = CExp::ram(CExp::varstr("v1"), CExp::range(Range::new(0, 4)));
 
         assert_eq!(
-            ram2.infer(&KIND_CTX, &fctx, &mut vctx),
+            ram2.infer::<TestConfig>(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
+    }
+
+    #[test]
+    fn test_pair_not_supported() {
+        let fctx = Set::new();
+
+        lazy_static! {
+            static ref PAIR_KIND_CTX: Ctx<Tid, CKind> = {
+                let mut kctx = Ctx::new();
+                kctx.insert(&Tid::from("F"), &Kind::Field);
+                kctx.insert(
+                    &Tid::from("G1"),
+                    &Kind::Pairing(Tid::from("G1"), Tid::from("G2")),
+                );
+                kctx.insert(
+                    &Tid::from("G2"),
+                    &Kind::Pairing(Tid::from("G1"), Tid::from("G2")),
+                );
+                kctx.insert(&Tid::from("S1"), &Kind::scalar1("G1"));
+                kctx.insert(&Tid::from("S2"), &Kind::scalar1("G2"));
+                kctx
+            };
+            static ref PAIR_VAR_CTX: Ctx<Vid, CTyp> = {
+                let mut vctx = Ctx::new();
+                vctx.insert(&Vid::from("g1"), &CTyp::Base(Tid::from("G1")));
+                vctx.insert(&Vid::from("g2"), &CTyp::Base(Tid::from("G2")));
+                vctx
+            };
+        }
+
+        let mut vctx = PAIR_VAR_CTX.clone();
+        let pair_exp = CExp::pair(CExp::varstr("g1"), CExp::varstr("g2"));
+        assert!(pair_exp
+            .infer::<NoPairingConfig>(&PAIR_KIND_CTX, &fctx, &mut vctx)
+            .is_err());
+    }
+
+    #[test]
+    fn test_fft_not_supported() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        let fft_exp = CExp::fft(CExp::ifft(CExp::vec(vec![
+            CExp::varstr("f1"),
+            CExp::lit(2),
+            CExp::lit(3),
+            CExp::lit(5),
+        ])));
+        assert!(fft_exp
+            .infer::<NoFftConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
+    }
+
+    #[test]
+    fn test_ifft_not_supported() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        let ifft_exp = CExp::ifft(CExp::vec(vec![
+            CExp::varstr("f1"),
+            CExp::lit(2),
+            CExp::lit(3),
+            CExp::lit(5),
+        ]));
+        assert!(ifft_exp
+            .infer::<NoFftConfig>(&KIND_CTX, &fctx, &mut vctx)
+            .is_err());
     }
 }

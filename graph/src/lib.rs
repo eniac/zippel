@@ -1075,7 +1075,7 @@ impl<C: HasOpFactory> UDag<C> {
         }
 
         // Typecheck the body with the type signature
-        body.typecheck(sig.clone(), &fctx.keys())?;
+        body.typecheck::<C>(sig.clone(), &fctx.keys())?;
 
         // Add the body to the Graph
         match body {
@@ -1210,7 +1210,7 @@ impl<C: HasOpFactory> UDag<C> {
         let mut vars = vars.clone();
         loop {
             // Type inference for [self]
-            let typ = exp.infer(kctx, &fctx.keys(), &vctx)?;
+            let typ = exp.infer::<C>(kctx, &fctx.keys(), &vctx)?;
             // Convert [CExp] to [Op] while creating the graph
             match exp.clone() {
                 // Literals get appended to the last node [self.it]
@@ -1335,9 +1335,6 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Billinear pairing
                 CExp::Pair(box a, box b) => {
-                    a.infer(kctx, &fctx.keys(), &vctx)?;
-                    b.infer(kctx, &fctx.keys(), &vctx)?;
-
                     let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
@@ -1352,9 +1349,6 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 // Create a new [bin] node
                 CExp::Bin(op, box a, box b) => {
-                    a.infer(kctx, &fctx.keys(), &vctx)?;
-                    b.infer(kctx, &fctx.keys(), &vctx)?;
-
                     // Add children first
                     let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
@@ -1388,7 +1382,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                 CExp::Map(box l, x, box e) => {
                     // Type of [e]
-                    let te = e.infer(kctx, &fctx.keys(), &vctx)?;
+                    let te = e.infer::<C>(kctx, &fctx.keys(), &vctx)?;
 
                     // Op for [e]
                     let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
@@ -1460,7 +1454,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // type inference for each parameter
                     let param_types: CTyps = params
                         .iter()
-                        .map(|p| p.infer(kctx, &fctx.keys(), &vctx))
+                        .map(|p| p.infer::<C>(kctx, &fctx.keys(), &vctx))
                         .collect::<Result<_, _>>()?;
 
                     // Is it a polynomial, MLE, or a function?
@@ -1558,7 +1552,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::Let(Some(id), box l, box r) => {
                     // Infer the type of [l]
-                    let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
+                    let tl = l.infer::<C>(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
                     let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add [id] to the variable context (clone-on-write)
@@ -1576,7 +1570,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::Log(id, box l, box r) => {
                     // Infer the type of [l]
-                    let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
+                    let tl = l.infer::<C>(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
                     let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Record transcript interaction
@@ -1704,7 +1698,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let field_exp = fields.get(&field_name).ok_or_else(|| {
                                 let mut field_types = Ctx::new();
                                 for (name, exp) in fields.iter() {
-                                    if let Ok(typ) = exp.infer(kctx, &fctx.keys(), &vctx) {
+                                    if let Ok(typ) = exp.infer::<C>(kctx, &fctx.keys(), &vctx) {
                                         field_types.insert(name, &typ);
                                     }
                                 }
@@ -1739,8 +1733,11 @@ impl<C: HasOpFactory> UDag<C> {
                             })?;
 
                             // Try to infer the record type to verify the field exists
-                            let record_typ =
-                                CExp::Var(id_clone.clone()).infer(kctx, &fctx.keys(), &vctx)?;
+                            let record_typ = CExp::Var(id_clone.clone()).infer::<C>(
+                                kctx,
+                                &fctx.keys(),
+                                &vctx,
+                            )?;
 
                             match &record_typ {
                                 CTyp::Record(fields) => {
@@ -1810,21 +1807,10 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         _ => {
                             // For other expressions, try to infer the record type
-                            let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
+                            let record_typ = record_exp.infer::<C>(kctx, &fctx.keys(), &vctx)?;
 
                             match record_typ {
-                                CTyp::Record(fields) => {
-                                    // Get the field type
-                                    let _field_typ = fields.get(&field_name).ok_or_else(|| {
-                                        GraphError::Type(TypeError::field_not_found(
-                                            kctx,
-                                            &vctx,
-                                            &record_exp,
-                                            field_name.as_str(),
-                                            &fields,
-                                        ))
-                                    })?;
-
+                                CTyp::Record(_) => {
                                     // For complex expressions, we'd need to evaluate them first
                                     // For now, return an error indicating this isn't fully supported
                                     Err(GraphError::Type(TypeError::next(
@@ -1844,7 +1830,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::SetRecord(box record_exp, field_name, box value_exp) => {
                     // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
-                    let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
+                    let record_typ = record_exp.infer::<C>(kctx, &fctx.keys(), &vctx)?;
                     let CTyp::Record(typ_fields) = &record_typ else {
                         return Err(GraphError::Type(TypeError::not_a_record(
                             kctx,

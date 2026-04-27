@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::parser::*;
+use crate::typ::backend::BackendConfig;
 use crate::typ::infer::{TypeError, Typeable};
 use crate::typ::subst::SubstError;
 use crate::typ::{
@@ -253,7 +254,11 @@ impl<N> FromIterator<Decl<N>> for Decls<N> {
 }
 
 impl CBody {
-    pub fn typecheck(&self, sig: CSig, fctx: &Set<CSig>) -> Result<(), TypeError> {
+    pub fn typecheck<C: BackendConfig>(
+        &self,
+        sig: CSig,
+        fctx: &Set<CSig>,
+    ) -> Result<(), TypeError> {
         // Kind context
         let kctx = sig.typevars.to_ctx();
         // Add arguments to [vctx] and [vars]
@@ -269,8 +274,8 @@ impl CBody {
                 }
 
                 // Type infer relation and body
-                let tr = relation.infer(&kctx, &fctx, &vctx)?;
-                let br = body.infer(&kctx, &fctx, &vctx)?;
+                let tr = relation.infer::<C>(&kctx, &fctx, &vctx)?;
+                let br = body.infer::<C>(&kctx, &fctx, &vctx)?;
                 if tr == CTyp::Bool && br == CTyp::Bool {
                     Ok(())
                 } else {
@@ -278,7 +283,7 @@ impl CBody {
                 }
             }
             Body::Func { body } => {
-                let br = body.infer(&kctx, &fctx, &vctx)?;
+                let br = body.infer::<C>(&kctx, &fctx, &vctx)?;
                 if br == sig.ret {
                     Ok(())
                 } else {

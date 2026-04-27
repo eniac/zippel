@@ -1,3 +1,4 @@
+use lang::typ::backend::BackendConfig;
 use rand::Rng;
 use rayon::prelude::*;
 use spongefish::{DuplexSpongeInterface, ProverState};
@@ -12,7 +13,7 @@ use ark_ec::models::bn::Bn;
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, FftField, Fp64, MontBackend, MontConfig, PrimeField, Zero};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
@@ -23,6 +24,8 @@ use std::sync::RwLock;
 /// API to Arkworks finite fields, elliptic curves, and pairings
 pub trait ArkConfig:
     Clone + Copy + Send + Sync + 'static + Eq + PartialEq + Ord + PartialOrd + fmt::Display + Hash
+where
+    Self: BackendConfig,
 {
     type F: PrimeField;
     type G1: CurveGroup<ScalarField = Self::F, Affine = Self::G1Affine>;
@@ -613,3 +616,60 @@ impl_op_factory!(ArkVesta, VESTA_OP_FACTORY);
 impl_op_factory!(ArkEd25519, ED25519_OP_FACTORY);
 impl_op_factory!(ArkField17, FIELD17_OP_FACTORY);
 impl_op_factory!(ArkField65537, FIELD65537_OP_FACTORY);
+
+fn fft_domain_supported<F: FftField>(deg: usize) -> bool {
+    let two_adicity = F::TWO_ADICITY;
+    let base = F::SMALL_SUBGROUP_BASE;
+    let base_adicity = F::SMALL_SUBGROUP_BASE_ADICITY;
+    if deg == 0 {
+        return true;
+    }
+    if let Some(domain_size) = deg.checked_next_power_of_two() {
+        let log_size = domain_size.trailing_zeros();
+        if log_size <= two_adicity {
+            return true;
+        }
+    };
+    if let (Some(base), Some(base_adicity)) = (base, base_adicity) {
+        let two_part = 1u64.checked_shl(two_adicity);
+        let q_part = (base as u64).checked_pow(base_adicity);
+        return match (two_part, q_part) {
+            (Some(t), Some(q)) => t.checked_mul(q).is_none_or(|prod| prod >= deg as u64),
+            _ => true,
+        };
+    }
+    false
+}
+
+macro_rules! impl_backend_config {
+    ($name:ty, $supports_pairing:literal) => {
+        impl BackendConfig for $name {
+            fn supports_fft_domain(deg: usize) -> bool {
+                fft_domain_supported::<<$name as ArkConfig>::F>(deg)
+            }
+
+            fn supports_pairing() -> bool {
+                $supports_pairing
+            }
+        }
+    };
+}
+
+impl_backend_config!(ArkBls12_381, true);
+impl_backend_config!(ArkBn254, true);
+impl_backend_config!(ArkMNT4_298, true);
+impl_backend_config!(ArkCurve25519, false);
+impl_backend_config!(ArkSecp256k1, false);
+impl_backend_config!(ArkPallas, false);
+impl_backend_config!(ArkVesta, false);
+impl_backend_config!(ArkEd25519, false);
+
+impl<F: PrimeField> BackendConfig for ArkFieldN<F> {
+    fn supports_fft_domain(deg: usize) -> bool {
+        fft_domain_supported::<<Self as ArkConfig>::F>(deg)
+    }
+
+    fn supports_pairing() -> bool {
+        false
+    }
+}
