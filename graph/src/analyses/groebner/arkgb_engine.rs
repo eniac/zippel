@@ -1,67 +1,73 @@
-//! Pure-engine bridge from zippel's `SparsePolynomial<F, GrevLexTerm>` to
+//! Pure-engine bridge from zippel's `SparsePolynomial<F, M>` to
 //! `ark_gb::compute_gb` and back.
 //!
 //! This module is a *compute engine*: it accepts zippel polynomials, runs
 //! ark-gb's Buchberger, and returns zippel polynomials. There is no shared
 //! state, no long-lived `Ring`, no parallel poly type. The
-//! [`RingSnapshot`] built by [`compute_gb`] is stack-local to a single call
-//! and dropped on return.
+//! [`RingSnapshot`] built per call is stack-local and dropped on return.
 //!
-//! # Order parity
+//! Two snapshot strategies are provided, one per supported zippel monomial
+//! type:
 //!
-//! - Zippel `GrevLexTerm`'s `Ord` returns `Less` for the *leading* monomial
-//!   (so `BTreeMap::first` yields it). PRef ordering: smallest PRef =
-//!   textbook-leftmost variable; largest PRef = textbook-rightmost.
-//! - ark-gb pins variables to dense indices `0..nvars-1`, with
-//!   `byte_index_for_var(nvars, i) = i + (W*8 - 1) - nvars`. Index 0 is
-//!   textbook-leftmost.
-//! - [`build_snapshot`] sorts the union of PRefs ascending and assigns
-//!   index 0 to the smallest PRef. This makes PRef-greater ⇔ ark-index-greater
-//!   ⇔ textbook-rightmost in both conventions, preserving the GrevLex order
-//!   on round-trip.
+//! - [`compute_gb_grevlex`] for `SparsePolynomial<F, GrevLexTerm>`.
+//!   PRefs are sorted ascending and assigned to ark-gb indices `0..nvars-1`,
+//!   making PRef-greater ⇔ ark-rightmost ⇔ textbook-rightmost. This
+//!   preserves GrevLex on round-trip.
+//! - [`compute_gb_elim`] for `SparsePolynomial<F, ElimTerm>`. PRefs are
+//!   partitioned into the *elim block* (those satisfying
+//!   `ElimTerm::eliminate_var`) and the *keep block*, then interleaved:
+//!   elim PRefs are assigned to **odd** indices, keep PRefs to **even**
+//!   indices. This lines up with ark-gb's `OddElimTerm<W>` (whose elim
+//!   predicate is `i % 2 == 1`), reproducing zippel's elim-block-then-grevlex
+//!   ordering. Padding ghost variables are inserted when the two block
+//!   sizes are unequal.
 //!
-//! # Caps
+//! # Caps (W = 8)
 //!
-//! At W=8: `nvars ≤ 63` and per-variable exponent ≤ 127. Both checks are
-//! enforced inside [`sparsepoly_to_ark`] and surface as
-//! [`EngineError`]; [`compute_gb`] panics on `Err` with PRef context, since
-//! a cap violation indicates the workload is incompatible with the chosen
-//! `W` — not a recoverable runtime condition.
+//! - `nvars ≤ 63` (`max_vars::<W>() = W*8 - 1`).
+//! - per-variable exponent ≤ 127 (`MAX_VAR_EXP = 0x7F`).
+//!
+//! Cap violations surface as [`EngineError`] inside [`build_snapshot_*`] /
+//! [`sparsepoly_to_ark`] and panic at the engine entry point with PRef
+//! context.
 //!
 //! # Reduced output
 //!
-//! `ark_gb::compute_gb` always returns a *reduced* basis. Callers of
-//! `GroebnerBasis::buchberger` that expected the unreduced output will
-//! observe a behavioural change. The corresponding Zippel parity tests
-//! check ideal equality / S-pair closure, both of which hold for reduced
-//! bases.
+//! `ark_gb::compute_gb` always returns a *reduced* basis, so
+//! `GroebnerBasis::buchberger` now returns reduced bases unconditionally.
+//! Existing zippel tests check ideal containment / S-pair closure, both of
+//! which hold for reduced bases.
 
 use crate::PRef;
 use crate::analyses::groebner::monomial::Monomial as ZippelMonomial;
-use crate::analyses::groebner::{GrevLexTerm, SparsePolynomial};
+use crate::analyses::groebner::{ElimTerm, GrevLexTerm, SparsePolynomial};
 use ark_ff::Field;
-use ark_gb::{Poly, Ring, compute_gb};
-use ark_gb::{GrevLexTerm as ArkGrevLexTerm, MonoTerm as ArkMonoTerm};
 use ark_gb::Monomial as ArkMonomial;
+use ark_gb::{
+    GrevLexTerm as ArkGrevLexTerm, MonoTerm as ArkMonoTerm, OddElimTerm as ArkOddElimTerm,
+};
+use ark_gb::{Poly, Ring, compute_gb};
 use share::Ctx;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// Width parameter for ark-gb's packed monomial layout. W=8 caps nvars
-/// at 63 and per-variable exponents at 127.
+/// Width parameter for ark-gb's packed monomial layout. W=8 caps nvars at
+/// 63 and per-variable exponents at 127.
 pub const W: usize = 8;
 
-/// Errors surfaced from the conversion boundary. Always indicate a
-/// workload incompatibility with the chosen `W`, not a runtime error.
+/// Errors surfaced from the conversion boundary. Always indicate a workload
+/// incompatibility with the chosen `W`, not a runtime error.
 #[derive(Debug)]
 pub enum EngineError {
     /// `nvars` exceeds `ark_gb::ring::max_vars::<W>() = W*8 - 1`.
     TooManyVars { nvars: usize, max: u32 },
     /// A variable's exponent in some monomial exceeds `0x7F`.
-    ExponentOverflow { var: PRef, exponent: usize, max: u32 },
-    /// `ark_gb::Ring::new` rejected the construction for some other reason
-    /// (currently only `nvars == 0`, which we filter elsewhere, but kept
-    /// here for completeness).
+    ExponentOverflow {
+        var: PRef,
+        exponent: usize,
+        max: u32,
+    },
+    /// `ark_gb::Ring::new` rejected the construction.
     RingConstruction { nvars: usize },
 }
 
@@ -80,87 +86,143 @@ impl std::fmt::Display for EngineError {
                  ark_gb::MAX_VAR_EXP = {}; this monomial cannot be packed at W={}",
                 exponent, var, max, W
             ),
-            EngineError::RingConstruction { nvars } => write!(
-                f,
-                "arkgb_engine: ark_gb::Ring::new({}) failed",
-                nvars
-            ),
+            EngineError::RingConstruction { nvars } => {
+                write!(f, "arkgb_engine: ark_gb::Ring::new({}) failed", nvars)
+            }
         }
     }
 }
 
-/// Stack-local mapping between zippel `PRef`s and ark-gb dense
-/// `0..nvars-1` indices, plus the constructed `Ring`.
+/// Stack-local mapping between zippel `PRef`s and ark-gb dense indices.
 ///
-/// Built fresh per call to [`compute_gb`]; never cached or shared.
+/// `idx_to_pref[i] = Some(p)` means ark-gb index `i` is bound to PRef `p`.
+/// `idx_to_pref[i] = None` means index `i` is a *ghost* variable (used only
+/// by the elim snapshot to pad an otherwise-empty parity slot, never appears
+/// in any input or output exponent vector).
 #[derive(Debug)]
 pub struct RingSnapshot<F: Field + Copy + Send + Sync> {
     pub ring: Arc<Ring<F, W>>,
-    /// `idx_to_pref[i]` is the PRef bound to ark-gb index `i`. Sorted
-    /// ascending by `PRef` — this is what makes the GrevLex direction
-    /// agree with zippel's convention (PRef-greater ⇔ ark-rightmost).
-    pub idx_to_pref: Vec<PRef>,
+    pub idx_to_pref: Vec<Option<PRef>>,
     pub pref_to_idx: BTreeMap<PRef, u32>,
 }
 
 impl<F: Field + Copy + Send + Sync> RingSnapshot<F> {
-    /// Number of variables this snapshot pins.
     pub fn nvars(&self) -> u32 {
         self.idx_to_pref.len() as u32
     }
 }
 
-/// Collect the union of PRefs across `polys`, sort ascending, and build
-/// the ring + index tables.
-pub fn build_snapshot<F: Field + Copy + Send + Sync>(
-    polys: &[SparsePolynomial<F, GrevLexTerm>],
-) -> Result<RingSnapshot<F>, EngineError> {
-    let mut all_prefs: std::collections::BTreeSet<PRef> =
-        std::collections::BTreeSet::new();
+fn collect_prefs<F, M>(polys: &[SparsePolynomial<F, M>]) -> BTreeSet<PRef>
+where
+    F: Field,
+    M: ZippelMonomial,
+{
+    let mut all = BTreeSet::new();
     for p in polys {
         for (term, _coef) in p.terms.iter() {
             for v in term.vars() {
-                all_prefs.insert(v);
+                all.insert(v);
             }
         }
     }
+    all
+}
 
-    let nvars = all_prefs.len();
+fn make_ring<F: Field + Copy + Send + Sync>(nvars: usize) -> Result<Arc<Ring<F, W>>, EngineError> {
     let max = ark_gb::ring::max_vars::<W>();
-    if nvars == 0 {
-        return Err(EngineError::RingConstruction { nvars: 0 });
-    }
     if nvars as u32 > max {
         return Err(EngineError::TooManyVars { nvars, max });
     }
+    let ring = Ring::<F, W>::new(nvars as u32).ok_or(EngineError::RingConstruction { nvars })?;
+    Ok(Arc::new(ring))
+}
 
-    let idx_to_pref: Vec<PRef> = all_prefs.into_iter().collect();
-    let mut pref_to_idx: BTreeMap<PRef, u32> = BTreeMap::new();
-    for (i, p) in idx_to_pref.iter().enumerate() {
+/// Snapshot strategy for `GrevLexTerm`: union of PRefs sorted ascending,
+/// assigned dense indices `0..nvars-1`. PRef-greater ⇔ ark-rightmost.
+pub fn build_snapshot_grevlex<F: Field + Copy + Send + Sync>(
+    polys: &[SparsePolynomial<F, GrevLexTerm>],
+) -> Result<RingSnapshot<F>, EngineError> {
+    let prefs = collect_prefs(polys);
+    if prefs.is_empty() {
+        return Err(EngineError::RingConstruction { nvars: 0 });
+    }
+    let idx_to_pref: Vec<Option<PRef>> = prefs.iter().cloned().map(Some).collect();
+    let mut pref_to_idx = BTreeMap::new();
+    for (i, p) in prefs.iter().enumerate() {
         pref_to_idx.insert(p.clone(), i as u32);
     }
-
-    let ring = Ring::<F, W>::new(nvars as u32)
-        .ok_or(EngineError::RingConstruction { nvars })?;
-
+    let ring = make_ring(idx_to_pref.len())?;
     Ok(RingSnapshot {
-        ring: Arc::new(ring),
+        ring,
         idx_to_pref,
         pref_to_idx,
     })
 }
 
-/// Convert one zippel `SparsePolynomial<F, GrevLexTerm>` to an ark-gb
-/// `Poly`, validating per-variable exponent caps. This is the **sole**
-/// place where zippel-Ord (`Less = leading`) meets ark-gb-Ord
-/// (`Greater = leading`); ark-gb's `from_terms` handles the sort.
-pub fn sparsepoly_to_ark<F: Field + Copy + Send + Sync>(
+/// Snapshot strategy for `ElimTerm`: partition PRefs into *elim* (those
+/// satisfying `ElimTerm::eliminate_var`) and *keep*; assign elim PRefs to
+/// odd ark indices and keep PRefs to even ark indices, padding the
+/// shorter block with ghost variables.
+///
+/// Within each block PRefs are sorted ascending so that PRef-greater ⇔
+/// ark-rightmost-within-block, preserving the grevlex tiebreak after the
+/// elim-block-sum prefix.
+pub fn build_snapshot_elim<F: Field + Copy + Send + Sync>(
+    polys: &[SparsePolynomial<F, ElimTerm>],
+) -> Result<RingSnapshot<F>, EngineError> {
+    let prefs = collect_prefs(polys);
+    if prefs.is_empty() {
+        return Err(EngineError::RingConstruction { nvars: 0 });
+    }
+
+    let mut elim: Vec<PRef> = Vec::new();
+    let mut keep: Vec<PRef> = Vec::new();
+    for p in prefs.into_iter() {
+        if ElimTerm::eliminate_var(&p) {
+            elim.push(p);
+        } else {
+            keep.push(p);
+        }
+    }
+
+    // Interleave: even -> keep, odd -> elim. Total slots = 2 * max(|keep|, |elim|).
+    let pairs = std::cmp::max(elim.len(), keep.len());
+    let nvars = pairs * 2;
+    let mut idx_to_pref: Vec<Option<PRef>> = vec![None; nvars];
+    let mut pref_to_idx: BTreeMap<PRef, u32> = BTreeMap::new();
+    for (i, p) in keep.into_iter().enumerate() {
+        let idx = i * 2;
+        pref_to_idx.insert(p.clone(), idx as u32);
+        idx_to_pref[idx] = Some(p);
+    }
+    for (i, p) in elim.into_iter().enumerate() {
+        let idx = i * 2 + 1;
+        pref_to_idx.insert(p.clone(), idx as u32);
+        idx_to_pref[idx] = Some(p);
+    }
+    let ring = make_ring(nvars)?;
+    Ok(RingSnapshot {
+        ring,
+        idx_to_pref,
+        pref_to_idx,
+    })
+}
+
+/// Convert one zippel `SparsePolynomial<F, ZM>` to an ark-gb `Poly`.
+/// Generic over the zippel/ark monomial pair; `ZM` and `AM` must agree on
+/// the snapshot's variable indexing (see `build_snapshot_*`).
+pub fn sparsepoly_to_ark<F, ZM, AM>(
     snap: &RingSnapshot<F>,
-    p: &SparsePolynomial<F, GrevLexTerm>,
-) -> Result<Poly<F, ArkGrevLexTerm<W>, W>, EngineError> {
+    p: &SparsePolynomial<F, ZM>,
+) -> Result<Poly<F, AM, W>, EngineError>
+where
+    F: Field + Copy + Send + Sync,
+    ZM: ZippelMonomial,
+    AM: ArkMonomial<F, W> + From<ArkMonoTerm<W>>,
+{
     let nvars = snap.nvars() as usize;
-    let mut terms: Vec<(F, ArkGrevLexTerm<W>)> = Vec::with_capacity(p.terms.len());
     let max_exp = ark_gb::ring::MAX_VAR_EXP;
+    let mut terms: Vec<(F, AM)> = Vec::with_capacity(p.terms.len());
 
     for (mono, coef) in p.terms.iter() {
         if coef.is_zero() {
@@ -175,119 +237,151 @@ pub fn sparsepoly_to_ark<F: Field + Copy + Send + Sync>(
                     max: max_exp,
                 });
             }
-            // Safe: build_snapshot interned every PRef in the input.
-            let idx = snap.pref_to_idx[&var] as usize;
+            // build_snapshot_* must have interned every PRef appearing in
+            // the input. Missing => caller used a PRef not present in
+            // any input poly, which is a bug.
+            let idx = *snap.pref_to_idx.get(&var).expect(
+                "arkgb_engine: PRef in poly term not present in snapshot \
+                 (build_snapshot must be called on the same polys)",
+            ) as usize;
             exps[idx] = power as u32;
         }
         let mt: ArkMonoTerm<W> = ArkMonoTerm::from_exponents(&snap.ring, &exps).ok_or(
-            // Reachable only if the cap loop above missed something
-            // (e.g. total_deg overflow). Surface a generic message.
             EngineError::ExponentOverflow {
-                var: snap.idx_to_pref[0].clone(),
+                var: snap
+                    .idx_to_pref
+                    .iter()
+                    .find_map(|p| p.clone())
+                    .expect("snapshot must have at least one real PRef"),
                 exponent: 0,
                 max: max_exp,
             },
         )?;
-        let am: ArkGrevLexTerm<W> = ArkGrevLexTerm::from(mt);
+        let am = AM::from(mt);
         terms.push((*coef, am));
     }
-
     Ok(Poly::from_terms(&snap.ring, terms))
 }
 
-/// Convert an ark-gb `Poly` back to zippel's `SparsePolynomial`. The
-/// reverse direction does no validation — every ark-gb monomial maps
-/// uniquely to a `Vec<(PRef, usize)>` via `idx_to_pref`.
-pub fn ark_to_sparsepoly<F: Field + Copy + Send + Sync>(
+/// Convert an ark-gb `Poly` back to zippel's `SparsePolynomial<F, ZM>`.
+pub fn ark_to_sparsepoly<F, ZM, AM>(
     snap: &RingSnapshot<F>,
-    p: &Poly<F, ArkGrevLexTerm<W>, W>,
-) -> SparsePolynomial<F, GrevLexTerm> {
-    let mut terms: Ctx<GrevLexTerm, F> = Ctx::default();
+    p: &Poly<F, AM, W>,
+) -> SparsePolynomial<F, ZM>
+where
+    F: Field + Copy + Send + Sync,
+    ZM: ZippelMonomial + From<Vec<(PRef, usize)>>,
+    AM: ArkMonomial<F, W>,
+{
+    let mut terms: Ctx<ZM, F> = Ctx::default();
     let nvars = snap.nvars() as usize;
 
     for (coef, mono) in p.iter() {
         if coef.is_zero() {
             continue;
         }
-        // `Monomial<F, W>::exponents` returns `Vec<u32>` of length nvars
-        // for any ark-gb monomial type, including `GrevLexTerm`.
-        let exps: Vec<u32> =
-            <ArkGrevLexTerm<W> as ArkMonomial<F, W>>::exponents(mono, &snap.ring);
+        let exps: Vec<u32> = AM::exponents(mono, &snap.ring);
         let mut pairs: Vec<(PRef, usize)> = Vec::new();
         for (i, e) in exps.iter().enumerate().take(nvars) {
-            if *e > 0 {
-                pairs.push((snap.idx_to_pref[i].clone(), *e as usize));
+            if *e == 0 {
+                continue;
             }
+            // A non-zero exponent on a ghost slot would mean ark-gb
+            // produced a term over a phantom variable, which the elim
+            // snapshot construction guarantees never happens (ghosts only
+            // exist to pad even/odd parity, no input term references them,
+            // so the ideal they generate has no ghost-bearing terms).
+            let pref = snap.idx_to_pref[i]
+                .clone()
+                .expect("arkgb_engine: ark-gb produced exponent on ghost variable");
+            pairs.push((pref, *e as usize));
         }
-        let term: GrevLexTerm = GrevLexTerm::from(pairs);
+        let term: ZM = ZM::from(pairs);
         terms.insert(&term, &coef);
     }
-
     SparsePolynomial { terms }
 }
 
-/// Run `ark_gb::compute_gb` on `polys` and return the (reduced) basis.
-///
-/// # Panics
-///
-/// Panics with a descriptive message via [`EngineError::Display`] if the
-/// workload exceeds W=8 caps (nvars > 63 or any exponent > 127). These
-/// are workload incompatibilities — caller must bump `W` or simplify the
-/// problem.
-///
-/// Returns an empty `Vec` if `polys` is empty or contains only zero
-/// polynomials (no variables to construct a `Ring` over).
-pub fn compute_gb_polys<F: Field + Copy + Send + Sync + 'static>(
-    polys: &[SparsePolynomial<F, GrevLexTerm>],
-) -> Vec<SparsePolynomial<F, GrevLexTerm>> {
-    let nonzero: Vec<&SparsePolynomial<F, GrevLexTerm>> =
-        polys.iter().filter(|p| !p.is_zero()).collect();
+/// Pure-constant ideal handler shared by the two `compute_gb_*` entry
+/// points: `Some(unit)` if any input is a non-zero constant, else `None`.
+fn unit_basis_if_constant<F, M>(
+    polys: &[&SparsePolynomial<F, M>],
+) -> Option<Vec<SparsePolynomial<F, M>>>
+where
+    F: Field + Copy,
+    M: ZippelMonomial + From<Vec<(PRef, usize)>>,
+{
+    for p in polys {
+        if p.terms.iter().next().is_some() {
+            let mut terms: Ctx<M, F> = Ctx::default();
+            let one_term = M::from(Vec::<(PRef, usize)>::new());
+            let one_coef = F::one();
+            terms.insert(&one_term, &one_coef);
+            return Some(vec![SparsePolynomial { terms }]);
+        }
+    }
+    None
+}
+
+/// Run `ark_gb::compute_gb` on a zippel polynomial slice and return the
+/// (reduced) basis in zippel form. Generic over snapshot strategy and
+/// monomial pair.
+fn compute_gb_with<F, ZM, AM>(
+    polys: &[SparsePolynomial<F, ZM>],
+    build_snap: impl FnOnce(&[SparsePolynomial<F, ZM>]) -> Result<RingSnapshot<F>, EngineError>,
+) -> Vec<SparsePolynomial<F, ZM>>
+where
+    F: Field + Copy + Send + Sync + 'static,
+    ZM: ZippelMonomial + From<Vec<(PRef, usize)>>,
+    AM: ArkMonomial<F, W> + From<ArkMonoTerm<W>> + 'static,
+{
+    let nonzero: Vec<&SparsePolynomial<F, ZM>> = polys.iter().filter(|p| !p.is_zero()).collect();
     if nonzero.is_empty() {
         return Vec::new();
     }
 
-    // build_snapshot rejects nvars=0; if it triggers (all polys are
-    // pure constants), we degrade to "the basis is {1}" or "{}".
-    let snap = match build_snapshot(polys) {
+    let snap = match build_snap(polys) {
         Ok(s) => s,
         Err(EngineError::RingConstruction { nvars: 0 }) => {
-            // Pure-constant ideal. Any non-zero constant generates the
-            // unit ideal; the reduced GB is a single non-zero constant.
-            // (Mirrors ark-gb's compute_gb behaviour after canonicalising.)
-            for p in &nonzero {
-                if p.terms.iter().next().is_some() {
-                    let mut terms: Ctx<GrevLexTerm, F> = Ctx::default();
-                    let one_term = GrevLexTerm::from(Vec::<(PRef, usize)>::new());
-                    let one_coef = F::one();
-                    terms.insert(&one_term, &one_coef);
-                    return vec![SparsePolynomial { terms }];
-                }
-            }
-            return Vec::new();
+            // Pure-constant ideal: ark-gb refuses nvars=0; caller wants
+            // {1} (the unit ideal generator).
+            return unit_basis_if_constant(&nonzero).unwrap_or_default();
         }
         Err(e) => panic!("{}", e),
     };
 
-    let ark_inputs: Vec<Poly<F, ArkGrevLexTerm<W>, W>> = nonzero
+    let ark_inputs: Vec<Poly<F, AM, W>> = nonzero
         .iter()
-        .map(|p| {
-            sparsepoly_to_ark(&snap, p).unwrap_or_else(|e| panic!("{}", e))
-        })
+        .map(|p| sparsepoly_to_ark(&snap, p).unwrap_or_else(|e| panic!("{}", e)))
         .collect();
 
-    let ark_result = compute_gb(snap.ring.clone(), ark_inputs);
-
-    ark_result
+    compute_gb(snap.ring.clone(), ark_inputs)
         .iter()
         .map(|p| ark_to_sparsepoly(&snap, p))
         .collect()
 }
 
+/// GB computation for `SparsePolynomial<F, GrevLexTerm>` via ark-gb's
+/// `GrevLexTerm<W>`.
+pub fn compute_gb_grevlex<F: Field + Copy + Send + Sync + 'static>(
+    polys: &[SparsePolynomial<F, GrevLexTerm>],
+) -> Vec<SparsePolynomial<F, GrevLexTerm>> {
+    compute_gb_with::<F, GrevLexTerm, ArkGrevLexTerm<W>>(polys, build_snapshot_grevlex)
+}
+
+/// GB computation for `SparsePolynomial<F, ElimTerm>` via ark-gb's
+/// `OddElimTerm<W>`. The snapshot lays out elim PRefs at odd indices and
+/// keep PRefs at even indices so that ark-gb's `i % 2 == 1` elim predicate
+/// matches `ElimTerm::eliminate_var`.
+pub fn compute_gb_elim<F: Field + Copy + Send + Sync + 'static>(
+    polys: &[SparsePolynomial<F, ElimTerm>],
+) -> Vec<SparsePolynomial<F, ElimTerm>> {
+    compute_gb_with::<F, ElimTerm, ArkOddElimTerm<W>>(polys, build_snapshot_elim)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyses::groebner::monomial::GrevLexTerm;
-    use crate::analyses::groebner::sparsepoly::SparsePolynomial;
     use ark_bls12_381::Fr;
     use ark_ff::One;
     use backend::ATyp;
@@ -317,7 +411,11 @@ mod tests {
     fn term(c: i64, parts: Vec<(&str, usize)>) -> SparsePolynomial<Fr, GrevLexTerm> {
         let mut terms: Ctx<GrevLexTerm, Fr> = Ctx::default();
         let m = mono(parts);
-        let coef = if c < 0 { -Fr::from((-c) as u64) } else { Fr::from(c as u64) };
+        let coef = if c < 0 {
+            -Fr::from((-c) as u64)
+        } else {
+            Fr::from(c as u64)
+        };
         terms.insert(&m, &coef);
         SparsePolynomial { terms }
     }
@@ -331,31 +429,25 @@ mod tests {
 
     #[test]
     fn round_trip_preserves_polynomial() {
-        // p = 3*a^2 + 2*a*b + 7
         let p = add(
             add(term(3, vec![("a", 2)]), term(2, vec![("a", 1), ("b", 1)])),
             term(7, vec![]),
         );
-        let snap = build_snapshot(std::slice::from_ref(&p)).unwrap();
-        let ark = sparsepoly_to_ark(&snap, &p).unwrap();
-        let back = ark_to_sparsepoly(&snap, &ark);
+        let snap = build_snapshot_grevlex(std::slice::from_ref(&p)).unwrap();
+        let ark: Poly<Fr, ArkGrevLexTerm<W>, W> = sparsepoly_to_ark(&snap, &p).unwrap();
+        let back: SparsePolynomial<Fr, GrevLexTerm> = ark_to_sparsepoly(&snap, &ark);
         assert_eq!(p, back);
     }
 
     #[test]
     fn order_tie_break_a2_vs_bc() {
-        // Same-degree GrevLex tie: a^2 vs b*c. Zippel says a^2 leads.
-        // ark-gb must agree after round-trip.
-        let p = add(
-            term(1, vec![("a", 2)]),
-            term(1, vec![("b", 1), ("c", 1)]),
-        );
-        let snap = build_snapshot(std::slice::from_ref(&p)).unwrap();
+        let p = add(term(1, vec![("a", 2)]), term(1, vec![("b", 1), ("c", 1)]));
+        let snap = build_snapshot_grevlex(std::slice::from_ref(&p)).unwrap();
         let leading_zippel = p.terms.iter().next().map(|(t, _)| t.clone()).unwrap();
         assert_eq!(leading_zippel, mono(vec![("a", 2)]));
 
-        let ark = sparsepoly_to_ark(&snap, &p).unwrap();
-        let back = ark_to_sparsepoly(&snap, &ark);
+        let ark: Poly<Fr, ArkGrevLexTerm<W>, W> = sparsepoly_to_ark(&snap, &p).unwrap();
+        let back: SparsePolynomial<Fr, GrevLexTerm> = ark_to_sparsepoly(&snap, &ark);
         let leading_back = back.terms.iter().next().map(|(t, _)| t.clone()).unwrap();
         assert_eq!(leading_back, mono(vec![("a", 2)]));
         assert_eq!(p, back);
@@ -364,15 +456,15 @@ mod tests {
     #[test]
     fn exponent_127_ok() {
         let p = term(1, vec![("a", 127)]);
-        let snap = build_snapshot(std::slice::from_ref(&p)).unwrap();
-        let _ark = sparsepoly_to_ark(&snap, &p).unwrap();
+        let snap = build_snapshot_grevlex(std::slice::from_ref(&p)).unwrap();
+        let _ark: Poly<Fr, ArkGrevLexTerm<W>, W> = sparsepoly_to_ark(&snap, &p).unwrap();
     }
 
     #[test]
     fn exponent_128_panics_via_engine_error() {
         let p = term(1, vec![("a", 128)]);
-        let snap = build_snapshot(std::slice::from_ref(&p)).unwrap();
-        let res = sparsepoly_to_ark(&snap, &p);
+        let snap = build_snapshot_grevlex(std::slice::from_ref(&p)).unwrap();
+        let res: Result<Poly<Fr, ArkGrevLexTerm<W>, W>, _> = sparsepoly_to_ark(&snap, &p);
         match res {
             Err(EngineError::ExponentOverflow { exponent, max, .. }) => {
                 assert_eq!(exponent, 128);
@@ -384,15 +476,13 @@ mod tests {
 
     #[test]
     fn nvars_64_panics() {
-        // 64 distinct variables, all degree-1: nvars > max_vars::<8>() = 63.
-        let mut p = term(0, vec![]); // start with zero
+        let mut p = term(0, vec![]);
         for i in 0..64 {
             let name = format!("v{}", i);
-            // Need static lifetime for our test helper — leak the strings.
             let leaked: &'static str = Box::leak(name.into_boxed_str());
             p = p + term(1, vec![(leaked, 1)]);
         }
-        let res = build_snapshot(std::slice::from_ref(&p));
+        let res = build_snapshot_grevlex(std::slice::from_ref(&p));
         match res {
             Err(EngineError::TooManyVars { nvars, max }) => {
                 assert_eq!(nvars, 64);
@@ -404,14 +494,9 @@ mod tests {
 
     #[test]
     fn compute_gb_simple_linear() {
-        // Two linear polys in {a, b}: a + b, a - b. GB should be {a, b}
-        // (up to scalar), or equivalently the ideal contains both
-        // generators of the variable ring.
         let p1 = add(term(1, vec![("a", 1)]), term(1, vec![("b", 1)]));
         let p2 = add(term(1, vec![("a", 1)]), term(-1, vec![("b", 1)]));
-        let gb = compute_gb_polys(&[p1, p2]);
-        // Reduced GB is monic, so we should see exactly {a, b} (modulo
-        // scalar). Each generator is a single linear term.
+        let gb = compute_gb_grevlex(&[p1, p2]);
         assert_eq!(gb.len(), 2);
         for p in &gb {
             assert_eq!(p.terms.len(), 1);

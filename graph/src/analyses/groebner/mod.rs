@@ -6,7 +6,6 @@ pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
-#[cfg(feature = "arkgb_backend")]
 pub mod arkgb_engine;
 
 use crate::DQDag;
