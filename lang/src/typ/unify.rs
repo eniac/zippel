@@ -125,7 +125,7 @@ impl Unify for CTyp {
                         *d,
                     ))
                 }
-            },
+            }
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {

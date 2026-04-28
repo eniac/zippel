@@ -399,10 +399,9 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Fft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
             }
             // Commuting conversion (interpolate a + interpolate b) = interpolate (a + b)
-            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => Op::Interpolate(
-                lp,
-                mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)),
-            ),
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
+                Op::Interpolate(lp, mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
+            }
             (v1, v2) => Op::Bin(BinOp::Add, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -440,10 +439,9 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Fft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
             }
             // Commuting conversion (interpolate a - interpolate b) = interpolate (a - b)
-            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => Op::Interpolate(
-                lp,
-                mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)),
-            ),
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
+                Op::Interpolate(lp, mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
+            }
             (v1, v2) => Op::Bin(BinOp::Sub, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -799,7 +797,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
-            Op::Proj(op, field, typ) => Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone()),
+            Op::Proj(op, field, typ) => {
+                Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             _ => self.clone(),
         }
@@ -837,7 +837,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
-            Op::Proj(op, field, typ) => Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone()),
+            Op::Proj(op, field, typ) => {
+                Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_refs(f))),
         }
     }
@@ -888,7 +890,9 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
             Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
-            Op::Proj(v, field, typ) => Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone()),
+            Op::Proj(v, field, typ) => {
+                Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
             _ => self.clone(),
         }

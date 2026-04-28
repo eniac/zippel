@@ -102,7 +102,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             ),
             Op::Check(op) => self.trans_clos_op(dag, op.get().clone()),
             Op::Interpolate(points, evals) => Op::Interpolate(
-                points.as_ref().map(|p| mk::<C>(self.trans_clos_op(dag, p.get().clone()))),
+                points
+                    .as_ref()
+                    .map(|p| mk::<C>(self.trans_clos_op(dag, p.get().clone()))),
                 mk::<C>(self.trans_clos_op(dag, evals.get().clone())),
             ),
             Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),

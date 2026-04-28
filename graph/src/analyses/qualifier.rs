@@ -26,7 +26,7 @@ impl QualifierPropagation {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
-            },
+            }
             Op::Interpolate(points, evals) => {
                 let q_evals = self.from_op(evals)?;
                 match points {
@@ -36,7 +36,7 @@ impl QualifierPropagation {
                         Some(q_points.join(&q_evals))
                     }
                 }
-            },
+            }
             Op::Fft(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),
             Op::Proj(a, _, _) => self.from_op(a),
@@ -44,7 +44,7 @@ impl QualifierPropagation {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
                 Some(qual_a.join(&qual_b))
-            },
+            }
             Op::Vec(vs) => {
                 let mut qual = Qualifier::Public;
                 for v in vs {

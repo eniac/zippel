@@ -1188,11 +1188,11 @@ fn test_div_by_non_constant_poly_panics() {
 // `CanonicalSerialize` encoding (same as transcript hashing / `value_to_bytes`).
 #[test]
 fn sumcheck_style_vp_serializes() {
+    use crate::VirtualPolynomial;
+    use crate::values::{serialize_value, value_to_bytes};
     use ark_poly::DenseMultilinearExtension;
     use ark_serialize::CanonicalSerialize;
     use ark_std::UniformRand;
-    use crate::VirtualPolynomial;
-    use crate::values::{serialize_value, value_to_bytes};
 
     type F = Fr;
     let num_vars = 10usize;

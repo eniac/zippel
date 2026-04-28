@@ -1,18 +1,18 @@
-use log::debug;
-use petgraph::graph::NodeIndex;
-use spongefish::{DuplexSpongeInterface, ProverState};
-use std::sync::{Arc, Mutex};
-use backend::{ArkConfig, Value, value_to_bytes};
 use backend::values::marginalize as backend_marginalize;
-use graph::{Dag, Node, Op, GOp};
-use graph::scheduler::{ThreadAlloc, TDag};
-use rand::rngs::ThreadRng;
+use backend::{ArkConfig, Value, value_to_bytes};
+use graph::scheduler::{TDag, ThreadAlloc};
+use graph::{Dag, GOp, Node, Op};
 use lang::ast::BinOp;
 use lang::id::Vid;
+use log::debug;
 use petgraph::Direction;
+use petgraph::graph::NodeIndex;
+use rand::rngs::ThreadRng;
 use share::Ctx;
+use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::pool::PoolManager;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
@@ -366,43 +366,56 @@ impl<C: ArkConfig> MutexGraph<C> {
                 return v_val.value_reduce(*op);
             }
             Op::Marginalize(a) => {
-                let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
-                    Op::Record(fields) => {
-                        let poly_op = fields
-                            .get(&"poly".to_string())
-                            .expect("marginalize: missing field 'poly'");
-                        let challenge_op = fields
-                            .get(&"challenge".to_string())
-                            .expect("marginalize: missing field 'challenge'");
-                        let round_op = fields.get(&"round".to_string());
-                        let num_variables_op = fields.get(&"num_variables".to_string());
-                        let max_degree_op = fields.get(&"max_degree".to_string());
+                let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) =
+                    match &**a {
+                        Op::Record(fields) => {
+                            let poly_op = fields
+                                .get(&"poly".to_string())
+                                .expect("marginalize: missing field 'poly'");
+                            let challenge_op = fields
+                                .get(&"challenge".to_string())
+                                .expect("marginalize: missing field 'challenge'");
+                            let round_op = fields.get(&"round".to_string());
+                            let num_variables_op = fields.get(&"num_variables".to_string());
+                            let max_degree_op = fields.get(&"max_degree".to_string());
 
-                        let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
-                        let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
-                        let round_val = round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                        let num_variables_val =
-                            num_variables_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                        let max_degree_val = max_degree_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                        (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
-                    }
-                    _ => {
-                        let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
-                        let Value::Record(record) = cfg_val else { unreachable!() };
-                        let poly_val = record
-                            .get(&"poly".to_string())
-                            .cloned()
-                            .unwrap();
-                        let challenge_val = record
-                            .get(&"challenge".to_string())
-                            .cloned()
-                            .unwrap();
-                        let round_val = record.get(&"round".to_string()).cloned();
-                        let num_variables_val = record.get(&"num_variables".to_string()).cloned();
-                        let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-                        (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
-                    }
-                };
+                            let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
+                            let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
+                            let round_val =
+                                round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            let num_variables_val =
+                                num_variables_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            let max_degree_val =
+                                max_degree_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            (
+                                poly_val,
+                                challenge_val,
+                                round_val,
+                                num_variables_val,
+                                max_degree_val,
+                            )
+                        }
+                        _ => {
+                            let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
+                            let Value::Record(record) = cfg_val else {
+                                unreachable!()
+                            };
+                            let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
+                            let challenge_val =
+                                record.get(&"challenge".to_string()).cloned().unwrap();
+                            let round_val = record.get(&"round".to_string()).cloned();
+                            let num_variables_val =
+                                record.get(&"num_variables".to_string()).cloned();
+                            let max_degree_val = record.get(&"max_degree".to_string()).cloned();
+                            (
+                                poly_val,
+                                challenge_val,
+                                round_val,
+                                num_variables_val,
+                                max_degree_val,
+                            )
+                        }
+                    };
 
                 let poly = poly_val.into_poly().clone();
                 let challenge = Some(challenge_val.into_scalar());
@@ -435,7 +448,9 @@ impl<C: ArkConfig> MutexGraph<C> {
             Op::Proj(record_op, field_name, _) => {
                 let inputs_rec = Arc::clone(&inputs);
                 let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);
-                let Value::Record(r) = rec_val else { unreachable!() };
+                let Value::Record(r) = rec_val else {
+                    unreachable!()
+                };
                 r.get(&field_name).cloned().unwrap()
             }
         }

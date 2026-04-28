@@ -1,4 +1,4 @@
-use backend::{ArkField17, ATyp, Value};
+use backend::{ATyp, ArkField17, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::path::PathBuf;
@@ -8,8 +8,7 @@ use zippel::*;
 fn main() {
     println!("=== Marginalize (ArkField17) ===");
     let zippel_path = PathBuf::from("examples/marginalize/marginalize.zippel");
-    let args =
-        ZippelArgs::new(zippel_path.clone()).with_subgraph("marginalize_proto".to_string());
+    let args = ZippelArgs::new(zippel_path.clone()).with_subgraph("marginalize_proto".to_string());
 
     let mut handler: ZippelHandler<ArkField17> = ZippelHandler::new(args);
 
@@ -44,8 +43,7 @@ fn main() {
     }
 
     println!("\n--- Static Analysis ---");
-    let analysis_args =
-        ZippelArgs::new(zippel_path).with_subgraph("marginalize_proto".to_string());
+    let analysis_args = ZippelArgs::new(zippel_path).with_subgraph("marginalize_proto".to_string());
     let mut analysis_handler: ZippelHandler<ArkField17> = ZippelHandler::new(analysis_args);
     let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();

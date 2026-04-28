@@ -674,7 +674,12 @@ fn pin_interpolate() {
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vec_typ);
 
-    let points = GOp::<B>::vec(vec![GOp::index(0), GOp::index(1), GOp::index(2), GOp::index(3)]);
+    let points = GOp::<B>::vec(vec![
+        GOp::index(0),
+        GOp::index(1),
+        GOp::index(2),
+        GOp::index(3),
+    ]);
     let interpolate_node = expected.add_node(Node::interpolate(Some(&points), &var_a));
     expected.add_edges(DepType::Data, interpolate_node, points);
     expected.add_edges(DepType::Data, interpolate_node, var_a);

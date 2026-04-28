@@ -1,6 +1,6 @@
-use backend::{ArkField17, Value};
-use backend::ArkConfig;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
+use backend::ArkConfig;
+use backend::{ArkField17, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::path::PathBuf;

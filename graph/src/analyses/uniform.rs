@@ -39,7 +39,7 @@ impl UniformityPropagation {
                 let p_ancestors = self.op_ancestors(p);
                 let x_ancestors = self.op_ancestors(x);
                 p_ancestors.union(x_ancestors)
-            },
+            }
             Op::Interpolate(points, evals) => points
                 .as_ref()
                 .map(|p| self.op_ancestors(p))
@@ -88,7 +88,7 @@ impl UniformityPropagation {
                 } else {
                     Some(Distribution::Nonuniform)
                 }
-            },
+            }
             Op::Interpolate(points, evals) => {
                 let dist_evals = self.from_op(evals)?;
                 match points {
@@ -98,7 +98,7 @@ impl UniformityPropagation {
                         Some(dist_points.add(&dist_evals))
                     }
                 }
-            },
+            }
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),

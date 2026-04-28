@@ -4,8 +4,8 @@
 /// to test algebraic properties and semantic correctness.
 use crate::{GOp, Node, Op, PRef, Ref, UDag, mk};
 use backend::op::HasOpFactory;
-use backend::{ArkConfig, ArkBls12_381, ArkScalarOps, ATyp, Value};
 use backend::values::marginalize as backend_marginalize;
+use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
 use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
@@ -204,7 +204,8 @@ fn evaluate_op<C: HasOpFactory>(
             a_val.value_poly()
         }
         Op::Marginalize(a) => {
-            let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
+            let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a
+            {
                 Op::Record(fields) => {
                     let poly_op = fields
                         .get(&"poly".to_string())
@@ -219,19 +220,34 @@ fn evaluate_op<C: HasOpFactory>(
                     let poly_val = evaluate_op(poly_op, computed, inputs);
                     let challenge_val = evaluate_op(challenge_op, computed, inputs);
                     let round_val = round_op.map(|op| evaluate_op(op, computed, inputs));
-                    let num_variables_val = num_variables_op.map(|op| evaluate_op(op, computed, inputs));
+                    let num_variables_val =
+                        num_variables_op.map(|op| evaluate_op(op, computed, inputs));
                     let max_degree_val = max_degree_op.map(|op| evaluate_op(op, computed, inputs));
-                    (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
+                    (
+                        poly_val,
+                        challenge_val,
+                        round_val,
+                        num_variables_val,
+                        max_degree_val,
+                    )
                 }
                 _ => {
                     let cfg_val = evaluate_op(a, computed, inputs);
-                    let Value::Record(record) = cfg_val else { unreachable!() };
+                    let Value::Record(record) = cfg_val else {
+                        unreachable!()
+                    };
                     let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
                     let challenge_val = record.get(&"challenge".to_string()).cloned().unwrap();
                     let round_val = record.get(&"round".to_string()).cloned();
                     let num_variables_val = record.get(&"num_variables".to_string()).cloned();
                     let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-                    (poly_val, challenge_val, round_val, num_variables_val, max_degree_val)
+                    (
+                        poly_val,
+                        challenge_val,
+                        round_val,
+                        num_variables_val,
+                        max_degree_val,
+                    )
                 }
             };
 
@@ -242,9 +258,15 @@ fn evaluate_op<C: HasOpFactory>(
                 v.into_index()
             } else {
                 let current_poly_vars = poly.num_vars().unwrap_or(1);
-                if round == 0 { current_poly_vars } else { current_poly_vars + (round - 1) }
+                if round == 0 {
+                    current_poly_vars
+                } else {
+                    current_poly_vars + (round - 1)
+                }
             };
-            let max_degree = max_degree_val.map(|v| v.into_index()).unwrap_or_else(|| poly.degree());
+            let max_degree = max_degree_val
+                .map(|v| v.into_index())
+                .unwrap_or_else(|| poly.degree());
 
             let (evals, next_poly) =
                 backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
@@ -255,11 +277,12 @@ fn evaluate_op<C: HasOpFactory>(
         }
         Op::Proj(record_op, field_name, _) => {
             let rec_val = evaluate_op(record_op, computed, inputs);
-            let Value::Record(record) = rec_val else { unreachable!() };
+            let Value::Record(record) = rec_val else {
+                unreachable!()
+            };
             record.get(&field_name).cloned().unwrap()
         }
-        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) | Op::Coef(_)
-        | Op::Eval(_, _) => {
+        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) | Op::Coef(_) | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
         Op::Reduce(binop, v) => {
@@ -394,10 +417,15 @@ mod tests {
         cfg_fields.insert(&"poly".to_string(), &mk(Op::Value(poly)));
         cfg_fields.insert(
             &"challenge".to_string(),
-            &mk(Op::Value(Value::Scalar(<TestConfig as ArkConfig>::FOps::zero()))),
+            &mk(Op::Value(Value::Scalar(
+                <TestConfig as ArkConfig>::FOps::zero(),
+            ))),
         );
         cfg_fields.insert(&"round".to_string(), &mk(Op::Value(Value::Index(0))));
-        cfg_fields.insert(&"num_variables".to_string(), &mk(Op::Value(Value::Index(1))));
+        cfg_fields.insert(
+            &"num_variables".to_string(),
+            &mk(Op::Value(Value::Index(1))),
+        );
         cfg_fields.insert(&"max_degree".to_string(), &mk(Op::Value(Value::Index(2))));
         let cfg = Op::Record(cfg_fields);
 

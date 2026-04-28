@@ -219,7 +219,10 @@ impl<C: HasOpFactory> Node<C, Nothing> {
         Node::Op(mk::<C>(GOp::marginalize(op.clone())), Nothing)
     }
     pub fn proj(op: &GOp<C>, field: &str, typ: &ATyp) -> Self {
-        Node::Op(mk::<C>(GOp::proj(op.clone(), field.to_string(), typ.clone())), Nothing)
+        Node::Op(
+            mk::<C>(GOp::proj(op.clone(), field.to_string(), typ.clone())),
+            Nothing,
+        )
     }
     pub fn bin(op: BinOp, a: &GOp<C>, b: &GOp<C>, typ: &ATyp) -> Self {
         Node::Op(

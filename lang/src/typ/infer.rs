@@ -366,22 +366,20 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match points_opt {
-                    None => {
-                        match evals_typ {
-                            CTyp::Vec(box b, n) => {
-                                let i = b
-                                    .to_scalar(kctx)
-                                    .ok_or(TypeError::interpolate_unary(kctx, &vctx, self))?;
-                                if !n.is_power_of_two() {
-                                    return Err(TypeError::interpolate_unary_not_pow2(
-                                        kctx, vctx, self, n,
-                                    ));
-                                }
-                                Ok(CTyp::Poly(i, 1, n))
+                    None => match evals_typ {
+                        CTyp::Vec(box b, n) => {
+                            let i = b
+                                .to_scalar(kctx)
+                                .ok_or(TypeError::interpolate_unary(kctx, &vctx, self))?;
+                            if !n.is_power_of_two() {
+                                return Err(TypeError::interpolate_unary_not_pow2(
+                                    kctx, vctx, self, n,
+                                ));
                             }
-                            _ => Err(TypeError::interpolate_unary(kctx, &vctx, self)),
+                            Ok(CTyp::Poly(i, 1, n))
                         }
-                    }
+                        _ => Err(TypeError::interpolate_unary(kctx, &vctx, self)),
+                    },
                     Some(points) => {
                         let points_typ = points
                             .infer(kctx, fctx, vctx)
@@ -507,22 +505,25 @@ impl Typeable for CExp {
 
             // Infer the type of a marginalize call.
             CExp::Marginalize(box rec) => {
-                let rec_typ = rec.infer(kctx, fctx, vctx)
+                let rec_typ = rec
+                    .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 let CTyp::Record(ref fields) = rec_typ else {
                     return Err(TypeError::not_a_record(kctx, vctx, &rec, &rec_typ));
                 };
 
-                let poly_typ = fields.get(&"poly".to_string())
+                let poly_typ = fields
+                    .get(&"poly".to_string())
                     .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "poly", &fields))?;
                 let (field_tid, n, d) = match poly_typ {
                     CTyp::Poly(tid, n, d) => (tid.clone(), *n, *d),
                     _ => return Err(TypeError::poly(kctx, vctx, self)),
                 };
 
-                let challenge_typ = fields.get(&"challenge".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "challenge", &fields))?;
+                let challenge_typ = fields.get(&"challenge".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "challenge", &fields)
+                })?;
                 let challenge_tid = challenge_typ
                     .to_scalar(kctx)
                     .ok_or_else(|| TypeError::exp(kctx, vctx, self))?;
@@ -530,20 +531,24 @@ impl Typeable for CExp {
                     return Err(TypeError::exp(kctx, vctx, self));
                 }
 
-                let round_typ = fields.get(&"round".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "round", &fields))?;
+                let round_typ = fields.get(&"round".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "round", &fields)
+                })?;
                 if !matches!(round_typ, CTyp::Fin(_)) {
                     return Err(TypeError::exp(kctx, vctx, self));
                 }
 
-                let num_variables_typ = fields.get(&"num_variables".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields))?;
+                let num_variables_typ =
+                    fields.get(&"num_variables".to_string()).ok_or_else(|| {
+                        TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields)
+                    })?;
                 if !matches!(num_variables_typ, CTyp::Fin(_)) {
                     return Err(TypeError::exp(kctx, vctx, self));
                 }
 
-                let max_degree_typ = fields.get(&"max_degree".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields))?;
+                let max_degree_typ = fields.get(&"max_degree".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields)
+                })?;
                 if !matches!(max_degree_typ, CTyp::Fin(_)) {
                     return Err(TypeError::exp(kctx, vctx, self));
                 }
@@ -557,9 +562,15 @@ impl Typeable for CExp {
 
                 let mut out_fields = Ctx::new();
                 let f_typ = CTyp::Base(field_tid.clone());
-                out_fields.insert(&"evaluations".to_string(), &CTyp::vec(&f_typ, out_degree + 1));
+                out_fields.insert(
+                    &"evaluations".to_string(),
+                    &CTyp::vec(&f_typ, out_degree + 1),
+                );
                 let next_n = if n > 0 { n - 1 } else { 0 };
-                out_fields.insert(&"next_poly".to_string(), &CTyp::Poly(field_tid.clone(), next_n, out_degree));
+                out_fields.insert(
+                    &"next_poly".to_string(),
+                    &CTyp::Poly(field_tid.clone(), next_n, out_degree),
+                );
 
                 Ok(CTyp::Record(out_fields))
             }
@@ -1629,7 +1640,8 @@ mod tests {
             Ok(CTyp::Poly(Tid::from("F"), 1, 4))
         );
 
-        let interp_bad = CExp::interpolate_grid(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
+        let interp_bad =
+            CExp::interpolate_grid(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
 
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 

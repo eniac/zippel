@@ -1,8 +1,8 @@
 use ark_ff::Zero;
 use ark_poly::DenseMultilinearExtension;
 use ark_std::UniformRand;
-use backend::poly_variant::PolyVariant;
 use backend::VirtualPolynomial;
+use backend::poly_variant::PolyVariant;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;

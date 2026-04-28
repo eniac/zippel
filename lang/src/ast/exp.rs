@@ -412,7 +412,7 @@ impl TidSubst for CExp {
             Exp::Interpolate(Some(box p), box e) => {
                 p.tid_subst(from, to);
                 e.tid_subst(from, to);
-            },
+            }
             Exp::Mle(box p)
             | Exp::Marginalize(box p)
             | Exp::Poly(box p)
@@ -1276,8 +1276,10 @@ impl<'pest> FromPest<'pest> for UExp {
                             Exp::from_pest(&mut Pairs::single(second))?,
                         )),
                     }
-                },
-                Rule::marginalize_exp => Ok(Exp::marginalize(Exp::from_pest(&mut pair.into_inner())?)),
+                }
+                Rule::marginalize_exp => {
+                    Ok(Exp::marginalize(Exp::from_pest(&mut pair.into_inner())?))
+                }
                 Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),

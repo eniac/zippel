@@ -72,10 +72,7 @@ impl<F: Field> VirtualPolynomial<F> {
         }
     }
 
-    pub fn fix_first_mle_variables_factorwise(
-        &self,
-        points: &[F],
-    ) -> Result<Self, PolyError<F>> {
+    pub fn fix_first_mle_variables_factorwise(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         if points.is_empty() {
             return Ok(self.clone());
         }
@@ -102,9 +99,7 @@ impl<F: Field> VirtualPolynomial<F> {
             products: self.products.clone(),
             flattened_polys: new_flattened,
             poly_pointers_lookup: new_lookup,
-            num_variables: self
-                .num_variables
-                .map(|n| n.saturating_sub(points.len())),
+            num_variables: self.num_variables.map(|n| n.saturating_sub(points.len())),
         };
 
         if result.products.is_empty() {
