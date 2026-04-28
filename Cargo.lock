@@ -296,7 +296,7 @@ dependencies = [
 [[package]]
 name = "ark-gb"
 version = "0.0.1"
-source = "git+https://github.com/elefthei/ark-gb?branch=master#75eec201ec2c654374e9858df3a429535ab6ebe6"
+source = "git+https://github.com/elefthei/ark-gb?rev=75eec201ec2c654374e9858df3a429535ab6ebe6#75eec201ec2c654374e9858df3a429535ab6ebe6"
 dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
 ]

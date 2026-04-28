@@ -54,8 +54,8 @@ jobs:
       - name: cargo test
         run: cargo test --workspace
 
-  test-arkgb-backend:
-    name: Test (arkgb_backend)
+  test-legacy-backend:
+    name: Test (legacy zippel buchberger, --no-default-features)
     runs-on: ubuntu-latest
     container: rustlang/rust:nightly
     steps:
@@ -70,5 +70,5 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      - name: cargo test --features graph/arkgb_backend
-        run: cargo test -p graph --features arkgb_backend
+      - name: cargo test (graph, no default features)
+        run: cargo test -p graph --no-default-features

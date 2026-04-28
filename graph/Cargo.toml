@@ -26,13 +26,14 @@ spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", branch = "
 
 itertools = "0.14.0"
 hashconsing = "1.6"
-ark-gb = { git = "https://github.com/elefthei/ark-gb", branch = "master", optional = true }
+ark-gb = { git = "https://github.com/elefthei/ark-gb", rev = "75eec201ec2c654374e9858df3a429535ab6ebe6", optional = true }
 
 [features]
-default = []
+default = ["arkgb_backend"]
 # Route Groebner-basis computation through the ark-gb crate instead of the
-# in-tree Buchberger/SparsePolynomial stack. Off by default during the
-# parity window (P1-P5); flipped on in P6.
+# in-tree Buchberger/SparsePolynomial stack. On by default since P6;
+# disable with --no-default-features to fall back to the legacy zippel
+# Buchberger loop.
 arkgb_backend = ["dep:ark-gb"]
 
 [dev-dependencies]
