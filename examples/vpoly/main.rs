@@ -1,11 +1,11 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, ArkConfig, Value, ATyp};
-use backend::poly_variant::PolyVariant;
-use backend::VirtualPolynomial;
 use ark_poly::DenseMultilinearExtension;
+use backend::VirtualPolynomial;
+use backend::poly_variant::PolyVariant;
+use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 const NUM_VARS: usize = 2;
 
@@ -24,7 +24,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -41,11 +44,13 @@ fn main() {
 
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/vpoly/vpoly.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
+    let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
         Ok(analysis) => {
             match &analysis.completeness {
@@ -59,6 +64,7 @@ fn main() {
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -70,8 +76,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .map(|_| Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar()).into_scalar())
         .collect();
     let a_mle = DenseMultilinearExtension::<<ArkBls12_381 as ArkConfig>::F>::from_evaluations_vec(
-        NUM_VARS,
-        a_evals,
+        NUM_VARS, a_evals,
     );
     let a = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(a_mle)));
 
@@ -80,8 +85,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .map(|_| Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar()).into_scalar())
         .collect();
     let b_mle = DenseMultilinearExtension::<<ArkBls12_381 as ArkConfig>::F>::from_evaluations_vec(
-        NUM_VARS,
-        b_evals,
+        NUM_VARS, b_evals,
     );
     let b = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(b_mle)));
 

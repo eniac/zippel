@@ -1,10 +1,10 @@
+use crate::{Dag, GOp, Node, Op, QDag, UDag};
 use backend::ArkConfig;
-use petgraph::graph::NodeIndex;
+use lang::typ::Qualifier;
 use petgraph::Direction;
+use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::Ctx;
-use lang::typ::Qualifier;
-use crate::{Dag, UDag, Node, QDag, GOp, Op};
 
 pub struct QualifierPropagation {
     pub quals: Ctx<NodeIndex, Qualifier>,
@@ -16,8 +16,7 @@ impl QualifierPropagation {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
             Op::Check(_) => Some(Qualifier::Public),
-            Op::Ref(r, _) =>
-                self.quals.get(&r.node()).map(|v| v.clone()),
+            Op::Ref(r, _) => self.quals.get(&r.node()).map(|v| v.clone()),
             Op::Ram(a, _) => self.from_op(a),
             Op::Poly(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
@@ -29,15 +28,19 @@ impl QualifierPropagation {
                 Some(qual_p.join(&qual_x))
             },
             Op::Interpolate(points, evals) => {
-                let q_points = self.from_op(points)?;
                 let q_evals = self.from_op(evals)?;
-                Some(q_points.join(&q_evals))
+                match points {
+                    None => Some(q_evals),
+                    Some(p) => {
+                        let q_points = self.from_op(p)?;
+                        Some(q_points.join(&q_evals))
+                    }
+                }
             },
             Op::Fft(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),
             Op::Proj(a, _, _) => self.from_op(a),
-            Op::Bin(_, a, b, _)
-            | Op::Pair(a, b, _) => {
+            Op::Bin(_, a, b, _) | Op::Pair(a, b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
                 Some(qual_a.join(&qual_b))
@@ -98,29 +101,36 @@ impl QualifierPropagation {
             }
         }
 
-        Dag { graph: dag.graph.map(
-            |i, node|
-                node.with_annotation(
-                    if node.is_transcript() {
+        Dag {
+            graph: dag.graph.map(
+                |i, node| {
+                    node.with_annotation(if node.is_transcript() {
                         // Transcript nodes are always Public (verifier-observable)
                         Qualifier::Public
                     } else {
-                        qp.quals.get(&i).unwrap_or_else(|| &Qualifier::Local).clone()
-                    }
-                ),
-            |_, e| e.clone()), vctx: dag.vctx.clone(), transcript_vars: dag.transcript_vars.clone() }
+                        qp.quals
+                            .get(&i)
+                            .unwrap_or_else(|| &Qualifier::Local)
+                            .clone()
+                    })
+                },
+                |_, e| e.clone(),
+            ),
+            vctx: dag.vctx.clone(),
+            transcript_vars: dag.transcript_vars.clone(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lang::ast::UModule;
+    use crate::{Node, UDags};
     use backend::ArkBls12_381;
     use backend::op::mk;
-    use crate::{UDags, Node};
-    use share::unwrap;
+    use lang::ast::UModule;
     use lang::typ::Qualifier;
+    use share::unwrap;
 
     #[test]
     #[ignore]
@@ -132,7 +142,10 @@ mod tests {
                 b <- r * s';
                 verify(a == b)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
@@ -166,7 +179,8 @@ mod tests {
     #[test]
     fn test_qualifier_from_op_check() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Check(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
@@ -179,7 +193,10 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -197,7 +214,10 @@ mod tests {
                 z <- x + y;
                 verify(z == x + y)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -215,7 +235,10 @@ mod tests {
                 z <- x * y;
                 verify(z == x * y)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -228,7 +251,10 @@ mod tests {
             proto simple<F: Field>(private x: F) where true {
                 verify(x == x)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
@@ -243,12 +269,19 @@ mod tests {
                 verify(x == x);
                 verify(y == y)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_check();
-        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Protocol with two verify statements should have two check nodes"
+        );
     }
 
     #[test]
@@ -258,15 +291,27 @@ mod tests {
                 verify(x == x);
                 verify(y == y)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_check();
-        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Protocol with two verify statements should have two check nodes"
+        );
         for (i, &check_node) in checks.iter().enumerate() {
             if let Node::Op(_, qual) = &g[check_node] {
-                assert_eq!(*qual, Qualifier::Public, "Check node {} should be Public", i);
+                assert_eq!(
+                    *qual,
+                    Qualifier::Public,
+                    "Check node {} should be Public",
+                    i
+                );
             }
         }
     }
@@ -279,12 +324,19 @@ mod tests {
                 verify(y == y);
                 verify(z == z)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_check();
-        assert_eq!(checks.len(), 3, "Protocol with three verify statements should have three check nodes");
+        assert_eq!(
+            checks.len(),
+            3,
+            "Protocol with three verify statements should have three check nodes"
+        );
     }
 
     #[test]
@@ -296,15 +348,27 @@ mod tests {
                 b <- a + y;
                 verify(b == b)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
 
         let checks = g.find_check();
-        assert_eq!(checks.len(), 2, "Scattered verify statements should produce 2 check nodes");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Scattered verify statements should produce 2 check nodes"
+        );
         for (i, &check_node) in checks.iter().enumerate() {
             if let Node::Op(_, qual) = &g[check_node] {
-                assert_eq!(*qual, Qualifier::Public, "Check node {} should be Public", i);
+                assert_eq!(
+                    *qual,
+                    Qualifier::Public,
+                    "Check node {} should be Public",
+                    i
+                );
             }
         }
     }
@@ -312,8 +376,10 @@ mod tests {
     #[test]
     fn test_qualifier_vec_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let val1 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let val2 = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
+        let val1 =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let val2 =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
         let op = Op::Vec(vec![mk::<ArkBls12_381>(val1), mk::<ArkBls12_381>(val2)]);
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
@@ -322,7 +388,8 @@ mod tests {
     #[test]
     fn test_qualifier_poly_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Poly(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
@@ -331,7 +398,8 @@ mod tests {
     #[test]
     fn test_qualifier_mle_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Mle(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
@@ -340,7 +408,8 @@ mod tests {
     #[test]
     fn test_qualifier_coef_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Coef(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
@@ -349,17 +418,19 @@ mod tests {
     #[test]
     fn test_qualifier_fft_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Fft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }
 
     #[test]
-    fn test_qualifier_ifft_operation() {
+    fn test_qualifier_interpolate_grid_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
-        let inner = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Interpolate(mk::<ArkBls12_381>(GOp::index(0)), mk::<ArkBls12_381>(inner));
+        let inner =
+            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = Op::Interpolate(None, mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }

@@ -10,7 +10,7 @@ use zippel::*;
 // Toggle this to compare runtime behavior:
 // - true  => roots-of-unity interpolate path
 // - false => arbitrary-point interpolate fallback path
-const RUN_ROOTS_CASE: bool = false;
+const RUN_ROOTS_CASE: bool = true;
 
 fn main() {
     let zippel_path = PathBuf::from("examples/fft_interpolate/fft_interpolate.zippel");

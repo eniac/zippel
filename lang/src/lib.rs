@@ -1,5 +1,4 @@
 #![feature(box_patterns)]
-#![feature(step_trait)]
 
 use lazy_static::lazy_static;
 
@@ -17,7 +16,7 @@ pub fn init_parser() {
     lazy_static::initialize(&INIT_PARSER);
 }
 
-pub mod id;
 pub mod ast;
-pub mod typ;
+pub mod id;
 mod parser;
+pub mod typ;

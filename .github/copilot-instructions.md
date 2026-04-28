@@ -15,7 +15,7 @@ cargo test -p graph -- --test scalar # run tests matching "scalar"
 cargo run --example ipa              # run an example (from repo root)
 ```
 
-CI runs in Docker via CircleCI (see `.circleci/config.yml`).
+CI runs on GitHub Actions (see `.github/workflows/ci.yml`) with lint (`cargo fmt --check` + `cargo clippy`) and test jobs in the `rustlang/rust:nightly` container.
 
 ## Architecture
 

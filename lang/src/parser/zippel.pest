@@ -90,7 +90,7 @@ exp_term  = _{
     }
     proj_op   = { "." ~ id }
     fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                      // Polynomial function definition
-    interpolate_exp = { "interpolate" ~ "(" ~ exp ~ "," ~ exp ~ ")"  }// Interpolate polynomial from points and evaluations
+    interpolate_exp = { "interpolate" ~ "(" ~ exp ~ ("," ~ exp)? ~ ")" }// Unary: FFT grid (inverse FFT); binary: explicit points + evals
     fft_exp       = { "fft" ~ "(" ~ exp ~ ")" }                       // Evaluation form (FFT) univariate polynomial or MLE
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
     eval_exp      = { "eval" ~ "(" ~ exp ~ "," ~ exp ~ ")"}           // Eval polynomial for point

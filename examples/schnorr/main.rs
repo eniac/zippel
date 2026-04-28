@@ -1,9 +1,9 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
+use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
 use lang::id::Vid;
 use share::Ctx;
-use ark_std::UniformRand;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== Schnorr (ArkBls12_381) ===");
@@ -18,7 +18,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -37,7 +40,9 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();
+    let analysis_elapsed = analysis_start.elapsed();
     match &analysis.completeness {
         Ok(()) => println!("Completeness:   ✓"),
         Err(e) => println!("Completeness:   ✗ {}", e),
@@ -46,6 +51,7 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -60,4 +66,3 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("h".to_string()), Value::G1Affine(h)),
     ])
 }
-

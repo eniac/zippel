@@ -1,9 +1,9 @@
-use share::{Pretty, Set, DocAllocator, DocBuilder};
+use share::{DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 
+use crate::parser::*;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use crate::parser::*;
 
 /// Generate a new identifier not in the set
 pub trait Fresh: Ord + Sized {
@@ -88,7 +88,8 @@ impl Fresh for Vid {
     }
 }
 /// Arbitrary instance for Tid
-#[cfg(test)] use arbitrary::{Arbitrary, Unstructured};
+#[cfg(test)]
+use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
 impl<'a> Arbitrary<'a> for Tid {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
@@ -172,7 +173,7 @@ impl<'pest> FromPest<'pest> for Vid {
             Rule::id => {
                 let s = pair.as_str();
                 Ok(Vid::from(s))
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -190,8 +191,8 @@ impl<'pest> FromPest<'pest> for Tid {
             Rule::id => {
                 let s = pair.as_str();
                 Ok(Tid::from(s))
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -207,13 +208,13 @@ fn split_alphanumeric(input: &str) -> (String, i32) {
             if pos < input.len() - 1 {
                 // There are trailing digits after the last non-digit
                 let alpha_part = &input[..=pos];
-                let numeric_part = input[pos+1..].parse::<i32>().unwrap_or(0);
+                let numeric_part = input[pos + 1..].parse::<i32>().unwrap_or(0);
                 (alpha_part.to_string(), numeric_part)
             } else {
                 // The string ends with a non-digit
                 (input.to_string(), 0)
             }
-        },
+        }
         None => {
             // The entire string is digits
             if !input.is_empty() {
@@ -247,7 +248,10 @@ fn test_alpha_numeric_alpha() {
 
 #[test]
 fn test_complex_pattern() {
-    assert_eq!(split_alphanumeric("abc123def"), ("abc123def".to_string(), 0));
+    assert_eq!(
+        split_alphanumeric("abc123def"),
+        ("abc123def".to_string(), 0)
+    );
 }
 
 #[test]
@@ -282,7 +286,8 @@ fn vid_fresh() {
 ////////////////////////////////////////////////////////////////////////////////////////
 /// Parser tests
 ////////////////////////////////////////////////////////////////////////////////////////
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn id_parser() {
     let mut pairs = ZippelParser::parse(Rule::id, "N").unwrap();

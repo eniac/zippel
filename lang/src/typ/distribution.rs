@@ -2,14 +2,14 @@ use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use std::fmt;
 
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 use crate::parser::*;
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
 pub enum Distribution {
     Uniform,
     UniformNonZero,
-    Nonuniform
+    Nonuniform,
 }
 
 impl Distribution {
@@ -26,7 +26,7 @@ impl Distribution {
     // Assumes independence, adding two distributions
     pub fn add(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, Distribution::UniformNonZero) 
+            (Distribution::Uniform, Distribution::UniformNonZero)
             | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
             (Distribution::Uniform, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
@@ -37,7 +37,7 @@ impl Distribution {
 
     pub fn sub(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, Distribution::UniformNonZero) 
+            (Distribution::Uniform, Distribution::UniformNonZero)
             | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
             (Distribution::Uniform, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
@@ -67,9 +67,11 @@ impl Distribution {
     pub fn mul(&self, other: &Distribution) -> Distribution {
         match (self, other) {
             // UniformNZ * UniformNZ = UniformNZ (product of non-zero uniform values is non-zero uniform)
-            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::UniformNonZero,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => {
+                Distribution::UniformNonZero
+            }
             // Uniform * UniformNZ or vice versa = Uniform (zero possible from the Uniform factor)
-            (Distribution::Uniform, Distribution::UniformNonZero) 
+            (Distribution::Uniform, Distribution::UniformNonZero)
             | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::Uniform,
             // UniformNZ * Nonuniform = Nonuniform (Nonuniform may always be zero,
             // which would produce a biased result even with a non-zero mask)
@@ -128,7 +130,6 @@ impl<'a> fmt::Display for Distribution {
     }
 }
 
-
 impl<'pest> FromPest<'pest> for Distribution {
     type Rule = Rule;
     type FatalError = InputError<'pest>;
@@ -146,7 +147,7 @@ impl<'pest> FromPest<'pest> for Distribution {
                     }
                 }
                 Ok(Distribution::Uniform)
-            },
+            }
             _ => Err(ConversionError::NoMatch),
         }
     }
@@ -203,9 +204,18 @@ mod tests {
 
     #[test]
     fn test_add_same() {
-        assert_eq!(Distribution::Uniform.add(&Distribution::Uniform), Distribution::Uniform);
-        assert_eq!(Distribution::UniformNonZero.add(&Distribution::UniformNonZero), Distribution::UniformNonZero);
-        assert_eq!(Distribution::Nonuniform.add(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(
+            Distribution::Uniform.add(&Distribution::Uniform),
+            Distribution::Uniform
+        );
+        assert_eq!(
+            Distribution::UniformNonZero.add(&Distribution::UniformNonZero),
+            Distribution::UniformNonZero
+        );
+        assert_eq!(
+            Distribution::Nonuniform.add(&Distribution::Nonuniform),
+            Distribution::Nonuniform
+        );
     }
 
     #[test]
@@ -240,9 +250,18 @@ mod tests {
 
     #[test]
     fn test_sub_same() {
-        assert_eq!(Distribution::Uniform.sub(&Distribution::Uniform), Distribution::Uniform);
-        assert_eq!(Distribution::UniformNonZero.sub(&Distribution::UniformNonZero), Distribution::UniformNonZero);
-        assert_eq!(Distribution::Nonuniform.sub(&Distribution::Nonuniform), Distribution::Nonuniform);
+        assert_eq!(
+            Distribution::Uniform.sub(&Distribution::Uniform),
+            Distribution::Uniform
+        );
+        assert_eq!(
+            Distribution::UniformNonZero.sub(&Distribution::UniformNonZero),
+            Distribution::UniformNonZero
+        );
+        assert_eq!(
+            Distribution::Nonuniform.sub(&Distribution::Nonuniform),
+            Distribution::Nonuniform
+        );
     }
 
     #[test]
@@ -272,11 +291,23 @@ mod tests {
     #[test]
     fn test_mul_with_nonuniform() {
         // Uniform * Nonuniform = Nonuniform (zero bias breaks masking)
-        assert_eq!(Distribution::Uniform.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
-        assert_eq!(Distribution::Nonuniform.mul(&Distribution::Uniform), Distribution::Nonuniform);
+        assert_eq!(
+            Distribution::Uniform.mul(&Distribution::Nonuniform),
+            Distribution::Nonuniform
+        );
+        assert_eq!(
+            Distribution::Nonuniform.mul(&Distribution::Uniform),
+            Distribution::Nonuniform
+        );
         // UniformNonZero * Nonuniform = Nonuniform (Nonuniform may be always-zero)
-        assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
-        assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
+        assert_eq!(
+            Distribution::UniformNonZero.mul(&Distribution::Nonuniform),
+            Distribution::Nonuniform
+        );
+        assert_eq!(
+            Distribution::Nonuniform.mul(&Distribution::UniformNonZero),
+            Distribution::Nonuniform
+        );
     }
 
     #[test]
@@ -319,9 +350,15 @@ mod tests {
 
     #[test]
     fn test_is_nil() {
-        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Uniform));
-        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::UniformNonZero));
-        assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(&Distribution::Nonuniform));
+        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
+            &Distribution::Uniform
+        ));
+        assert!(!<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
+            &Distribution::UniformNonZero
+        ));
+        assert!(<Distribution as Pretty<'_, BoxAllocator, ()>>::is_nil(
+            &Distribution::Nonuniform
+        ));
     }
 
     /// Regression: UniformNonZero * Nonuniform must be Nonuniform, not Uniform.
@@ -329,8 +366,13 @@ mod tests {
     /// does not produce a uniform distribution when the other factor is always 0.
     #[test]
     fn test_mul_uniform_nz_nonuniform_is_nonuniform() {
-        assert_eq!(Distribution::UniformNonZero.mul(&Distribution::Nonuniform), Distribution::Nonuniform);
-        assert_eq!(Distribution::Nonuniform.mul(&Distribution::UniformNonZero), Distribution::Nonuniform);
+        assert_eq!(
+            Distribution::UniformNonZero.mul(&Distribution::Nonuniform),
+            Distribution::Nonuniform
+        );
+        assert_eq!(
+            Distribution::Nonuniform.mul(&Distribution::UniformNonZero),
+            Distribution::Nonuniform
+        );
     }
 }
-

@@ -4,27 +4,33 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use crate::{UDag, UDags, Node, GOp, HOp, Dep, DepType, PRef, Ref, GraphError, mk};
-use backend::{ArkBls12_381, ATyp};
-use lang::ast::{UModule, BinOp};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
+use backend::{ATyp, ArkBls12_381};
+use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
-use lang::typ::{Qualifier, Distribution};
+use lang::typ::{Distribution, Qualifier};
+use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::Direction;
 use share::Ctx;
 
 type B = ArkBls12_381;
 
 /// Parse a `.zippel` source string and build graphs via from_module.
 fn parse_and_build(src: &str) -> UDags<B> {
-    let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(src)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     UDags::<B>::from_module(m).unwrap()
 }
 
 /// Parse and build, returning Result to allow testing error paths.
 fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
-    let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+    let m = UModule::from_str(src)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
     UDags::<B>::from_module(m)
 }
 
@@ -124,7 +130,12 @@ fn pin_proto_simple() {
     let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![pref_s.clone()]));
     let var_s_body = GOp::<B>::var(&s, inp, ATyp::scalar());
 
-    let equ_body = expected.add_node(Node::bin(BinOp::Equ, &var_s_body, &var_s_body, &ATyp::bool()));
+    let equ_body = expected.add_node(Node::bin(
+        BinOp::Equ,
+        &var_s_body,
+        &var_s_body,
+        &ATyp::bool(),
+    ));
     expected.add_edges(DepType::Data, equ_body, var_s_body.clone());
     expected.add_edges(DepType::Data, equ_body, var_s_body);
 
@@ -185,7 +196,14 @@ fn pin_range() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vs10 = ATyp::vec_scalar(10);
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vs10.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        vs10.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vs10);
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::typ::CRange::new(0, 5)));
@@ -205,7 +223,11 @@ fn pin_range() {
 fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let src = format!(
         "fn f<F: Field>(public a: F, public b: F) -> {} {{ a {} b }}",
-        if result_typ == ATyp::bool() { "Bool" } else { "F" },
+        if result_typ == ATyp::bool() {
+            "Bool"
+        } else {
+            "F"
+        },
         op_str
     );
     let gs = parse_and_build(&src);
@@ -610,7 +632,14 @@ fn pin_coef() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::vpoly(1, 4);
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), poly_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        poly_typ.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, poly_typ);
 
@@ -634,12 +663,19 @@ fn pin_interpolate() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vec_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        vec_typ.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vec_typ);
 
     let points = GOp::<B>::vec(vec![GOp::index(0), GOp::index(1), GOp::index(2), GOp::index(3)]);
-    let interpolate_node = expected.add_node(Node::interpolate(&points, &var_a));
+    let interpolate_node = expected.add_node(Node::interpolate(Some(&points), &var_a));
     expected.add_edges(DepType::Data, interpolate_node, points);
     expected.add_edges(DepType::Data, interpolate_node, var_a);
 
@@ -660,7 +696,14 @@ fn pin_fft() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::vpoly(1, 4);
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), poly_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        poly_typ.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, poly_typ);
 
@@ -684,7 +727,14 @@ fn pin_mle() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vec_typ.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        vec_typ.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vec_typ);
 
@@ -889,8 +939,22 @@ fn pin_bin_dot() {
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
-    let pref_b = PRef::from_var(Vid::new("b"), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
+    let pref_b = PRef::from_var(
+        Vid::new("b"),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
     let var_a = GOp::<B>::var(&a, inp, vs2.clone());
@@ -918,8 +982,22 @@ fn pin_bin_concat() {
     let vs2 = ATyp::vec_scalar(2);
     let vs4 = ATyp::vec_scalar(4);
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
-    let pref_b = PRef::from_var(Vid::new("b"), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
+    let pref_b = PRef::from_var(
+        Vid::new("b"),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
     let var_a = GOp::<B>::var(&a, inp, vs2.clone());
@@ -948,8 +1026,22 @@ fn pin_bin_rem() {
     let at_b = ATyp::vpoly(1, 2);
     let at_res = ATyp::vpoly(1, 1);
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), at_a.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
-    let pref_b = PRef::from_var(Vid::new("b"), NodeIndex::new(0), at_b.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        at_a.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
+    let pref_b = PRef::from_var(
+        Vid::new("b"),
+        NodeIndex::new(0),
+        at_b.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
     let var_a = GOp::<B>::var(&a, inp, at_a);
@@ -979,7 +1071,10 @@ fn pin_bin_and() {
     let s = ATyp::scalar();
     let bl = ATyp::bool();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a"), pub_scalar_pref("b")]));
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
+    ));
     let var_a = GOp::<B>::var(&a, inp, s.clone());
     let var_b = GOp::<B>::var(&b, inp, s.clone());
 
@@ -1021,7 +1116,14 @@ fn pin_map() {
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vs2);
 
@@ -1060,7 +1162,14 @@ fn pin_ram_expr() {
     let a = Vid::new("a");
     let vs4 = ATyp::vec_scalar(4);
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), vs4.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        vs4.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vs4);
 
@@ -1088,8 +1197,22 @@ fn pin_eval() {
     let at_p = ATyp::vpoly(1, 4);
     let at_x = ATyp::vec_scalar(2);
 
-    let pref_p = PRef::from_var(Vid::new("p"), NodeIndex::new(0), at_p.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
-    let pref_x = PRef::from_var(Vid::new("x"), NodeIndex::new(0), at_x.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_p = PRef::from_var(
+        Vid::new("p"),
+        NodeIndex::new(0),
+        at_p.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
+    let pref_x = PRef::from_var(
+        Vid::new("x"),
+        NodeIndex::new(0),
+        at_x.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_p, pref_x]));
     let var_p = GOp::<B>::var(&p, inp, at_p);
@@ -1123,8 +1246,22 @@ fn pin_pair() {
     let a = Vid::new("a");
     let b = Vid::new("b");
 
-    let pref_a = PRef::from_var(Vid::new("a"), NodeIndex::new(0), ATyp::g1(), 0, Qualifier::Public, Distribution::Nonuniform);
-    let pref_b = PRef::from_var(Vid::new("b"), NodeIndex::new(0), ATyp::g2(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        Vid::new("a"),
+        NodeIndex::new(0),
+        ATyp::g1(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
+    let pref_b = PRef::from_var(
+        Vid::new("b"),
+        NodeIndex::new(0),
+        ATyp::g2(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
     let var_a = GOp::<B>::var(&a, inp, ATyp::g1());
@@ -1159,7 +1296,14 @@ fn pin_proj_var() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let pref_r = PRef::from_var(Vid::new("r"), NodeIndex::new(0), record_typ, 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_r = PRef::from_var(
+        Vid::new("r"),
+        NodeIndex::new(0),
+        record_typ,
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_r]));
 
@@ -1190,7 +1334,14 @@ fn pin_set_record() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let pref_r = PRef::from_var(Vid::new("r"), NodeIndex::new(0), record_typ, 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_r = PRef::from_var(
+        Vid::new("r"),
+        NodeIndex::new(0),
+        record_typ,
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let pref_v = pub_scalar_pref("v");
 
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_r, pref_v]));
@@ -1291,10 +1442,10 @@ fn pin_proj_var_record() {
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![
-        pub_scalar_pref("a"),
-        pub_scalar_pref("b"),
-    ]));
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
+    ));
 
     // r.x extracts field x from the Record, which is Ref(Var(a, inp), scalar)
     // Since that's Ref::Var (not Ref::Node), add_top_exp creates a ret node
@@ -1322,10 +1473,27 @@ fn pin_app_univariate_poly() {
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![
-        PRef::from_var(Vid::new("p"), NodeIndex::new(0), ATyp::vpoly(1, 2), 0, Qualifier::Public, Distribution::Nonuniform),
-        PRef::from_var(Vid::new("x"), NodeIndex::new(0), s.clone(), 0, Qualifier::Public, Distribution::Nonuniform),
-    ]));
+    let inp = expected.add_node(Node::inp(
+        Vid::new("f"),
+        vec![
+            PRef::from_var(
+                Vid::new("p"),
+                NodeIndex::new(0),
+                ATyp::vpoly(1, 2),
+                0,
+                Qualifier::Public,
+                Distribution::Nonuniform,
+            ),
+            PRef::from_var(
+                Vid::new("x"),
+                NodeIndex::new(0),
+                s.clone(),
+                0,
+                Qualifier::Public,
+                Distribution::Nonuniform,
+            ),
+        ],
+    ));
 
     let var_p = GOp::<B>::var(&Vid::new("p"), inp, ATyp::vpoly(1, 2));
     let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
@@ -1350,10 +1518,10 @@ fn pin_app_univariate_poly() {
 /// Tests: CExp::Fun path (L1407-1419).
 #[test]
 fn pin_fun_lit() {
-    use ark_ff::{Zero, One};
+    use ark_ff::{One, Zero};
     use ark_poly::DenseUVPolynomial;
     use ark_poly::univariate::DensePolynomial;
-    use backend::{Value, PolyVariant, VirtualPolynomial};
+    use backend::{PolyVariant, Value, VirtualPolynomial};
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
@@ -1363,7 +1531,7 @@ fn pin_fun_lit() {
 
     let mut expected = UDag::<B>::new();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
+    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
 
     // fun x => x → DensePolynomial [0, 1] representing the identity
     let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
@@ -1468,8 +1636,11 @@ fn pin_get_relation_no_duplicate_edges() {
 
     let relation = dag.get_relation().unwrap();
     // A simple `s == v` relation should have ≤ 4 edges (Rel→Equ, Equ←s, Equ←v)
-    assert!(relation.edge_count() <= 4,
-        "get_relation has {} edges, expected ≤ 4 (duplicate loop bug?)", relation.edge_count());
+    assert!(
+        relation.edge_count() <= 4,
+        "get_relation has {} edges, expected ≤ 4 (duplicate loop bug?)",
+        relation.edge_count()
+    );
 }
 
 /// get_verifier returns error when verifier body references a private input directly.
@@ -1487,7 +1658,7 @@ fn pin_get_verifier_private_leak() {
     // The verifier assertion `s == s` directly uses private `s`.
     let result = dag.get_verifier();
     match result {
-        Err(GraphError::PrivateNodeInVerifier(_, _)) => {},
+        Err(GraphError::PrivateNodeInVerifier(_, _)) => {}
         Err(e) => panic!("Expected PrivateNodeInVerifier, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
@@ -1505,7 +1676,7 @@ fn pin_get_relation_no_relation() {
 
     let result = dag.get_relation();
     match result {
-        Err(GraphError::RelationNotFound(_)) => {},
+        Err(GraphError::RelationNotFound(_)) => {}
         Err(e) => panic!("Expected RelationNotFound, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
@@ -1568,7 +1739,9 @@ fn pin_find_var_find_ref() {
     // `c <- a + b` creates a transcript node and registers it in vctx.
     let op_nodes = dag.op_nodes();
     // The transcript node should be findable as variable `c`
-    let has_c = op_nodes.iter().any(|n| dag.find_var(*n) == Some(Vid::new("c")));
+    let has_c = op_nodes
+        .iter()
+        .any(|n| dag.find_var(*n) == Some(Vid::new("c")));
     assert!(has_c, "Expected to find variable 'c' on an op node");
 }
 
@@ -1594,8 +1767,12 @@ fn pin_transcript_nodes_order() {
         if let Some(e) = edge {
             let parent = e.source();
             let parent_pos = tnodes.iter().position(|&n| n == parent);
-            assert!(parent_pos.is_some() && parent_pos.unwrap() < i,
-                "Transcript node {:?} parent {:?} should appear earlier", tnodes[i], parent);
+            assert!(
+                parent_pos.is_some() && parent_pos.unwrap() < i,
+                "Transcript node {:?} parent {:?} should appear earlier",
+                tnodes[i],
+                parent
+            );
         }
     }
 }
@@ -1642,12 +1819,20 @@ fn pin_trc_reachability() {
     // trc from Inp (outgoing) should reach all nodes
     let inp = dag.input_node();
     let forward = dag.trc(inp, Direction::Outgoing);
-    assert_eq!(forward.len(), dag.node_count(), "Forward closure from inp should reach all nodes");
+    assert_eq!(
+        forward.len(),
+        dag.node_count(),
+        "Forward closure from inp should reach all nodes"
+    );
 
     // trc from the last op (incoming) should also reach all nodes
     let max = dag.max_node();
     let backward = dag.trc(max, Direction::Incoming);
-    assert_eq!(backward.len(), dag.node_count(), "Backward closure from max should reach all nodes");
+    assert_eq!(
+        backward.len(),
+        dag.node_count(),
+        "Backward closure from max should reach all nodes"
+    );
 }
 
 /// find_check finds Check nodes in a protocol and returns an empty Vec for a function.
@@ -1659,13 +1844,19 @@ fn pin_find_check() {
         }
     "#;
     let proto_gs = parse_and_build(proto_src);
-    assert!(!proto_gs[0].find_check().is_empty(), "Protocol should have a check node");
+    assert!(
+        !proto_gs[0].find_check().is_empty(),
+        "Protocol should have a check node"
+    );
 
     let fn_src = r#"
         fn f<F: Field>(public a: F) -> F { a + a }
     "#;
     let fn_gs = parse_and_build(fn_src);
-    assert!(fn_gs[0].find_check().is_empty(), "Function should not have a check node");
+    assert!(
+        fn_gs[0].find_check().is_empty(),
+        "Function should not have a check node"
+    );
 }
 
 /// find_check finds multiple Check nodes in a protocol with multiple verify statements.
@@ -1680,7 +1871,11 @@ fn pin_find_check_multiple() {
     "#;
     let gs = parse_and_build(src);
     let checks = gs[0].find_check();
-    assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+    assert_eq!(
+        checks.len(),
+        2,
+        "Protocol with two verify statements should have two check nodes"
+    );
 
     // Three separate verify statements produce three Check nodes
     let src3 = r#"
@@ -1692,7 +1887,11 @@ fn pin_find_check_multiple() {
     "#;
     let gs3 = parse_and_build(src3);
     let checks3 = gs3[0].find_check();
-    assert_eq!(checks3.len(), 3, "Protocol with three verify statements should have three check nodes");
+    assert_eq!(
+        checks3.len(),
+        3,
+        "Protocol with three verify statements should have three check nodes"
+    );
 
     // Single verify with && produces one Check node
     let src_and = r#"
@@ -1702,7 +1901,11 @@ fn pin_find_check_multiple() {
     "#;
     let gs_and = parse_and_build(src_and);
     let checks_and = gs_and[0].find_check();
-    assert_eq!(checks_and.len(), 1, "Protocol with single verify (&&) should have one check node");
+    assert_eq!(
+        checks_and.len(),
+        1,
+        "Protocol with single verify (&&) should have one check node"
+    );
 }
 
 /// get_verifier works correctly with multiple check nodes.
@@ -1724,7 +1927,11 @@ fn pin_get_verifier_multiple_checks() {
 
     // Verifier must have one check node for each verify in this protocol
     let checks = verifier.find_check();
-    assert!(checks.len() == 2, "Verifier should have exactly 2 check nodes for a protocol with two verify statements, got {}", checks.len());
+    assert!(
+        checks.len() == 2,
+        "Verifier should have exactly 2 check nodes for a protocol with two verify statements, got {}",
+        checks.len()
+    );
     // Verifier name matches
     assert_eq!(verifier.name(), Vid::new("two_verify"));
     // Verifier args should only include public inputs
@@ -1750,7 +1957,10 @@ fn pin_get_prover_multiple_checks() {
     let (prover, _node_map) = dag.get_prover();
 
     // Prover should have computation nodes but NO verify check nodes
-    assert!(prover.find_check().is_empty(), "Prover should not have any check nodes");
+    assert!(
+        prover.find_check().is_empty(),
+        "Prover should not have any check nodes"
+    );
     // Prover name matches
     assert_eq!(prover.name(), Vid::new("two_verify"));
 }
@@ -1770,7 +1980,12 @@ fn pin_find_check_scattered() {
     let dag = &gs[0];
 
     let checks = dag.find_check();
-    assert_eq!(checks.len(), 2, "Scattered verify statements should produce 2 check nodes, got {}", checks.len());
+    assert_eq!(
+        checks.len(),
+        2,
+        "Scattered verify statements should produce 2 check nodes, got {}",
+        checks.len()
+    );
 }
 
 /// find_check correctly identifies check nodes interleaved with challenge generation.
@@ -1789,7 +2004,12 @@ fn pin_find_check_interleaved_with_challenge() {
     let dag = &gs[0];
 
     let checks = dag.find_check();
-    assert_eq!(checks.len(), 2, "Interleaved verify+challenge should produce 2 check nodes, got {}", checks.len());
+    assert_eq!(
+        checks.len(),
+        2,
+        "Interleaved verify+challenge should produce 2 check nodes, got {}",
+        checks.len()
+    );
 }
 
 /// Verifier subgraph from a protocol with scattered verify statements includes all
@@ -1809,11 +2029,18 @@ fn pin_get_verifier_scattered_checks() {
 
     let verifier = dag.get_verifier().unwrap();
     let checks = verifier.find_check();
-    assert!(checks.len() >= 2, "Verifier should have at least 2 check nodes for scattered verify statements, got {}", checks.len());
+    assert!(
+        checks.len() >= 2,
+        "Verifier should have at least 2 check nodes for scattered verify statements, got {}",
+        checks.len()
+    );
 
     // Verifier args should only include public inputs
     let args = verifier.args();
-    assert!(args.iter().all(|a| a.is_public()), "All verifier args should be public");
+    assert!(
+        args.iter().all(|a| a.is_public()),
+        "All verifier args should be public"
+    );
 }
 
 /// Prover subgraph from a protocol with scattered verify statements excludes ALL check nodes.
@@ -1831,7 +2058,10 @@ fn pin_get_prover_scattered_checks() {
     let dag = &gs[0];
 
     let (prover, _node_map) = dag.get_prover();
-    assert!(prover.find_check().is_empty(), "Prover should not have any check nodes, even with scattered verify statements");
+    assert!(
+        prover.find_check().is_empty(),
+        "Prover should not have any check nodes, even with scattered verify statements"
+    );
 }
 
 /// Dags::protocols() and Dags::functions() correctly classify protocols with multiple
@@ -1853,12 +2083,26 @@ fn pin_dags_multiple_verify_protocols() {
 
     let funcs = gs.functions();
     assert_eq!(gs.protocols().len(), 1, "Should have exactly 1 protocol");
-    assert_eq!(funcs.len(), 2, "Should have exactly 2 functions (including one with verify)");
-    assert_eq!(gs.protocols()[0].find_check().len(), 2, "Protocol with two verify statements should have 2 check nodes");
+    assert_eq!(
+        funcs.len(),
+        2,
+        "Should have exactly 2 functions (including one with verify)"
+    );
+    assert_eq!(
+        gs.protocols()[0].find_check().len(),
+        2,
+        "Protocol with two verify statements should have 2 check nodes"
+    );
 
     // A function with verify is still a function — it has no relation node
-    let fn_with_verify = funcs.iter().find(|g| g.name() == Vid::new("with_verify")).unwrap();
-    assert!(!fn_with_verify.find_check().is_empty(), "Function with verify should have check nodes in its DAG");
+    let fn_with_verify = funcs
+        .iter()
+        .find(|g| g.name() == Vid::new("with_verify"))
+        .unwrap();
+    assert!(
+        !fn_with_verify.find_check().is_empty(),
+        "Function with verify should have check nodes in its DAG"
+    );
 }
 
 /// Inlined verify from a function call creates a Check node that IS terminal
@@ -1882,12 +2126,18 @@ fn pin_find_check_cross_function_verify() {
     assert_eq!(protos.len(), 1, "Should have exactly 1 protocol");
     let proto = protos[0];
     // Both the inlined verify and the protocol's own verify are terminal
-    assert_eq!(proto.find_check().len(), 2,
-        "Full DAG should have 2 terminal checks: one inlined from function, one from protocol");
+    assert_eq!(
+        proto.find_check().len(),
+        2,
+        "Full DAG should have 2 terminal checks: one inlined from function, one from protocol"
+    );
     // Verifier subgraph: both checks are also present
     let verifier = proto.clone().rename_inner_nodes().get_verifier().unwrap();
-    assert!(verifier.find_check().len() >= 2,
-        "Verifier should have both inlined and protocol check nodes, got {}", verifier.find_check().len());
+    assert!(
+        verifier.find_check().len() >= 2,
+        "Verifier should have both inlined and protocol check nodes, got {}",
+        verifier.find_check().len()
+    );
 }
 
 // ============================================================================
@@ -1929,8 +2179,14 @@ fn pin_combine_dag() {
     let combined = dag_f.combine_dag(dag_g);
 
     // Combined should have sum of nodes and edges
-    assert_eq!(combined.node_count(), dag_f.node_count() + dag_g.node_count());
-    assert_eq!(combined.edge_count(), dag_f.edge_count() + dag_g.edge_count());
+    assert_eq!(
+        combined.node_count(),
+        dag_f.node_count() + dag_g.node_count()
+    );
+    assert_eq!(
+        combined.edge_count(),
+        dag_f.edge_count() + dag_g.edge_count()
+    );
 }
 
 /// map_annotations transforms annotations on a DAG.
@@ -2016,7 +2272,7 @@ fn pin_error_non_polynomial_fun() {
     "#;
     let result = try_parse_and_build(src);
     match result {
-        Err(GraphError::NonPolynomialFun(_)) => {},
+        Err(GraphError::NonPolynomialFun(_)) => {}
         Err(e) => panic!("Expected NonPolynomialFun, got: {}", e),
         Ok(_) => panic!("Expected error but got Ok"),
     }
@@ -2033,7 +2289,7 @@ fn pin_error_fun_unbound_var() {
     // Either it panics or returns Err — either way it should not succeed
     match result {
         Ok(Ok(_)) => panic!("Unbound variable in Fun should fail"),
-        _ => {}, // Error or panic — both acceptable
+        _ => {} // Error or panic — both acceptable
     }
 }
 
@@ -2111,19 +2367,25 @@ fn pin_multi_transcript() {
     assert_eq!(tnodes.len(), 3, "Expected 3 transcript nodes");
 
     // Verify second and third transcript nodes have incoming transcript edges
-    assert!(dag.transcript_edge(tnodes[1], Direction::Incoming).is_some(),
-        "Second transcript should have incoming edge");
-    assert!(dag.transcript_edge(tnodes[2], Direction::Incoming).is_some(),
-        "Third transcript should have incoming edge");
+    assert!(
+        dag.transcript_edge(tnodes[1], Direction::Incoming)
+            .is_some(),
+        "Second transcript should have incoming edge"
+    );
+    assert!(
+        dag.transcript_edge(tnodes[2], Direction::Incoming)
+            .is_some(),
+        "Third transcript should have incoming edge"
+    );
 }
 
 /// Multilinear Fun: `fun x, y => x + y` creates DenseMle.
 /// Tests: CExp::Fun with multiple variables (multilinear path).
 #[test]
 fn pin_fun_multilinear() {
-    use ark_ff::{Zero, One};
+    use ark_ff::{One, Zero};
     use ark_poly::evaluations::multivariate::multilinear::DenseMultilinearExtension;
-    use backend::{Value, PolyVariant, VirtualPolynomial};
+    use backend::{PolyVariant, Value, VirtualPolynomial};
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
@@ -2163,7 +2425,14 @@ fn pin_map_nested_binop() {
     let a = Vid::new("a");
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
-    let pref_a = PRef::from_var(a.clone(), NodeIndex::new(0), vs2.clone(), 0, Qualifier::Public, Distribution::Nonuniform);
+    let pref_a = PRef::from_var(
+        a.clone(),
+        NodeIndex::new(0),
+        vs2.clone(),
+        0,
+        Qualifier::Public,
+        Distribution::Nonuniform,
+    );
     let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
     let var_a = GOp::<B>::var(&a, inp, vs2);
 
@@ -2263,7 +2532,10 @@ fn pin_app_mle() {
     // MLE application desugars to: mle_l + (mle_r - mle_l) * x
     // where mle_l = p[0..1], mle_r = p[1..2]
     // This should produce several nodes for the arithmetic
-    assert!(dag.node_count() > 2, "MLE app should produce multiple nodes");
+    assert!(
+        dag.node_count() > 2,
+        "MLE app should produce multiple nodes"
+    );
     // Verify it's a function (no check node)
     assert!(dag.find_check().is_empty());
 }
@@ -2281,7 +2553,7 @@ fn pin_reduce_add() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(
@@ -2290,9 +2562,7 @@ fn pin_reduce_add() {
     ));
     let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
 
-    let reduce = expected.add_node(Node::ret(
-        &GOp::reduce(BinOp::Add, var_v.clone()),
-    ));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Add, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);
@@ -2307,7 +2577,7 @@ fn pin_reduce_mul() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(
@@ -2316,9 +2586,7 @@ fn pin_reduce_mul() {
     ));
     let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(4));
 
-    let reduce = expected.add_node(Node::ret(
-        &GOp::reduce(BinOp::Mul, var_v.clone()),
-    ));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Mul, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);
@@ -2333,7 +2601,7 @@ fn pin_reduce_sub() {
         }
     "#;
     let gs = parse_and_build(src);
-    let dag = &gs[0];
+    let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
     let inp = expected.add_node(Node::inp(
@@ -2342,9 +2610,7 @@ fn pin_reduce_sub() {
     ));
     let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
 
-    let reduce = expected.add_node(Node::ret(
-        &GOp::reduce(BinOp::Sub, var_v.clone()),
-    ));
+    let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Sub, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);
 
     assert!(gs[0] == expected);

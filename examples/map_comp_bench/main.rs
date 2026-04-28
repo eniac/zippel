@@ -1,14 +1,19 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, Value, ATyp};
+use backend::{ATyp, ArkBls12_381, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 const N_VAL: usize = 16;
 
 fn main() {
-    println!("=== Map Comprehension Benchmark (ArkBls12_381, N={}) ===", N_VAL);
-    let args = ZippelArgs::new(PathBuf::from("examples/map_comp_bench/map_comp_bench.zippel"));
+    println!(
+        "=== Map Comprehension Benchmark (ArkBls12_381, N={}) ===",
+        N_VAL
+    );
+    let args = ZippelArgs::new(PathBuf::from(
+        "examples/map_comp_bench/map_comp_bench.zippel",
+    ));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &N_VAL);
@@ -21,7 +26,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();

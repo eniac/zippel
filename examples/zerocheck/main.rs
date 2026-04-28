@@ -1,9 +1,9 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkConfig, ArkSecp256k1, Value, ATyp};
 use ark_ff::{One, Zero};
+use backend::{ATyp, ArkConfig, ArkSecp256k1, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 fn main() {
     println!("=== Zerocheck (ArkSecp256k1) ===");
@@ -20,7 +20,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkSecp256k1>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -37,11 +40,13 @@ fn main() {
 
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/zerocheck/zerocheck.zippel"));
         let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
+    let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
         Ok(analysis) => {
             match &analysis.completeness {
@@ -55,6 +60,7 @@ fn main() {
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
@@ -69,8 +75,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let v = Value::<ArkSecp256k1>::VecScalar(v_coeffs.clone()).value_poly();
 
     // Pick random alpha and set p(X) = alpha * X so that q(X) = p(X)/v(X) = alpha.
-    let alpha_val: Value<ArkSecp256k1> =
-        Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
+    let alpha_val: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::scalar());
     let alpha = alpha_val.into_scalar();
     let p_coeffs: Vec<<ArkSecp256k1 as ArkConfig>::F> =
         v_coeffs.iter().map(|c| *c * alpha).collect();

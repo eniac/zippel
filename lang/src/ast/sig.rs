@@ -1,10 +1,10 @@
-use crate::typ::{Size, CKind, CTyp, GTyp, TypeVars, CTyps, Range, RangeTraversal, TypeInline};
+use crate::ast::{GArg, GArgs};
+use crate::id::{Fresh, Tid, TidSubst, Vid};
 use crate::typ::subst::AliasSubsts;
 use crate::typ::unify::{Unify, UnifyError};
-use crate::ast::{GArg, GArgs};
-use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
+use crate::typ::{CKind, CTyp, CTyps, GTyp, Range, RangeTraversal, Size, TypeInline, TypeVars};
 use share::traversal::{ToTraversal1, ToTraversal2};
-use crate::id::{Fresh, Vid, Tid, TidSubst};
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 use thiserror::Error;
 
@@ -13,7 +13,7 @@ pub enum SigError {
     #[error("SigError: Arity mismatch: expected {0} arguments, got {1}")]
     ArityMismatch(usize, usize),
     #[error("SigError: Unifying signatures {0} ~ {1}\n\n{2}")]
-    Unify(CSig, CTyps, UnifyError)
+    Unify(CSig, CTyps, UnifyError),
 }
 
 /// Function and protocol argument signatures
@@ -22,7 +22,7 @@ pub struct Sig<N> {
     pub name: Vid,
     pub typevars: TypeVars<N>,
     pub args: GArgs<N>,
-    pub ret: GTyp<N>
+    pub ret: GTyp<N>,
 }
 
 /// Symbolic sized signature
@@ -32,7 +32,11 @@ pub type USig = Sig<Size>;
 pub type CSig = Sig<usize>;
 
 impl CSig {
-    pub fn unify(self, typs: &CTyps, kctx: &Ctx<Tid, CKind>) -> Result<(CSig, AliasSubsts), SigError> {
+    pub fn unify(
+        self,
+        typs: &CTyps,
+        kctx: &Ctx<Tid, CKind>,
+    ) -> Result<(CSig, AliasSubsts), SigError> {
         // Check arity first
         if self.args.len() != typs.len() {
             return Err(SigError::ArityMismatch(self.args.len(), typs.len()));
@@ -54,8 +58,13 @@ impl CSig {
         let mut args = Vec::new();
         for (l, r) in shifted.args.iter().zip(typs.iter()) {
             let typ = CTyp::unify(&l.typ, &r, &kind_ctx, &mut subs)
-                    .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
-            args.push(GArg { qualifier: l.qualifier, distribution: l.distribution, id: l.id.clone(), typ });
+                .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
+            args.push(GArg {
+                qualifier: l.qualifier,
+                distribution: l.distribution,
+                id: l.id.clone(),
+                typ,
+            });
         }
 
         // Substitute alias in the return type and typevars
@@ -69,8 +78,18 @@ impl CSig {
 impl<N: Clone> ToTraversal1<N> for Sig<N> {
     type Output<Z> = Sig<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Sig<Z>, E> {
-        let Sig { name, typevars, args, ret } = self;
-        Ok(Sig { name, typevars: typevars.traverse1(f)?, args: args.traverse2(f)?, ret: ret.traverse2(f)? })
+        let Sig {
+            name,
+            typevars,
+            args,
+            ret,
+        } = self;
+        Ok(Sig {
+            name,
+            typevars: typevars.traverse1(f)?,
+            args: args.traverse2(f)?,
+            ret: ret.traverse2(f)?,
+        })
     }
 }
 
@@ -83,8 +102,16 @@ impl<N: Clone> TidSubst for Sig<N> {
 }
 
 impl<N: Clone> RangeTraversal<N> for Sig<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(Sig { name: self.name, typevars: self.typevars.range_traverse(f)?, args: self.args.range_traverse(f)?, ret: self.ret.range_traverse(f)? })
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
+        Ok(Sig {
+            name: self.name,
+            typevars: self.typevars.range_traverse(f)?,
+            args: self.args.range_traverse(f)?,
+            ret: self.ret.range_traverse(f)?,
+        })
     }
 }
 
@@ -116,7 +143,7 @@ where
             allocator.text("("),
             self.args.pretty(allocator),
             allocator.text(") -> "),
-            self.ret.pretty(allocator)
+            self.ret.pretty(allocator),
         ])
     }
 

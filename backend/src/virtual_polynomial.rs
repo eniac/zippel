@@ -1,12 +1,12 @@
+use crate::{PolyError, PolyVariant};
 use ark_ff::{Field, PrimeField};
-use std::ops::{Add, Sub, Mul};
-use std::fmt;
+use ark_serialize::{CanonicalSerialize, SerializationError};
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::sync::Arc;
-use ark_serialize::{CanonicalSerialize, SerializationError};
+use std::fmt;
 use std::io::Write;
-use crate::{PolyVariant, PolyError};
+use std::ops::{Add, Mul, Sub};
+use std::sync::Arc;
 
 /// Virtual Polynomial - represents a polynomial as a sum of products of base polynomials.
 /// This is useful for sum-check protocols and allows flexible representation
@@ -227,9 +227,11 @@ impl<F: Field> VirtualPolynomial<F> {
 
     /// Evaluate the virtual polynomial at a point
     pub fn evaluate_uv(&self, point: &F) -> F {
-        self.products.iter()
+        self.products
+            .iter()
             .map(|(coeff, indices)| {
-                let prod = indices.iter()
+                let prod = indices
+                    .iter()
                     .map(|&idx| self.flattened_polys[idx].evaluate(&vec![*point]))
                     .fold(F::one(), |acc, val| acc * val);
                 *coeff * prod
@@ -389,12 +391,13 @@ impl<F: Field> VirtualPolynomial<F> {
             let mut term_result: Option<PolyVariant<F>> = None;
 
             for &idx in indices {
-                let poly = &**self.flattened_polys.get(idx)
-                    .ok_or_else(|| PolyError::UnsupportedOperation {
+                let poly = &**self.flattened_polys.get(idx).ok_or_else(|| {
+                    PolyError::UnsupportedOperation {
                         op: lang::ast::BinOp::Mul,
                         left: PolyVariant::from_scalar(F::zero()),
                         right: PolyVariant::from_scalar(F::zero()),
-                    })?;
+                    }
+                })?;
 
                 term_result = Some(match term_result {
                     None => poly.clone(),
@@ -425,7 +428,9 @@ impl<F: Field> VirtualPolynomial<F> {
     }
 
     pub fn is_multilinear(&self) -> bool {
-        self.normalize().map(|p| p.is_multilinear()).unwrap_or(false)
+        self.normalize()
+            .map(|p| p.is_multilinear())
+            .unwrap_or(false)
     }
 
     pub fn num_vars(&self) -> Option<usize> {
@@ -499,13 +504,13 @@ impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
         match self.normalize() {
-            Ok(normalized) => {
-                return normalized.serialize_compressed(&mut writer);
-            }
-            Err(PolyError::MleMultiplication { .. }) => {
+            Ok(normalized) => normalized.serialize_compressed(&mut writer),
+            Err(_) => {
+                // Sum-of-products / non-normal shapes (e.g. products from poly_mul) may not
+                // collapse to a single PolyVariant; encode the explicit VP representation so
+                // transcript hashing of public Poly values (e.g. sumcheck) cannot fail.
                 1u8.serialize_compressed(&mut writer)?;
 
-                // Encode num_variables as Option<usize>
                 match self.num_variables {
                     Some(n) => {
                         true.serialize_compressed(&mut writer)?;
@@ -516,20 +521,15 @@ impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
                     }
                 }
 
-                // Encode products: Vec<(F, Vec<usize>)>
                 (self.products.len() as u64).serialize_compressed(&mut writer)?;
                 for (coeff, indices) in &self.products {
-                    // Coefficient
                     coeff.serialize_compressed(&mut writer)?;
-                    // Indices into flattened_polys
                     (indices.len() as u64).serialize_compressed(&mut writer)?;
                     for &idx in indices {
                         (idx as u64).serialize_compressed(&mut writer)?;
                     }
                 }
 
-                // Encode flattened_polys with an explicit tag per variant so the
-                // representation is canonical and self-contained.
                 (self.flattened_polys.len() as u64).serialize_compressed(&mut writer)?;
                 for poly_arc in &self.flattened_polys {
                     match poly_arc.as_ref() {
@@ -554,7 +554,6 @@ impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
 
                 Ok(())
             }
-            Err(_) => Err(SerializationError::InvalidData),
         }
     }
 
@@ -644,13 +643,18 @@ impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
                 type CanonProduct<F> = (F, Vec<PolyVariant<F>>);
 
                 let canonicalize = |vp: &VirtualPolynomial<F>| -> Vec<CanonProduct<F>> {
-                    let mut prods: Vec<CanonProduct<F>> = vp.products.iter().map(|(coeff, indices)| {
-                        let mut polys: Vec<PolyVariant<F>> = indices.iter()
-                            .map(|&idx| (*vp.flattened_polys[idx]).clone())
-                            .collect();
-                        polys.sort();
-                        (*coeff, polys)
-                    }).collect();
+                    let mut prods: Vec<CanonProduct<F>> = vp
+                        .products
+                        .iter()
+                        .map(|(coeff, indices)| {
+                            let mut polys: Vec<PolyVariant<F>> = indices
+                                .iter()
+                                .map(|&idx| (*vp.flattened_polys[idx]).clone())
+                                .collect();
+                            polys.sort();
+                            (*coeff, polys)
+                        })
+                        .collect();
                     // Sort by polynomial factors first so like terms are adjacent
                     prods.sort_by(|(_, p1), (_, p2)| p1.cmp(p2));
                     // Merge products with the same polynomial factors
@@ -678,13 +682,19 @@ impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
 
 impl<F: PrimeField> Eq for VirtualPolynomial<F> {}
 
-impl<F: Field> PartialOrd for VirtualPolynomial<F> where F: ark_ff::PrimeField {
+impl<F: Field> PartialOrd for VirtualPolynomial<F>
+where
+    F: ark_ff::PrimeField,
+{
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<F: Field> Ord for VirtualPolynomial<F> where F: ark_ff::PrimeField {
+impl<F: Field> Ord for VirtualPolynomial<F>
+where
+    F: ark_ff::PrimeField,
+{
     fn cmp(&self, other: &Self) -> Ordering {
         // First compare by number of products
         match self.products.len().cmp(&other.products.len()) {
@@ -755,13 +765,9 @@ impl<F: Field> fmt::Display for VirtualPolynomial<F> {
 mod tests {
     use super::*;
     use ark_bls12_381::Fr;
-    use ark_ff::{UniformRand, Zero, One};
+    use ark_ff::{One, UniformRand, Zero};
+    use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use ark_std::test_rng;
-use ark_poly::{
-    univariate::DensePolynomial,
-    DenseMultilinearExtension,
-    DenseUVPolynomial,
-};
 
     // ========== Test Helpers ==========
     fn create_vp_from_scalar(val: u64) -> VirtualPolynomial<Fr> {
@@ -776,7 +782,9 @@ use ark_poly::{
 
     fn create_vp_from_mle(evals: Vec<u64>, num_vars: usize) -> VirtualPolynomial<Fr> {
         let evals_fr: Vec<Fr> = evals.iter().map(|&e| Fr::from(e)).collect();
-        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals_fr));
+        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            num_vars, evals_fr,
+        ));
         VirtualPolynomial::from_poly(mle)
     }
 
@@ -787,7 +795,11 @@ use ark_poly::{
             let point = Fr::rand(&mut rng);
             let eval_a = a.evaluate_uv(&point);
             let eval_b = b.evaluate_uv(&point);
-            assert_eq!(eval_a, eval_b, "{}: evaluation mismatch at point {:?}", msg, point);
+            assert_eq!(
+                eval_a, eval_b,
+                "{}: evaluation mismatch at point {:?}",
+                msg, point
+            );
         }
     }
 
@@ -796,7 +808,7 @@ use ark_poly::{
     #[test]
     fn test_addition_associativity() {
         let a = create_vp_from_poly_univariate(vec![1, 2, 3]); // 1 + 2x + 3x^2
-        let b = create_vp_from_poly_univariate(vec![4, 5]);    // 4 + 5x
+        let b = create_vp_from_poly_univariate(vec![4, 5]); // 4 + 5x
         let c = create_vp_from_scalar(7);
 
         let left = a.poly_add(&b.poly_add(&c).unwrap()).unwrap();
@@ -853,14 +865,18 @@ use ark_poly::{
 
     #[test]
     fn test_multiplication_associativity() {
-        let a = create_vp_from_poly_univariate(vec![1, 2]);     // 1 + 2x
-        let b = create_vp_from_poly_univariate(vec![3, 4]);     // 3 + 4x
+        let a = create_vp_from_poly_univariate(vec![1, 2]); // 1 + 2x
+        let b = create_vp_from_poly_univariate(vec![3, 4]); // 3 + 4x
         let c = create_vp_from_scalar(5);
 
         let left = a.poly_mul(&b.poly_mul(&c).unwrap()).unwrap();
         let right = a.poly_mul(&b).unwrap().poly_mul(&c).unwrap();
 
-        assert_vp_eq(&left, &right, "Multiplication associativity: (a*b)*c = a*(b*c)");
+        assert_vp_eq(
+            &left,
+            &right,
+            "Multiplication associativity: (a*b)*c = a*(b*c)",
+        );
     }
 
     #[test]
@@ -906,7 +922,9 @@ use ark_poly::{
         let left = a.poly_mul(&b.poly_add(&c).unwrap()).unwrap();
 
         // a*b + a*c
-        let right = a.poly_mul(&b).unwrap()
+        let right = a
+            .poly_mul(&b)
+            .unwrap()
             .poly_add(&a.poly_mul(&c).unwrap())
             .unwrap();
 
@@ -923,7 +941,9 @@ use ark_poly::{
         let left = a.poly_add(&b).unwrap().poly_mul(&c).unwrap();
 
         // a*c + b*c
-        let right = a.poly_mul(&c).unwrap()
+        let right = a
+            .poly_mul(&c)
+            .unwrap()
             .poly_add(&b.poly_mul(&c).unwrap())
             .unwrap();
 
@@ -943,7 +963,11 @@ use ark_poly::{
         neg_b.neg_virtual();
         let add_neg_result = a.poly_add(&neg_b).unwrap();
 
-        assert_vp_eq(&sub_result, &add_neg_result, "Subtraction as inverse: a-b = a+(-b)");
+        assert_vp_eq(
+            &sub_result,
+            &add_neg_result,
+            "Subtraction as inverse: a-b = a+(-b)",
+        );
     }
 
     #[test]
@@ -962,11 +986,18 @@ use ark_poly::{
     #[test]
     fn test_product_representation() {
         // Create a virtual polynomial as a product: (1 + 2x) * (3 + 4x)
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![Fr::from(1u64), Fr::from(2u64)]));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![Fr::from(3u64), Fr::from(4u64)]));
+        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+        ]));
+        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(3u64),
+            Fr::from(4u64),
+        ]));
 
         let mut vp = VirtualPolynomial::new();
-        vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one()).unwrap();
+        vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one())
+            .unwrap();
 
         // Expected: 3 + 10x + 8x^2
         let expected = create_vp_from_poly_univariate(vec![3, 10, 8]);
@@ -980,9 +1011,11 @@ use ark_poly::{
 
         // Normalize should give back the same polynomial
         let normalized = a.normalize().unwrap();
-        let expected = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
-            vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]
-        ));
+        let expected = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+            Fr::from(3u64),
+        ]));
 
         assert_eq!(normalized, expected, "Normalize simple polynomial");
     }
@@ -990,15 +1023,18 @@ use ark_poly::{
     #[test]
     fn test_normalize_product() {
         // (1 + 2x) * (3 + 4x) = 3 + 10x + 8x^2
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
-            vec![Fr::from(1u64), Fr::from(2u64)]
-        ));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
-            vec![Fr::from(3u64), Fr::from(4u64)]
-        ));
+        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+        ]));
+        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(3u64),
+            Fr::from(4u64),
+        ]));
 
         let mut vp = VirtualPolynomial::new();
-        vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one()).unwrap();
+        vp.add_poly_list(vec![Arc::new(poly1), Arc::new(poly2)], Fr::one())
+            .unwrap();
 
         let normalized = vp.normalize().unwrap();
 
@@ -1012,12 +1048,14 @@ use ark_poly::{
 
     #[test]
     fn test_mul_by_poly() {
-        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
-            vec![Fr::from(1u64), Fr::from(2u64)]
-        ));
-        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(
-            vec![Fr::from(3u64), Fr::from(4u64)]
-        ));
+        let poly1 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+        ]));
+        let poly2 = PolyVariant::DenseUni(DensePolynomial::from_coefficients_vec(vec![
+            Fr::from(3u64),
+            Fr::from(4u64),
+        ]));
 
         let mut vp = VirtualPolynomial::from_poly(poly1);
         vp.mul_by_poly(Arc::new(poly2), Fr::from(2u64)).unwrap();
@@ -1055,7 +1093,11 @@ use ark_poly::{
         assert!(zero.is_zero(), "Zero polynomial should report is_zero");
 
         let point = Fr::from(42u64);
-        assert_eq!(zero.evaluate_uv(&point), Fr::zero(), "Zero polynomial evaluates to zero");
+        assert_eq!(
+            zero.evaluate_uv(&point),
+            Fr::zero(),
+            "Zero polynomial evaluates to zero"
+        );
     }
 
     #[test]
@@ -1069,7 +1111,15 @@ use ark_poly::{
 
         vp.simplify();
 
-        assert_eq!(vp.products.len(), 1, "Simplify should remove zero coefficients");
-        assert_eq!(vp.products[0].0, Fr::from(5u64), "Simplify should keep non-zero coefficients");
+        assert_eq!(
+            vp.products.len(),
+            1,
+            "Simplify should remove zero coefficients"
+        );
+        assert_eq!(
+            vp.products[0].0,
+            Fr::from(5u64),
+            "Simplify should keep non-zero coefficients"
+        );
     }
 }

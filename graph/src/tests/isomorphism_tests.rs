@@ -1,6 +1,6 @@
-use crate::{UDag, GOp};
-use crate::tests::test_helpers::{TestConfig, GraphBuilder};
-use backend::{ATyp, ABase};
+use crate::tests::test_helpers::{GraphBuilder, TestConfig};
+use crate::{GOp, UDag};
+use backend::{ABase, ATyp};
 use lang::ast::BinOp;
 
 /// Build a simple graph: input(x, y) → add(x, y)

@@ -1,17 +1,20 @@
 use crate::id::{Tid, TidSubst};
-use crate::typ::kind::Kind;
-use crate::typ::Size;
-use crate::typ::range::{Range, RangeTraversal};
 use crate::parser::*;
+use crate::typ::kind::Kind;
+use crate::typ::range::{Range, RangeTraversal};
+use crate::typ::Size;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
-use share::{Pretty, Ctx, DocAllocator, DocBuilder, BoxAllocator};
 use share::traversal::ToTraversal1;
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
 /// A type variable with an associated kind, parameterized by size type N
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
-pub struct TypeVar<N> { pub id: Tid, pub kind: Kind<N> }
+pub struct TypeVar<N> {
+    pub id: Tid,
+    pub kind: Kind<N>,
+}
 
 /// Symbolically-sized type variable
 pub type UTypeVar = TypeVar<Size>;
@@ -19,11 +22,20 @@ pub type UTypeVar = TypeVar<Size>;
 pub type CTypeVar = TypeVar<usize>;
 
 impl<N> TypeVar<N> {
-    pub fn new(id: &Tid, kind: &Kind<N>) -> Self where N: Clone {
-        TypeVar { id: id.clone(), kind: kind.clone() }
+    pub fn new(id: &Tid, kind: &Kind<N>) -> Self
+    where
+        N: Clone,
+    {
+        TypeVar {
+            id: id.clone(),
+            kind: kind.clone(),
+        }
     }
     pub fn new_str(id: &str, kind: Kind<N>) -> Self {
-        TypeVar { id: Tid::new(id), kind }
+        TypeVar {
+            id: Tid::new(id),
+            kind,
+        }
     }
 }
 
@@ -52,8 +64,14 @@ impl<N> TypeVars<N> {
     pub fn contains(&self, id: &Tid) -> bool {
         self.0.iter().any(|tvar| &tvar.id == id)
     }
-    pub fn to_ctx(&self) -> Ctx<Tid, Kind<N>> where N: Clone {
-        self.0.iter().map(|tvar| (tvar.id.clone(), tvar.kind.clone())).collect()
+    pub fn to_ctx(&self) -> Ctx<Tid, Kind<N>>
+    where
+        N: Clone,
+    {
+        self.0
+            .iter()
+            .map(|tvar| (tvar.id.clone(), tvar.kind.clone()))
+            .collect()
     }
 }
 
@@ -96,29 +114,54 @@ impl<N> TidSubst for TypeVars<N> {
 impl<N> ToTraversal1<N> for TypeVar<N> {
     type Output<Z> = TypeVar<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<TypeVar<Z>, E> {
-        Ok(TypeVar { id: self.id, kind: self.kind.traverse1(f)? })
+        Ok(TypeVar {
+            id: self.id,
+            kind: self.kind.traverse1(f)?,
+        })
     }
 }
 
 /// Traversal over the size parameter N
 impl<N> ToTraversal1<N> for TypeVars<N> {
     type Output<Z> = TypeVars<Z>;
-    fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<TypeVars<Z>, E> {
-        Ok(TypeVars(self.0.into_iter().map(|tv| tv.traverse1(f)).collect::<Result<_, _>>()?))
+    fn traverse1<Z: Clone, E>(
+        self,
+        f: &mut dyn FnMut(N) -> Result<Z, E>,
+    ) -> Result<TypeVars<Z>, E> {
+        Ok(TypeVars(
+            self.0
+                .into_iter()
+                .map(|tv| tv.traverse1(f))
+                .collect::<Result<_, _>>()?,
+        ))
     }
 }
 
 /// Range traversal for TypeVar
 impl<N: Clone> RangeTraversal<N> for TypeVar<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(TypeVar { id: self.id, kind: self.kind.range_traverse(f)? })
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
+        Ok(TypeVar {
+            id: self.id,
+            kind: self.kind.range_traverse(f)?,
+        })
     }
 }
 
 /// Range traversal for TypeVars
 impl<N: Clone> RangeTraversal<N> for TypeVars<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
-        Ok(TypeVars(self.0.into_iter().map(|tv| tv.range_traverse(f)).collect::<Result<_, _>>()?))
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
+        Ok(TypeVars(
+            self.0
+                .into_iter()
+                .map(|tv| tv.range_traverse(f))
+                .collect::<Result<_, _>>()?,
+        ))
     }
 }
 
@@ -139,7 +182,7 @@ impl<'pest> FromPest<'pest> for UTypeVar {
                 }
                 let kind = Kind::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(TypeVar { id, kind })
-            },
+            }
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
@@ -166,31 +209,51 @@ impl<'pest> FromPest<'pest> for UTypeVars {
                     match tv.kind.clone() {
                         Kind::Pairing(g1, g2) => {
                             // Is [g1] a group kind?
-                            let tv1 = tvars.iter().find(|tv: &&UTypeVar| tv.id == g1)
-                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(g1.clone())))?;
+                            let tv1 = tvars.iter().find(|tv: &&UTypeVar| tv.id == g1).ok_or(
+                                ConversionError::Malformed(InputError::KindNotFound(g1.clone())),
+                            )?;
                             if !tv1.kind.is_group() {
-                                return Err(ConversionError::Malformed(InputError::PairingGroup(g1.clone(), g2, g1.clone(), tv1.kind.clone())));
+                                return Err(ConversionError::Malformed(InputError::PairingGroup(
+                                    g1.clone(),
+                                    g2,
+                                    g1.clone(),
+                                    tv1.kind.clone(),
+                                )));
                             }
                             // Is [g2] a group kind?
-                            let tv2 = tvars.iter().find(|tv: &&UTypeVar| tv.id == g2)
-                                .ok_or(ConversionError::Malformed(InputError::KindNotFound(g2.clone())))?;
+                            let tv2 = tvars.iter().find(|tv: &&UTypeVar| tv.id == g2).ok_or(
+                                ConversionError::Malformed(InputError::KindNotFound(g2.clone())),
+                            )?;
                             if !tv2.kind.is_group() {
-                                return Err(ConversionError::Malformed(InputError::PairingGroup(g1, g2.clone(), g2, tv2.kind.clone())));
+                                return Err(ConversionError::Malformed(InputError::PairingGroup(
+                                    g1,
+                                    g2.clone(),
+                                    g2,
+                                    tv2.kind.clone(),
+                                )));
                             }
                             tvars.push(tv);
-                        },
+                        }
                         Kind::Scalar(fs) => {
-                            fs.iter().all(|f| {
-                                // Is [f] in [fs] a group kind?
-                                tvars.iter().any(|tv: &UTypeVar| &tv.id == f && tv.kind.is_group())
-                            }).then(|| ()).ok_or(ConversionError::Malformed(InputError::ScalarGroup(fs.clone().into(), tv.kind.clone())))?;
+                            fs.iter()
+                                .all(|f| {
+                                    // Is [f] in [fs] a group kind?
+                                    tvars
+                                        .iter()
+                                        .any(|tv: &UTypeVar| &tv.id == f && tv.kind.is_group())
+                                })
+                                .then(|| ())
+                                .ok_or(ConversionError::Malformed(InputError::ScalarGroup(
+                                    fs.clone().into(),
+                                    tv.kind.clone(),
+                                )))?;
                             tvars.push(tv);
-                        },
+                        }
                         _ => tvars.push(tv),
                     }
                 }
                 Ok(TypeVars(tvars))
-            },
+            }
             _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
@@ -233,8 +296,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.intersperse(
-            self.0.into_iter().map(|tvar| tvar.pretty(allocator)), ", ")
+        allocator.intersperse(self.0.into_iter().map(|tvar| tvar.pretty(allocator)), ", ")
     }
 
     fn is_nil(&self) -> bool {
@@ -250,7 +312,8 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for TypeVars
     }
 }
 
-#[cfg(test)] use pest::Parser;
+#[cfg(test)]
+use pest::Parser;
 #[test]
 fn typevars_parser() {
     use crate::typ::range::Range as TRange;
@@ -266,11 +329,14 @@ fn typevars_parser() {
             TypeVar::new_str("D1", Kind::scalar1("B2")),
             TypeVar::new_str("D2", Kind::scalar2("B1", "B2")),
             TypeVar::new_str("E", Kind::pairing("B1", "B2")),
-            TypeVar::new_str("F", Kind::Range(TRange {
-                start: Size::zero(),
-                step: Size::one(),
-                end: Size::from(10),
-            }))
+            TypeVar::new_str(
+                "F",
+                Kind::Range(TRange {
+                    start: Size::zero(),
+                    step: Size::one(),
+                    end: Size::from(10),
+                })
+            )
         ]))
     );
 
@@ -278,7 +344,9 @@ fn typevars_parser() {
     let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_dup).unwrap();
     assert_eq!(
         UTypeVars::from_pest(&mut pairs),
-        Err(ConversionError::Malformed(InputError::DuplicateTid(Tid::new("A"))))
+        Err(ConversionError::Malformed(InputError::DuplicateTid(
+            Tid::new("A")
+        )))
     );
 
     let ex_bad_multiplicative = "A: Field, B: Group, D: Scalar<A>";
@@ -289,7 +357,12 @@ fn typevars_parser() {
     let mut pairs = ZippelParser::parse(Rule::tvars, ex_bad_pairing).unwrap();
     assert_eq!(
         UTypeVars::from_pest(&mut pairs),
-        Err(ConversionError::Malformed(InputError::PairingGroup(Tid::new("A"), Tid::new("B"), Tid::new("A"), Kind::Field)))
+        Err(ConversionError::Malformed(InputError::PairingGroup(
+            Tid::new("A"),
+            Tid::new("B"),
+            Tid::new("A"),
+            Kind::Field
+        )))
     );
 
     let ex_reserved = "Bool: Field";

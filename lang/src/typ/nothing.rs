@@ -1,5 +1,5 @@
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
-use share::{Pretty, DocAllocator, DocBuilder, BoxAllocator};
 
 /// This is for no-type annotations and no principals
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]

@@ -1136,16 +1136,19 @@ impl<C: HasOpFactory> UDag<C> {
             },
 
             // Create a new [interpolate], [fft] or [mle] node
-            CExp::Interpolate(box points, box evals) => {
-                let points_op = self.add_exp(points, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+            CExp::Interpolate(points_opt, box evals) => {
                 let evals_op = self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                // Add new node
-                let nifft = self.add_node(Node::interpolate(&points_op, &evals_op));
+                let points_op = match points_opt {
+                    None => None,
+                    Some(box p) => Some(self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?),
+                };
+                let ninterp = self.add_node(Node::interpolate(points_op.as_ref(), &evals_op));
+                if let Some(p_op) = points_op {
+                    self.add_edges(edge_type, ninterp, p_op);
+                }
+                self.add_edges(edge_type, ninterp, evals_op);
 
-                self.add_edges(edge_type, nifft, points_op);
-                self.add_edges(edge_type, nifft, evals_op);
-
-                return Ok(GOp::underscore(nifft, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                return Ok(GOp::underscore(ninterp, ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                     TypeError::next(
                         TypeError::exp(kctx, &vctx, &exp),
                         TypeError::ark(kctx, &vctx, &exp, &typ)

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use share::{Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Ark {
@@ -9,7 +9,7 @@ pub enum Ark {
     G2,
     G1Affine,
     G2Affine,
-    GT
+    GT,
 }
 
 /// Pretty-printer for Ark

@@ -224,7 +224,10 @@ fn serialize_value_internal<C: ArkConfig, W: Write>(
             Ok(())
         }
         Value::Poly(poly) => {
-            poly.serialize_compressed(&mut *writer)
+            // UFCS: `poly.serialize_compressed` does not reliably resolve to
+            // `CanonicalSerialize` for `VirtualPolynomial` (public transcript bytes
+            // must match `VirtualPolynomial`'s tagged/normalize-or-explicit encoding).
+            CanonicalSerialize::serialize_compressed(poly, &mut *writer)
         }
         Value::Record(fields) => {
             // Serialize record fields
@@ -2105,14 +2108,21 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-            ATyp::Uni(n) => Value::VecScalar(C::FOps::vec_rand(rng, *n)),
-            ATyp::Mle(_n) => {
-                // For MLE random, create a random univariate polynomial first, then convert
-                // Actually, we should create a random MLE - but for now use a simple approach
-                let num_vars = 1;  // Minimum 1 variable
-                let evals = C::FOps::vec_rand(rng, 1 << num_vars);
+            ATyp::Uni(n) => {
+                // Match `Poly(F,1,n)` / FFT grid size `n`: `value_fft` uses `n` coefficients.
+                let len = (*n).max(1);
+                let coeffs = C::FOps::vec_rand(rng, len);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                    DensePolynomial::from_coefficients_vec(coeffs),
+                )))
+            },
+            ATyp::Mle(k) => {
+                let num_vars = *k;
+                let evals = C::FOps::vec_rand(rng, 1usize << num_vars);
                 Value::Poly(VirtualPolynomial::from_poly(
-                    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals))
+                    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+                        num_vars, evals,
+                    )),
                 ))
             },
             ATyp::VPoly(_, _) => {
@@ -2520,45 +2530,34 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    pub fn value_ifft(&self) -> Self {
-        match self {
-            Value::VecScalar(v) => {
-                let mut v = v.clone();
-                C::FOps::vec_ifft(&mut v);
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(v)))
-            },
-            Value::VecIndex(v) => {
-                let mut v = v.par_iter().map(|i| C::FOps::from_usize(*i)).collect();
-                C::FOps::vec_ifft(&mut v);
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(v)))
-            },
-            _ => panic!("Expected vec scalar or vec index, found {}", self),
-        }
-    }
-
-    /// Interpolate a univariate polynomial from evaluations at `points`.
-    ///
-    /// Fast path: if `points` are exactly the size-`n` FFT domain roots of unity,
-    /// use IFFT.
-    /// Fallback: otherwise interpolate over arbitrary points.
-    pub fn value_interpolate_with_points(&self, points: &Self) -> Self {
+    pub fn value_interpolate(&self, points: Option<&Self>) -> Self {
         let evals = value_as_scalar_vec::<C>(self);
-        let xs = value_as_scalar_vec::<C>(points);
-        assert_eq!(
-            xs.len(),
-            evals.len(),
-            "interpolate expects points and evaluations with same length"
-        );
-        assert!(!xs.is_empty(), "interpolate expects non-empty inputs");
+        assert!(!evals.is_empty(), "interpolate expects non-empty evaluations");
 
-        if are_fft_domain_points::<C>(&xs) {
-            let mut coeffs = evals;
-            C::FOps::vec_ifft(&mut coeffs);
-            return Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)));
+        match points {
+            None => {
+                let mut coeffs = evals;
+                C::FOps::vec_ifft(&mut coeffs);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)))
+            }
+            Some(points) => {
+                let xs = value_as_scalar_vec::<C>(points);
+                assert_eq!(
+                    xs.len(),
+                    evals.len(),
+                    "interpolate expects points and evaluations with same length"
+                );
+
+                if are_fft_domain_points::<C>(&xs) {
+                    let mut coeffs = evals;
+                    C::FOps::vec_ifft(&mut coeffs);
+                    return Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)));
+                }
+
+                let coeffs = interpolate_univariate_from_points::<C::F>(&xs, &evals);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)))
+            }
         }
-
-        let coeffs = interpolate_univariate_from_points::<C::F>(&xs, &evals);
-        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(coeffs)))
     }
 
     pub fn value_fft(&self) -> Self {
@@ -2700,9 +2699,6 @@ fn are_fft_domain_points<C: ArkConfig>(points: &[C::F]) -> bool {
     domain.elements().zip(points.iter()).all(|(a, b)| a == *b)
 }
 
-/// O(n^2) interpolation from arbitrary distinct points using:
-/// P(x) = prod_j (x - x_j), and
-/// f(x) = sum_i y_i / P'(x_i) * P(x)/(x - x_i).
 fn interpolate_univariate_from_points<F: PrimeField>(points: &[F], evals: &[F]) -> Vec<F> {
     let n = points.len();
     assert_eq!(n, evals.len(), "point/eval length mismatch");
@@ -2742,7 +2738,6 @@ fn interpolate_univariate_from_points<F: PrimeField>(points: &[F], evals: &[F]) 
     coeffs
 }
 
-/// Divide ascending-coefficient polynomial `p` by `(x - a)`.
 fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
     assert!(p.len() >= 2, "polynomial degree must be at least 1");
     let n = p.len() - 1;

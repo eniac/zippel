@@ -1,22 +1,21 @@
-use std::fmt;
+use bumpalo::Bump;
 use from_pest::{ConversionError, FromPest};
 use pest::iterators::Pairs;
 use pest::Parser;
-use bumpalo::Bump;
+use std::fmt;
 use thiserror::Error;
 
-use share::{Ctx, Set, Pretty, BoxAllocator, DocAllocator, DocBuilder};
-use share::traversal::ToTraversal1;
-use crate::ast::{Exp, FreeVars, CSig, Sig, GArgs};
+use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
-use crate::typ::{
-    GTyp, CTyp, CKind, Range, Size, TypeVars, RangeTraversal, SizeSubsts, EvalError, RangeError,
-    TypeInline,
-};
-use crate::typ::subst::SubstError;
-use crate::typ::infer::{Typeable, TypeError};
 use crate::parser::*;
-
+use crate::typ::infer::{TypeError, Typeable};
+use crate::typ::subst::SubstError;
+use crate::typ::{
+    CKind, CTyp, EvalError, GTyp, Range, RangeError, RangeTraversal, Size, SizeSubsts, TypeInline,
+    TypeVars,
+};
+use share::traversal::ToTraversal1;
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 
 /// Body of Zippel declarations (protocols, functions, and type aliases).
 /// Specs are given either by an explicit relation on inputs (precondition)
@@ -29,18 +28,13 @@ pub enum Body<N> {
     /// # fields
     /// - `body`: The body of the protocol.
     /// - `relation`: The relation describing the protocol.
-    Proto {
-        body: Exp<N>,
-        relation: Exp<N>,
-    },
+    Proto { body: Exp<N>, relation: Exp<N> },
 
     /// A function body declaration
     ///
     /// # fields
     /// - `body`: The body of the function.
-    Func {
-        body: Exp<N>
-    },
+    Func { body: Exp<N> },
 
     /// A type alias declaration (e.g., `type Point = { x: F, y: F };`)
     /// The aliased type is stored in the Sig's return type.
@@ -104,22 +98,52 @@ impl FreeVars for CBody {
 
 /// Useful constructors
 impl<N> Decl<N> {
-    pub fn proto(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, relation: Exp<N>, body: Exp<N>) -> Self {
-        let sig = Sig { name, typevars, args, ret: GTyp::bool() };
+    pub fn proto(
+        name: Vid,
+        typevars: TypeVars<N>,
+        args: GArgs<N>,
+        relation: Exp<N>,
+        body: Exp<N>,
+    ) -> Self {
+        let sig = Sig {
+            name,
+            typevars,
+            args,
+            ret: GTyp::bool(),
+        };
         let body = Body::Proto { relation, body };
         Decl { sig, body }
     }
 
-    pub fn func(name: Vid, typevars: TypeVars<N>, args: GArgs<N>, ret: GTyp<N>, body: Exp<N>) -> Self {
-        let sig = Sig { name, typevars, args, ret };
+    pub fn func(
+        name: Vid,
+        typevars: TypeVars<N>,
+        args: GArgs<N>,
+        ret: GTyp<N>,
+        body: Exp<N>,
+    ) -> Self {
+        let sig = Sig {
+            name,
+            typevars,
+            args,
+            ret,
+        };
         let body = Body::Func { body };
         Decl { sig, body }
     }
 
     pub fn type_alias(name: Vid, typ: GTyp<N>) -> Self {
         use crate::ast::arg::Args;
-        let sig = Sig { name, typevars: TypeVars(vec![]), args: Args(vec![]), ret: typ };
-        Decl { sig, body: Body::TypeAlias }
+        let sig = Sig {
+            name,
+            typevars: TypeVars(vec![]),
+            args: Args(vec![]),
+            ret: typ,
+        };
+        Decl {
+            sig,
+            body: Body::TypeAlias,
+        }
     }
 }
 
@@ -128,23 +152,22 @@ impl<N> Decl<N> {
 pub struct Decls<N>(pub Vec<Decl<N>>);
 
 /// Untyped body with symbolic sizes
-pub type UBody =  Body<Size>;
+pub type UBody = Body<Size>;
 
 /// Concrete sized body
 pub type CBody = Body<usize>;
 
 /// Untyped decl with symbolic sizes
-pub type UDecl =  Decl<Size>;
+pub type UDecl = Decl<Size>;
 
 /// Concrete sized declaration
 pub type CDecl = Decl<usize>;
 
 /// Untyped declarations with symbolic sizes
-pub type UDecls =  Decls<Size>;
+pub type UDecls = Decls<Size>;
 
 /// Concrete sized declarations
 pub type CDecls = Decls<usize>;
-
 
 impl UDecl {
     /// Parse a string into a Zippel declaration
@@ -156,26 +179,40 @@ impl UDecl {
     /// Each declaration has typevariables that can be concretized to different sizes.
     /// This method returns all possible size substitutions for the declaration.
     /// If `sizes` pins a Range typevar, only that value is generated.
-    pub fn get_size_substitutions(&'_ self, sizes: &Ctx<Tid, usize>) -> Result<Set<SizeSubsts>, DeclError> {
+    pub fn get_size_substitutions(
+        &'_ self,
+        sizes: &Ctx<Tid, usize>,
+    ) -> Result<Set<SizeSubsts>, DeclError> {
         Ok(SizeSubsts::from_typevars(&self.sig.typevars, sizes)?)
     }
 
     /// Concretize a declaration with a given size substitution
     pub fn concretize<'a, 'b>(&'a self, substs: &'b SizeSubsts) -> Result<CDecl, DeclError> {
-
         let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
-        csig.typevars = csig.typevars
+        // Remove typevars substituted
+        csig.typevars = csig
+            .typevars
             .into_iter()
-            .filter(|tv| !matches!(tv.kind, CKind::SizeVar | CKind::Range(_)))
+            .filter(|tv| !substs.contains(&tv.id))
             .collect();
 
         // Check the ranges
         Ok(CDecl {
-            sig: csig.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+            sig: csig
+                .clone()
+                .range_traverse(&mut |r| {
+                    r.check()?;
+                    Ok(r)
+                })
                 .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
-            body: cbody.clone().range_traverse(&mut |r| { r.check()?; Ok(r) })
+            body: cbody
+                .clone()
+                .range_traverse(&mut |r| {
+                    r.check()?;
+                    Ok(r)
+                })
                 .map_err(|e| DeclError::InvalidRange(csig.clone(), e))?,
         })
     }
@@ -190,7 +227,10 @@ impl UDecls {
     }
 
     /// Parse a file into a Zippel declarations list
-    pub fn from_file<'a>(file: &str, allocator: &'a Bump) -> Result<Self, ConversionError<InputError<'a>>> {
+    pub fn from_file<'a>(
+        file: &str,
+        allocator: &'a Bump,
+    ) -> Result<Self, ConversionError<InputError<'a>>> {
         let input_str = std::fs::read_to_string(file).unwrap();
         let stored_str = allocator.alloc_str(&input_str);
         Decls::from_str(stored_str)
@@ -229,8 +269,10 @@ impl CBody {
             Body::Proto { body, relation } => {
                 // Relation must be pure (no side-effects)
                 if !relation.is_pure() {
-                    return Err(TypeError::decl(&sig.name,
-                            TypeError::not_pure_rel(relation)));
+                    return Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::not_pure_rel(relation),
+                    ));
                 }
 
                 // Type infer relation and body
@@ -239,19 +281,21 @@ impl CBody {
                 if tr == CTyp::Bool && br == CTyp::Bool {
                     Ok(())
                 } else {
-                    Err(TypeError::decl(&sig.name,
-                        TypeError::bool(&kctx, &vctx, &relation)).into())
+                    Err(TypeError::decl(&sig.name, TypeError::bool(&kctx, &vctx, &relation)).into())
                 }
-            },
+            }
             Body::Func { body } => {
                 let br = body.infer(&kctx, &fctx, &vctx)?;
                 if br == sig.ret {
                     Ok(())
                 } else {
-                    Err(TypeError::decl(&sig.name,
-                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br)).into())
+                    Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br),
+                    )
+                    .into())
                 }
-            },
+            }
             Body::TypeAlias => Ok(()),
         }
     }
@@ -262,15 +306,13 @@ impl<N: Clone> ToTraversal1<N> for Body<N> {
     type Output<Z> = Body<Z>;
     fn traverse1<Z: Clone, E>(self, f: &mut dyn FnMut(N) -> Result<Z, E>) -> Result<Body<Z>, E> {
         match self {
-            Body::Proto { relation, body } =>
-                Ok(Body::Proto {
-                    body: body.traverse1(f)?,
-                    relation: relation.traverse1(f)?,
-                }),
-            Body::Func { body } =>
-                Ok(Body::Func {
-                    body: body.traverse1(f)?,
-                }),
+            Body::Proto { relation, body } => Ok(Body::Proto {
+                body: body.traverse1(f)?,
+                relation: relation.traverse1(f)?,
+            }),
+            Body::Func { body } => Ok(Body::Func {
+                body: body.traverse1(f)?,
+            }),
             Body::TypeAlias => Ok(Body::TypeAlias),
         }
     }
@@ -282,25 +324,26 @@ impl TidSubst for CBody {
             Body::Proto { relation, body } => {
                 relation.tid_subst(from, to);
                 body.tid_subst(from, to);
-            },
+            }
             Body::Func { body } => body.tid_subst(from, to),
-            Body::TypeAlias => {},
+            Body::TypeAlias => {}
         }
     }
 }
 
 impl<N: Clone> RangeTraversal<N> for Body<N> {
-    fn range_traverse<E>(self, f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>) -> Result<Self, E> {
+    fn range_traverse<E>(
+        self,
+        f: &mut dyn FnMut(Range<N>) -> Result<Range<N>, E>,
+    ) -> Result<Self, E> {
         match self {
-            Body::Proto { relation, body } =>
-                Ok(Body::Proto {
-                    relation: relation.range_traverse(f)?,
-                    body: body.range_traverse(f)?,
-                }),
-            Body::Func { body } =>
-                Ok(Body::Func {
-                    body: body.range_traverse(f)?,
-                }),
+            Body::Proto { relation, body } => Ok(Body::Proto {
+                relation: relation.range_traverse(f)?,
+                body: body.range_traverse(f)?,
+            }),
+            Body::Func { body } => Ok(Body::Func {
+                body: body.range_traverse(f)?,
+            }),
             Body::TypeAlias => Ok(Body::TypeAlias),
         }
     }
@@ -312,7 +355,10 @@ impl<N: Clone> TypeInline<N> for Body<N> {
     }
 }
 
-impl<N: Clone + Ord> TypeInline<N> for Decl<N> where Sig<N>: TypeInline<N> {
+impl<N: Clone + Ord> TypeInline<N> for Decl<N>
+where
+    Sig<N>: TypeInline<N>,
+{
     fn type_inline(self, ctx: &Ctx<Tid, GTyp<N>>) -> Self {
         Decl {
             sig: self.sig.type_inline(ctx),
@@ -331,24 +377,22 @@ where
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
-            Body::Proto { relation, body } =>
-                allocator.concat([
-                    allocator.text(" where ("),
-                    relation.pretty(allocator),
-                    allocator.text(") {"),
-                    allocator.line(),
-                    body.pretty(allocator).group().indent(2),
-                    allocator.line(),
-                    allocator.text("}"),
-                ]),
-            Body::Func { body } =>
-                allocator.concat([
-                    allocator.text("{"),
-                    allocator.line(),
-                    body.pretty(allocator).group().indent(2),
-                    allocator.line(),
-                    allocator.text("}"),
-                ]),
+            Body::Proto { relation, body } => allocator.concat([
+                allocator.text(" where ("),
+                relation.pretty(allocator),
+                allocator.text(") {"),
+                allocator.line(),
+                body.pretty(allocator).group().indent(2),
+                allocator.line(),
+                allocator.text("}"),
+            ]),
+            Body::Func { body } => allocator.concat([
+                allocator.text("{"),
+                allocator.line(),
+                body.pretty(allocator).group().indent(2),
+                allocator.line(),
+                allocator.text("}"),
+            ]),
             Body::TypeAlias => allocator.nil(),
         }
     }
@@ -369,11 +413,15 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         let Decl { sig, body } = self;
         allocator.concat([
-            if body.is_proto() { allocator.text("proto") } else { allocator.text("fn") },
+            if body.is_proto() {
+                allocator.text("proto")
+            } else {
+                allocator.text("fn")
+            },
             allocator.space(),
             sig.pretty(allocator),
             allocator.space(),
-            body.pretty(allocator)
+            body.pretty(allocator),
         ])
     }
 
@@ -394,7 +442,7 @@ where
     }
 }
 /// Pretty instance for decls
-impl <'a, D, N, A> Pretty<'a, D, A> for Decls<N>
+impl<'a, D, N, A> Pretty<'a, D, A> for Decls<N>
 where
     D: DocAllocator<'a, A>,
     N: Clone + Pretty<'a, D, A> + 'a,
@@ -404,7 +452,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         allocator.intersperse(
             self.0.into_iter().map(|d| d.pretty(allocator)),
-            allocator.hardline()
+            allocator.hardline(),
         )
     }
 
@@ -447,9 +495,11 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // External relation
                 let relation = Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 // Protocol's body (single expression, chains via let/log/verify/assert continuations)
-                let body = Exp::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?;
+                let body = Exp::from_pest(&mut Pairs::single(
+                    inner.next().ok_or(ConversionError::NoMatch)?,
+                ))?;
                 Ok(Decl::proto(name, typevars, args, relation, body))
-            },
+            }
             Rule::func_decl => {
                 let mut inner = pair.into_inner();
                 // Function's name
@@ -461,16 +511,18 @@ impl<'pest> FromPest<'pest> for UDecl {
                 // Function return type
                 let ret = GTyp::from_pest(&mut inner)?;
                 // Function's body (single expression, chains via let/log continuations)
-                let body = Exp::from_pest(&mut Pairs::single(inner.next().ok_or(ConversionError::NoMatch)?))?;
+                let body = Exp::from_pest(&mut Pairs::single(
+                    inner.next().ok_or(ConversionError::NoMatch)?,
+                ))?;
                 Ok(Decl::func(name, typevars, args, ret, body))
-            },
+            }
             Rule::type_decl => {
                 let mut inner = pair.into_inner();
                 let name = Vid(inner.next().unwrap().as_str().to_string());
                 let typ = GTyp::from_pest(&mut Pairs::single(inner.next().unwrap()))?;
                 Ok(Decl::type_alias(name, typ))
-            },
-            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair)))
+            }
+            _ => Err(ConversionError::Malformed(InputError::UnexpectedExp(pair))),
         }
     }
 }
@@ -491,27 +543,27 @@ impl<'pest> FromPest<'pest> for UDecls {
                     match p.as_rule() {
                         Rule::decl => {
                             decls.push(Decl::from_pest(&mut Pairs::single(p))?);
-                        },
+                        }
                         Rule::EOI => (),
                         _ => unreachable!(),
                     }
                 }
                 Ok(Decls(decls))
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
 
-#[cfg(test)] use crate::{
-        ast::{UExp, Exps, GArg},
-        typ::{Kind, TypeVar}
+#[cfg(test)]
+use crate::{
+    ast::{Exps, GArg, UExp},
+    typ::{Kind, TypeVar},
 };
 
 #[test]
 fn proto_easy() {
-    let ex =
-        "proto test<F: Field>(public a: F) where a == a { verify(a == a) }";
+    let ex = "proto test<F: Field>(public a: F) where a == a { verify(a == a) }";
 
     let pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
     UDecl::from_pest(&mut pairs.into_iter()).unwrap();
@@ -526,14 +578,20 @@ fn proto_parser() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::proto(
-        Vid::from("test"),
-        TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-        GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-        UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
-        UExp::letx(Vid::from("x"), UExp::from(3) * UExp::varstr("a"),
-            UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
-    ));
+    assert_eq!(
+        UDecl::from_pest(&mut pairs).unwrap(),
+        UDecl::proto(
+            Vid::from("test"),
+            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
+            GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+            UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
+            UExp::letx(
+                Vid::from("x"),
+                UExp::from(3) * UExp::varstr("a"),
+                UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x")))
+            )
+        )
+    );
 }
 
 #[test]
@@ -545,17 +603,33 @@ fn fn_parser1() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
-        Vid::from("test"),
-        TypeVars(vec![
-            TypeVar::new_str("F", Kind::Field),
-            TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) }))
-        ]),
-        GArgs::from([GArg::private("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
-        GTyp::varstr("F"),
-        UExp::letx(Vid::from("x"), UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
-            UExp::varstr("x") + UExp::varstr("x"))
-    ));
+    assert_eq!(
+        UDecl::from_pest(&mut pairs).unwrap(),
+        UDecl::func(
+            Vid::from("test"),
+            TypeVars(vec![
+                TypeVar::new_str("F", Kind::Field),
+                TypeVar::new_str(
+                    "N",
+                    Kind::Range(Range {
+                        start: Size::Lit(0),
+                        step: Size::Lit(1),
+                        end: Size::Lit(10)
+                    })
+                )
+            ]),
+            GArgs::from([GArg::private(
+                "a",
+                GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
+            )]),
+            GTyp::varstr("F"),
+            UExp::letx(
+                Vid::from("x"),
+                UExp::from(3) * UExp::ram(UExp::from("a"), UExp::from(0)),
+                UExp::varstr("x") + UExp::varstr("x")
+            )
+        )
+    );
 }
 
 #[test]
@@ -569,20 +643,34 @@ fn fn_parser2() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decl, ex).unwrap();
-    assert_eq!(UDecl::from_pest(&mut pairs).unwrap(), UDecl::func(
-        Vid::from("test"),
-        TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-        GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-        GTyp::varstr("F"),
-        UExp::letx(Vid::from("v"), UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
-            UExp::logx(Vid::from("p"),
-                UExp::interpolate(
-                    UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
-                    UExp::mul(UExp::varstr("v"), UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]))
+    assert_eq!(
+        UDecl::from_pest(&mut pairs).unwrap(),
+        UDecl::func(
+            Vid::from("test"),
+            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
+            GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+            GTyp::varstr("F"),
+            UExp::letx(
+                Vid::from("v"),
+                UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
+                UExp::logx(
+                    Vid::from("p"),
+                    UExp::interpolate_at(
+                        UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
+                        UExp::mul(
+                            UExp::varstr("v"),
+                            UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
+                        ),
+                    ),
+                    UExp::logx(
+                        Vid::from("x"),
+                        UExp::challenge(Tid::from("F")),
+                        UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])),
+                    ),
                 ),
-                UExp::logx(Vid::from("x"), UExp::challenge(Tid::from("F")),
-                    UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])))))
-    ));
+            ),
+        ),
+    );
 }
 
 #[test]
@@ -598,25 +686,44 @@ fn decls_parser() {
         "}"
     );
     let mut pairs = ZippelParser::parse(Rule::decls, ex).unwrap();
-    assert_eq!(UDecls::from_pest(&mut pairs).unwrap(), Decls(vec![
-        UDecl::proto(
-            Vid::from("test"),
-            TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
-            GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
-            UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
-            UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::varstr("a")),
-                UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x"))))
-        ),
-        UDecl::func(
-            Vid::from("test"),
-            TypeVars(vec![
-                TypeVar::new_str("F", Kind::Field),
-                TypeVar::new_str("N", Kind::Range(Range { start: Size::Lit(0), step: Size::Lit(1), end: Size::Lit(10) })),
-            ]),
-            GArgs::from([GArg::public("a", GTyp::vec(&GTyp::varstr("F"), Size::from("N")))]),
-            GTyp::varstr("F"),
-            UExp::letx(Vid::from("x"), UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
-                UExp::varstr("x") + UExp::varstr("x"))
-        )
-    ]));
+    assert_eq!(
+        UDecls::from_pest(&mut pairs).unwrap(),
+        Decls(vec![
+            UDecl::proto(
+                Vid::from("test"),
+                TypeVars(vec![TypeVar::new_str("F", Kind::Field)]),
+                GArgs::from([GArg::public("a", GTyp::varstr("F"))]),
+                UExp::equ(UExp::varstr("a"), UExp::varstr("a")),
+                UExp::letx(
+                    Vid::from("x"),
+                    UExp::mul(UExp::from(3), UExp::varstr("a")),
+                    UExp::verify(UExp::equ(UExp::varstr("x"), UExp::varstr("x")))
+                )
+            ),
+            UDecl::func(
+                Vid::from("test"),
+                TypeVars(vec![
+                    TypeVar::new_str("F", Kind::Field),
+                    TypeVar::new_str(
+                        "N",
+                        Kind::Range(Range {
+                            start: Size::Lit(0),
+                            step: Size::Lit(1),
+                            end: Size::Lit(10)
+                        })
+                    ),
+                ]),
+                GArgs::from([GArg::public(
+                    "a",
+                    GTyp::vec(&GTyp::varstr("F"), Size::from("N"))
+                )]),
+                GTyp::varstr("F"),
+                UExp::letx(
+                    Vid::from("x"),
+                    UExp::mul(UExp::from(3), UExp::ram(UExp::varstr("a"), UExp::from(0))),
+                    UExp::varstr("x") + UExp::varstr("x")
+                )
+            )
+        ])
+    );
 }

@@ -26,10 +26,15 @@ spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = 
 [dev-dependencies]
 tempfile = "3.10"
 criterion = "0.5"
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+petgraph = "0.7.1"
 
 [[bench]]
 name = "graph_execution"
+harness = false
+
+[[bench]]
+name = "groebner"
 harness = false
 
 [[example]]
@@ -171,3 +176,7 @@ path = "examples/map_comp_bench/main.rs"
 [[example]]
 name = "type_alias"
 path = "examples/type_alias/main.rs"
+
+[[example]]
+name = "r1cs_sigma"
+path = "examples/r1cs_sigma/main.rs"

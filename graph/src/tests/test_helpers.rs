@@ -2,17 +2,16 @@
 ///
 /// This module provides utilities for creating and executing graphs
 /// to test algebraic properties and semantic correctness.
-
-use crate::{UDag, Node, Op, GOp, Ref, PRef, mk};
+use crate::{GOp, Node, Op, PRef, Ref, UDag, mk};
 use backend::op::HasOpFactory;
-use backend::{ArkConfig, ArkBls12_381, Value, ATyp, ArkScalarOps};
+use backend::{ArkConfig, ArkBls12_381, ArkScalarOps, ATyp, Value};
 use backend::values::marginalize as backend_marginalize;
 use lang::id::Vid;
-use lang::typ::{Nothing, Qualifier, Distribution};
+use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use share::Ctx;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
@@ -42,7 +41,7 @@ impl<C: HasOpFactory> GraphBuilder<C> {
                     typ.clone(),
                     0,
                     Qualifier::Private,
-                    Distribution::Nonuniform
+                    Distribution::Nonuniform,
                 );
                 args.push(pref);
             }
@@ -165,7 +164,8 @@ fn evaluate_op<C: HasOpFactory>(
             }
         }
         Op::Vec(ops) => {
-            let values: Vec<Value<C>> = ops.iter()
+            let values: Vec<Value<C>> = ops
+                .iter()
                 .map(|o| evaluate_op(o, computed, inputs))
                 .collect();
             Value::value_vec(values)
@@ -193,7 +193,8 @@ fn evaluate_op<C: HasOpFactory>(
             Value::random(&mut rng, typ)
         }
         Op::Record(fields) => {
-            let evaluated_fields: Ctx<String, Value<C>> = fields.iter()
+            let evaluated_fields: Ctx<String, Value<C>> = fields
+                .iter()
                 .map(|(k, v)| (k.clone(), evaluate_op(v, computed, inputs)))
                 .collect();
             Value::Record(evaluated_fields)
@@ -257,8 +258,8 @@ fn evaluate_op<C: HasOpFactory>(
             let Value::Record(record) = rec_val else { unreachable!() };
             record.get(&field_name).cloned().unwrap()
         }
-        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) |
-        Op::Coef(_) | Op::Eval(_, _) => {
+        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) | Op::Coef(_)
+        | Op::Eval(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
         Op::Reduce(binop, v) => {
@@ -289,11 +290,7 @@ pub fn test_inputs<C: ArkConfig>() -> Ctx<Vid, Value<C>> {
 }
 
 /// Add a scalar input to context
-pub fn add_scalar_input<C: ArkConfig>(
-    ctx: &mut Ctx<Vid, Value<C>>,
-    name: &str,
-    value: u64,
-) {
+pub fn add_scalar_input<C: ArkConfig>(ctx: &mut Ctx<Vid, Value<C>>, name: &str, value: u64) {
     ctx.insert(&Vid::from(name), &scalar(value));
 }
 
@@ -429,8 +426,8 @@ mod tests {
 
     #[test]
     fn test_execute_multiple_checks() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         // Protocol with two separate verify statements → two Check nodes
@@ -440,12 +437,19 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_check();
-        assert_eq!(checks.len(), 2, "Protocol with two verify statements should have two check nodes");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Protocol with two verify statements should have two check nodes"
+        );
 
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "x", 5);
@@ -464,8 +468,8 @@ mod tests {
 
     #[test]
     fn test_execute_single_check_conjunction() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         // Protocol with single verify using && → one Check node
@@ -474,12 +478,19 @@ mod tests {
                 verify(x == x && y == y)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_check();
-        assert_eq!(checks.len(), 1, "Protocol with single verify (&&) should have one check node");
+        assert_eq!(
+            checks.len(),
+            1,
+            "Protocol with single verify (&&) should have one check node"
+        );
 
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "x", 5);
@@ -496,8 +507,8 @@ mod tests {
 
     #[test]
     fn test_execute_scattered_checks() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         // Protocol with scattered verify statements throughout the body
@@ -509,12 +520,19 @@ mod tests {
                 verify(b == b)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
         let checks = dag.find_check();
-        assert_eq!(checks.len(), 2, "Scattered verify statements should produce 2 check nodes");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Scattered verify statements should produce 2 check nodes"
+        );
 
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "x", 3);
@@ -533,8 +551,8 @@ mod tests {
 
     #[test]
     fn test_execute_checks_negative_second_fails() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         // Second verify has a false condition (x != y)
@@ -544,7 +562,10 @@ mod tests {
                 verify(x == y)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -566,8 +587,8 @@ mod tests {
 
     #[test]
     fn test_execute_checks_negative_first_fails() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         // First verify has a false condition (x != y)
@@ -577,7 +598,10 @@ mod tests {
                 verify(y == y)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
         let dag = &gs[0];
 
@@ -601,8 +625,8 @@ mod tests {
     /// fn checked(x) { verify(x == x); x } inlined into protocol → both checks true.
     #[test]
     fn test_execute_cross_fn_verify_positive() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -615,12 +639,19 @@ mod tests {
                 verify(a == v)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
         let checks = proto.find_check();
-        assert_eq!(checks.len(), 2, "Should have 2 check nodes (inlined + protocol)");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Should have 2 check nodes (inlined + protocol)"
+        );
 
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "v", 5);
@@ -639,8 +670,8 @@ mod tests {
     /// fn checked(x, y) { verify(x == y); x } — when x ≠ y the inlined check fails.
     #[test]
     fn test_execute_cross_fn_verify_negative() {
-        use lang::ast::UModule;
         use crate::UDags;
+        use lang::ast::UModule;
         use share::Ctx;
 
         let src = r#"
@@ -653,12 +684,19 @@ mod tests {
                 verify(r == a)
             }
         "#;
-        let m = UModule::from_str(src).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = UDags::<TestConfig>::from_module(m).unwrap();
 
         let proto = gs.protocols()[0];
         let checks = proto.find_check();
-        assert_eq!(checks.len(), 2, "Should have 2 check nodes (inlined + protocol)");
+        assert_eq!(
+            checks.len(),
+            2,
+            "Should have 2 check nodes (inlined + protocol)"
+        );
 
         let mut inputs = test_inputs();
         add_scalar_input(&mut inputs, "a", 3);

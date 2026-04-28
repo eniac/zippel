@@ -1,13 +1,13 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
-use backend::{ArkBls12_381, ArkConfig, Value};
+use ark_ff::Zero;
+use ark_poly::DenseMultilinearExtension;
+use ark_std::UniformRand;
 use backend::poly_variant::PolyVariant;
 use backend::VirtualPolynomial;
-use ark_poly::DenseMultilinearExtension;
-use lang::id::{Vid, Tid};
+use backend::{ArkBls12_381, ArkConfig, Value};
+use lang::id::{Tid, Vid};
 use share::Ctx;
-use ark_ff::Zero;
-use ark_std::UniformRand;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 const NUM_VARS: usize = 10;
 const MAX_DEGREE: usize = 10;
@@ -38,7 +38,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
     if DROP_EVAL_POINT_TEST {
         let removed = drop_one_eval_point_from_proof(&mut proof);
         println!(
@@ -60,26 +63,28 @@ fn main() {
         std::process::exit(1);
     }
 
-    // // Static analysis (completeness & ZK)
-    // println!("\n--- Static Analysis ---");
-    // let analysis_result = std::panic::catch_unwind(|| {
-    //     let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
-    //     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    //     analysis_handler.minimal_analysis()
-    // });
-    // match analysis_result {
-    //     Ok(analysis) => {
-    //         match &analysis.completeness {
-    //             Ok(()) => println!("Completeness:   ✓"),
-    //             Err(e) => println!("Completeness:   ✗ {}", e),
-    //         }
-    //         match &analysis.zk {
-    //             Ok(()) => println!("ZK:             ✓"),
-    //             Err(e) => println!("ZK:             ✗ {}", e),
-    //         }
-    //     }
-    //     Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    // }
+    println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
+    let analysis_result = std::panic::catch_unwind(|| {
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        analysis_handler.minimal_analysis()
+    });
+    let analysis_elapsed = analysis_start.elapsed();
+    match analysis_result {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn drop_one_eval_point_from_proof(proof: &mut [Value<ArkBls12_381>]) -> bool {
@@ -143,4 +148,3 @@ fn prover_create_inputs(num_vars: usize, max_degree: usize) -> Ctx<Vid, Value<Ar
         (Vid("poly".to_string()), poly),
     ])
 }
-

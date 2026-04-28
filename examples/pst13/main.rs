@@ -1,10 +1,10 @@
-use zippel::*;
-use std::{path::PathBuf, time::Instant};
+use ark_std::One;
+use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
-use ark_std::UniformRand;
-use ark_std::One;
+use std::{path::PathBuf, time::Instant};
+use zippel::*;
 
 // N = number of variables; 2^N = number of polynomial coefficients.
 // To test with a different N, change N_VARS, update the inputs accordingly,
@@ -24,7 +24,10 @@ fn main() {
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
-    println!("Proof size:     {proof_bytes} bytes ({} elements)", proof.len());
+    println!(
+        "Proof size:     {proof_bytes} bytes ({} elements)",
+        proof.len()
+    );
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -41,11 +44,13 @@ fn main() {
 
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
+    let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
         Ok(analysis) => {
             match &analysis.completeness {
@@ -59,6 +64,7 @@ fn main() {
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -73,27 +79,39 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     // PST.Setup: sample secret trapdoor alpha = (alpha_1, ..., alpha_N)
     let one = <ArkBls12_381 as ArkConfig>::F::one();
-    let alpha: Vec<_> = (0..n).map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng)).collect();
+    let alpha: Vec<_> = (0..n)
+        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .collect();
     let one_m_alpha: Vec<_> = alpha.iter().map(|a| one - a).collect();
 
     // PST.Setup: compute ck_N = [eq_N(alpha, i) * G  for i in {0,1}^N]
     // Index i encodes the bit-string (i_{N-1}, ..., i_1, i_0) in MSB-first order
     // so that the streaming algorithm's split-by-first-variable is a contiguous split.
-    let ck_n_scalars: Vec<_> = (0..size).map(|i| {
-        // Bit j (MSB = variable 1) of i
-        (0..n).fold(one, |acc, j| {
-            let bit = (i >> (n - 1 - j)) & 1;
-            if bit == 1 { acc * alpha[j] } else { acc * one_m_alpha[j] }
+    let ck_n_scalars: Vec<_> = (0..size)
+        .map(|i| {
+            // Bit j (MSB = variable 1) of i
+            (0..n).fold(one, |acc, j| {
+                let bit = (i >> (n - 1 - j)) & 1;
+                if bit == 1 {
+                    acc * alpha[j]
+                } else {
+                    acc * one_m_alpha[j]
+                }
+            })
         })
-    }).collect();
+        .collect();
     let ck_n = Value::VecG1(ck_n_scalars.iter().map(|s| gen_g * s).collect());
 
     // Sample random polynomial p = [p_{i_1...i_N} for i in {0,1}^N]
-    let p_scalars: Vec<_> = (0..size).map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng)).collect();
+    let p_scalars: Vec<_> = (0..size)
+        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .collect();
     let p = Value::VecScalar(p_scalars.clone());
 
     // Sample evaluation point z = (z_1, ..., z_N)
-    let z_scalars: Vec<_> = (0..n).map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng)).collect();
+    let z_scalars: Vec<_> = (0..n)
+        .map(|_| <ArkBls12_381 as ArkConfig>::F::rand(&mut rng))
+        .collect();
     let z = Value::VecScalar(z_scalars.clone());
 
     // Compute y = p(z) as a multilinear extension evaluation:
@@ -102,7 +120,11 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         let eq_z_i = (0..n).fold(one, |prod, j| {
             let bit = (i >> (n - 1 - j)) & 1;
             let one_m_zj = one - z_scalars[j];
-            if bit == 1 { prod * z_scalars[j] } else { prod * one_m_zj }
+            if bit == 1 {
+                prod * z_scalars[j]
+            } else {
+                prod * one_m_zj
+            }
         });
         acc + p_scalars[i] * eq_z_i
     });
@@ -118,13 +140,13 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let alpha_h = Value::VecG2(alpha.iter().map(|a| gen_h * a).collect());
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p".to_string()),        p),
-        (Vid("z".to_string()),        z),
-        (Vid("y".to_string()),        y),
-        (Vid("c_p".to_string()),      c_p),
-        (Vid("ck_N".to_string()),     ck_n),
-        (Vid("g_gen".to_string()),    Value::G1(gen_g)),
-        (Vid("h_gen".to_string()),    Value::G2(gen_h)),
-        (Vid("alpha_H".to_string()),  alpha_h),
+        (Vid("p".to_string()), p),
+        (Vid("z".to_string()), z),
+        (Vid("y".to_string()), y),
+        (Vid("c_p".to_string()), c_p),
+        (Vid("ck_N".to_string()), ck_n),
+        (Vid("g_gen".to_string()), Value::G1(gen_g)),
+        (Vid("h_gen".to_string()), Value::G2(gen_h)),
+        (Vid("alpha_H".to_string()), alpha_h),
     ])
 }

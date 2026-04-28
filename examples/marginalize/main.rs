@@ -47,7 +47,9 @@ fn main() {
     let analysis_args =
         ZippelArgs::new(zippel_path).with_subgraph("marginalize_proto".to_string());
     let mut analysis_handler: ZippelHandler<ArkField17> = ZippelHandler::new(analysis_args);
+    let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();
+    let analysis_elapsed = analysis_start.elapsed();
     match &analysis.completeness {
         Ok(()) => println!("Completeness:     ✓"),
         Err(e) => println!("Completeness:     ✗ {}", e),
@@ -56,6 +58,7 @@ fn main() {
         Ok(()) => println!("ZK:               ✓"),
         Err(e) => println!("ZK:               ✗ {}", e),
     }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn create_inputs() -> Ctx<Vid, Value<ArkField17>> {

@@ -1,12 +1,12 @@
-pub mod local_scheduler;
-mod cost;
 mod asymptotic_cost;
+mod cost;
+pub mod local_scheduler;
 
-pub use cost::{Cost, CostModel};
-pub use asymptotic_cost::AsymptoticCost;
-use std::fmt;
 use crate::{Dag, UDag};
+pub use asymptotic_cost::AsymptoticCost;
 use backend::ArkConfig;
+pub use cost::{Cost, CostModel};
+use std::fmt;
 
 /// Thread identifiers
 pub type ThreadId = usize;
@@ -36,5 +36,4 @@ impl fmt::Display for ThreadAlloc {
 /// This trait implements a scheduling algorithm for the DAG.
 pub trait Scheduler {
     fn schedule<C: ArkConfig>(self, dag: UDag<C>) -> TDag<C>;
-    
 }

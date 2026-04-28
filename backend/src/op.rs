@@ -1,16 +1,19 @@
-use lang::typ::range::CRange;
+use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
 use lang::ast::BinOp;
-use lang::typ::lub::Lub;
-use lang::typ::Nothing;
 use lang::id::Vid;
-use crate::{Value, ABase, ATyp, ArkConfig, ArkScalarOps};
+use lang::typ::Nothing;
+use lang::typ::lub::Lub;
+use lang::typ::range::CRange;
 
 use hashconsing::{HConsed, HConsign, HashConsign};
-use std::sync::RwLock;
 use petgraph::graph::NodeIndex;
-use share::{Ctx, Pretty, BoxAllocator, DocAllocator, DocBuilder};
+use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
-use std::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign, BitAndAssign, Add, Sub, Mul, Div, Rem, BitXor, BitAnd};
+use std::ops::{
+    Add, AddAssign, BitAnd, BitAndAssign, BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign,
+    Rem, RemAssign, Sub, SubAssign,
+};
+use std::sync::RwLock;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug, Hash)]
 pub enum Ref {
@@ -51,13 +54,14 @@ pub enum Op<C: ArkConfig, R> {
     /// Random oracle challenge
     Challenge(ATyp, bool),
 
-    /// Convert from evaluation domain to lagrange domain.
-    Interpolate(HOp<C>, HOp<C>),
+    /// Interpolate to univariate polynomial: `None` uses the FFT evaluation grid (inverse FFT);
+    /// `Some(points)` uses explicit interpolation points together with evaluations.
+    Interpolate(Option<HOp<C>>, HOp<C>),
 
-    /// Convert from lagrange domain to evaluation domain
+    /// Forward FFT: polynomial coefficients → evaluations on the FFT grid.
     Fft(HOp<C>),
 
-    /// Polynomial 
+    /// Polynomial
     Poly(HOp<C>),
 
     /// Multilinear extension
@@ -143,16 +147,16 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Record(_) => 16,
             Op::Random(_, _) => 17,
             Op::Challenge(_, _) => 18,
-            Op::Interpolate(_, _) => 18,
-            Op::Fft(_) => 19,
-            Op::Check(_) => 20,
-            Op::Poly(_) => 21,
-            Op::Eval(_, _) => 22,
-            Op::Coef(_) => 23,
-            Op::Mle(_) => 24,
-            Op::Reduce(_, _) => 25,
-            Op::Marginalize(_) => 26,
-            Op::Proj(_, _, _) => 27,
+            Op::Interpolate(_, _) => 19,
+            Op::Fft(_) => 20,
+            Op::Check(_) => 21,
+            Op::Poly(_) => 22,
+            Op::Eval(_, _) => 23,
+            Op::Coef(_) => 24,
+            Op::Mle(_) => 25,
+            Op::Reduce(_, _) => 26,
+            Op::Marginalize(_) => 27,
+            Op::Proj(_, _, _) => 28,
         }
     }
 
@@ -163,22 +167,30 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Bin(_, _, _, typ) => typ.clone(),
             Op::Pair(_, _, typ) => typ.clone(),
             Op::Ref(_, t) => t.clone(),
-            Op::Ram(l, r) =>
-                match (l.typ(), r.typ()) {
-                    (ATyp::Vec(box typ, _), ATyp::Base(_)) => typ,
-                    (ATyp::Vec(box typ, _), ATyp::Vec(_, m)) =>
-                        ATyp::vec(&typ, m),
-                    (ATyp::Record(_), _) => {
-                        panic!("Records do not support indexed access. Use direct field access (record.field) instead.")
-                    },
-                    (a, b) =>
-                        panic!("UncaughtError: Ram operand must be a vector, not {} [ {} ]", a, b),
+            Op::Ram(l, r) => match (l.typ(), r.typ()) {
+                (ATyp::Vec(box typ, _), ATyp::Base(_)) => typ,
+                (ATyp::Vec(box typ, _), ATyp::Vec(_, m)) => ATyp::vec(&typ, m),
+                (ATyp::Record(_), _) => {
+                    panic!(
+                        "Records do not support indexed access. Use direct field access (record.field) instead."
+                    )
                 }
+                (a, b) => panic!(
+                    "UncaughtError: Ram operand must be a vector, not {} [ {} ]",
+                    a, b
+                ),
+            },
             Op::Vec(vs) => {
                 let mut typ = vs[0].typ();
                 for v in vs.iter().skip(1) {
-                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing)
-                        .expect(format!("UncaughtError: Vector operands must be of the same type: {} != {}", typ, v.typ()).as_str());
+                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).expect(
+                        format!(
+                            "UncaughtError: Vector operands must be of the same type: {} != {}",
+                            typ,
+                            v.typ()
+                        )
+                        .as_str(),
+                    );
                 }
                 ATyp::vec(&typ, vs.len())
             }
@@ -192,8 +204,19 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
-            Op::Interpolate(_, evals) => evals.typ(),
-            Op::Fft(op) => op.typ(),
+            Op::Interpolate(None, op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
+                t => panic!(
+                    "Op::Interpolate (FFT grid): input must be Vec(Scalar | Fin, n); got {}",
+                    t
+                ),
+            },
+            Op::Interpolate(Some(_), evals) => evals.typ(),
+            Op::Fft(op) => match op.typ() {
+                ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
+                t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
+            },
             Op::Check(op) => op.typ(),
             Op::Poly(op) => op.typ(),
             Op::Eval(_p, x) => x.typ(),
@@ -203,9 +226,8 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Proj(_, _, typ) => typ.clone(),
             Op::Reduce(op, v) => {
                 let (elem, _) = v.typ().into_vec();
-                ATyp::lub_op(*op, &elem, &elem, &Nothing)
-                    .expect("Reduce: type error in binary op")
-            },
+                ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
+            }
         }
     }
 
@@ -250,7 +272,6 @@ impl<C: ArkConfig, R> Op<C, R> {
 }
 
 impl<C: HasOpFactory> GOp<C> {
-
     pub fn bin(op: BinOp, a: Self, b: Self, typ: ATyp) -> Self {
         match op {
             BinOp::Add => Self::add(a, b, typ),
@@ -277,26 +298,37 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Ram(_, idx_inner), _) => {
                 if let Op::Value(Value::VecIndex(vl)) = idx_inner.get() {
                     match &i {
-                        Op::Value(Value::VecIndex(vr)) =>
-                            return Op::ram(v_inner_clone(&v), Op::Value(Value::VecIndex(vr.iter()
-                                .map(|j| vl[*j as usize].clone())
-                                .collect::<Vec<_>>()))),
-                        Op::Value(Value::Index(j)) =>
-                            return Op::ram(v_inner_clone(&v), Op::Value(Value::Index(vl[*j].clone()))),
+                        Op::Value(Value::VecIndex(vr)) => {
+                            return Op::ram(
+                                v_inner_clone(&v),
+                                Op::Value(Value::VecIndex(
+                                    vr.iter()
+                                        .map(|j| vl[*j as usize].clone())
+                                        .collect::<Vec<_>>(),
+                                )),
+                            );
+                        }
+                        Op::Value(Value::Index(j)) => {
+                            return Op::ram(
+                                v_inner_clone(&v),
+                                Op::Value(Value::Index(vl[*j].clone())),
+                            );
+                        }
                         _ => {}
                     }
                 }
-            },
+            }
             _ => {}
         }
         match (v, i) {
             // [e0, e1, ..., en][i] = e_i
             (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i as usize].get().clone(),
             // [e0, e1, ..., en][r] = [e_i for i in r]
-            (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) =>
-                Op::vec(vr.into_iter()
+            (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) => Op::vec(
+                vr.into_iter()
                     .map(|i| vs[i as usize].get().clone())
-                    .collect::<Vec<_>>()),
+                    .collect::<Vec<_>>(),
+            ),
             // v[v2]
             (Op::Value(a), Op::Value(b)) => Op::Value(Value::ram(a, b)),
             // Default constructor
@@ -311,7 +343,7 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Vec(mut vs1), Op::Vec(vs2)) => {
                 vs1.extend(vs2);
                 Op::Vec(vs1)
-            },
+            }
             // [e0, e1, ..., en] + e = [e0, e1, ..., e_n, e]
             (Op::Vec(mut vs), v) | (v, Op::Vec(mut vs)) => {
                 let (t, _) = typ.clone().into_vec();
@@ -322,7 +354,7 @@ impl<C: HasOpFactory> GOp<C> {
                     let v_h = mk::<C>(v);
                     Op::Bin(BinOp::Concat, v_h, mk::<C>(Op::Vec(vs)), typ)
                 }
-            },
+            }
             // v1 + v2 = v1.concat(v2)
             (Op::Value(a), Op::Value(mut b)) => {
                 Value::concat(a, &mut b);
@@ -341,29 +373,36 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 + v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a + b),
             // e + v = v + e
-            (Op::Vec(l), Op::Value(mut v))
-            | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
-                Op::vec(v.into_vec_mut().into_iter()
-                    .zip(l.into_iter())
-                    .map(|(v, l)| Op::add(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    v.into_vec_mut()
+                        .into_iter()
+                        .zip(l.into_iter())
+                        .map(|(v, l)| Op::add(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
 
             // [e0, e1, ... en] + [e0', e1', ... em'] = [e0 + e0', e1 + e1', ... en + em']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Op::vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)|
-                        Op::add(l.get().clone(), r.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    l.into_iter()
+                        .zip(r.into_iter())
+                        .map(|(l, r)| Op::add(l.get().clone(), r.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
             // Commuting conversion (fft a + fft b) = fft (a + b)
-            (Op::Fft(l), Op::Fft(r)) =>
-                Op::Fft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ))),
+            (Op::Fft(l), Op::Fft(r)) => {
+                Op::Fft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
+            }
             // Commuting conversion (interpolate a + interpolate b) = interpolate (a + b)
-            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp =>
-                Op::Interpolate(lp, mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ))),
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => Op::Interpolate(
+                lp,
+                mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)),
+            ),
             (v1, v2) => Op::Bin(BinOp::Add, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -375,29 +414,36 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 - v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a - b),
             // e - v = v - e
-            (Op::Vec(l), Op::Value(mut v))
-            | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
-                Op::vec(v.into_vec_mut().into_iter()
-                    .zip(l.into_iter())
-                    .map(|(v, l)| Op::sub(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    v.into_vec_mut()
+                        .into_iter()
+                        .zip(l.into_iter())
+                        .map(|(v, l)| Op::sub(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
 
             // [e0, e1, ... en] - [e0', e1', ... em'] = [e0 - e0', e1 - e1', ... en - em']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Op::vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)|
-                        Op::sub(l.get().clone(), r.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    l.into_iter()
+                        .zip(r.into_iter())
+                        .map(|(l, r)| Op::sub(l.get().clone(), r.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
             // Commuting conversion (fft a - fft b) = fft (a - b)
-            (Op::Fft(l), Op::Fft(r)) =>
-                Op::Fft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ))),
+            (Op::Fft(l), Op::Fft(r)) => {
+                Op::Fft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
+            }
             // Commuting conversion (interpolate a - interpolate b) = interpolate (a - b)
-            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp =>
-                Op::Interpolate(lp, mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ))),
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => Op::Interpolate(
+                lp,
+                mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)),
+            ),
             (v1, v2) => Op::Bin(BinOp::Sub, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -411,27 +457,34 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 * v2 = v1.mul(v2)
             (Op::Value(a), Op::Value(b)) => Op::Value(a * b),
             // [e0, ..., en] * v = [e0 * v0, e1 * v1, ..., en * vn]
-            (Op::Vec(l), Op::Value(mut v))
-            | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.is_vec() {
-                    Op::vec(v.into_vec_mut().into_iter()
-                        .zip(l.into_iter())
-                        .map(|(v, l)| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                        .collect())
+                    Op::vec(
+                        v.into_vec_mut()
+                            .into_iter()
+                            .zip(l.into_iter())
+                            .map(|(v, l)| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 } else {
-                    Op::vec(l.into_iter()
-                        .map(|l| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone())).collect())
+                    Op::vec(
+                        l.into_iter()
+                            .map(|l| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 }
-            },
+            }
             // [e0, e1, ... en] * [e0', e1', ... en'] = [e0 * e0', e1 * e1', ... en * en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Op::vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)|
-                        Op::mul(l.get().clone(), r.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    l.into_iter()
+                        .zip(r.into_iter())
+                        .map(|(l, r)| Op::mul(l.get().clone(), r.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
             // Default constructor
             (v1, v2) => Op::Bin(BinOp::Mul, mk::<C>(v1), mk::<C>(v2), typ),
         }
@@ -445,27 +498,34 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 / v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a / b),
             // [e0, ..., en] / v = [e0 / v0, e1 / v1, ..., en / vn]
-            (Op::Vec(l), Op::Value(mut v))
-            | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.is_vec() {
-                    Op::vec(v.into_vec_mut().into_iter()
-                        .zip(l.into_iter())
-                        .map(|(v, l)| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                        .collect())
+                    Op::vec(
+                        v.into_vec_mut()
+                            .into_iter()
+                            .zip(l.into_iter())
+                            .map(|(v, l)| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 } else {
-                    Op::vec(l.into_iter()
-                        .map(|l| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone())).collect())
+                    Op::vec(
+                        l.into_iter()
+                            .map(|l| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 }
-            },
+            }
             // [e0, e1, ... en] / [e0', e1', ... en'] = [e0 / e0', e1 / e1', ... en / en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Op::vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)|
-                        Op::div(l.get().clone(), r.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    l.into_iter()
+                        .zip(r.into_iter())
+                        .map(|(l, r)| Op::div(l.get().clone(), r.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
             // Default constructor
             (v1, v2) => Op::Bin(BinOp::Div, mk::<C>(v1), mk::<C>(v2), typ),
         }
@@ -476,7 +536,7 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Value(a), Op::Value(mut b)) => {
                 a.value_pair(&mut b);
                 Op::Value(b)
-            },
+            }
             (v1, v2) => Op::Pair(mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -486,27 +546,34 @@ impl<C: HasOpFactory> GOp<C> {
             // v1 % v2
             (Op::Value(a), Op::Value(b)) => Op::Value(a % b),
             // [e0, ..., en] % v = [e0 % v0, e1 % v1, ..., en % vn]
-            (Op::Vec(l), Op::Value(mut v))
-            | (Op::Value(mut v), Op::Vec(l)) => {
+            (Op::Vec(l), Op::Value(mut v)) | (Op::Value(mut v), Op::Vec(l)) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.is_vec() {
-                    Op::vec(v.into_vec_mut().into_iter()
-                        .zip(l.into_iter())
-                        .map(|(v, l)| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
-                        .collect())
+                    Op::vec(
+                        v.into_vec_mut()
+                            .into_iter()
+                            .zip(l.into_iter())
+                            .map(|(v, l)| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 } else {
-                    Op::vec(l.into_iter()
-                        .map(|l| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone())).collect())
+                    Op::vec(
+                        l.into_iter()
+                            .map(|l| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
+                            .collect(),
+                    )
                 }
-            },
+            }
             // [e0, e1, ... en] % [e0', e1', ... en'] = [e0 % e0', e1 % e1', ... en % en']
             (Op::Vec(l), Op::Vec(r)) => {
                 let (t, _) = typ.into_vec();
-                Op::vec(l.into_iter().zip(r.into_iter())
-                    .map(|(l, r)|
-                        Op::rem(l.get().clone(), r.get().clone(), t.clone()))
-                    .collect())
-            },
+                Op::vec(
+                    l.into_iter()
+                        .zip(r.into_iter())
+                        .map(|(l, r)| Op::rem(l.get().clone(), r.get().clone(), t.clone()))
+                        .collect(),
+                )
+            }
             // Default constructor
             (v1, v2) => Op::Bin(BinOp::Rem, mk::<C>(v1), mk::<C>(v2), typ),
         }
@@ -516,22 +583,24 @@ impl<C: HasOpFactory> GOp<C> {
         match typ {
             ATyp::Base(ABase::Fin(r)) if r.contains(1) => Op::Value(Value::Index(1)),
             ATyp::Base(ABase::Scalar) => Op::Value(Value::Scalar(C::FOps::one())),
-            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) =>
-                Op::Value(Value::VecScalar(vec![C::FOps::one(); *n])),
-            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) =>
-                Op::Value(Value::VecIndex(vec![1; *n])),
+            ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
+                Op::Value(Value::VecScalar(vec![C::FOps::one(); *n]))
+            }
+            ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
+                Op::Value(Value::VecIndex(vec![1; *n]))
+            }
             ATyp::Vec(box typ, n) => {
                 let mut vs = vec![];
                 for _ in 0..*n {
                     vs.push(Op::one(typ));
                 }
                 Op::vec(vs)
-            },
+            }
             ATyp::Uni(n) if *n > 0 => {
                 let mut vs = vec![0; *n];
                 vs[0] = 1;
                 Op::Value(Value::VecIndex(vs))
-            },
+            }
             _ => unreachable!("UncaughtError: Op::one() not implemented for type {}", typ),
         }
     }
@@ -548,10 +617,10 @@ impl<C: HasOpFactory> GOp<C> {
         match (v1, v2) {
             // v1 . v2 = v1.dot(v2)
             (Op::Value(a), Op::Value(b)) => {
-                let mut b= b;
+                let mut b = b;
                 Value::value_dot(&a, &mut b);
                 Op::Value(b)
-            },
+            }
             // Default case, constructor
             (v1, v2) => Op::Bin(BinOp::Dot, mk::<C>(v1), mk::<C>(v2), typ),
         }
@@ -580,12 +649,15 @@ impl<C: HasOpFactory> GOp<C> {
     pub fn reduce(op: BinOp, v: Self) -> GOp<C> {
         Op::Reduce(op, mk::<C>(v))
     }
-    
-    pub fn interpolate(points: Self, evals: Self) -> GOp<C> {
+    pub fn interpolate(points: Option<Self>, evals: Self) -> GOp<C> {
         match evals {
             Op::Fft(inner) => inner.get().clone(),
-            _ => Op::Interpolate(mk::<C>(points), mk::<C>(evals)),
+            _ => Op::Interpolate(points.map(|p| mk::<C>(p)), mk::<C>(evals)),
         }
+    }
+
+    pub fn interpolate_at(points: Self, evals: Self) -> GOp<C> {
+        Self::interpolate(Some(points), evals)
     }
 
     pub fn fft(op: Self) -> GOp<C> {
@@ -614,8 +686,7 @@ impl<C: HasOpFactory> GOp<C> {
 
     pub fn and(v1: Self, v2: Self) -> Self {
         match (v1, v2) {
-            (Op::Value(Value::Bool(false)), _)
-            | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
+            (Op::Value(Value::Bool(false)), _) | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
             (Op::Value(a), Op::Value(b)) => Op::Value(a & b),
             (v1, v2) => Op::Bin(BinOp::And, mk::<C>(v1), mk::<C>(v2), ATyp::bool()),
         }
@@ -658,23 +729,18 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
-            Op::Bin(_, a, b, _)
-            | Op::Eval(a, b)
-            | Op::Pair(a, b, _)
-            | Op::Ram(a, b) =>
-                a.references().into_iter()
-                    .chain(b.references().into_iter())
-                    .collect(),
-            Op::Vec(vs) =>
-                vs.into_iter()
-                    .flat_map(|v| v.references())
-                    .collect(),
-            Op::Record(fields) =>
-                fields.iter()
-                    .flat_map(|(_, v)| v.references())
-                    .collect(),
-            Op::Interpolate(points, v) =>
-                points.references().into_iter().chain(v.references().into_iter()).collect(),
+            Op::Bin(_, a, b, _) | Op::Eval(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
+                .references()
+                .into_iter()
+                .chain(b.references().into_iter())
+                .collect(),
+            Op::Vec(vs) => vs.into_iter().flat_map(|v| v.references()).collect(),
+            Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
+            Op::Interpolate(points, v) => points
+                .iter()
+                .flat_map(|p| p.references())
+                .chain(v.references())
+                .collect(),
             Op::Check(v)
             | Op::Poly(v)
             | Op::Mle(v)
@@ -683,9 +749,7 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Marginalize(v)
             | Op::Fft(v) => v.references(),
             Op::Proj(v, _, _) => v.references(),
-            Op::Value(_)
-            | Op::Random(_, _)
-            | Op::Challenge(_, _) => vec![],
+            Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => vec![],
         }
     }
 }
@@ -695,45 +759,79 @@ impl<C: HasOpFactory> GOp<C> {
         match self {
             Op::Ref(Ref::Node(n), typ) => Op::Ref(Ref::Node(f(*n)), typ.clone()),
             Op::Ref(Ref::Var(v, n), typ) => Op::Ref(Ref::Var(v.clone(), f(*n)), typ.clone()),
-            Op::Bin(op, a, b, typ) =>
-                Op::Bin(*op, mk::<C>(a.map_node_indices(f)), mk::<C>(b.map_node_indices(f)), typ.clone()),
-            Op::Ram(a, b) =>
-                Op::Ram(mk::<C>(a.map_node_indices(f)), mk::<C>(b.map_node_indices(f))),
-            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| mk::<C>(v.map_node_indices(f))).collect()),
-            Op::Record(fields) => Op::Record(fields.iter().map(|(k, v)| (k.clone(), mk::<C>(v.map_node_indices(f)))).collect()),
-            Op::Pair(a, b, typ) =>
-                Op::Pair(mk::<C>(a.map_node_indices(f)), mk::<C>(b.map_node_indices(f)), typ.clone()),
-            Op::Eval(a, b) => Op::Eval(mk::<C>(a.map_node_indices(f)), mk::<C>(b.map_node_indices(f))),
+            Op::Bin(op, a, b, typ) => Op::Bin(
+                *op,
+                mk::<C>(a.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+                typ.clone(),
+            ),
+            Op::Ram(a, b) => Op::Ram(
+                mk::<C>(a.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+            ),
+            Op::Vec(vs) => Op::Vec(
+                vs.into_iter()
+                    .map(|v| mk::<C>(v.map_node_indices(f)))
+                    .collect(),
+            ),
+            Op::Record(fields) => Op::Record(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), mk::<C>(v.map_node_indices(f))))
+                    .collect(),
+            ),
+            Op::Pair(a, b, typ) => Op::Pair(
+                mk::<C>(a.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+                typ.clone(),
+            ),
+            Op::Eval(a, b) => Op::Eval(
+                mk::<C>(a.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+            ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
             Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
-            Op::Interpolate(points, evals) => Op::Interpolate(mk::<C>(points.map_node_indices(f)), mk::<C>(evals.map_node_indices(f))),
+            Op::Interpolate(points, evals) => Op::Interpolate(
+                points.as_ref().map(|p| mk::<C>(p.map_node_indices(f))),
+                mk::<C>(evals.map_node_indices(f)),
+            ),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
             Op::Proj(op, field, typ) => Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone()),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
-            _ => self.clone()
+            _ => self.clone(),
         }
     }
 
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
         match self {
             Op::Ref(r, typ) => Op::Ref(f(r.clone()), typ.clone()),
-            Op::Bin(op, a, b, typ) =>
-                Op::Bin(*op, mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone()),
-            Op::Ram(a, b) =>
-                Op::Ram(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f))),
+            Op::Bin(op, a, b, typ) => Op::Bin(
+                *op,
+                mk::<C>(a.map_refs(f)),
+                mk::<C>(b.map_refs(f)),
+                typ.clone(),
+            ),
+            Op::Ram(a, b) => Op::Ram(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f))),
             Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| mk::<C>(v.map_refs(f))).collect()),
-            Op::Record(fields) => Op::Record(fields.iter().map(|(k, v)| (k.clone(), mk::<C>(v.map_refs(f)))).collect()),
-            Op::Pair(a, b, typ) =>
-                Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone()),
+            Op::Record(fields) => Op::Record(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), mk::<C>(v.map_refs(f))))
+                    .collect(),
+            ),
+            Op::Pair(a, b, typ) => {
+                Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
+            }
             Op::Check(op) => Op::Check(mk::<C>(op.map_refs(f))),
-            Op::Interpolate(points, evals) => Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f))),
+            Op::Interpolate(points, evals) => Op::Interpolate(
+                points.as_ref().map(|p| mk::<C>(p.map_refs(f))),
+                mk::<C>(evals.map_refs(f)),
+            ),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
-            Op::Value(_)
-            | Op::Random(_, _)
-            | Op::Challenge(_, _) => self.clone(),
+            Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
             Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
@@ -746,9 +844,13 @@ impl<C: HasOpFactory> GOp<C> {
 
     /// Inline an operation, except for the nodes specified
     /// which remain as node identifiers.
-    pub fn inline<F: Fn(&Ref, &GOp<C>)->bool>(&self, vars: &Ctx<Ref, GOp<C>>, except: &F) -> GOp<C> {
+    pub fn inline<F: Fn(&Ref, &GOp<C>) -> bool>(
+        &self,
+        vars: &Ctx<Ref, GOp<C>>,
+        except: &F,
+    ) -> GOp<C> {
         match self {
-            Op::Ref(r, _) =>
+            Op::Ref(r, _) => {
                 if let Some(next) = vars.get(&r) {
                     if except(r, next) {
                         return self.clone();
@@ -756,33 +858,41 @@ impl<C: HasOpFactory> GOp<C> {
                     next.inline(vars, except)
                 } else {
                     self.clone()
-                },
+                }
+            }
             Op::Bin(op, a, b, typ) => {
                 let oa = a.inline(vars, except);
                 let ob = b.inline(vars, except);
                 Op::bin(*op, oa, ob, typ.clone())
-            },
+            }
             Op::Ram(a, b) => {
                 let oa = a.inline(vars, except);
                 let ob = b.inline(vars, except);
                 Op::Ram(mk::<C>(oa), mk::<C>(ob))
-            },
-            Op::Vec(vs) =>
-                Op::Vec(vs.into_iter().map(|v| mk::<C>(v.inline(vars, except)))
-                    .collect::<Vec<_>>()),
-            Op::Record(fields) =>
-                Op::Record(fields.iter().map(|(k, v)| (k.clone(), mk::<C>(v.inline(vars, except)))).collect()),
+            }
+            Op::Vec(vs) => Op::Vec(
+                vs.into_iter()
+                    .map(|v| mk::<C>(v.inline(vars, except)))
+                    .collect::<Vec<_>>(),
+            ),
+            Op::Record(fields) => Op::Record(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), mk::<C>(v.inline(vars, except))))
+                    .collect(),
+            ),
             Op::Check(op) => op.inline(vars, except),
-            Op::Interpolate(points, evals) => Op::Interpolate(mk::<C>(points.inline(vars, except)), mk::<C>(evals.inline(vars, except))),
+            Op::Interpolate(points, evals) => Op::Interpolate(
+                points.as_ref().map(|p| mk::<C>(p.inline(vars, except))),
+                mk::<C>(evals.inline(vars, except)),
+            ),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
             Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
             Op::Proj(v, field, typ) => Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone()),
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
-            _ => self.clone()
+            _ => self.clone(),
         }
     }
-
-
 }
 
 /// Pretty-printer for Operations
@@ -949,8 +1059,10 @@ where
             Op::Bin(op, a, b, _) => {
                 let a_op = a.get().clone();
                 let b_op = b.get().clone();
-                let needs_left_paren = matches!(&a_op, Op::Bin(op1, _, _, _) if op1.precedence() < op.precedence());
-                let needs_right_paren = matches!(&b_op, Op::Bin(op2, _, _, _) if op2.precedence() < op.precedence());
+                let needs_left_paren =
+                    matches!(&a_op, Op::Bin(op1, _, _, _) if op1.precedence() < op.precedence());
+                let needs_right_paren =
+                    matches!(&b_op, Op::Bin(op2, _, _, _) if op2.precedence() < op.precedence());
                 if needs_left_paren {
                     allocator.concat(vec![
                         allocator.text("("),
@@ -974,7 +1086,7 @@ where
                         b_op.pretty(allocator),
                     ])
                 }
-            },
+            }
             Op::Fft(v) => allocator.concat([
                 allocator.text("(fft "),
                 v.get().clone().pretty(allocator),
@@ -1021,7 +1133,12 @@ where
                 b.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Interpolate(points, evals) => allocator.concat([
+            Op::Interpolate(None, evals) => allocator.concat([
+                allocator.text("(interpolate "),
+                evals.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Interpolate(Some(points), evals) => allocator.concat([
                 allocator.text("(interpolate "),
                 points.get().clone().pretty(allocator),
                 allocator.text(", "),
@@ -1046,7 +1163,9 @@ where
             Op::Vec(vs) => allocator.concat([
                 allocator.text("["),
                 allocator.intersperse(
-                vs.into_iter().map(|v| v.get().clone().pretty(allocator)), ", "),
+                    vs.into_iter().map(|v| v.get().clone().pretty(allocator)),
+                    ", ",
+                ),
                 allocator.text("]"),
             ]),
             Op::Record(fields) => {
@@ -1080,7 +1199,7 @@ where
     }
 }
 
-impl<'a, C: ArkConfig, R: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Op<C, R>{
+impl<'a, C: ArkConfig, R: Pretty<'a, BoxAllocator, ()> + Clone> fmt::Display for Op<C, R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Op<C, R> as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1
