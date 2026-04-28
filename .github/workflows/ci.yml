@@ -53,3 +53,22 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace
+
+  test-arkgb-backend:
+    name: Test (arkgb_backend)
+    runs-on: ubuntu-latest
+    container: rustlang/rust:nightly
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gcc m4 pkg-config
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --features graph/arkgb_backend
+        run: cargo test -p graph --features arkgb_backend
