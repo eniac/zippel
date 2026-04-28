@@ -6,7 +6,7 @@ pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
-pub mod arkgb_engine;
+pub mod engine;
 
 use crate::DQDag;
 use crate::analyses::TransClos;

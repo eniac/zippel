@@ -450,7 +450,7 @@ impl Monomial for GrevLexTerm {
     where
         F: Field + Copy + Send + Sync + 'static,
     {
-        crate::analyses::groebner::arkgb_engine::compute_gb_grevlex(polys)
+        crate::analyses::groebner::engine::grevlex::compute_gb_grevlex(polys)
     }
 }
 
@@ -485,7 +485,7 @@ impl Monomial for ElimTerm {
     where
         F: Field + Copy + Send + Sync + 'static,
     {
-        crate::analyses::groebner::arkgb_engine::compute_gb_elim(polys)
+        crate::analyses::groebner::engine::elim::compute_gb_elim(polys)
     }
 }
 
