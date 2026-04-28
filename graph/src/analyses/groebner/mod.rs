@@ -7,7 +7,7 @@ pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
 #[cfg(feature = "arkgb_backend")]
-pub mod arkgb_backend;
+pub mod arkgb_engine;
 
 use crate::DQDag;
 use crate::analyses::TransClos;

@@ -39,6 +39,29 @@ pub trait Monomial:
     }
     fn lcm(&self, other: &Self) -> Self;
     fn gcd(&self, other: &Self) -> Self;
+
+    /// Optional fast Gröbner-basis computation via the `ark-gb` crate.
+    ///
+    /// The default returns `None`, meaning "I have no ark-gb mapping;
+    /// fall through to the in-tree Buchberger loop". Monomial orders
+    /// that have a corresponding ark-gb monomial type override this to
+    /// return `Some(reduced_basis)`, in which case `GroebnerBasis::buchberger`
+    /// short-circuits and uses the ark-gb engine.
+    ///
+    /// Note the bound `F: Copy + Send + Sync + 'static`: ark-gb's
+    /// `compute_gb` requires it. Call sites that supply a stricter `F`
+    /// (e.g. `ark_bn254::Fr`) satisfy it for free; call sites with only
+    /// `F: Field` continue using the default `None` and the legacy loop.
+    #[cfg(feature = "arkgb_backend")]
+    fn compute_gb_via_arkgb<F>(
+        _polys: &[crate::analyses::groebner::SparsePolynomial<F, Self>],
+    ) -> Option<Vec<crate::analyses::groebner::SparsePolynomial<F, Self>>>
+    where
+        F: Field + Copy + Send + Sync + 'static,
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
@@ -428,6 +451,20 @@ impl Monomial for GrevLexTerm {
 
     fn gcd(&self, other: &Self) -> Self {
         GrevLexTerm(self.0.gcd(&other.0))
+    }
+
+    /// `GrevLexTerm` has a direct mapping to `ark_gb::GrevLexTerm<W>`, so
+    /// delegate `compute_gb` to the ark-gb engine. The default
+    /// implementation on the trait returns `None`; this override is what
+    /// activates the engine swap inside `GroebnerBasis::buchberger`.
+    #[cfg(feature = "arkgb_backend")]
+    fn compute_gb_via_arkgb<F>(
+        polys: &[crate::analyses::groebner::SparsePolynomial<F, Self>],
+    ) -> Option<Vec<crate::analyses::groebner::SparsePolynomial<F, Self>>>
+    where
+        F: Field + Copy + Send + Sync + 'static,
+    {
+        Some(crate::analyses::groebner::arkgb_engine::compute_gb_polys(polys))
     }
 }
 

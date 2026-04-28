@@ -178,6 +178,22 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             return Self::empty(self.num_vars);
         }
 
+        // Try the ark-gb engine first. The trait default returns `None`,
+        // so this is a no-op for monomial orders that don't override
+        // `compute_gb_via_arkgb` (e.g. `ElimTerm`). `GrevLexTerm`
+        // overrides it, delegating to `arkgb_engine::compute_gb_polys`.
+        //
+        // Note that ark-gb's `compute_gb` always returns a *reduced*
+        // basis. Callers expecting the unreduced output of Buchberger's
+        // algorithm will see a behaviour change under
+        // `--features arkgb_backend`.
+        #[cfg(feature = "arkgb_backend")]
+        {
+            if let Some(gb) = T::compute_gb_via_arkgb(&self.basis) {
+                return Self::new(self.num_vars, gb);
+            }
+        }
+
         // Initialize with non-zero polynomials
         let basis_nonzero = self
             .basis
