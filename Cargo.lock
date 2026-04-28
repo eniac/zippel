@@ -236,7 +236,7 @@ dependencies = [
 [[package]]
 name = "ark-ff"
 version = "0.5.0"
-source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
+source = "git+https://github.com/arkworks-rs/algebra.git#4cec9f0e7a9a4f0d26433917980b1d4d5d8e521c"
 dependencies = [
  "ark-ff-asm 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-ff-macros 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-asm"
 version = "0.5.0"
-source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
+source = "git+https://github.com/arkworks-rs/algebra.git#4cec9f0e7a9a4f0d26433917980b1d4d5d8e521c"
 dependencies = [
  "quote",
  "syn",
@@ -284,7 +284,7 @@ dependencies = [
 [[package]]
 name = "ark-ff-macros"
 version = "0.5.0"
-source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
+source = "git+https://github.com/arkworks-rs/algebra.git#4cec9f0e7a9a4f0d26433917980b1d4d5d8e521c"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -296,7 +296,7 @@ dependencies = [
 [[package]]
 name = "ark-gb"
 version = "0.0.1"
-source = "git+https://github.com/elefthei/ark-gb?branch=master#4f8acdb39b8bda88b0170465da0931757c12a571"
+source = "git+https://github.com/elefthei/ark-gb?branch=master#75eec201ec2c654374e9858df3a429535ab6ebe6"
 dependencies = [
  "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
 ]
@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize"
 version = "0.5.0"
-source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
+source = "git+https://github.com/arkworks-rs/algebra.git#4cec9f0e7a9a4f0d26433917980b1d4d5d8e521c"
 dependencies = [
  "ark-serialize-derive 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",
@@ -408,7 +408,7 @@ dependencies = [
 [[package]]
 name = "ark-serialize-derive"
 version = "0.5.0"
-source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
+source = "git+https://github.com/arkworks-rs/algebra.git#4cec9f0e7a9a4f0d26433917980b1d4d5d8e521c"
 dependencies = [
  "proc-macro2",
  "quote",
