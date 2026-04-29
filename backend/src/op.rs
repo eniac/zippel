@@ -284,7 +284,10 @@ impl<C: ArkConfig, R> Op<C, R> {
                 let next_n = n.saturating_sub(1);
 
                 let mut out_fields = Ctx::new();
-                out_fields.insert(&"evaluations".to_string(), &ATyp::vec_scalar(out_degree + 1));
+                out_fields.insert(
+                    &"evaluations".to_string(),
+                    &ATyp::vec_scalar(out_degree + 1),
+                );
                 out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
                 ATyp::Record(out_fields)
             }
