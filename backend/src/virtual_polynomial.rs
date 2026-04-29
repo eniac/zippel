@@ -499,7 +499,10 @@ impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
         _compress: ark_serialize::Compress,
     ) -> Result<(), SerializationError> {
         match self.normalize() {
-            Ok(normalized) => normalized.serialize_compressed(&mut writer),
+            Ok(normalized) => {
+                0u8.serialize_compressed(&mut writer)?;
+                normalized.serialize_compressed(&mut writer)
+            }
             Err(_) => {
                 // Sum-of-products / non-normal shapes (e.g. products from poly_mul) may not
                 // collapse to a single PolyVariant; encode the explicit VP representation so

@@ -212,17 +212,85 @@ impl<C: ArkConfig, R> Op<C, R> {
                     t
                 ),
             },
-            Op::Interpolate(Some(_), evals) => evals.typ(),
+            Op::Interpolate(Some(points), evals) => match evals.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
+                t => panic!(
+                    "Op::Interpolate: input must be Vec(Scalar | Fin, n); got {}",
+                    t
+                ),
+            },
             Op::Fft(op) => match op.typ() {
                 ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
                 t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
             },
             Op::Check(op) => op.typ(),
-            Op::Poly(op) => op.typ(),
+            Op::Poly(op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
+                t => panic!(
+                    "Op::Poly: input must be Vec(Scalar | Fin, n); got {}",
+                    t
+                ),
+            },
             Op::Eval(_p, x) => x.typ(),
-            Op::Coef(op) => op.typ(),
-            Op::Mle(op) => op.typ(),
-            Op::Marginalize(op) => op.typ(),
+            Op::Coef(op) => match op.typ() {
+                ATyp::Uni(n) | ATyp::VPoly(1, n) => ATyp::vec_scalar(n),
+                t => panic!(
+                    "Op::Coef: input must be a univariate polynomial type; got {}",
+                    t
+                ),
+            },
+            Op::Mle(op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
+                    if !n.is_power_of_two() {
+                        panic!(
+                            "Op::Mle: input vector length must be a power of two; got {}",
+                            n
+                        );
+                    }
+                    ATyp::mle(n.ilog2() as usize)
+                }
+                t => panic!(
+                    "Op::Mle: input must be Vec(Scalar | Fin, n); got {}",
+                    t
+                ),
+            },
+            Op::Marginalize(op) => {
+                let cfg_typ = op.typ();
+                let ATyp::Record(fields) = cfg_typ else {
+                    panic!("Op::Marginalize: input must be a record config");
+                };
+
+                let poly_typ = fields
+                    .get(&"poly".to_string())
+                    .unwrap_or_else(|| panic!("Op::Marginalize: missing 'poly' field"));
+                let (n, d) = match poly_typ {
+                    ATyp::Uni(deg) => (1usize, *deg),
+                    ATyp::Mle(vars) => (*vars, 1usize),
+                    ATyp::VPoly(vars, deg) => (*vars, *deg),
+                    t => panic!("Op::Marginalize: 'poly' must be a polynomial type, got {}", t),
+                };
+
+                let out_degree = fields
+                    .get(&"max_degree".to_string())
+                    .and_then(|t| match t {
+                        ATyp::Base(ABase::Fin(r))
+                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                        {
+                            Some(r.start)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(d);
+                let next_n = n.saturating_sub(1);
+
+                let mut out_fields = Ctx::new();
+                out_fields.insert(&"evaluations".to_string(), &ATyp::vec_scalar(out_degree + 1));
+                out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
+                ATyp::Record(out_fields)
+            }
             Op::Proj(_, _, typ) => typ.clone(),
             Op::Reduce(op, v) => {
                 let (elem, _) = v.typ().into_vec();

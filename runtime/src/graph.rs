@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::pool::PoolManager;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
 /// Specifies what kind of result to collect from graph execution.
@@ -85,7 +84,6 @@ fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
 fn update_successors<C: ArkConfig>(
     g: &Arc<MutexGraph<C>>,
     inputs: &Arc<Ctx<Vid, Value<C>>>,
-    pool_manager: &Arc<PoolManager>,
     tx: SyncSender,
     node_idx: NodeIndex,
 ) {
@@ -118,23 +116,18 @@ fn update_successors<C: ArkConfig>(
                         continue;
                     }
 
-                    let thread_num = annotation.thread_num;
                     let g_clone = Arc::clone(g);
                     let inputs_clone = Arc::clone(inputs);
-                    let pm_clone = Arc::clone(pool_manager);
                     let dep_idx = dependent;
                     let tx = tx.clone();
                     debug!(
-                        "[update_successors] node {:?} -> non-sync {:?} ready (thread_num={})",
-                        node_idx, dependent, thread_num
+                        "[update_successors] node {:?} -> non-sync {:?} ready, spawning",
+                        node_idx, dependent
                     );
-                    pool_manager.submit(
-                        thread_num,
-                        Box::new(move || {
-                            g_clone.handle_node(dep_idx, inputs_clone.clone());
-                            update_successors(&g_clone, &inputs_clone, &pm_clone, tx, dep_idx);
-                        }),
-                    );
+                    rayon::spawn(move || {
+                        g_clone.handle_node(dep_idx, inputs_clone.clone());
+                        update_successors(&g_clone, &inputs_clone, tx, dep_idx);
+                    });
                 }
             }
             // Inp and Rel nodes have no remaining_deps counter;
@@ -518,14 +511,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         //
         // Set remaining_deps counters, collect result indices, and
         // identify initially-ready nodes — all in one pass.
-        // Reserve one core for the main thread (sync node processing).
-        // .max(2) before subtraction prevents underflow and ensures the
-        // pool capacity is at least 1.
-        let mut max_thread_num: usize = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .max(2)
-            - 1;
         let mut result_indices: Vec<NodeIndex> = Vec::new();
         // Capacity of 1 is enough: sync nodes are connected in the DAG,
         // meaning that at any time, only one sync node can be processed.
@@ -534,7 +519,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         for node_idx in g.mutex_graph.node_indices() {
             match &g.mutex_graph[node_idx] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                    max_thread_num = max_thread_num.max(annotation.thread_num);
                     let unique_preds: HashSet<NodeIndex> = g
                         .mutex_graph
                         .neighbors_directed(node_idx, Direction::Incoming)
@@ -563,7 +547,6 @@ impl<C: ArkConfig> MutexGraph<C> {
             ResultKind::Verifier => result_indices,
         };
 
-        debug!("[run_graph] max_thread_num={}", max_thread_num);
         debug!(
             "[run_graph] total nodes={}, result_indices count={}",
             g.mutex_graph.node_indices().count(),
@@ -581,12 +564,9 @@ impl<C: ArkConfig> MutexGraph<C> {
         //     }
         // }
 
-        // Create the pool manager with capacity = max_thread_num.
-        let pool_manager = PoolManager::new(max_thread_num);
-
         // Push the initial sync node (the input node) onto the sync queue
-        // and submit any root Op nodes (remaining_deps == 0) that have no
-        // predecessors — e.g. random values — to the pool manager.
+        // and spawn any root Op nodes (remaining_deps == 0) that have no
+        // predecessors — e.g. random values.
         for ni in g.mutex_graph.node_indices() {
             match &g.mutex_graph[ni] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -599,22 +579,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                             );
                             tx.push(ni);
                         } else {
-                            let thread_num = annotation.thread_num;
                             let g_clone = Arc::clone(&g);
                             let inputs_clone = Arc::clone(&inputs);
-                            let pm_clone = Arc::clone(&pool_manager);
                             let tx = tx.clone();
                             debug!(
-                                "[run_graph] init: submitting non-sync node {:?} with remaining_deps=0 thread_num={}",
-                                ni, thread_num
+                                "[run_graph] init: spawning non-sync node {:?} with remaining_deps=0",
+                                ni
                             );
-                            pool_manager.submit(
-                                thread_num,
-                                Box::new(move || {
-                                    g_clone.handle_node(ni, inputs_clone.clone());
-                                    update_successors(&g_clone, &inputs_clone, &pm_clone, tx, ni);
-                                }),
-                            );
+                            rayon::spawn(move || {
+                                g_clone.handle_node(ni, inputs_clone.clone());
+                                update_successors(&g_clone, &inputs_clone, tx, ni);
+                            });
                         }
                     }
                 }
@@ -631,7 +606,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         // Phase 2: Main execution loop.
         //
         // Compute values for sync nodes (transcript and challenge).
-        // Dispatch other computes to the pool manager, and wait for completion.
+        // Spawn non-sync computes onto shared worker threads, and wait for completion.
         let mut loop_count = 0u32;
         while let Some(SyncMessage { node_idx, tx }) = rx.pop() {
             loop_count += 1;
@@ -683,12 +658,12 @@ impl<C: ArkConfig> MutexGraph<C> {
             };
 
             // Update successors — pushes ready sync nodes to the sync queue
-            // and submits non-sync nodes to the pool manager.
+            // and spawns non-sync nodes onto shared worker threads.
             debug!(
                 "[run_graph] calling update_successors for node {:?}",
                 node_idx
             );
-            update_successors(&g, &inputs, &pool_manager, tx, node_idx);
+            update_successors(&g, &inputs, tx, node_idx);
         }
 
         debug!(

@@ -566,7 +566,7 @@ impl Typeable for CExp {
                     &"evaluations".to_string(),
                     &CTyp::vec(&f_typ, out_degree + 1),
                 );
-                let next_n = if n > 0 { n - 1 } else { 0 };
+                let next_n = n.saturating_sub(1);
                 out_fields.insert(
                     &"next_poly".to_string(),
                     &CTyp::Poly(field_tid.clone(), next_n, out_degree),

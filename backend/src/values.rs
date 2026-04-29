@@ -2562,8 +2562,8 @@ impl<C: ArkConfig> Value<C> {
             None => {
                 let mut coeffs = evals;
                 C::FOps::vec_ifft(&mut coeffs);
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(
-                    coeffs,
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                    DensePolynomial { coeffs },
                 )))
             }
             Some(points) => {
@@ -2577,14 +2577,14 @@ impl<C: ArkConfig> Value<C> {
                 if are_fft_domain_points::<C>(&xs) {
                     let mut coeffs = evals;
                     C::FOps::vec_ifft(&mut coeffs);
-                    return Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(
-                        coeffs,
+                    return Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                        DensePolynomial { coeffs },
                     )));
                 }
 
                 let coeffs = interpolate_univariate_from_points::<C::F>(&xs, &evals);
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::from_coeffs(
-                    coeffs,
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                    DensePolynomial { coeffs },
                 )))
             }
         }
