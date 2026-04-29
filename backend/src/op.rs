@@ -228,10 +228,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Poly(op) => match op.typ() {
                 ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
                 | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
-                t => panic!(
-                    "Op::Poly: input must be Vec(Scalar | Fin, n); got {}",
-                    t
-                ),
+                t => panic!("Op::Poly: input must be Vec(Scalar | Fin, n); got {}", t),
             },
             Op::Eval(_p, x) => x.typ(),
             Op::Coef(op) => match op.typ() {
@@ -252,10 +249,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                     }
                     ATyp::mle(n.ilog2() as usize)
                 }
-                t => panic!(
-                    "Op::Mle: input must be Vec(Scalar | Fin, n); got {}",
-                    t
-                ),
+                t => panic!("Op::Mle: input must be Vec(Scalar | Fin, n); got {}", t),
             },
             Op::Marginalize(op) => {
                 let cfg_typ = op.typ();
@@ -270,7 +264,10 @@ impl<C: ArkConfig, R> Op<C, R> {
                     ATyp::Uni(deg) => (1usize, *deg),
                     ATyp::Mle(vars) => (*vars, 1usize),
                     ATyp::VPoly(vars, deg) => (*vars, *deg),
-                    t => panic!("Op::Marginalize: 'poly' must be a polynomial type, got {}", t),
+                    t => panic!(
+                        "Op::Marginalize: 'poly' must be a polynomial type, got {}",
+                        t,
+                    ),
                 };
 
                 let out_degree = fields
