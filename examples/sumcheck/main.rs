@@ -14,6 +14,8 @@ const MAX_DEGREE: usize = 10;
 const DROP_EVAL_POINT_TEST: bool = false;
 
 fn main() {
+    let zippel_file =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel");
     let num_vars = NUM_VARS;
     let max_degree = MAX_DEGREE;
     if max_degree == 0 {
@@ -24,8 +26,7 @@ fn main() {
     println!("=== Sumcheck (ArkBls12_381) ===");
     println!("num_vars:       {num_vars}");
     println!("max_degree:     {max_degree}");
-    let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"))
-        .with_pdf(PathBuf::from("target/sumcheck_graphs.pdf"));
+    let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("S"), &10);
@@ -66,7 +67,7 @@ fn main() {
     println!("\n--- Static Analysis ---");
     let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+        let analysis_args = ZippelArgs::new(zippel_file.clone());
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
