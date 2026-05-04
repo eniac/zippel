@@ -49,21 +49,28 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// Resolve a `Ref` to a `PRef` known by this builder.
     ///
     /// Lookup order:
-    /// 1. `self.vars()` — refs already inserted into the closure (`np` ∪ `pl`).
-    /// 2. `self.args` — top-level relation/input arguments.
-    /// 3. **Fallback**: register the Ref as an opaque variable in `self.np`.
+    /// 1. `self.vars()` — strict ref equality against entries in the closure.
+    /// 2. `self.args` — top-level relation/input arguments by var name.
+    /// 3. `self.vars()` again — match by `r.node()` only.
+    /// 4. **Fallback**: register the Ref as an opaque variable in `self.np`.
     ///
-    /// The fallback exists because `TransClos` does not insert refs whose
-    /// backing node is a *nested* `Node::Inp`/`Node::Rel` into its closure
-    /// (see `trans_clos_ref`), and `self.args` only carries the *start*
-    /// node's args. A var bound inside a called function's scope can therefore
-    /// surface in the closure without being resolvable here.
+    /// Step 3 exists because `TransClos::insert` is keyed by `r.node()` (one
+    /// entry per node-index) but embedded `Op::Ref` may use either shape:
+    /// `Ref::Node(n)` or `Ref::Var(name, n)`. `dag.find_ref(n)` (called from
+    /// `trans_clos_ref`) only returns `Var` if `self.vctx[n]` is populated —
+    /// and `let`-bindings do **not** populate `vctx` (only `log` does, see
+    /// lib.rs:1675/1689/1700). Meanwhile `op_from_var` (lib.rs:1150)
+    /// *unconditionally* synthesizes `Ref::Var(id, n)` for downstream
+    /// embeddings of any let-bound name. So the same node lands in `clos` as
+    /// `Node(n)` while consumers reference it as `Var(name, n)`. Matching by
+    /// `r.node()` bridges that gap and preserves the equational constraint
+    /// (e.g., `round_ok = prev_eval - evs[0] - evs[1]` in sumcheck).
     ///
-    /// Treating such refs as opaque ring elements is sound: they enter the
-    /// basis only as bare `SparsePolynomial::var(&pf)` with no equational
-    /// constraints, so completeness/knowledge analyses remain conservative —
-    /// the same treatment already given to `Op::Random`, `Op::Challenge`, and
-    /// other unmodeled non-polynomial operations.
+    /// Step 4 (opaque fallback) remains as a defensive backstop for refs that
+    /// genuinely have no closure entry — sound because the opaque variable
+    /// adds no equational constraint, so completeness/knowledge analyses
+    /// remain conservative (the same treatment already given to `Op::Random`,
+    /// `Op::Challenge`, and other unmodeled non-polynomial operations).
     pub fn find_ref(&mut self, r: &Ref) -> PRef {
         if let Some(v) = self.vars().into_iter().find(|v| v.reference == *r) {
             return v;
@@ -73,6 +80,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             .iter()
             .find(|v| v.var() == r.var() && v.is_var())
             .cloned()
+        {
+            return v;
+        }
+        if let Some(v) = self
+            .vars()
+            .into_iter()
+            .find(|v| v.reference.node() == r.node())
         {
             return v;
         }
@@ -747,14 +761,11 @@ mod tests {
         assert!(!builder.basis.basis[0].contains(&pref_a));
     }
 
-    /// Regression: a `Ref` to a variable bound only in a *nested* scope
-    /// (e.g., inside a called function) is not reachable through `vars()` or
-    /// the top-level `args`. `find_ref` must register it as an opaque
-    /// variable in `np` and return a fresh `PRef` instead of panicking.
-    ///
-    /// See the panic that previously fired on `cargo run --example sumcheck`:
-    ///   `Reference round_ok not found in context`
-    /// where `round_ok` is a `let` binding inside `sumcheck_round`.
+    /// Regression: a `Ref` whose backing node has no closure entry at all
+    /// (and no matching node-index in `vars()`) must be registered as an
+    /// opaque variable in `np` and returned as a fresh `PRef` — not panic.
+    /// This is the defensive backstop after the strict-equality / args-name /
+    /// node-index fallbacks all miss.
     #[test]
     fn find_ref_unknown_var_is_opaque_not_panic() {
         use lang::id::Vid;
@@ -772,28 +783,70 @@ mod tests {
         );
         builder.args.insert(known);
 
-        // Reference to `round_ok` bound at NodeIndex(78) — a nested Inp/Rel
-        // node not in args, not in vars().
-        let nested_ref = Ref::Var(Vid::new("round_ok"), NodeIndex::new(78));
+        // Reference to a node never inserted into the closure — neither by
+        // ref equality nor by node-index match.
+        let unknown_ref = Ref::Var(Vid::new("round_ok"), NodeIndex::new(78));
         assert_eq!(builder.np.len(), 0);
 
-        let resolved = builder.find_ref(&nested_ref);
+        let resolved = builder.find_ref(&unknown_ref);
 
-        assert_eq!(resolved.reference, nested_ref);
+        assert_eq!(resolved.reference, unknown_ref);
         assert_eq!(builder.np.len(), 1, "opaque ref must land in np");
         assert!(
             builder
                 .np
                 .keys()
                 .into_iter()
-                .any(|p| p.reference == nested_ref),
+                .any(|p| p.reference == unknown_ref),
             "np must contain the opaque PRef keyed by the original Ref"
         );
 
         // Idempotent: a second lookup should resolve via `vars()` and not
         // duplicate the entry in `np`.
-        let resolved2 = builder.find_ref(&nested_ref);
-        assert_eq!(resolved2.reference, nested_ref);
+        let resolved2 = builder.find_ref(&unknown_ref);
+        assert_eq!(resolved2.reference, unknown_ref);
         assert_eq!(builder.np.len(), 1, "second lookup must not duplicate np");
+    }
+
+    /// Regression: `TransClos::insert` is keyed by `r.node()` and may insert
+    /// a node under `Ref::Node(n)` (because `dag.find_ref(n)` returns Node
+    /// when `vctx[n]` is not set — e.g., for `let`-bound names). Downstream
+    /// `op_from_var` (lib.rs:1150) synthesizes `Ref::Var(id, n)` for the same
+    /// node. `find_ref` must reconcile by matching on `r.node()` and return
+    /// the existing PRef — not register a fresh opaque var.
+    ///
+    /// This was the actual root cause of the sumcheck `round_ok` panic that
+    /// the previous opaque-fallback fix only papered over.
+    #[test]
+    fn find_ref_var_matches_node_by_index() {
+        use lang::id::Vid;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Pre-populate `np` with a Node-shape entry at NodeIndex(78) — as
+        // TransClos would do for a let-bound `round_ok` whose vctx is unset.
+        let node_pref = PRef::from_ref(
+            Ref::Node(NodeIndex::new(78)),
+            ATyp::scalar(),
+            Qualifier::Private,
+            Distribution::Nonuniform,
+        );
+        let placeholder = Op::Ref(Ref::Node(NodeIndex::new(78)), ATyp::scalar());
+        builder.np.insert(&node_pref, &placeholder);
+        assert_eq!(builder.np.len(), 1);
+
+        // Look up the same node via a Var-shape ref — as op_from_var would
+        // synthesize for `round_ok && tail_ok`'s embedded reference.
+        let var_ref = Ref::Var(Vid::new("round_ok"), NodeIndex::new(78));
+        let resolved = builder.find_ref(&var_ref);
+
+        // Must return the existing Node-shape PRef, not register a new opaque.
+        assert_eq!(resolved.reference, Ref::Node(NodeIndex::new(78)));
+        assert_eq!(
+            builder.np.len(),
+            1,
+            "node-index fallback must NOT add a duplicate opaque entry"
+        );
     }
 }
