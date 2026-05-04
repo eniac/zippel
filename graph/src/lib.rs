@@ -1249,13 +1249,32 @@ impl<C: HasOpFactory> UDag<C> {
                 // Variables are edges, no new nodes are added
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
 
-                CExp::Eval(box p, box x) => {
+                CExp::Evaluate(box p, opt_points) => {
                     let vp = self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let vx = self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    match opt_points {
+                        // Binary form: eval(p, points) → Op::Evaluate(p, points)
+                        Some(box x) => {
+                            let vx =
+                                self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                            let eval_op = GOp::evaluate(vp, vx);
+                            return Ok(eval_op);
+                        }
+                        // Unary form: eval(p) → Op::Fft(p)  (FFT-grid evaluation)
+                        None => {
+                            let nfft = self.add_node(Node::fft(&vp));
+                            self.add_edges(edge_type, nfft, vp);
 
-                    let eval_op = GOp::eval(vp, vx);
-
-                    return Ok(eval_op);
+                            return Ok(GOp::underscore(
+                                nfft,
+                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                                    TypeError::next(
+                                        TypeError::exp(kctx, &vctx, &exp),
+                                        TypeError::ark(kctx, &vctx, &exp, &typ),
+                                    )
+                                })?,
+                            ));
+                        }
+                    }
                 }
 
                 CExp::Poly(box v) => {
@@ -1294,52 +1313,47 @@ impl<C: HasOpFactory> UDag<C> {
                     ));
                 }
 
-                // Create a new [interpolate], [fft] or [mle] node
+                // Lower CExp::Interpolate(opt_points, evals) into either Op::Ifft (unary)
+                // or Op::Interpolate (binary) — monomorphic per variant.
                 CExp::Interpolate(points_opt, box evals) => {
                     let evals_op =
                         self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    let points_op = match points_opt {
-                        None => None,
-                        Some(box p) => {
-                            Some(self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?)
+                    match points_opt {
+                        // Unary: interpolate(evs) → Op::Ifft(evs)  (FFT-grid interpolation)
+                        None => {
+                            let nifft = self.add_node(Node::ifft(&evals_op));
+                            self.add_edges(edge_type, nifft, evals_op);
+
+                            return Ok(GOp::underscore(
+                                nifft,
+                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                                    TypeError::next(
+                                        TypeError::exp(kctx, &vctx, &exp),
+                                        TypeError::ark(kctx, &vctx, &exp, &typ),
+                                    )
+                                })?,
+                            ));
                         }
-                    };
-                    let ninterp = self.add_node(Node::interpolate(points_op.as_ref(), &evals_op));
-                    if let Some(p_op) = points_op {
-                        self.add_edges(edge_type, ninterp, p_op);
+                        // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
+                        Some(box p) => {
+                            let points_op =
+                                self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                            let ninterp = self.add_node(Node::interpolate(&points_op, &evals_op));
+                            self.add_edges(edge_type, ninterp, points_op);
+                            self.add_edges(edge_type, ninterp, evals_op);
+
+                            return Ok(GOp::underscore(
+                                ninterp,
+                                ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                                    TypeError::next(
+                                        TypeError::exp(kctx, &vctx, &exp),
+                                        TypeError::ark(kctx, &vctx, &exp, &typ),
+                                    )
+                                })?,
+                            ));
+                        }
                     }
-                    self.add_edges(edge_type, ninterp, evals_op);
-
-                    return Ok(GOp::underscore(
-                        ninterp,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
-                    ));
                 }
-                CExp::Fft(box v) => {
-                    // Add child first
-                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                    // Add new node
-                    let nfft = self.add_node(Node::fft(&child));
-
-                    // Add edge from [nifft] to [child]
-                    self.add_edges(edge_type, nfft, child);
-
-                    return Ok(GOp::underscore(
-                        nfft,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                            TypeError::next(
-                                TypeError::exp(kctx, &vctx, &exp),
-                                TypeError::ark(kctx, &vctx, &exp, &typ),
-                            )
-                        })?,
-                    ));
-                }
-
                 // Create a new [vec] value
                 CExp::Vec(vs) => {
                     return Ok(GOp::vec(vs.0.traverse1(&mut |v| {

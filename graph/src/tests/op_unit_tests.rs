@@ -72,32 +72,32 @@ mod op_construction_tests {
     fn test_interpolate_construction() {
         let val = GOp::<C>::value(&scalar::<C>(42));
         let points = GOp::<C>::vec(vec![GOp::<C>::index(0)]);
-        let interpolate_op = Op::interpolate_at(points, val.clone());
+        let interpolate_op = Op::interpolate(points, val.clone());
 
         match interpolate_op {
-            Op::Interpolate(Some(_), inner) => match &*inner {
+            Op::Interpolate(_, inner) => match &*inner {
                 Op::Value(_) => (),
                 _ => panic!("Expected Value inside Interpolate"),
             },
             _ => panic!("Expected Interpolate operation"),
         }
 
-        let grid_op = Op::interpolate(None, val);
+        let grid_op = Op::ifft(val);
         match grid_op {
-            Op::Interpolate(None, inner) => match &*inner {
+            Op::Ifft(inner) => match &*inner {
                 Op::Value(_) => (),
-                _ => panic!("Expected Value inside unary interpolate"),
+                _ => panic!("Expected Value inside Ifft"),
             },
-            _ => panic!("Expected unary Interpolate operation"),
+            _ => panic!("Expected Ifft operation"),
         }
     }
 
     #[test]
     fn test_fft_interpolate_cancellation() {
-        // interpolate(fft(x)) should return x
+        // ifft(fft(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
         let fft_op = Op::fft(val.clone());
-        let result = Op::interpolate(None, fft_op);
+        let result = Op::ifft(fft_op);
 
         // Should cancel out and return original
         match result {
@@ -108,9 +108,9 @@ mod op_construction_tests {
 
     #[test]
     fn test_interpolate_fft_cancellation() {
-        // fft(interpolate(x)) should return x
+        // fft(ifft(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
-        let interp_grid = Op::interpolate(None, val.clone());
+        let interp_grid = Op::ifft(val.clone());
         let result = Op::fft(interp_grid);
 
         // Should cancel out and return original
@@ -323,11 +323,11 @@ mod op_construction_tests {
         let p = GOp::<C>::value(&scalar::<C>(42));
         let x = Op::value(&scalar::<C>(3));
 
-        let eval_op = Op::eval(p, x);
+        let eval_op = Op::evaluate(p, x);
 
         match eval_op {
-            Op::Eval(_, _) => (),
-            _ => panic!("Expected Eval"),
+            Op::Evaluate(_, _) => (),
+            _ => panic!("Expected Evaluate"),
         }
     }
 
@@ -690,8 +690,8 @@ mod op_additional_tests {
     fn test_op_sub_commutative_interpolate() {
         let a = GOp::<C>::value(&scalar::<C>(5));
         let b = GOp::<C>::value(&scalar::<C>(2));
-        let interpolate_a = Op::Interpolate(Some(mk::<C>(GOp::index(0))), mk::<C>(a));
-        let interpolate_b = Op::Interpolate(Some(mk::<C>(GOp::index(0))), mk::<C>(b));
+        let interpolate_a = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(a));
+        let interpolate_b = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(b));
         let typ = ATyp::scalar();
         let result = Op::sub(interpolate_a, interpolate_b, typ);
 

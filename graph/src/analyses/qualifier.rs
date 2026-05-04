@@ -22,21 +22,17 @@ impl QualifierPropagation {
             Op::Mle(a) => self.from_op(a),
             Op::Coef(a) => self.from_op(a),
             Op::Reduce(_, v) => self.from_op(v),
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             }
             Op::Interpolate(points, evals) => {
+                let q_points = self.from_op(points)?;
                 let q_evals = self.from_op(evals)?;
-                match points {
-                    None => Some(q_evals),
-                    Some(p) => {
-                        let q_points = self.from_op(p)?;
-                        Some(q_points.join(&q_evals))
-                    }
-                }
+                Some(q_points.join(&q_evals))
             }
+            Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Marginalize(a) => self.from_op(a),
             Op::Proj(a, _, _) => self.from_op(a),
@@ -430,7 +426,7 @@ mod tests {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Interpolate(None, mk::<ArkBls12_381>(inner));
+        let op = Op::Ifft(mk::<ArkBls12_381>(inner));
         let qual = qp.from_op(&op);
         assert_eq!(qual, Some(Qualifier::Public));
     }

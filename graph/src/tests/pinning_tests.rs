@@ -680,20 +680,21 @@ fn pin_interpolate() {
         GOp::index(2),
         GOp::index(3),
     ]);
-    let interpolate_node = expected.add_node(Node::interpolate(Some(&points), &var_a));
+    let interpolate_node = expected.add_node(Node::interpolate(&points, &var_a));
     expected.add_edges(DepType::Data, interpolate_node, points);
     expected.add_edges(DepType::Data, interpolate_node, var_a);
 
     assert!(gs[0] == expected);
 }
 
-/// Fft operation: polynomial → vector (evaluation).
-/// Tests: CExp::Fft, Node::fft.
+/// Fft operation: polynomial → vector (evaluation on the FFT grid).
+/// Surface syntax: `eval(p)` (unary) lowers to Op::Fft.
+/// Tests: CExp::Evaluate(_, None), Node::fft.
 #[test]
 fn pin_fft() {
     let src = r#"
         fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
-            fft(a)
+            eval(a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -1187,8 +1188,8 @@ fn pin_ram_expr() {
     assert!(gs[0] == expected);
 }
 
-/// Eval expression: `eval(p, x)` produces nested Eval op, no graph node.
-/// Tests: CExp::Eval → GOp::eval wrapping two Refs in ret node.
+/// Eval expression: `eval(p, x)` produces nested Evaluate op, no graph node.
+/// Tests: CExp::Evaluate(p, Some(x)) → GOp::evaluate wrapping two Refs in ret node.
 #[test]
 fn pin_eval() {
     let src = r#"
@@ -1223,8 +1224,8 @@ fn pin_eval() {
     let var_p = GOp::<B>::var(&p, inp, at_p);
     let var_x = GOp::<B>::var(&x, inp, at_x);
 
-    // eval(p, x) → Eval(var_p, var_x) — no graph node
-    let eval_op = GOp::<B>::eval(var_p, var_x);
+    // evaluate(p, x) → Evaluate(var_p, var_x) — no graph node
+    let eval_op = GOp::<B>::evaluate(var_p, var_x);
     // Not Ref::Node → ret node created
     let ret = expected.add_node(Node::ret(&eval_op));
     expected.add_edges(DepType::Data, ret, eval_op);

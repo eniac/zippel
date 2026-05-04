@@ -54,9 +54,13 @@ pub enum Op<C: ArkConfig, R> {
     /// Random oracle challenge
     Challenge(ATyp, bool),
 
-    /// Interpolate to univariate polynomial: `None` uses the FFT evaluation grid (inverse FFT);
-    /// `Some(points)` uses explicit interpolation points together with evaluations.
-    Interpolate(Option<HOp<C>>, HOp<C>),
+    /// Inverse FFT: evaluations on the FFT grid (n roots of unity, n a power of two)
+    /// → univariate polynomial coefficients.
+    Ifft(HOp<C>),
+
+    /// Interpolate to univariate polynomial at explicit points: `points` is a
+    /// vector of distinct x-coordinates, `evals` is the matching vector of y-values.
+    Interpolate(HOp<C>, HOp<C>),
 
     /// Forward FFT: polynomial coefficients → evaluations on the FFT grid.
     Fft(HOp<C>),
@@ -76,8 +80,8 @@ pub enum Op<C: ArkConfig, R> {
     /// Coefficients of a polynomial
     Coef(HOp<C>),
 
-    /// Evaluate a polynomial at a point
-    Eval(HOp<C>, HOp<C>),
+    /// Evaluate a polynomial at a point (or vector of points)
+    Evaluate(HOp<C>, HOp<C>),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -151,12 +155,13 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Fft(_) => 20,
             Op::Check(_) => 21,
             Op::Poly(_) => 22,
-            Op::Eval(_, _) => 23,
+            Op::Evaluate(_, _) => 23,
             Op::Coef(_) => 24,
             Op::Mle(_) => 25,
             Op::Reduce(_, _) => 26,
             Op::Marginalize(_) => 27,
             Op::Proj(_, _, _) => 28,
+            Op::Ifft(_) => 29,
         }
     }
 
@@ -204,20 +209,47 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
-            Op::Interpolate(None, op) => match op.typ() {
+            Op::Ifft(op) => match op.typ() {
                 ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
-                t => panic!(
-                    "Op::Interpolate (FFT grid): input must be Vec(Scalar | Fin, n); got {}",
-                    t
-                ),
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
+                    if !n.is_power_of_two() {
+                        panic!(
+                            "Op::Ifft: input vector length must be a power of two; got {}",
+                            n
+                        );
+                    }
+                    ATyp::uni(n)
+                }
+                t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
             },
-            Op::Interpolate(Some(points), evals) => match evals.typ() {
-                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
-                t => panic!(
-                    "Op::Interpolate: input must be Vec(Scalar | Fin, n); got {}",
-                    t
+            Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
+                (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                ) => {
+                    if m != n {
+                        panic!(
+                            "Op::Interpolate: points and evals must have the same length; got {} vs {}",
+                            m, n
+                        );
+                    }
+                    ATyp::uni(n)
+                }
+                (tp, te) => panic!(
+                    "Op::Interpolate: both arguments must be Vec(Scalar | Fin, n); got points: {}, evals: {}",
+                    tp, te
                 ),
             },
             Op::Fft(op) => match op.typ() {
@@ -230,7 +262,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                 | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
                 t => panic!("Op::Poly: input must be Vec(Scalar | Fin, n); got {}", t),
             },
-            Op::Eval(_p, x) => x.typ(),
+            Op::Evaluate(_p, x) => x.typ(),
             Op::Coef(op) => match op.typ() {
                 ATyp::Uni(n) | ATyp::VPoly(1, n) => ATyp::vec_scalar(n),
                 t => panic!(
@@ -355,8 +387,8 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
-    pub fn eval(p: Self, x: Self) -> Self {
-        Op::Eval(mk::<C>(p), mk::<C>(x))
+    pub fn evaluate(p: Self, x: Self) -> Self {
+        Op::Evaluate(mk::<C>(p), mk::<C>(x))
     }
 
     /// Random access simplifications
@@ -466,7 +498,11 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Fft(l), Op::Fft(r)) => {
                 Op::Fft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
             }
-            // Commuting conversion (interpolate a + interpolate b) = interpolate (a + b)
+            // Commuting conversion (ifft a + ifft b) = ifft (a + b)
+            (Op::Ifft(l), Op::Ifft(r)) => {
+                Op::Ifft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
+            }
+            // Commuting conversion (interpolate p a + interpolate p b) = interpolate p (a + b)
             (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
                 Op::Interpolate(lp, mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
             }
@@ -506,7 +542,11 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Fft(l), Op::Fft(r)) => {
                 Op::Fft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
             }
-            // Commuting conversion (interpolate a - interpolate b) = interpolate (a - b)
+            // Commuting conversion (ifft a - ifft b) = ifft (a - b)
+            (Op::Ifft(l), Op::Ifft(r)) => {
+                Op::Ifft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
+            }
+            // Commuting conversion (interpolate p a - interpolate p b) = interpolate p (a - b)
             (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
                 Op::Interpolate(lp, mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
             }
@@ -715,20 +755,25 @@ impl<C: HasOpFactory> GOp<C> {
     pub fn reduce(op: BinOp, v: Self) -> GOp<C> {
         Op::Reduce(op, mk::<C>(v))
     }
-    pub fn interpolate(points: Option<Self>, evals: Self) -> GOp<C> {
-        match evals {
+    /// Build an `Op::Interpolate(points, evals)` (binary form). Caller is responsible
+    /// for using `Op::ifft(evals)` for the FFT-grid (unary) form.
+    pub fn interpolate(points: Self, evals: Self) -> GOp<C> {
+        Op::Interpolate(mk::<C>(points), mk::<C>(evals))
+    }
+
+    /// Inverse FFT smart constructor. Sound rewrite: `ifft(fft(p)) = p`.
+    pub fn ifft(op: Self) -> GOp<C> {
+        match op {
             Op::Fft(inner) => inner.get().clone(),
-            _ => Op::Interpolate(points.map(|p| mk::<C>(p)), mk::<C>(evals)),
+            op => Op::Ifft(mk::<C>(op)),
         }
     }
 
-    pub fn interpolate_at(points: Self, evals: Self) -> GOp<C> {
-        Self::interpolate(Some(points), evals)
-    }
-
+    /// Forward FFT smart constructor. Sound rewrite: `fft(ifft(v)) = v`.
+    /// `fft(interpolate(points, evs))` is NOT identity for arbitrary points and is left as-is.
     pub fn fft(op: Self) -> GOp<C> {
         match op {
-            Op::Interpolate(_, inner) => inner.get().clone(),
+            Op::Ifft(inner) => inner.get().clone(),
             op => Op::Fft(mk::<C>(op)),
         }
     }
@@ -795,7 +840,7 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
-            Op::Bin(_, a, b, _) | Op::Eval(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
+            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
                 .references()
                 .into_iter()
                 .chain(b.references().into_iter())
@@ -803,8 +848,8 @@ impl<C: ArkConfig> GOp<C> {
             Op::Vec(vs) => vs.into_iter().flat_map(|v| v.references()).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
             Op::Interpolate(points, v) => points
-                .iter()
-                .flat_map(|p| p.references())
+                .references()
+                .into_iter()
                 .chain(v.references())
                 .collect(),
             Op::Check(v)
@@ -813,6 +858,7 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Coef(v)
             | Op::Reduce(_, v)
             | Op::Marginalize(v)
+            | Op::Ifft(v)
             | Op::Fft(v) => v.references(),
             Op::Proj(v, _, _) => v.references(),
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => vec![],
@@ -851,7 +897,7 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(b.map_node_indices(f)),
                 typ.clone(),
             ),
-            Op::Eval(a, b) => Op::Eval(
+            Op::Evaluate(a, b) => Op::Evaluate(
                 mk::<C>(a.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
             ),
@@ -859,9 +905,10 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
             Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
             Op::Interpolate(points, evals) => Op::Interpolate(
-                points.as_ref().map(|p| mk::<C>(p.map_node_indices(f))),
+                mk::<C>(points.map_node_indices(f)),
                 mk::<C>(evals.map_node_indices(f)),
             ),
+            Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_node_indices(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
@@ -894,15 +941,15 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
             }
             Op::Check(op) => Op::Check(mk::<C>(op.map_refs(f))),
-            Op::Interpolate(points, evals) => Op::Interpolate(
-                points.as_ref().map(|p| mk::<C>(p.map_refs(f))),
-                mk::<C>(evals.map_refs(f)),
-            ),
+            Op::Interpolate(points, evals) => {
+                Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f)))
+            }
+            Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_refs(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
-            Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
+            Op::Evaluate(p, x) => Op::Evaluate(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
             Op::Proj(op, field, typ) => {
@@ -953,9 +1000,10 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Check(op) => op.inline(vars, except),
             Op::Interpolate(points, evals) => Op::Interpolate(
-                points.as_ref().map(|p| mk::<C>(p.inline(vars, except))),
+                mk::<C>(points.inline(vars, except)),
                 mk::<C>(evals.inline(vars, except)),
             ),
+            Op::Ifft(v) => Op::Ifft(mk::<C>(v.inline(vars, except))),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
             Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
             Op::Proj(v, field, typ) => {
@@ -1164,6 +1212,11 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
+            Op::Ifft(v) => allocator.concat([
+                allocator.text("(ifft "),
+                v.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
             Op::Poly(v) => allocator.concat([
                 allocator.text("(poly "),
                 v.get().clone().pretty(allocator),
@@ -1174,7 +1227,7 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Eval(p, x) => allocator.concat([
+            Op::Evaluate(p, x) => allocator.concat([
                 allocator.text("(eval "),
                 p.get().clone().pretty(allocator),
                 allocator.text(", "),
@@ -1205,12 +1258,7 @@ where
                 b.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Interpolate(None, evals) => allocator.concat([
-                allocator.text("(interpolate "),
-                evals.get().clone().pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Op::Interpolate(Some(points), evals) => allocator.concat([
+            Op::Interpolate(points, evals) => allocator.concat([
                 allocator.text("(interpolate "),
                 points.get().clone().pretty(allocator),
                 allocator.text(", "),

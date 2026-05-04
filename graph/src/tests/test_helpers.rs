@@ -282,7 +282,12 @@ fn evaluate_op<C: HasOpFactory>(
             };
             record.get(&field_name).cloned().unwrap()
         }
-        Op::Interpolate(_, _) | Op::Fft(_) | Op::Mle(_) | Op::Coef(_) | Op::Eval(_, _) => {
+        Op::Interpolate(_, _)
+        | Op::Ifft(_)
+        | Op::Fft(_)
+        | Op::Mle(_)
+        | Op::Coef(_)
+        | Op::Evaluate(_, _) => {
             unimplemented!("FFT/polynomial operations not yet supported in test executor")
         }
         Op::Reduce(binop, v) => {

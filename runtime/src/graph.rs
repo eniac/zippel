@@ -307,7 +307,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 // TODO: Implement challenge
                 return Value::random(&mut rng, typ);
             }
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
                 let p_val: Value<C> = self.handle_op(&*p, inputs_p_clone);
@@ -331,14 +331,14 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_poly();
             }
-            Op::Interpolate(Some(points), evals) => {
+            Op::Interpolate(points, evals) => {
                 let inputs_points_clone = Arc::clone(&inputs);
                 let inputs_evals_clone = Arc::clone(&inputs);
                 let points_val: Value<C> = self.handle_op(&*points, inputs_points_clone);
                 let evals_val: Value<C> = self.handle_op(&*evals, inputs_evals_clone);
                 return evals_val.value_interpolate(Some(&points_val));
             }
-            Op::Interpolate(None, a) => {
+            Op::Ifft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_interpolate(None);

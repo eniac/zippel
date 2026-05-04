@@ -11,6 +11,7 @@ use crate::analyses::TransClos;
 use crate::pref::PRef;
 use crate::{GOp, Op, Ref};
 use lang::ast::BinOp;
+use lang::typ::{Distribution, Qualifier};
 
 use ark_ff::{One, Zero};
 use backend::op::HasOpFactory;
@@ -45,19 +46,49 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         self.np.keys().union(self.pl.keys())
     }
 
-    pub fn find_ref(&self, r: &Ref) -> PRef {
-        self.vars()
-            .into_iter()
-            .find(|v| v.reference == *r)
-            .or_else(|| {
-                self.args
-                    .iter()
-                    .find(|v| v.var() == r.var() && v.is_var())
-                    .cloned()
-            })
-            .unwrap_or_else(|| {
-                panic!("Reference {} not found in context \n{}", r, self);
-            })
+    /// Resolve a `Ref` to a `PRef` known by this builder.
+    ///
+    /// Lookup order:
+    /// 1. `self.vars()` — refs already inserted into the closure (`np` ∪ `pl`).
+    /// 2. `self.args` — top-level relation/input arguments.
+    /// 3. **Fallback**: register the Ref as an opaque variable in `self.np`.
+    ///
+    /// The fallback exists because `TransClos` does not insert refs whose
+    /// backing node is a *nested* `Node::Inp`/`Node::Rel` into its closure
+    /// (see `trans_clos_ref`), and `self.args` only carries the *start*
+    /// node's args. A var bound inside a called function's scope can therefore
+    /// surface in the closure without being resolvable here.
+    ///
+    /// Treating such refs as opaque ring elements is sound: they enter the
+    /// basis only as bare `SparsePolynomial::var(&pf)` with no equational
+    /// constraints, so completeness/knowledge analyses remain conservative —
+    /// the same treatment already given to `Op::Random`, `Op::Challenge`, and
+    /// other unmodeled non-polynomial operations.
+    pub fn find_ref(&mut self, r: &Ref) -> PRef {
+        if let Some(v) = self.vars().into_iter().find(|v| v.reference == *r) {
+            return v;
+        }
+        if let Some(v) = self
+            .args
+            .iter()
+            .find(|v| v.var() == r.var() && v.is_var())
+            .cloned()
+        {
+            return v;
+        }
+        log::debug!(
+            "groebner: opaque ref {} (not in vars/args), registering in np",
+            r
+        );
+        let pref = PRef::from_ref(
+            r.clone(),
+            ATyp::scalar(),
+            Qualifier::Private,
+            Distribution::Nonuniform,
+        );
+        let opaque = Op::Ref(r.clone(), ATyp::scalar());
+        self.np.insert(&pref, &opaque);
+        pref
     }
 
     /// Filter out variables that satisfy the predicate
@@ -354,6 +385,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             Op::Interpolate(points, evals) => {
                 let op = Op::Interpolate(points, evals);
+                self.np.insert(&pr, &op);
+            }
+            Op::Ifft(a) => {
+                let op = Op::Ifft(a);
                 self.np.insert(&pr, &op);
             }
             Op::Fft(a) => {
@@ -710,5 +745,55 @@ mod tests {
         assert!(builder.basis.basis[0].contains(&pref_c));
         assert!(builder.basis.basis[1].contains(&pref_c));
         assert!(!builder.basis.basis[0].contains(&pref_a));
+    }
+
+    /// Regression: a `Ref` to a variable bound only in a *nested* scope
+    /// (e.g., inside a called function) is not reachable through `vars()` or
+    /// the top-level `args`. `find_ref` must register it as an opaque
+    /// variable in `np` and return a fresh `PRef` instead of panicking.
+    ///
+    /// See the panic that previously fired on `cargo run --example sumcheck`:
+    ///   `Reference round_ok not found in context`
+    /// where `round_ok` is a `let` binding inside `sumcheck_round`.
+    #[test]
+    fn find_ref_unknown_var_is_opaque_not_panic() {
+        use lang::id::Vid;
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        // Mimic a top-level relation with one arg `claimed_sum`.
+        let known = PRef::from_var(
+            Vid::new("claimed_sum"),
+            NodeIndex::new(0),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.args.insert(known);
+
+        // Reference to `round_ok` bound at NodeIndex(78) — a nested Inp/Rel
+        // node not in args, not in vars().
+        let nested_ref = Ref::Var(Vid::new("round_ok"), NodeIndex::new(78));
+        assert_eq!(builder.np.len(), 0);
+
+        let resolved = builder.find_ref(&nested_ref);
+
+        assert_eq!(resolved.reference, nested_ref);
+        assert_eq!(builder.np.len(), 1, "opaque ref must land in np");
+        assert!(
+            builder
+                .np
+                .keys()
+                .into_iter()
+                .any(|p| p.reference == nested_ref),
+            "np must contain the opaque PRef keyed by the original Ref"
+        );
+
+        // Idempotent: a second lookup should resolve via `vars()` and not
+        // duplicate the entry in `np`.
+        let resolved2 = builder.find_ref(&nested_ref);
+        assert_eq!(resolved2.reference, nested_ref);
+        assert_eq!(builder.np.len(), 1, "second lookup must not duplicate np");
     }
 }

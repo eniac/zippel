@@ -180,7 +180,18 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
                     / nthreads as f64
             }
             Op::Challenge(t, _) => cost += Self::SCALAR_ADD * t.size() as f64,
-            Op::Interpolate(_, op) | Op::Fft(op) => {
+            Op::Interpolate(points, evals) => {
+                let n = evals.typ().size() as f64;
+                // Charge points subgraph + Vandermonde-style binary case (n^2).
+                let child_cost = self.cost(evals, nthreads).0 + self.cost(points, nthreads).0;
+                cost += child_cost + (n * n * Self::SCALAR_MUL / nthreads as f64);
+            }
+            Op::Ifft(op) => {
+                let n = op.typ().size() as f64;
+                cost += self.cost(op, nthreads).0
+                    + (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
+            }
+            Op::Fft(op) => {
                 let n = op.typ().size() as f64;
                 cost += self.cost(op, nthreads).0
                     + (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
@@ -188,7 +199,7 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Check(op) => cost += self.cost(op, nthreads).0,
             Op::Poly(_op) => cost += 1.0,
             Op::Mle(_op) => cost += 1.0,
-            Op::Eval(_p, _x) => cost += 1.0,
+            Op::Evaluate(_p, _x) => cost += 1.0,
             Op::Coef(_op) => cost += 1.0,
             Op::Reduce(_, v) => {
                 let (_, n) = v.typ().into_vec();
