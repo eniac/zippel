@@ -22,13 +22,20 @@ impl QualifierPropagation {
             Op::Mle(a) => self.from_op(a),
             Op::Coef(a) => self.from_op(a),
             Op::Reduce(_, v) => self.from_op(v),
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
             }
+            Op::Interpolate(points, evals) => {
+                let q_points = self.from_op(points)?;
+                let q_evals = self.from_op(evals)?;
+                Some(q_points.join(&q_evals))
+            }
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
+            Op::Marginalize(a) => self.from_op(a),
+            Op::Proj(a, _, _) => self.from_op(a),
             Op::Bin(_, a, b, _) | Op::Pair(a, b, _) => {
                 let qual_a = self.from_op(a)?;
                 let qual_b = self.from_op(b)?;
@@ -66,10 +73,11 @@ impl QualifierPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => {
-                    for arg in args {
-                        qp.quals.insert(&arg.reference.node(), &arg.qualifier);
-                    }
+                Node::Inp(_) | Node::Rel(_) => {
+                    continue;
+                }
+                Node::Arg(_, _, qual, _, _) => {
+                    qp.quals.insert(&n, qual);
                     continue;
                 }
                 Node::Transcr(_, _) => {
@@ -122,7 +130,6 @@ mod tests {
     use share::unwrap;
 
     #[test]
-    #[ignore]
     fn qualifier_prop() {
         let ex = r#"
             proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {
@@ -415,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn test_qualifier_ifft_operation() {
+    fn test_qualifier_interpolate_grid_operation() {
         let qp = QualifierPropagation { quals: Ctx::new() };
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));

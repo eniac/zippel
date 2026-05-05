@@ -15,13 +15,16 @@ use std::ops::{
 };
 use std::sync::RwLock;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug, Hash)]
-pub enum Ref {
-    /// Reference to a node in the graph
-    Node(NodeIndex),
-    /// Reference to a variable
-    Var(Vid, NodeIndex),
-}
+/// A reference to a node in the graph by `NodeIndex`.
+///
+/// Issue #83 / Phase B: this is now a thin newtype around `NodeIndex`.
+/// Previously a sum type `Node(NodeIndex) | Var(Vid, NodeIndex)`, the
+/// `Var` variant existed solely to disambiguate scalar arguments that
+/// would otherwise hash-cons identically when all sharing one `Inp` node.
+/// Phase B splits each argument into its own `Node::Arg` with a unique
+/// `NodeIndex`, making the `Vid` carrier on `Ref` redundant.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub struct Ref(pub NodeIndex);
 
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
@@ -54,10 +57,15 @@ pub enum Op<C: ArkConfig, R> {
     /// Random oracle challenge
     Challenge(ATyp, bool),
 
-    /// Convert from evaluation domain to lagrange domain.
+    /// Inverse FFT: evaluations on the FFT grid (n roots of unity, n a power of two)
+    /// → univariate polynomial coefficients.
     Ifft(HOp<C>),
 
-    /// Convert from lagrange domain to evaluation domain
+    /// Interpolate to univariate polynomial at explicit points: `points` is a
+    /// vector of distinct x-coordinates, `evals` is the matching vector of y-values.
+    Interpolate(HOp<C>, HOp<C>),
+
+    /// Forward FFT: polynomial coefficients → evaluations on the FFT grid.
     Fft(HOp<C>),
 
     /// Polynomial
@@ -66,11 +74,17 @@ pub enum Op<C: ArkConfig, R> {
     /// Multilinear extension
     Mle(HOp<C>),
 
+    /// Sum-check marginalization helper
+    Marginalize(HOp<C>),
+
+    /// Project a field from a record value
+    Proj(HOp<C>, String, ATyp),
+
     /// Coefficients of a polynomial
     Coef(HOp<C>),
 
-    /// Evaluate a polynomial at a point
-    Eval(HOp<C>, HOp<C>),
+    /// Evaluate a polynomial at a point (or vector of points)
+    Evaluate(HOp<C>, HOp<C>),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -99,22 +113,18 @@ pub fn mk<C: HasOpFactory>(op: GOp<C>) -> HOp<C> {
 }
 
 impl Ref {
+    pub fn new(n: NodeIndex) -> Self {
+        Ref(n)
+    }
+
     pub fn node(&self) -> NodeIndex {
-        match self {
-            Ref::Node(n) => *n,
-            Ref::Var(_, n) => *n,
-        }
+        self.0
     }
+}
 
-    pub fn var(&self) -> Option<Vid> {
-        match self {
-            Ref::Node(_) => None,
-            Ref::Var(v, _) => Some(v.clone()),
-        }
-    }
-
-    pub fn is_var(&self) -> bool {
-        self.var().is_some()
+impl From<Ref> for NodeIndex {
+    fn from(r: Ref) -> Self {
+        r.0
     }
 }
 
@@ -140,14 +150,17 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Record(_) => 16,
             Op::Random(_, _) => 17,
             Op::Challenge(_, _) => 18,
-            Op::Ifft(_) => 18,
-            Op::Fft(_) => 19,
-            Op::Check(_) => 20,
-            Op::Poly(_) => 21,
-            Op::Eval(_, _) => 22,
-            Op::Coef(_) => 23,
-            Op::Mle(_) => 24,
-            Op::Reduce(_, _) => 25,
+            Op::Interpolate(_, _) => 19,
+            Op::Fft(_) => 20,
+            Op::Check(_) => 21,
+            Op::Poly(_) => 22,
+            Op::Evaluate(_, _) => 23,
+            Op::Coef(_) => 24,
+            Op::Mle(_) => 25,
+            Op::Reduce(_, _) => 26,
+            Op::Marginalize(_) => 27,
+            Op::Proj(_, _, _) => 28,
+            Op::Ifft(_) => 29,
         }
     }
 
@@ -197,18 +210,119 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Challenge(t, _) => t.clone(),
             Op::Ifft(op) => match op.typ() {
                 ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
+                    if !n.is_power_of_two() {
+                        panic!(
+                            "Op::Ifft: input vector length must be a power of two; got {}",
+                            n
+                        );
+                    }
+                    ATyp::uni(n)
+                }
                 t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
+            },
+            Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
+                (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                ) => {
+                    if m != n {
+                        panic!(
+                            "Op::Interpolate: points and evals must have the same length; got {} vs {}",
+                            m, n
+                        );
+                    }
+                    ATyp::uni(n)
+                }
+                (tp, te) => panic!(
+                    "Op::Interpolate: both arguments must be Vec(Scalar | Fin, n); got points: {}, evals: {}",
+                    tp, te
+                ),
             },
             Op::Fft(op) => match op.typ() {
                 ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
                 t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
             },
             Op::Check(op) => op.typ(),
-            Op::Poly(op) => op.typ(),
-            Op::Eval(_p, x) => x.typ(),
-            Op::Coef(op) => op.typ(),
-            Op::Mle(op) => op.typ(),
+            Op::Poly(op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
+                t => panic!("Op::Poly: input must be Vec(Scalar | Fin, n); got {}", t),
+            },
+            Op::Evaluate(_p, x) => x.typ(),
+            Op::Coef(op) => match op.typ() {
+                ATyp::Uni(n) | ATyp::VPoly(1, n) => ATyp::vec_scalar(n),
+                t => panic!(
+                    "Op::Coef: input must be a univariate polynomial type; got {}",
+                    t
+                ),
+            },
+            Op::Mle(op) => match op.typ() {
+                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
+                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
+                    if !n.is_power_of_two() {
+                        panic!(
+                            "Op::Mle: input vector length must be a power of two; got {}",
+                            n
+                        );
+                    }
+                    ATyp::mle(n.ilog2() as usize)
+                }
+                t => panic!("Op::Mle: input must be Vec(Scalar | Fin, n); got {}", t),
+            },
+            Op::Marginalize(op) => {
+                let cfg_typ = op.typ();
+                let ATyp::Record(fields) = cfg_typ else {
+                    panic!("Op::Marginalize: input must be a record config");
+                };
+
+                let poly_typ = fields
+                    .get(&"poly".to_string())
+                    .unwrap_or_else(|| panic!("Op::Marginalize: missing 'poly' field"));
+                let (n, d) = match poly_typ {
+                    ATyp::Uni(deg) => (1usize, *deg),
+                    ATyp::Mle(vars) => (*vars, 1usize),
+                    ATyp::VPoly(vars, deg) => (*vars, *deg),
+                    t => panic!(
+                        "Op::Marginalize: 'poly' must be a polynomial type, got {}",
+                        t,
+                    ),
+                };
+
+                let out_degree = fields
+                    .get(&"max_degree".to_string())
+                    .and_then(|t| match t {
+                        ATyp::Base(ABase::Fin(r))
+                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                        {
+                            Some(r.start)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(d);
+                let next_n = n.saturating_sub(1);
+
+                let mut out_fields = Ctx::new();
+                out_fields.insert(
+                    &"evaluations".to_string(),
+                    &ATyp::vec_scalar(out_degree + 1),
+                );
+                out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
+                ATyp::Record(out_fields)
+            }
+            Op::Proj(_, _, typ) => typ.clone(),
             Op::Reduce(op, v) => {
                 let (elem, _) = v.typ().into_vec();
                 ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
@@ -272,8 +386,8 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
-    pub fn eval(p: Self, x: Self) -> Self {
-        Op::Eval(mk::<C>(p), mk::<C>(x))
+    pub fn evaluate(p: Self, x: Self) -> Self {
+        Op::Evaluate(mk::<C>(p), mk::<C>(x))
     }
 
     /// Random access simplifications
@@ -387,6 +501,10 @@ impl<C: HasOpFactory> GOp<C> {
             (Op::Ifft(l), Op::Ifft(r)) => {
                 Op::Ifft(mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
             }
+            // Commuting conversion (interpolate p a + interpolate p b) = interpolate p (a + b)
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
+                Op::Interpolate(lp, mk::<C>(Op::add(l.get().clone(), r.get().clone(), typ)))
+            }
             (v1, v2) => Op::Bin(BinOp::Add, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -426,6 +544,10 @@ impl<C: HasOpFactory> GOp<C> {
             // Commuting conversion (ifft a - ifft b) = ifft (a - b)
             (Op::Ifft(l), Op::Ifft(r)) => {
                 Op::Ifft(mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
+            }
+            // Commuting conversion (interpolate p a - interpolate p b) = interpolate p (a - b)
+            (Op::Interpolate(lp, l), Op::Interpolate(rp, r)) if lp == rp => {
+                Op::Interpolate(lp, mk::<C>(Op::sub(l.get().clone(), r.get().clone(), typ)))
             }
             (v1, v2) => Op::Bin(BinOp::Sub, mk::<C>(v1), mk::<C>(v2), typ),
         }
@@ -621,17 +743,33 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Mle(mk::<C>(op))
     }
 
+    pub fn marginalize(op: Self) -> GOp<C> {
+        Op::Marginalize(mk::<C>(op))
+    }
+
+    pub fn proj(record_op: Self, field: String, typ: ATyp) -> GOp<C> {
+        Op::Proj(mk::<C>(record_op), field, typ)
+    }
+
     pub fn reduce(op: BinOp, v: Self) -> GOp<C> {
         Op::Reduce(op, mk::<C>(v))
     }
+    /// Build an `Op::Interpolate(points, evals)` (binary form). Caller is responsible
+    /// for using `Op::ifft(evals)` for the FFT-grid (unary) form.
+    pub fn interpolate(points: Self, evals: Self) -> GOp<C> {
+        Op::Interpolate(mk::<C>(points), mk::<C>(evals))
+    }
 
+    /// Inverse FFT smart constructor. Sound rewrite: `ifft(fft(p)) = p`.
     pub fn ifft(op: Self) -> GOp<C> {
         match op {
             Op::Fft(inner) => inner.get().clone(),
-            _ => Op::Ifft(mk::<C>(op)),
+            op => Op::Ifft(mk::<C>(op)),
         }
     }
 
+    /// Forward FFT smart constructor. Sound rewrite: `fft(ifft(v)) = v`.
+    /// `fft(interpolate(points, evs))` is NOT identity for arbitrary points and is left as-is.
     pub fn fft(op: Self) -> GOp<C> {
         match op {
             Op::Ifft(inner) => inner.get().clone(),
@@ -683,38 +821,45 @@ fn v_inner_clone<C: ArkConfig>(op: &GOp<C>) -> GOp<C> {
 
 impl<C: ArkConfig> GOp<C> {
     pub fn underscore(n: NodeIndex, typ: ATyp) -> Self {
-        Op::Ref(Ref::Node(n), typ)
+        Op::Ref(Ref(n), typ)
     }
 
-    pub fn var(v: &Vid, n: NodeIndex, typ: ATyp) -> Self {
-        Op::Ref(Ref::Var(v.clone(), n), typ)
+    /// Construct a `GOp::Ref` for a variable. After Phase B, `var` and
+    /// `underscore` are operationally identical: both produce
+    /// `Op::Ref(Ref(n), typ)`. The `Vid` parameter is retained as a
+    /// callsite-documentation aid but no longer carried on `Ref`.
+    pub fn var(_v: &Vid, n: NodeIndex, typ: ATyp) -> Self {
+        Op::Ref(Ref(n), typ)
     }
 
-    pub fn is_var(&self) -> bool {
-        matches!(self, Op::Ref(Ref::Var(_, _), _))
-    }
-
-    pub fn is_underscore(&self) -> bool {
-        matches!(self, Op::Ref(Ref::Node(_), _))
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Op::Ref(_, _))
     }
 
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
-            Op::Bin(_, a, b, _) | Op::Eval(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
+            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
                 .references()
                 .into_iter()
                 .chain(b.references().into_iter())
                 .collect(),
             Op::Vec(vs) => vs.into_iter().flat_map(|v| v.references()).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
-            Op::Ifft(v)
-            | Op::Check(v)
+            Op::Interpolate(points, v) => points
+                .references()
+                .into_iter()
+                .chain(v.references())
+                .collect(),
+            Op::Check(v)
             | Op::Poly(v)
             | Op::Mle(v)
             | Op::Coef(v)
             | Op::Reduce(_, v)
+            | Op::Marginalize(v)
+            | Op::Ifft(v)
             | Op::Fft(v) => v.references(),
+            Op::Proj(v, _, _) => v.references(),
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => vec![],
         }
     }
@@ -723,8 +868,7 @@ impl<C: ArkConfig> GOp<C> {
 impl<C: HasOpFactory> GOp<C> {
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> GOp<C> {
         match self {
-            Op::Ref(Ref::Node(n), typ) => Op::Ref(Ref::Node(f(*n)), typ.clone()),
-            Op::Ref(Ref::Var(v, n), typ) => Op::Ref(Ref::Var(v.clone(), f(*n)), typ.clone()),
+            Op::Ref(r, typ) => Op::Ref(Ref(f(r.0)), typ.clone()),
             Op::Bin(op, a, b, typ) => Op::Bin(
                 *op,
                 mk::<C>(a.map_node_indices(f)),
@@ -751,16 +895,24 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(b.map_node_indices(f)),
                 typ.clone(),
             ),
-            Op::Eval(a, b) => Op::Eval(
+            Op::Evaluate(a, b) => Op::Evaluate(
                 mk::<C>(a.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
             Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
+            Op::Interpolate(points, evals) => Op::Interpolate(
+                mk::<C>(points.map_node_indices(f)),
+                mk::<C>(evals.map_node_indices(f)),
+            ),
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_node_indices(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
+            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
+            Op::Proj(op, field, typ) => {
+                Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_node_indices(f))),
             _ => self.clone(),
         }
@@ -787,13 +939,20 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Pair(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f)), typ.clone())
             }
             Op::Check(op) => Op::Check(mk::<C>(op.map_refs(f))),
+            Op::Interpolate(points, evals) => {
+                Op::Interpolate(mk::<C>(points.map_refs(f)), mk::<C>(evals.map_refs(f)))
+            }
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_refs(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_refs(f))),
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
-            Op::Eval(p, x) => Op::Eval(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
+            Op::Evaluate(p, x) => Op::Evaluate(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
+            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
+            Op::Proj(op, field, typ) => {
+                Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.map_refs(f))),
         }
     }
@@ -838,8 +997,16 @@ impl<C: HasOpFactory> GOp<C> {
                     .collect(),
             ),
             Op::Check(op) => op.inline(vars, except),
+            Op::Interpolate(points, evals) => Op::Interpolate(
+                mk::<C>(points.inline(vars, except)),
+                mk::<C>(evals.inline(vars, except)),
+            ),
             Op::Ifft(v) => Op::Ifft(mk::<C>(v.inline(vars, except))),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
+            Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
+            Op::Proj(v, field, typ) => {
+                Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone())
+            }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
             _ => self.clone(),
         }
@@ -854,10 +1021,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Ref::Node(n) => allocator.text(format!("n{}", n.index())),
-            Ref::Var(v, _) => allocator.text(format!("{}", v)),
-        }
+        allocator.text(format!("n{}", self.0.index()))
     }
 
     fn is_nil(&self) -> bool {
@@ -875,19 +1039,7 @@ impl fmt::Display for Ref {
 
 impl From<NodeIndex> for Ref {
     fn from(n: NodeIndex) -> Self {
-        Ref::Node(n)
-    }
-}
-
-impl<'a> From<&'a Vid> for Ref {
-    fn from(v: &'a Vid) -> Self {
-        Ref::Var(v.clone(), NodeIndex::new(0))
-    }
-}
-
-impl<'a> From<&'a str> for Ref {
-    fn from(v: &'a str) -> Self {
-        Ref::Var(Vid::from(v), NodeIndex::new(0))
+        Ref(n)
     }
 }
 
@@ -1043,6 +1195,11 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
+            Op::Ifft(v) => allocator.concat([
+                allocator.text("(ifft "),
+                v.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
             Op::Poly(v) => allocator.concat([
                 allocator.text("(poly "),
                 v.get().clone().pretty(allocator),
@@ -1053,7 +1210,7 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Eval(p, x) => allocator.concat([
+            Op::Evaluate(p, x) => allocator.concat([
                 allocator.text("(eval "),
                 p.get().clone().pretty(allocator),
                 allocator.text(", "),
@@ -1065,6 +1222,18 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
+            Op::Marginalize(v) => allocator.concat([
+                allocator.text("(marginalize "),
+                v.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Proj(v, field, _) => allocator.concat([
+                allocator.text("(proj "),
+                v.get().clone().pretty(allocator),
+                allocator.text(" ."),
+                allocator.text(field.clone()),
+                allocator.text(")"),
+            ]),
             Op::Pair(a, b, _) => allocator.concat([
                 allocator.text("(pair "),
                 a.get().clone().pretty(allocator),
@@ -1072,9 +1241,11 @@ where
                 b.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Ifft(v) => allocator.concat([
-                allocator.text("(ifft "),
-                v.get().clone().pretty(allocator),
+            Op::Interpolate(points, evals) => allocator.concat([
+                allocator.text("(interpolate "),
+                points.get().clone().pretty(allocator),
+                allocator.text(", "),
+                evals.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
             Op::Check(v) => allocator.concat([

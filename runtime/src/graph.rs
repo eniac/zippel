@@ -1,3 +1,4 @@
+use backend::values::marginalize as backend_marginalize;
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::scheduler::{TDag, ThreadAlloc};
 use graph::{Dag, GOp, Node, Op};
@@ -13,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::pool::PoolManager;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
 /// Specifies what kind of result to collect from graph execution.
@@ -72,7 +72,7 @@ pub struct MutexGraph<C: ArkConfig> {
 /// `Op` nodes are compute-only and run on the thread pool.
 fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
     match &g.mutex_graph[node_idx] {
-        Node::Inp(_, _) | Node::Transcr(_, _) => true,
+        Node::Inp(_) | Node::Transcr(_, _) => true,
         Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => true,
         _ => false,
     }
@@ -84,7 +84,6 @@ fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
 fn update_successors<C: ArkConfig>(
     g: &Arc<MutexGraph<C>>,
     inputs: &Arc<Ctx<Vid, Value<C>>>,
-    pool_manager: &Arc<PoolManager>,
     tx: SyncSender,
     node_idx: NodeIndex,
 ) {
@@ -117,29 +116,30 @@ fn update_successors<C: ArkConfig>(
                         continue;
                     }
 
-                    let thread_num = annotation.thread_num;
                     let g_clone = Arc::clone(g);
                     let inputs_clone = Arc::clone(inputs);
-                    let pm_clone = Arc::clone(pool_manager);
                     let dep_idx = dependent;
                     let tx = tx.clone();
                     debug!(
-                        "[update_successors] node {:?} -> non-sync {:?} ready (thread_num={})",
-                        node_idx, dependent, thread_num
+                        "[update_successors] node {:?} -> non-sync {:?} ready, spawning",
+                        node_idx, dependent
                     );
-                    pool_manager.submit(
-                        thread_num,
-                        Box::new(move || {
-                            g_clone.handle_node(dep_idx, inputs_clone.clone());
-                            update_successors(&g_clone, &inputs_clone, &pm_clone, tx, dep_idx);
-                        }),
-                    );
+                    rayon::spawn(move || {
+                        g_clone.handle_node(dep_idx, inputs_clone.clone());
+                        update_successors(&g_clone, &inputs_clone, tx, dep_idx);
+                    });
                 }
             }
-            // Inp and Rel nodes have no remaining_deps counter;
-            // they should never appear as successors.
-            Node::Inp(_, _) | Node::Rel(_, _) => {
-                unreachable!("Inp/Rel node {:?} on sync channel", node_idx)
+            // Inp/Rel markers and Arg nodes have no compute and no
+            // remaining_deps counter. They appear as successors of one
+            // another (Inp → Arg) and as successors of compute paths is
+            // never expected. Pass through Args by recursively notifying
+            // *their* successors so downstream Ops can decrement properly.
+            Node::Inp(_) | Node::Rel(_) => {
+                unreachable!("Inp/Rel marker {:?} on sync channel", node_idx)
+            }
+            Node::Arg(_, _, _, _, _) => {
+                update_successors(g, inputs, tx.clone(), dependent);
             }
         }
     }
@@ -218,16 +218,18 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let return_val = annotation.return_value.lock().unwrap();
                 match &*return_val {
                     Some(val) => val.clone(),
-                    None => panic!("Value should exist"),
+                    None => panic!("Value should exist for node {:?}", node),
                 }
             }
-            Node::Inp(_, _) | Node::Rel(_, _) => {
-                let vid = r.var().expect("Input should be a variable");
-                inputs
-                    .get(&vid)
-                    .expect(format!("Value for {} should exist", vid).as_str())
-                    .clone()
+            Node::Inp(_) | Node::Rel(_) => {
+                // Should not be referenced directly in Phase B; values
+                // come from Arg nodes.
+                panic!("get_value on Inp/Rel marker node {:?}", node)
             }
+            Node::Arg(vid, _, _, _, _) => inputs
+                .get(vid)
+                .expect(format!("Value for {} should exist", vid).as_str())
+                .clone(),
         }
     }
 
@@ -313,7 +315,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 // TODO: Implement challenge
                 return Value::random(&mut rng, typ);
             }
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
                 let p_val: Value<C> = self.handle_op(&*p, inputs_p_clone);
@@ -337,10 +339,17 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 return a_val.value_poly();
             }
+            Op::Interpolate(points, evals) => {
+                let inputs_points_clone = Arc::clone(&inputs);
+                let inputs_evals_clone = Arc::clone(&inputs);
+                let points_val: Value<C> = self.handle_op(&*points, inputs_points_clone);
+                let evals_val: Value<C> = self.handle_op(&*evals, inputs_evals_clone);
+                return evals_val.value_interpolate(Some(&points_val));
+            }
             Op::Ifft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_ifft();
+                return a_val.value_interpolate(None);
             }
             Op::Fft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
@@ -356,6 +365,94 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
                 return v_val.value_reduce(*op);
+            }
+            Op::Marginalize(a) => {
+                let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) =
+                    match &**a {
+                        Op::Record(fields) => {
+                            let poly_op = fields
+                                .get(&"poly".to_string())
+                                .expect("marginalize: missing field 'poly'");
+                            let challenge_op = fields
+                                .get(&"challenge".to_string())
+                                .expect("marginalize: missing field 'challenge'");
+                            let round_op = fields.get(&"round".to_string());
+                            let num_variables_op = fields.get(&"num_variables".to_string());
+                            let max_degree_op = fields.get(&"max_degree".to_string());
+
+                            let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
+                            let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
+                            let round_val =
+                                round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            let num_variables_val =
+                                num_variables_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            let max_degree_val =
+                                max_degree_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
+                            (
+                                poly_val,
+                                challenge_val,
+                                round_val,
+                                num_variables_val,
+                                max_degree_val,
+                            )
+                        }
+                        _ => {
+                            let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
+                            let Value::Record(record) = cfg_val else {
+                                unreachable!()
+                            };
+                            let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
+                            let challenge_val =
+                                record.get(&"challenge".to_string()).cloned().unwrap();
+                            let round_val = record.get(&"round".to_string()).cloned();
+                            let num_variables_val =
+                                record.get(&"num_variables".to_string()).cloned();
+                            let max_degree_val = record.get(&"max_degree".to_string()).cloned();
+                            (
+                                poly_val,
+                                challenge_val,
+                                round_val,
+                                num_variables_val,
+                                max_degree_val,
+                            )
+                        }
+                    };
+
+                let poly = poly_val.into_poly().clone();
+                let challenge = Some(challenge_val.into_scalar());
+                let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
+
+                let num_variables = if let Some(v) = num_variables_val {
+                    v.into_index()
+                } else {
+                    let current_poly_vars = poly.num_vars().unwrap_or(1);
+                    if round == 0 {
+                        current_poly_vars
+                    } else {
+                        current_poly_vars + (round - 1)
+                    }
+                };
+
+                let max_degree = max_degree_val
+                    .map(|v| v.into_index())
+                    .unwrap_or_else(|| poly.degree());
+                let (evals, next_poly) =
+                    backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
+
+                let mut out_fields = Ctx::new();
+                out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
+                out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
+
+                return Value::Record(out_fields);
+            }
+
+            Op::Proj(record_op, field_name, _) => {
+                let inputs_rec = Arc::clone(&inputs);
+                let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);
+                let Value::Record(r) = rec_val else {
+                    unreachable!()
+                };
+                r.get(&field_name).cloned().unwrap()
             }
         }
     }
@@ -374,8 +471,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             }
-            Node::Inp(_, _) => {}
-            Node::Rel(_, _) => {}
+            Node::Inp(_) => {}
+            Node::Rel(_) => {}
+            Node::Arg(_, _, _, _, _) => {}
         }
     }
 
@@ -422,14 +520,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         //
         // Set remaining_deps counters, collect result indices, and
         // identify initially-ready nodes — all in one pass.
-        // Reserve one core for the main thread (sync node processing).
-        // .max(2) before subtraction prevents underflow and ensures the
-        // pool capacity is at least 1.
-        let mut max_thread_num: usize = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .max(2)
-            - 1;
         let mut result_indices: Vec<NodeIndex> = Vec::new();
         // Capacity of 1 is enough: sync nodes are connected in the DAG,
         // meaning that at any time, only one sync node can be processed.
@@ -438,7 +528,6 @@ impl<C: ArkConfig> MutexGraph<C> {
         for node_idx in g.mutex_graph.node_indices() {
             match &g.mutex_graph[node_idx] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                    max_thread_num = max_thread_num.max(annotation.thread_num);
                     let unique_preds: HashSet<NodeIndex> = g
                         .mutex_graph
                         .neighbors_directed(node_idx, Direction::Incoming)
@@ -458,8 +547,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                         _ => {}
                     }
                 }
-                Node::Inp(_, _) => {}
-                Node::Rel(_, _) => {}
+                Node::Inp(_) => {}
+                Node::Rel(_) => {}
+                Node::Arg(_, _, _, _, _) => {}
             }
         }
         let result_indices: Vec<NodeIndex> = match result_kind {
@@ -467,7 +557,6 @@ impl<C: ArkConfig> MutexGraph<C> {
             ResultKind::Verifier => result_indices,
         };
 
-        debug!("[run_graph] max_thread_num={}", max_thread_num);
         debug!(
             "[run_graph] total nodes={}, result_indices count={}",
             g.mutex_graph.node_indices().count(),
@@ -485,12 +574,9 @@ impl<C: ArkConfig> MutexGraph<C> {
         //     }
         // }
 
-        // Create the pool manager with capacity = max_thread_num.
-        let pool_manager = PoolManager::new(max_thread_num);
-
         // Push the initial sync node (the input node) onto the sync queue
-        // and submit any root Op nodes (remaining_deps == 0) that have no
-        // predecessors — e.g. random values — to the pool manager.
+        // and spawn any root Op nodes (remaining_deps == 0) that have no
+        // predecessors — e.g. random values.
         for ni in g.mutex_graph.node_indices() {
             match &g.mutex_graph[ni] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -503,30 +589,26 @@ impl<C: ArkConfig> MutexGraph<C> {
                             );
                             tx.push(ni);
                         } else {
-                            let thread_num = annotation.thread_num;
                             let g_clone = Arc::clone(&g);
                             let inputs_clone = Arc::clone(&inputs);
-                            let pm_clone = Arc::clone(&pool_manager);
                             let tx = tx.clone();
                             debug!(
-                                "[run_graph] init: submitting non-sync node {:?} with remaining_deps=0 thread_num={}",
-                                ni, thread_num
+                                "[run_graph] init: spawning non-sync node {:?} with remaining_deps=0",
+                                ni
                             );
-                            pool_manager.submit(
-                                thread_num,
-                                Box::new(move || {
-                                    g_clone.handle_node(ni, inputs_clone.clone());
-                                    update_successors(&g_clone, &inputs_clone, &pm_clone, tx, ni);
-                                }),
-                            );
+                            rayon::spawn(move || {
+                                g_clone.handle_node(ni, inputs_clone.clone());
+                                update_successors(&g_clone, &inputs_clone, tx, ni);
+                            });
                         }
                     }
                 }
-                Node::Inp(_, _) => {
+                Node::Inp(_) => {
                     debug!("[run_graph] pushing initial sync node {:?}", ni);
                     tx.push(ni);
                 }
-                Node::Rel(_, _) => {}
+                Node::Rel(_) => {}
+                Node::Arg(_, _, _, _, _) => {}
             }
         }
 
@@ -535,7 +617,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         // Phase 2: Main execution loop.
         //
         // Compute values for sync nodes (transcript and challenge).
-        // Dispatch other computes to the pool manager, and wait for completion.
+        // Spawn non-sync computes onto shared worker threads, and wait for completion.
         let mut loop_count = 0u32;
         while let Some(SyncMessage { node_idx, tx }) = rx.pop() {
             loop_count += 1;
@@ -546,20 +628,29 @@ impl<C: ArkConfig> MutexGraph<C> {
             );
 
             match &g.mutex_graph[node_idx] {
-                Node::Inp(_, prefs) => {
+                Node::Inp(_) => {
+                    // Walk Arg children to send public values through the sponge.
+                    let mut arg_children: Vec<NodeIndex> = g
+                        .mutex_graph
+                        .nodes_from(node_idx)
+                        .filter(|n| g.mutex_graph[*n].is_arg())
+                        .collect();
+                    arg_children.sort();
                     debug!(
-                        "[run_graph] node {:?} is Inp/Rel with {} prefs",
+                        "[run_graph] node {:?} is Inp with {} arg children",
                         node_idx,
-                        prefs.len()
+                        arg_children.len()
                     );
-                    // Send public values through the sponge.
-                    for pref in prefs.clone() {
-                        if pref.qualifier.is_public() && !pref.from_transcript {
-                            prover_state.public_message(
-                                value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap())
-                                    .unwrap()
-                                    .as_slice(),
-                            );
+                    for arg_idx in arg_children {
+                        if let Some(pref) = g.mutex_graph[arg_idx].arg_pref(arg_idx) {
+                            if pref.qualifier.is_public() && !pref.from_transcript {
+                                let vid = pref.name().expect("Arg node must carry a name").clone();
+                                prover_state.public_message(
+                                    value_to_bytes(inputs.get(&vid).unwrap())
+                                        .unwrap()
+                                        .as_slice(),
+                                );
+                            }
                         }
                     }
                 }
@@ -579,20 +670,20 @@ impl<C: ArkConfig> MutexGraph<C> {
                         prover_state.public_message(serialized.as_slice());
                     }
                 }
-                Node::Op(_, _) | Node::Rel(_, _) => {
-                    // Non-sync Op and Rel nodes should never appear on the sync
+                Node::Op(_, _) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {
+                    // Non-sync Op and Rel/Arg nodes should never appear on the sync
                     // channel. Panic indicates a logic error in scheduling.
-                    unreachable!("non-sync Op node {:?} on sync channel", node_idx)
+                    unreachable!("non-sync node {:?} on sync channel", node_idx)
                 }
             };
 
             // Update successors — pushes ready sync nodes to the sync queue
-            // and submits non-sync nodes to the pool manager.
+            // and spawns non-sync nodes onto shared worker threads.
             debug!(
                 "[run_graph] calling update_successors for node {:?}",
                 node_idx
             );
-            update_successors(&g, &inputs, &pool_manager, tx, node_idx);
+            update_successors(&g, &inputs, tx, node_idx);
         }
 
         debug!(

@@ -48,11 +48,11 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
             .cloned()
             .collect();
 
-        public_args.sort_by_key(|arg| arg.var().map(|v| v.0.clone()).unwrap_or_default());
+        public_args.sort_by_key(|arg| arg.name().map(|v| v.0.clone()).unwrap_or_default());
 
         let mut instance_buf = Vec::new();
         for arg in public_args {
-            if let Some(vid) = arg.var() {
+            if let Some(vid) = arg.name() {
                 let vid_bytes = vid.0.as_bytes();
                 instance_buf.extend_from_slice(vid_bytes);
 

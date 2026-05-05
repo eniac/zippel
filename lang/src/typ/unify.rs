@@ -114,6 +114,18 @@ impl Unify for CTyp {
                 *n.max(m),
                 1,
             )),
+            // Virtual / multivariate polynomials with tracked degree (>1): sizes must agree.
+            (CTyp::Poly(a, n, d), CTyp::Poly(b, m, e)) if *n > 1 && *d > 1 && *m > 1 && *e > 1 => {
+                if n != m || d != e {
+                    Err(UnifyError::typ_mismatch(&x, &y))
+                } else {
+                    Ok(CTyp::Poly(
+                        Tid::unify(a, b, ctx, subs).map_err(|e| UnifyError::typ(&x, &y, e))?,
+                        *n,
+                        *d,
+                    ))
+                }
+            }
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
@@ -171,6 +183,14 @@ impl Unify for CTyp {
 
 #[cfg(test)]
 use share::Set;
+#[test]
+fn unify_poly_f_2_2_self() {
+    let f = Tid::from("F");
+    let ctx = Ctx::from([(f.clone(), Kind::Field)]);
+    let mut subs = AliasSubsts::new();
+    let t = CTyp::Poly(f.clone(), 2, 2);
+    assert_eq!(CTyp::unify(&t, &t, &ctx, &mut subs), Ok(t));
+}
 #[test]
 fn unify_typ() {
     let f1 = Tid::from("F1");

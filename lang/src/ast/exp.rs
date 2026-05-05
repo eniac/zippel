@@ -116,19 +116,15 @@ pub enum Exp<N> {
     ///     ```
     App(Vid, Exps<N>),
 
-    ///     Convert from coeffecient vector to evaluation vector
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let v = coef [1,2,1]; // 1 + 2x + x^2
-    ///     ```
-    Ifft(Box<Exp<N>>),
-
-    ///     Convert from lagrange domain to evaluation domain.
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let p = eval(poly);
-    ///     ```
-    Fft(Box<Exp<N>>),
+    /// Interpolate to a univariate polynomial: unary `interpolate(v)` uses the FFT
+    /// evaluation grid (inverse FFT); binary `interpolate(xs, ys)` uses explicit points.
+    ///
+    /// **Zippel:**
+    /// ```zippel
+    /// let p_grid = interpolate(evals_on_fft_domain);
+    /// let q = interpolate([0, 1, 2], [a, b, c]);
+    /// ```
+    Interpolate(Option<Box<Exp<N>>>, Box<Exp<N>>),
 
     ///     Polynomial from coefficients
     ///     **Zippel Code:**
@@ -137,12 +133,16 @@ pub enum Exp<N> {
     ///     ```
     Poly(Box<Exp<N>>),
 
-    ///     Evaluate polynomial for point
-    ///     **Zippel Code:**
-    ///     ```zippel
-    ///     let p = eval(poly, point);
-    ///     ```
-    Eval(Box<Exp<N>>, Box<Exp<N>>),
+    /// Evaluate a polynomial: unary `eval(p)` evaluates on the FFT grid (FFT);
+    /// binary `eval(p, points)` evaluates at explicit points (scalar or vector).
+    ///
+    /// **Zippel:**
+    /// ```zippel
+    /// let evs = eval(p);                    // FFT-grid evaluation
+    /// let v   = eval(p, point);             // single-point eval
+    /// let vs  = eval(p, [x0, x1, x2]);      // batch eval
+    /// ```
+    Evaluate(Box<Exp<N>>, Option<Box<Exp<N>>>),
 
     ///     Get vector of coefficients of polynomial
     ///     **Zippel Code:**
@@ -157,6 +157,15 @@ pub enum Exp<N> {
     ///     let g = mle x;
     ///     ```
     Mle(Box<Exp<N>>),
+
+    ///     One round of sum-check style marginalization over a Boolean hypercube.
+    ///     The argument is typically a record containing fields like the polynomial,
+    ///     number of variables, maximum degree, and optional challenge.
+    ///     **Zippel Code:**
+    ///     ```zippel
+    ///     let out = marginalize {| poly: p, num_variables: 3, max_degree: 2, challenge: r |};
+    ///     ```
+    Marginalize(Box<Exp<N>>),
 
     ///     A vector of elements
     ///     **Zippel Code:**
@@ -307,14 +316,24 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
             Exp::Lit(x) => Ok(Exp::Lit(f(x)?)),
             Exp::Bool(b) => Ok(Exp::Bool(b)),
             Exp::Var(v) => Ok(Exp::Var(v)),
-            Exp::Ifft(box p) => Ok(Exp::Ifft(Box::new(p.traverse1(f)?))),
+            Exp::Interpolate(po, box evals) => Ok(Exp::Interpolate(
+                match po {
+                    None => None,
+                    Some(box p) => Some(Box::new(p.traverse1(f)?)),
+                },
+                Box::new(evals.traverse1(f)?),
+            )),
             Exp::Poly(box p) => Ok(Exp::Poly(Box::new(p.traverse1(f)?))),
-            Exp::Eval(box p, box x) => Ok(Exp::Eval(
+            Exp::Evaluate(box p, ox) => Ok(Exp::Evaluate(
                 Box::new(p.traverse1(f)?),
-                Box::new(x.traverse1(f)?),
+                match ox {
+                    None => None,
+                    Some(box x) => Some(Box::new(x.traverse1(f)?)),
+                },
             )),
             Exp::Coef(box p) => Ok(Exp::Coef(Box::new(p.traverse1(f)?))),
             Exp::Mle(box p) => Ok(Exp::Mle(Box::new(p.traverse1(f)?))),
+            Exp::Marginalize(box p) => Ok(Exp::Marginalize(Box::new(p.traverse1(f)?))),
             Exp::Pair(box x, box y) => Ok(Exp::Pair(
                 Box::new(x.traverse1(f)?),
                 Box::new(y.traverse1(f)?),
@@ -335,7 +354,6 @@ impl<N: Clone> ToTraversal1<N> for Exp<N> {
             Exp::Challenge(t, b) => Ok(Exp::Challenge(t, b)),
             Exp::Random(t, b) => Ok(Exp::Random(t, b)),
             Exp::Range(r) => Ok(Exp::Range(r.traverse1(f)?)),
-            Exp::Fft(box x) => Ok(Exp::Fft(Box::new(x.traverse1(f)?))),
             Exp::Ram(box x, box i) => Ok(Exp::Ram(
                 Box::new(x.traverse1(f)?),
                 Box::new(i.traverse1(f)?),
@@ -389,18 +407,26 @@ impl TidSubst for CExp {
         match self {
             Exp::Challenge(t, _) if t == from => *t = to.clone(),
             Exp::Random(t, _) if t == from => *t = to.clone(),
-            Exp::Ifft(box p)
-            | Exp::Mle(box p)
+            Exp::Interpolate(None, box e) => e.tid_subst(from, to),
+            Exp::Interpolate(Some(box p), box e) => {
+                p.tid_subst(from, to);
+                e.tid_subst(from, to);
+            }
+            Exp::Evaluate(box p, None) => p.tid_subst(from, to),
+            Exp::Evaluate(box p, Some(box x)) => {
+                p.tid_subst(from, to);
+                x.tid_subst(from, to);
+            }
+            Exp::Mle(box p)
+            | Exp::Marginalize(box p)
             | Exp::Poly(box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
             | Exp::Reduce(_, box p)
-            | Exp::Coef(box p)
-            | Exp::Fft(box p) => p.tid_subst(from, to),
+            | Exp::Coef(box p) => p.tid_subst(from, to),
             Exp::Vec(v) | Exp::App(_, v) => v.tid_subst(from, to),
             Exp::Bin(_, box a, box b)
             | Exp::Map(box a, _, box b)
-            | Exp::Eval(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Let(_, box a, box b)
             | Exp::Log(_, box a, box b)
@@ -444,18 +470,24 @@ impl FreeVars for CExp {
             | Exp::Random(_, _)
             | Exp::Lit(_)
             | Exp::Range(_) => Set::new(),
-            Exp::Ifft(box p)
-            | Exp::Mle(box p)
+            Exp::Interpolate(points, evals) => match points {
+                None => evals.freevars(),
+                Some(p) => p.freevars().union(evals.freevars()),
+            },
+            Exp::Evaluate(p, points) => match points {
+                None => p.freevars(),
+                Some(x) => p.freevars().union(x.freevars()),
+            },
+            Exp::Mle(box p)
+            | Exp::Marginalize(box p)
             | Exp::Poly(box p)
             | Exp::Reduce(_, box p)
             | Exp::Assert(box p)
             | Exp::Verify(box p)
-            | Exp::Coef(box p)
-            | Exp::Fft(box p) => p.freevars(),
+            | Exp::Coef(box p) => p.freevars(),
             Exp::Vec(v) | Exp::App(_, v) => v.freevars(),
             Exp::Bin(_, box a, box b)
             | Exp::Pair(box a, box b)
-            | Exp::Eval(box a, box b)
             | Exp::Ram(box a, box b)
             | Exp::Map(box a, _, box b)
             | Exp::Let(_, box a, box b)
@@ -494,11 +526,24 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
     ) -> Result<Self, E> {
         match self {
             Exp::Range(r) => Ok(Exp::Range(f(r)?)),
-            Exp::Ifft(box p) => Ok(Exp::ifft(p.range_traverse(f)?)),
+            Exp::Interpolate(po, box evals) => Ok(Exp::interpolate(
+                match po {
+                    None => None,
+                    Some(box p) => Some(p.range_traverse(f)?),
+                },
+                evals.range_traverse(f)?,
+            )),
             Exp::Poly(box p) => Ok(Exp::poly(p.range_traverse(f)?)),
             Exp::Mle(box p) => Ok(Exp::mle(p.range_traverse(f)?)),
+            Exp::Marginalize(box p) => Ok(Exp::marginalize(p.range_traverse(f)?)),
             Exp::Vec(v) => Ok(Exp::Vec(v.range_traverse(f)?)),
-            Exp::Eval(box p, box x) => Ok(Exp::eval(p.range_traverse(f)?, x.range_traverse(f)?)),
+            Exp::Evaluate(box p, ox) => Ok(Exp::evaluate(
+                p.range_traverse(f)?,
+                match ox {
+                    None => None,
+                    Some(box x) => Some(x.range_traverse(f)?),
+                },
+            )),
             Exp::Bin(op, box x, box y) => {
                 Ok(Exp::bin(op, x.range_traverse(f)?, y.range_traverse(f)?))
             }
@@ -506,7 +551,6 @@ impl<N: Clone> RangeTraversal<N> for Exp<N> {
                 Ok(Exp::map(x.range_traverse(f)?, id, r.range_traverse(f)?))
             }
             Exp::Ram(box x, box i) => Ok(Exp::ram(x.range_traverse(f)?, i.range_traverse(f)?)),
-            Exp::Fft(box x) => Ok(Exp::fft(x.range_traverse(f)?)),
             Exp::Coef(box x) => Ok(Exp::coef(x.range_traverse(f)?)),
             Exp::Let(Some(x), box t, box e) => {
                 Ok(Exp::letx(x, t.range_traverse(f)?, e.range_traverse(f)?))
@@ -611,20 +655,33 @@ impl<N> Exp<N> {
     pub fn bin(op: BinOp, l: Self, r: Self) -> Self {
         Exp::Bin(op, Box::new(l), Box::new(r))
     }
-    pub fn ifft(a: Self) -> Self {
-        Exp::Ifft(Box::new(a))
+    pub fn interpolate(points: Option<Self>, evals: Self) -> Self {
+        Exp::Interpolate(points.map(Box::new), Box::new(evals))
+    }
+    pub fn interpolate_at(points: Self, evals: Self) -> Self {
+        Exp::Interpolate(Some(Box::new(points)), Box::new(evals))
+    }
+    pub fn interpolate_grid(evals: Self) -> Self {
+        Exp::Interpolate(None, Box::new(evals))
     }
     pub fn mle(a: Self) -> Self {
         Exp::Mle(Box::new(a))
     }
-    pub fn fft(e: Self) -> Self {
-        Exp::Fft(Box::new(e))
+    pub fn marginalize(a: Self) -> Self {
+        Exp::Marginalize(Box::new(a))
     }
+
     pub fn poly(a: Self) -> Self {
         Exp::Poly(Box::new(a))
     }
-    pub fn eval(p: Self, x: Self) -> Self {
-        Exp::Eval(Box::new(p), Box::new(x))
+    pub fn evaluate(p: Self, points: Option<Self>) -> Self {
+        Exp::Evaluate(Box::new(p), points.map(Box::new))
+    }
+    pub fn evaluate_at(p: Self, points: Self) -> Self {
+        Exp::Evaluate(Box::new(p), Some(Box::new(points)))
+    }
+    pub fn evaluate_grid(p: Self) -> Self {
+        Exp::Evaluate(Box::new(p), None)
     }
     pub fn coef(a: Self) -> Self {
         Exp::Coef(Box::new(a))
@@ -728,14 +785,15 @@ impl<N> Exp<N> {
     pub fn is_pure(&self) -> bool {
         match self {
             Exp::Lit(_) | Exp::Bool(_) | Exp::Var(_) | Exp::Range(_) => true,
-            Exp::Ifft(box p) => p.is_pure(),
+            Exp::Interpolate(None, box e) => e.is_pure(),
+            Exp::Interpolate(Some(box p), box e) => p.is_pure() && e.is_pure(),
             Exp::Coef(box p) => p.is_pure(),
             Exp::Poly(box p) => p.is_pure(),
             Exp::Mle(box p) => p.is_pure(),
             Exp::Reduce(_, box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Eval(box p, box x) => p.is_pure() && x.is_pure(),
+            Exp::Evaluate(box p, ox) => p.is_pure() && ox.as_ref().map_or(true, |x| x.is_pure()),
             Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
@@ -743,12 +801,12 @@ impl<N> Exp<N> {
             Exp::Log(_, box _, box _) => false,
             Exp::Challenge(_, _) | Exp::Random(_, _) => false,
             Exp::App(_, args) => args.iter().all(|e| e.is_pure()),
-            Exp::Fft(box a) => a.is_pure(),
             Exp::Assert(_) | Exp::Verify(_) => false,
             Exp::Fun(_, box body) => body.is_pure(),
             Exp::Record(fields) => fields.iter().all(|(_, e)| e.is_pure()),
             Exp::Proj(box exp, _) => exp.is_pure(),
             Exp::SetRecord(box record, _, box value) => record.is_pure() && value.is_pure(),
+            Exp::Marginalize(box p) => p.is_pure(),
         }
     }
 }
@@ -813,9 +871,16 @@ where
         match self {
             Exp::Lit(p) => p.pretty(allocator),
             Exp::Bool(b) => allocator.text(b.to_string()),
-            Exp::Ifft(p) => allocator.concat([
-                allocator.text("ifft("),
-                p.pretty(allocator),
+            Exp::Interpolate(None, ev) => allocator.concat([
+                allocator.text("interpolate("),
+                ev.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::Interpolate(Some(points), evals) => allocator.concat([
+                allocator.text("interpolate("),
+                points.pretty(allocator),
+                allocator.text(", "),
+                evals.pretty(allocator),
                 allocator.text(")"),
             ]),
             Exp::Poly(p) => allocator.concat([
@@ -828,7 +893,12 @@ where
                 p.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Eval(p, x) => allocator.concat([
+            Exp::Evaluate(p, None) => allocator.concat([
+                allocator.text("eval("),
+                p.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::Evaluate(p, Some(x)) => allocator.concat([
                 allocator.text("eval("),
                 p.pretty(allocator),
                 allocator.text(", "),
@@ -837,6 +907,11 @@ where
             ]),
             Exp::Mle(p) => allocator.concat([
                 allocator.text("mle("),
+                p.pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Exp::Marginalize(p) => allocator.concat([
+                allocator.text("marginalize("),
                 p.pretty(allocator),
                 allocator.text(")"),
             ]),
@@ -896,11 +971,6 @@ where
                 x.pretty(allocator),
                 allocator.text("("),
                 d.pretty(allocator),
-                allocator.text(")"),
-            ]),
-            Exp::Fft(b) => allocator.concat([
-                allocator.text("fft("),
-                (*b).pretty(allocator),
                 allocator.text(")"),
             ]),
             Exp::Ram(x, i) => allocator.concat([
@@ -1203,9 +1273,23 @@ impl<'pest> FromPest<'pest> for UExp {
                         }
                     }
                 }
-                Rule::fft_exp => Ok(Exp::fft(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::mle_exp => Ok(Exp::mle(Exp::from_pest(&mut pair.into_inner())?)),
-                Rule::ifft_exp => Ok(Exp::ifft(Exp::from_pest(&mut pair.into_inner())?)),
+                Rule::interpolate_exp => {
+                    let mut inner = pair.into_inner();
+                    let first = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    match inner.next() {
+                        None => Ok(Exp::interpolate_grid(first)),
+                        Some(second) => Ok(Exp::interpolate_at(
+                            first,
+                            Exp::from_pest(&mut Pairs::single(second))?,
+                        )),
+                    }
+                }
+                Rule::marginalize_exp => {
+                    Ok(Exp::marginalize(Exp::from_pest(&mut pair.into_inner())?))
+                }
                 Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::range_exp => Ok(Exp::range(Range::from_pest(&mut pair.into_inner())?)),
@@ -1266,10 +1350,16 @@ impl<'pest> FromPest<'pest> for UExp {
                 }
                 Rule::eval_exp => {
                     let mut inner = pair.into_inner();
-                    Ok(Exp::eval(
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                        Exp::from_pest(&mut Pairs::single(inner.next().unwrap()))?,
-                    ))
+                    let first = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    match inner.next() {
+                        None => Ok(Exp::evaluate_grid(first)),
+                        Some(second) => Ok(Exp::evaluate_at(
+                            first,
+                            Exp::from_pest(&mut Pairs::single(second))?,
+                        )),
+                    }
                 }
                 Rule::dot_exp => {
                     let mut inner = pair.into_inner();
@@ -1494,7 +1584,17 @@ fn parser_eval() {
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::eval(Exp::varstr("poly"), Exp::from(3)))
+        Ok(Exp::evaluate_at(Exp::varstr("poly"), Exp::from(3)))
+    );
+}
+
+#[test]
+fn parser_eval_grid() {
+    let ex = "eval(poly)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::evaluate_grid(Exp::varstr("poly")))
     );
 }
 
@@ -1513,26 +1613,25 @@ fn parser_coef() {
 }
 
 #[test]
-fn parser_ifft() {
-    let ex = "ifft([1,2,3])";
+fn parser_interpolate() {
+    let ex = "interpolate([0,1,2], [1,2,3])";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::ifft(Exp::vec(vec![
-            Exp::from(1),
-            Exp::from(2),
-            Exp::from(3)
-        ])))
+        Ok(Exp::interpolate_at(
+            Exp::vec(vec![Exp::from(0), Exp::from(1), Exp::from(2)]),
+            Exp::vec(vec![Exp::from(1), Exp::from(2), Exp::from(3)]),
+        ))
     );
 }
 
 #[test]
-fn parser_fft() {
-    let ex = "fft(x + 2)";
+fn parser_fft_via_eval() {
+    let ex = "eval(x + 2)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
     assert_eq!(
         UExp::from_pest(&mut pairs),
-        Ok(Exp::fft(Exp::varstr("x") + Exp::from(2)))
+        Ok(Exp::evaluate_grid(Exp::varstr("x") + Exp::from(2)))
     );
 }
 

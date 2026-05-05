@@ -480,26 +480,25 @@ mod vec_ops {
 }
 
 // =============================================================================
-// Polynomial ops (Ifft, Fft, Poly, Coef, Mle, Eval)
+// Polynomial ops (unary interpolate / Fft / Poly / Coef / Mle / Eval)
 //
 // `infer.rs` is authoritative:
-//   - `Ifft : Vec(F, n) -> Poly(F, 1, n)`         (lowered: `VPoly(1, n)`)
-//   - `Fft  : Poly(F, 1, n) -> Vec(F, n)`          (univariate arm)
-// Both require `n` to be a power of two (enforced in `infer.rs`).
+//   - `interpolate(evs) : Vec(F, n) -> Poly(F, 1, n)` when `n` is a power of two (FFT grid)
+//   - `fft : Poly(F, 1, n) -> Vec(F, n)` (univariate arm; `n` power of two)
 // =============================================================================
 
 mod poly_ops {
     use super::*;
 
-    /// Spec: `Ifft : Vec(F, n) -> Uni(n)`.
+    /// Spec: unary `interpolate` / `value_ifft`: `Vec(F, n) -> Uni(n)` (see `infer.rs`).
     #[test]
     fn pbt_ifft_returns_poly_per_spec() {
         arbtest::arbtest(|u| {
-            // Pow2 sizes only — `infer.rs` rejects non-pow2 Ifft.
+            // Pow2 sizes only — unary interpolate rejects non-pow2 length in `infer.rs`.
             let n: usize = *u.choose(&[1usize, 2, 4, 8])?;
             let mut rng = test_rng();
             let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
-            let r = v.value_ifft();
+            let r = v.value_interpolate(None);
             let expected = ATyp::uni(n);
             assert!(
                 has_atyp(&r, &expected),
@@ -584,14 +583,14 @@ mod poly_ops {
 }
 
 // =============================================================================
-// Pinned regression: the user-flagged Ifft case
+// Pinned regression: unary interpolate (`value_ifft`) returning the correct polynomial shape
 // =============================================================================
 
 mod regression {
     use super::*;
 
-    /// Per `lang/src/typ/infer.rs:342`, the type rule for `Ifft` is
-    /// `Vec(F, n) -> Poly(F, 1, n)`. Per `backend/src/types.rs`,
+    /// Per unary `interpolate` in `lang/src/typ/infer.rs`, the rule is
+    /// `Vec(F, n) -> Poly(F, 1, n)` (with `n` a power of two). Per `backend/src/types.rs`,
     /// `Poly(F, 1, n)` lowers to `ATyp::VPoly(1, n)`. The runtime
     /// (`backend/src/values.rs::value_ifft`) must produce `Value::Poly`
     /// (DenseUni) so that `has_atyp(_, VPoly(1, n))` holds.
@@ -602,13 +601,13 @@ mod regression {
     fn ifft_returns_poly_per_spec_fixed_size_4() {
         let mut rng = test_rng();
         let v: V = Value::random(&mut rng, &ATyp::vec_scalar(4));
-        let r = v.value_ifft();
+        let r = v.value_interpolate(None);
         let expected = ATyp::vpoly(1, 4);
         let actual = vty(&r);
         assert!(
             has_atyp(&r, &expected),
             "ifft(Vec(F, 4)) should produce a value of type {expected} \
-             per infer.rs:342, but got value of type {actual}."
+             per the unary interpolate typing rule, but got value of type {actual}."
         );
     }
 }

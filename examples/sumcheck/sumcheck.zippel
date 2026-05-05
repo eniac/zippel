@@ -1,65 +1,73 @@
-// Base case: final round (one variable remaining)
-fn sumcheck_round<F: Field>(
-    public claimed_sum: F,
-    public current_poly: Mle<F, 1>,
-    public round_claims: [F; 2]
+// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
+// `challenge` is the verifier coin for this round; we draw the next one only before recursing.
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
+    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+    public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1],
+    public challenges: [F; NUM_VARS_CONST - V],
+    public prev_eval: F,
+    public challenge: F,
+    public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    verify(claimed_sum == round_claims[0] + round_claims[1]);
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
+    let out = marginalize(cfg);
+    let pi = out.next_poly;
 
-    r <- challenge<F>;
+    evs <- out.evaluations;
+    let round_ok = prev_eval == evs[0] + evs[1];
 
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_prev_vec = eval(g, [r_next]);
+    let next_prev = next_prev_vec[0];
+
+    let next_challenges = challenges ++ [r_next];
+    let tail_ok = sumcheck_round(orig_poly, pi, points, next_challenges, next_prev, r_next, curr_round + 1);
+    round_ok && tail_ok
+}
+
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
+    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
+    public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1],
+    public challenges: [F; NUM_VARS_CONST - 1],
+    public prev_eval: F,
+    public challenge: F,
+    public curr_round: Fin<NUM_VARS_CONST>
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    let round_ok = prev_eval == evs[0] + evs[1];
+
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let full_challenges = challenges ++ [r_final];
+    let from_round_vec = eval(g, [r_final]);
+    let from_round = from_round_vec[0];
+    let from_orig = eval(orig_poly, full_challenges);
+
+    round_ok && from_round == from_orig
+}
+
+// Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
+proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
+    public claimed_sum: F,
+    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+) where let zero = claimed_sum - claimed_sum;
+        let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
+        let out0 = marginalize(cfg0);
+        let evs0 = out0.evaluations;
+        claimed_sum == evs0[0] + evs0[1] {
     let zero = claimed_sum - claimed_sum;
-    let one = zero + 1;
-    let coeff_left = one - r;
-    let g_line = (coeff_left * round_claims[0]) + (r * round_claims[1]);
-
-    let r_point = [r];
-    eval_vec <- eval(current_poly, r_point);
-    let oracle_eval = eval_vec[0];
-
-    g_line == oracle_eval
-}
-
-// Recursive case: V ≥ 2
-fn sumcheck_round<F: Field, S: Size, V: 2..S>(
-    public claimed_sum: F,
-    public p: Poly<F, V, DEGREE>,
-    public current_poly: Mle<F, V>,
-    public round_claims: [F; 2*V]
-) -> Bool {
-    verify(claimed_sum == round_claims[0] + round_claims[1]);
-
-    r <- challenge<F>;
-    let next_claim = ((1-r) * round_claims[0]) + (r * round_claims[1]);
-
-    let r_point = [r];
-    let next_poly = p(r_point);
-
-    sumcheck_round(next_claim, next_poly, round_claims[2..2*V])
-}
-
-fn inner_poly<F: Field, S: Size, NUM_VARS: 1..S>(a: Mle<F, NUM_VARS>, b: Mle<F, NUM_VARS>, c: Poly<F, NUM_VARS, 2>) \
-   -> Poly<F, NUM_VARS, 6> {
-   5*a*b + 10*c^3 - a*c
-}
-
-fn hypercube<F: Field, N> -> Vec<F, 2^N> {
-}
-
-fn sum_check_spec(a: Mle<F, NUM_VARS_CONST>, b: Mle<F, NUM_VARS_CONST>, c: Mle<F, NUM_VARS_CONST>) -> F {
-   let p = inner_poly(a, b, c);
-   let v = [p(i) for i in hypercube<NUM_VARS_CONST>()];
-   reduce(+, v)
-}
-
-// Entry point: claimed sum, multilinear polynomial, and prover messages.
-// Prove: \sum_{i=0}^n a_i * b_i = s
-proto sumcheck<F: Field, S: Size, NUM_VARS_CONST, DEGREE>(
-    public claimed_sum: F,
-    public a: Mle<F, NUM_VARS_CONST>,
-    public b: Mle<F, NUM_VARS_CONST>,
-    public c: Mle<F, NUM_VARS_CONST>,
-    public round_claims: [F; 2*NUM_VARS_CONST]
-) where (sum_check_spec(inner_poly(a, b, c)) == claimed_sum) {
-    verify(sumcheck_round(claimed_sum, inner_poly(a,b,c), round_claims))
+    let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    let round1_ok = claimed_sum == evs0[0] + evs0[1];
+    r1 <- challenge<F>;
+    let points = [i for i in 0..MAX_DEGREE_CONST + 1];
+    let g = interpolate(points, evs0);
+    let prev_vec = eval(g, [r1]);
+    let prev = prev_vec[0];
+    verify(round1_ok && sumcheck_round(poly, out0.next_poly, points, [r1], prev, r1, 1))
 }

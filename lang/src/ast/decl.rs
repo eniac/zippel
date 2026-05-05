@@ -11,7 +11,7 @@ use crate::parser::*;
 use crate::typ::infer::{TypeError, Typeable};
 use crate::typ::subst::SubstError;
 use crate::typ::{
-    CTyp, EvalError, GTyp, Range, RangeError, RangeTraversal, Size, SizeSubsts, TypeInline,
+    CKind, CTyp, EvalError, GTyp, Range, RangeError, RangeTraversal, Size, SizeSubsts, TypeInline,
     TypeVars,
 };
 use share::traversal::ToTraversal1;
@@ -257,7 +257,14 @@ impl CBody {
         // Kind context
         let kctx = sig.typevars.to_ctx();
         // Add arguments to [vctx] and [vars]
-        let vctx = sig.args.to_ctx();
+        let mut vctx = sig.args.to_ctx();
+        for (tid, kind) in kctx.iter() {
+            if let CKind::Range(r) = kind {
+                if r.step == 1 && r.end == r.start + 1 {
+                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
+                }
+            }
+        }
         match self {
             Body::Proto { body, relation } => {
                 // Relation must be pure (no side-effects)
@@ -630,7 +637,7 @@ fn fn_parser2() {
     let ex = concat!(
         "fn test<F: Field>(public a: F) -> F {\n",
         "    let v = [1,2,3];\n",
-        "    p <- ifft(v * [0,1,2]);\n",
+        "    p <- interpolate([0,1,2], v * [0,1,2]);\n",
         "    x <- challenge<F>;\n",
         "    p(x)\n",
         "}"
@@ -648,18 +655,21 @@ fn fn_parser2() {
                 UExp::vec(vec![UExp::from(1), UExp::from(2), UExp::from(3)]),
                 UExp::logx(
                     Vid::from("p"),
-                    UExp::ifft(UExp::mul(
-                        UExp::varstr("v"),
-                        UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)])
-                    )),
+                    UExp::interpolate_at(
+                        UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
+                        UExp::mul(
+                            UExp::varstr("v"),
+                            UExp::vec(vec![UExp::from(0), UExp::from(1), UExp::from(2)]),
+                        ),
+                    ),
                     UExp::logx(
                         Vid::from("x"),
                         UExp::challenge(Tid::from("F")),
-                        UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")]))
-                    )
-                )
-            )
-        )
+                        UExp::app(Vid::from("p"), Exps::from([UExp::varstr("x")])),
+                    ),
+                ),
+            ),
+        ),
     );
 }
 

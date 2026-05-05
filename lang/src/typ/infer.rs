@@ -46,22 +46,25 @@ pub enum TypeError {
     )]
     Vec(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CTyp, CTyp, Box<TypeError>),
 
-    #[error("IfftError: Argument to [ifft] must be a vector of fields:\n\t{0}, {1} |- ifft {2}")]
-    Ifft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+    #[error("InterpolateError: Arguments to [interpolate] must be vectors of fields:\n\t{0}, {1} |- interpolate {2}")]
+    Interpolate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
+
+    #[error("InterpolateError: Unary [interpolate] expects a vector of fields:\n\t{0}, {1} |- interpolate {2}")]
+    InterpolateUnary(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
     #[error(
-        "IfftError: Argument to [ifft] must be a vector whose length is a power of two; got n={3}:\n\t{0}, {1} |- ifft {2}"
+        "InterpolateError: Unary [interpolate] requires a vector whose length is a power of two; got n={3}:\n\t{0}, {1} |- interpolate {2}"
     )]
-    IfftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
+    InterpolateUnaryNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize),
 
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
     Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("EvalError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
-    Eval(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+    #[error("EvaluateError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
+    Evaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
-    #[error("EvalMleTooManyArgumentsError: Arguments to [eval] for a multilinear extension had too many arguments:\n\t{0}, {1} |- evalMle {2} {3}")]
-    EvalMleTooManyArguments(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+    #[error("EvaluateMleTooManyArgumentsError: Arguments to [eval] for a multilinear extension had too many arguments:\n\t{0}, {1} |- evalMle {2} {3}")]
+    EvaluateMleTooManyArguments(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
     #[error("CoefError: Arguments to [coef] must be a polynomial:\n\t{0}, {1} |- coef {2}")]
     Coef(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
@@ -95,13 +98,13 @@ pub enum TypeError {
     #[error("InterpolateError: Expects a field vector:\n\t{0}, {1} |- interpolate ( {2}: {3})")]
     Interp(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
-    #[error("FftError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- fft ( {2}: {3})")]
-    Fft(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
+    #[error("EvaluateGridError: Expects a polynomial (univariate or MLE):\n\t{0}, {1} |- eval ( {2}: {3})")]
+    EvaluateGrid(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error(
-        "FftError: Univariate [fft] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- fft ( {2}: {4})"
+        "EvaluateGridError: Unary [eval] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- eval ( {2}: {4})"
     )]
-    FftNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
+    EvaluateGridNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
 
     #[error("RamError: Index {4} must be a Fin type within the bounds of the vector {2}:\n\t{0}, {1} |- {2} : {3} [ {4} : {5} ]")]
     Ram(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp, CExp, CTyp),
@@ -174,25 +177,28 @@ impl<'a> TypeError {
             Box::new(r),
         )
     }
-    pub fn ifft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
-        TypeError::Ifft(kctx.clone(), vctx.clone(), e.clone())
+    pub fn interpolate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::Interpolate(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn ifft_not_pow2(
+    pub fn interpolate_unary(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
+        TypeError::InterpolateUnary(kctx.clone(), vctx.clone(), e.clone())
+    }
+    pub fn interpolate_unary_not_pow2(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         e: &CExp,
         n: usize,
     ) -> Self {
-        TypeError::IfftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n)
+        TypeError::InterpolateUnaryNotPow2(kctx.clone(), vctx.clone(), e.clone(), n)
     }
-    pub fn fft_not_pow2(
+    pub fn evaluate_grid_not_pow2(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         e: &CExp,
         n: usize,
         t: &CTyp,
     ) -> Self {
-        TypeError::FftNotPow2(kctx.clone(), vctx.clone(), e.clone(), n, t.clone())
+        TypeError::EvaluateGridNotPow2(kctx.clone(), vctx.clone(), e.clone(), n, t.clone())
     }
     pub fn poly(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Poly(kctx.clone(), vctx.clone(), e.clone())
@@ -200,16 +206,16 @@ impl<'a> TypeError {
     pub fn coef(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Coef(kctx.clone(), vctx.clone(), e.clone())
     }
-    pub fn eval(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
-        TypeError::Eval(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+    pub fn evaluate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
+        TypeError::Evaluate(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
-    pub fn eval_mle_too_many_arguments(
+    pub fn evaluate_mle_too_many_arguments(
         kctx: &Ctx<Tid, CKind>,
         vctx: &Ctx<Vid, CTyp>,
         p: &CExp,
         x: &CExp,
     ) -> Self {
-        TypeError::EvalMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+        TypeError::EvaluateMleTooManyArguments(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn mle(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, e: &CExp) -> Self {
         TypeError::Mle(kctx.clone(), vctx.clone(), e.clone())
@@ -267,8 +273,13 @@ impl<'a> TypeError {
     pub fn interp(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
         TypeError::Interp(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
-    pub fn fft(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, a: &CExp, ta: &CTyp) -> Self {
-        TypeError::Fft(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
+    pub fn evaluate_grid(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        a: &CExp,
+        ta: &CTyp,
+    ) -> Self {
+        TypeError::EvaluateGrid(kctx.clone(), vctx.clone(), a.clone(), ta.clone())
     }
     pub fn ram(
         kctx: &Ctx<Tid, CKind>,
@@ -353,25 +364,48 @@ impl Typeable for CExp {
             // Booleans
             CExp::Bool(_) => Ok(CTyp::Bool),
 
-            // Infer the type of a univariate polynomial from ifft
-            CExp::Ifft(box v) => {
-                // Infer the type of its argument
-                let typ = v
+            // Unary: FFT-grid interpolation; binary: explicit points + evaluations
+            CExp::Interpolate(points_opt, box evals) => {
+                let evals_typ = evals
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // It must be a vector of fields, or a vector of Fin
-                match typ {
-                    CTyp::Vec(box b, n) => {
-                        let i = b
-                            .to_scalar(kctx)
-                            .ok_or(TypeError::ifft(kctx, &vctx, self))?;
-                        if !n.is_power_of_two() {
-                            return Err(TypeError::ifft_not_pow2(kctx, vctx, self, n));
+                match points_opt {
+                    None => match evals_typ {
+                        CTyp::Vec(box b, n) => {
+                            let i = b
+                                .to_scalar(kctx)
+                                .ok_or(TypeError::interpolate_unary(kctx, &vctx, self))?;
+                            if !n.is_power_of_two() {
+                                return Err(TypeError::interpolate_unary_not_pow2(
+                                    kctx, vctx, self, n,
+                                ));
+                            }
+                            Ok(CTyp::Poly(i, 1, n))
                         }
-                        Ok(CTyp::Poly(i, 1, n))
+                        _ => Err(TypeError::interpolate_unary(kctx, &vctx, self)),
+                    },
+                    Some(points) => {
+                        let points_typ = points
+                            .infer(kctx, fctx, vctx)
+                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                        match (points_typ, evals_typ) {
+                            (CTyp::Vec(box bp, np), CTyp::Vec(box be, ne)) if np == ne => {
+                                let ip = bp
+                                    .to_scalar(kctx)
+                                    .ok_or(TypeError::interpolate(kctx, &vctx, self))?;
+                                let ie = be
+                                    .to_scalar(kctx)
+                                    .ok_or(TypeError::interpolate(kctx, &vctx, self))?;
+                                if ip != ie {
+                                    return Err(TypeError::interpolate(kctx, &vctx, self));
+                                }
+                                Ok(CTyp::Poly(ie, 1, ne))
+                            }
+                            _ => Err(TypeError::interpolate(kctx, &vctx, self)),
+                        }
                     }
-                    _ => Err(TypeError::ifft(kctx, &vctx, self)),
                 }
             }
 
@@ -413,35 +447,77 @@ impl Typeable for CExp {
                 }
             }
 
-            CExp::Eval(box p, box x) => {
+            CExp::Evaluate(box p, opt_points) => {
                 let p_typ = p
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-                let x_typ = x
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                match (p_typ, x_typ) {
-                    // Univariate polynomial evaluated at a vector of points:
-                    (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
-                        let _i = b
-                            .to_scalar(kctx)
-                            .ok_or(TypeError::eval(kctx, &vctx, p, x))?;
-                        Ok(CTyp::Vec(b, len_vec))
-                    }
-                    (CTyp::Poly(_i, n, 1), CTyp::Vec(b, len_vec)) => {
-                        let i = b
-                            .to_scalar(kctx)
-                            .ok_or(TypeError::eval(kctx, &vctx, p, x))?;
-                        if len_vec == n {
-                            return Ok(*b);
+                match opt_points {
+                    // Binary form: eval(p, points) — point or vector evaluation.
+                    Some(box x) => {
+                        let x_typ = x
+                            .infer(kctx, fctx, vctx)
+                            .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                        match (p_typ, x_typ) {
+                            // Univariate polynomial evaluated at a vector of points:
+                            (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
+                                let _i = b
+                                    .to_scalar(kctx)
+                                    .ok_or(TypeError::evaluate(kctx, &vctx, p, x))?;
+                                Ok(CTyp::Vec(b, len_vec))
+                            }
+                            // Multivariate polynomial (MLE, virtual, etc.): n > 1.
+                            (CTyp::Poly(_i, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
+                                let i = b
+                                    .to_scalar(kctx)
+                                    .ok_or(TypeError::evaluate(kctx, &vctx, p, x))?;
+                                if len_vec == n {
+                                    return Ok(*b);
+                                }
+                                if len_vec < n {
+                                    return Ok(CTyp::Poly(i, n - len_vec, d));
+                                }
+                                Err(TypeError::evaluate_mle_too_many_arguments(
+                                    kctx, &vctx, p, x,
+                                ))
+                            }
+                            _ => Err(TypeError::evaluate(kctx, &vctx, p, x)),
                         }
-                        if len_vec < n {
-                            return Ok(CTyp::Poly(i, n - len_vec, 1));
-                        }
-                        return Err(TypeError::eval_mle_too_many_arguments(kctx, &vctx, p, x));
                     }
-                    _ => Err(TypeError::eval(kctx, &vctx, p, x)),
+                    // Unary form: eval(p) — evaluation on the FFT grid (n roots of unity).
+                    None => {
+                        let t = p_typ;
+                        match t.clone() {
+                            CTyp::Poly(tid, 1, n) => {
+                                let k = kctx.get(&tid).ok_or(TypeError::lub(
+                                    TypeError::exp(kctx, vctx, self),
+                                    LubError::kind_not_found(&tid),
+                                ))?;
+                                if !k.is_scalar() {
+                                    return Err(TypeError::evaluate_grid(kctx, vctx, p, &t));
+                                }
+                                if !n.is_power_of_two() {
+                                    return Err(TypeError::evaluate_grid_not_pow2(
+                                        kctx, vctx, p, n, &t,
+                                    ));
+                                }
+                                Ok(CTyp::vec(&CTyp::Base(tid), n))
+                            }
+                            CTyp::Poly(tid, n, 1) => {
+                                let k = kctx.get(&tid).ok_or(TypeError::lub(
+                                    TypeError::exp(kctx, vctx, self),
+                                    LubError::kind_not_found(&tid),
+                                ))?;
+                                if k.is_scalar() {
+                                    Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
+                                } else {
+                                    Err(TypeError::evaluate_grid(kctx, vctx, p, &t))
+                                }
+                            }
+                            _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
+                        }
+                    }
                 }
             }
 
@@ -470,6 +546,78 @@ impl Typeable for CExp {
                     }
                     _ => Err(TypeError::mle(kctx, &vctx, self)),
                 }
+            }
+
+            // Infer the type of a marginalize call.
+            CExp::Marginalize(box rec) => {
+                let rec_typ = rec
+                    .infer(kctx, fctx, vctx)
+                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
+
+                let CTyp::Record(ref fields) = rec_typ else {
+                    return Err(TypeError::not_a_record(kctx, vctx, &rec, &rec_typ));
+                };
+
+                let poly_typ = fields
+                    .get(&"poly".to_string())
+                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, &rec, "poly", &fields))?;
+                let (field_tid, n, d) = match poly_typ {
+                    CTyp::Poly(tid, n, d) => (tid.clone(), *n, *d),
+                    _ => return Err(TypeError::poly(kctx, vctx, self)),
+                };
+
+                let challenge_typ = fields.get(&"challenge".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "challenge", &fields)
+                })?;
+                let challenge_tid = challenge_typ
+                    .to_scalar(kctx)
+                    .ok_or_else(|| TypeError::exp(kctx, vctx, self))?;
+                if challenge_tid != field_tid {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let round_typ = fields.get(&"round".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "round", &fields)
+                })?;
+                if !matches!(round_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let num_variables_typ =
+                    fields.get(&"num_variables".to_string()).ok_or_else(|| {
+                        TypeError::field_not_found(kctx, vctx, &rec, "num_variables", &fields)
+                    })?;
+                if !matches!(num_variables_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                let max_degree_typ = fields.get(&"max_degree".to_string()).ok_or_else(|| {
+                    TypeError::field_not_found(kctx, vctx, &rec, "max_degree", &fields)
+                })?;
+                if !matches!(max_degree_typ, CTyp::Fin(_)) {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+
+                // Runtime consumes max_degree as an index. When this is a singleton Fin,
+                // preserve that precise degree in the inferred output type.
+                let out_degree = match max_degree_typ {
+                    CTyp::Fin(r) if r.step == 1 && r.end == r.start + 1 => r.start,
+                    _ => d,
+                };
+
+                let mut out_fields = Ctx::new();
+                let f_typ = CTyp::Base(field_tid.clone());
+                out_fields.insert(
+                    &"evaluations".to_string(),
+                    &CTyp::vec(&f_typ, out_degree + 1),
+                );
+                let next_n = n.saturating_sub(1);
+                out_fields.insert(
+                    &"next_poly".to_string(),
+                    &CTyp::Poly(field_tid.clone(), next_n, out_degree),
+                );
+
+                Ok(CTyp::Record(out_fields))
             }
 
             // Infer the type of a (nonempty) vector by unifying the types of its elements
@@ -718,44 +866,6 @@ impl Typeable for CExp {
                 Ok(CTyp::base(t))
             }
 
-            // Convert a polynomial to its fft form
-            CExp::Fft(box a) => {
-                let t = a
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
-                // Only univariate and MLE polynomials can be evaluated
-                match t.clone() {
-                    CTyp::Poly(tid, 1, n) => {
-                        let k = kctx.get(&tid).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(&tid),
-                        ))?;
-                        // Only field elements can be evaluated
-                        if !k.is_scalar() {
-                            return Err(TypeError::fft(kctx, vctx, &a, &t));
-                        }
-                        if !n.is_power_of_two() {
-                            return Err(TypeError::fft_not_pow2(kctx, vctx, &a, n, &t));
-                        }
-                        Ok(CTyp::vec(&CTyp::Base(tid), n))
-                    }
-                    CTyp::Poly(tid, n, 1) => {
-                        let k = kctx.get(&tid).ok_or(TypeError::lub(
-                            TypeError::exp(kctx, vctx, self),
-                            LubError::kind_not_found(&tid),
-                        ))?;
-                        // Only field elements can be evaluated
-                        if k.is_scalar() {
-                            Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
-                        } else {
-                            Err(TypeError::fft(kctx, vctx, &a, &t))
-                        }
-                    }
-                    _ => Err(TypeError::fft(kctx, vctx, &a, &t)),
-                }
-            }
-
             // Random access into vectors
             CExp::Ram(a, b) => {
                 let ta = a
@@ -877,20 +987,27 @@ impl Typeable for CExp {
                     _ => {
                         // It is a function
                         // Find all matching functions in function context [fctx]
-                        let matching_sigs = fctx
+                        let mut matching_sigs: Vec<_> = fctx
                             .iter()
                             .filter_map(|sig| {
-                                // If the function name matches
-                                if &sig.name == id {
-                                    // The argument types must match the parameter types
-                                    let (vs, _) = sig.clone().unify(&param_types, &kctx).ok()?;
-                                    // Return new signature
-                                    Some(vs)
-                                } else {
-                                    None
+                                if &sig.name != id {
+                                    return None;
                                 }
+                                let (vs, _) = sig.clone().unify(&param_types, &kctx).ok()?;
+                                Some(vs)
                             })
-                            .collect::<Vec<_>>();
+                            .collect();
+                        // [CTyp::unify] uses max() on univariate degree so many overloads
+                        // Poly<F,1,d> all unify with Poly<F,1,1>. When ambiguous, keep only
+                        // signatures whose parameters match argument types exactly (no widening).
+                        if matching_sigs.len() > 1 {
+                            matching_sigs.retain(|vs| {
+                                vs.args
+                                    .iter()
+                                    .zip(param_types.0.iter())
+                                    .all(|(a, t)| a.typ == *t)
+                            });
+                        }
 
                         // Only one function shoud match
                         if matching_sigs.len() != 1 {
@@ -1513,12 +1630,12 @@ mod tests {
 
     // Test interpolate
     #[test]
-    fn test_ifft() {
+    fn test_interpolate() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
         // Pow2 length required by the spec (radix-2 FFT).
-        let interp1 = CExp::ifft(CExp::vec(vec![
+        let interp1 = CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
@@ -1530,12 +1647,13 @@ mod tests {
             Ok(CTyp::Poly(Tid::from("F"), 1, 4))
         );
 
-        let interp_bad = CExp::ifft(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
+        let interp_bad =
+            CExp::interpolate_grid(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
 
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
 
         // Non-power-of-two length is rejected.
-        let interp_non_pow2 = CExp::ifft(CExp::vec(vec![
+        let interp_non_pow2 = CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
@@ -1589,7 +1707,7 @@ mod tests {
         let mut vctx = VAR_CTX.clone();
 
         // Pow2 length required by the spec (radix-2 FFT).
-        let eval1 = CExp::fft(CExp::ifft(CExp::vec(vec![
+        let eval1 = CExp::evaluate_grid(CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
@@ -1601,7 +1719,7 @@ mod tests {
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
 
-        let eval_bad = CExp::fft(CExp::vec(vec![CExp::varstr("f1")]));
+        let eval_bad = CExp::evaluate_grid(CExp::vec(vec![CExp::varstr("f1")]));
 
         assert!(eval_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }

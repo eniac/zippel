@@ -11,6 +11,7 @@ use crate::analyses::TransClos;
 use crate::pref::PRef;
 use crate::{GOp, Op, Ref};
 use lang::ast::BinOp;
+use lang::typ::{Distribution, Qualifier};
 
 use ark_ff::{One, Zero};
 use backend::op::HasOpFactory;
@@ -29,6 +30,14 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     pub np: Ctx<PRef, GOp<C>>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub args: Set<PRef>,
+    /// Phase B: the input and relation markers each have their own
+    /// `Node::Arg` children, even when they bind the same protocol parameter
+    /// — keeping the closures of `from_input` and `from_relation`
+    /// structurally separate. To make the Gröbner machinery treat the two
+    /// `Ref`s for a shared parameter as one symbol, we install an alias from
+    /// each subsequent arg's `Ref` to the canonical `PRef` chosen the first
+    /// time we saw an arg with that name.
+    pub ref_aliases: std::collections::HashMap<Ref, PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
@@ -38,6 +47,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             np: Ctx::new(),
             pl: Ctx::new(),
             args: Set::new(),
+            ref_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -45,19 +55,37 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         self.np.keys().union(self.pl.keys())
     }
 
-    pub fn find_ref(&self, r: &Ref) -> PRef {
-        self.vars()
-            .into_iter()
-            .find(|v| v.reference == *r)
-            .or_else(|| {
-                self.args
-                    .iter()
-                    .find(|v| v.var() == r.var() && v.is_var())
-                    .cloned()
-            })
-            .unwrap_or_else(|| {
-                panic!("Reference {} not found in context \n{}", r, self);
-            })
+    /// Resolve a `Ref` to a `PRef` known by this builder.
+    ///
+    /// Phase B: every `Ref` carries a unique `NodeIndex`. The Inp and Rel
+    /// markers' arg children alias to a canonical `PRef` via `ref_aliases`,
+    /// after which lookup is a single keyed scan against the closure. If
+    /// the ref is not present (e.g., it points at a non-modelled op like
+    /// `Op::Random`/`Op::Challenge`), register it as an opaque variable in
+    /// `np` so downstream consumers see a consistent `PRef`.
+    pub fn find_ref(&mut self, r: &Ref) -> PRef {
+        if let Some(p) = self.ref_aliases.get(r).cloned() {
+            return p;
+        }
+        if let Some(v) = self.vars().into_iter().find(|v| v.reference == *r) {
+            return v;
+        }
+        if let Some(v) = self.args.iter().find(|v| v.reference == *r).cloned() {
+            return v;
+        }
+        log::debug!(
+            "groebner: opaque ref {} (not in vars/args), registering in np",
+            r
+        );
+        let pref = PRef::from_ref(
+            r.clone(),
+            ATyp::scalar(),
+            Qualifier::Private,
+            Distribution::Nonuniform,
+        );
+        let opaque = Op::Ref(r.clone(), ATyp::scalar());
+        self.np.insert(&pref, &opaque);
+        pref
     }
 
     /// Filter out variables that satisfy the predicate
@@ -261,8 +289,51 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         self.add_tc(tc);
     }
 
+    /// Register only the *args* of the input marker, without any of its
+    /// body operations. Useful when bootstrapping a relation-only builder
+    /// that must agree with a separate input-aware builder on which
+    /// `Ref` is the canonical one for each protocol parameter.
+    pub fn register_input_args(&mut self, g: &DQDag<C>) {
+        let tc = TransClos::from_input(g);
+        for new_arg in tc.args.iter() {
+            let canonical = self
+                .args
+                .iter()
+                .find(|a| a.name() == new_arg.name())
+                .cloned();
+            match canonical {
+                Some(c) if c.reference != new_arg.reference => {
+                    self.ref_aliases.insert(new_arg.reference.clone(), c);
+                }
+                None => {
+                    self.args.insert(new_arg.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn add_tc(&mut self, tc: TransClos<C>) {
-        self.args.append(tc.args.clone().into_iter());
+        // Phase B: when add_tc runs more than once (e.g. add_input then
+        // add_relation), the same protocol parameter shows up with a
+        // different `Ref` (different `Node::Arg` per marker). Canonicalise
+        // by name: keep the first PRef seen, alias subsequent Refs to it.
+        for new_arg in tc.args.iter() {
+            let canonical = self
+                .args
+                .iter()
+                .find(|a| a.name() == new_arg.name())
+                .cloned();
+            match canonical {
+                Some(c) if c.reference != new_arg.reference => {
+                    self.ref_aliases.insert(new_arg.reference.clone(), c);
+                }
+                None => {
+                    self.args.insert(new_arg.clone());
+                }
+                _ => {}
+            }
+        }
 
         for (i, op) in tc.clos.into_iter() {
             self.add_op(i, op);
@@ -350,6 +421,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             Op::Random(t, b) => {
                 let op = Op::Random(t, b);
+                self.np.insert(&pr, &op);
+            }
+            Op::Interpolate(points, evals) => {
+                let op = Op::Interpolate(points, evals);
                 self.np.insert(&pr, &op);
             }
             Op::Ifft(a) => {

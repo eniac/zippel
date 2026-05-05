@@ -194,6 +194,14 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
+    /// Return MLE evaluation table if this is a DenseMle
+    pub fn as_mle_evaluations(&self) -> Option<&[F]> {
+        match self {
+            PolyVariant::DenseMle(mle) => Some(mle.evaluations.as_slice()),
+            _ => None,
+        }
+    }
+
     /// Convert to vector of evaluations or coefficients
     pub fn to_vec(&self) -> Option<Vec<F>> {
         match self {

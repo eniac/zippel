@@ -69,11 +69,21 @@ mod op_construction_tests {
     }
 
     #[test]
-    fn test_ifft_construction() {
+    fn test_interpolate_construction() {
         let val = GOp::<C>::value(&scalar::<C>(42));
-        let ifft_op = Op::ifft(val);
+        let points = GOp::<C>::vec(vec![GOp::<C>::index(0)]);
+        let interpolate_op = Op::interpolate(points, val.clone());
 
-        match ifft_op {
+        match interpolate_op {
+            Op::Interpolate(_, inner) => match &*inner {
+                Op::Value(_) => (),
+                _ => panic!("Expected Value inside Interpolate"),
+            },
+            _ => panic!("Expected Interpolate operation"),
+        }
+
+        let grid_op = Op::ifft(val);
+        match grid_op {
             Op::Ifft(inner) => match &*inner {
                 Op::Value(_) => (),
                 _ => panic!("Expected Value inside Ifft"),
@@ -83,7 +93,7 @@ mod op_construction_tests {
     }
 
     #[test]
-    fn test_fft_ifft_cancellation() {
+    fn test_fft_interpolate_cancellation() {
         // ifft(fft(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
         let fft_op = Op::fft(val.clone());
@@ -92,21 +102,21 @@ mod op_construction_tests {
         // Should cancel out and return original
         match result {
             Op::Value(_) => (),
-            _ => panic!("Expected FFT/IFFT to cancel"),
+            _ => panic!("Expected FFT/Interpolate to cancel"),
         }
     }
 
     #[test]
-    fn test_ifft_fft_cancellation() {
+    fn test_interpolate_fft_cancellation() {
         // fft(ifft(x)) should return x
         let val = GOp::<C>::value(&scalar::<C>(42));
-        let ifft_op = Op::ifft(val.clone());
-        let result = Op::fft(ifft_op);
+        let interp_grid = Op::ifft(val.clone());
+        let result = Op::fft(interp_grid);
 
         // Should cancel out and return original
         match result {
             Op::Value(_) => (),
-            _ => panic!("Expected IFFT/FFT to cancel"),
+            _ => panic!("Expected Interpolate/FFT to cancel"),
         }
     }
 
@@ -313,11 +323,11 @@ mod op_construction_tests {
         let p = GOp::<C>::value(&scalar::<C>(42));
         let x = Op::value(&scalar::<C>(3));
 
-        let eval_op = Op::eval(p, x);
+        let eval_op = Op::evaluate(p, x);
 
         match eval_op {
-            Op::Eval(_, _) => (),
-            _ => panic!("Expected Eval"),
+            Op::Evaluate(_, _) => (),
+            _ => panic!("Expected Evaluate"),
         }
     }
 
@@ -360,79 +370,20 @@ mod op_construction_tests {
 #[cfg(test)]
 mod ref_tests {
     use crate::Ref;
-    use lang::id::Vid;
     use petgraph::graph::NodeIndex;
 
     #[test]
     fn test_ref_node_extraction() {
         let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
+        let r = Ref(node_idx);
         assert_eq!(r.node(), node_idx);
-    }
-
-    #[test]
-    fn test_ref_var_extraction_some() {
-        let vid = Vid::from("test_var");
-        let node_idx = NodeIndex::new(0);
-        let r = Ref::Var(vid.clone(), node_idx);
-        assert_eq!(r.var(), Some(vid));
-    }
-
-    #[test]
-    fn test_ref_var_extraction_none() {
-        let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
-        assert_eq!(r.var(), None);
-    }
-
-    #[test]
-    fn test_ref_is_var_true() {
-        let vid = Vid::from("test_var");
-        let node_idx = NodeIndex::new(0);
-        let r = Ref::Var(vid, node_idx);
-        assert!(r.is_var());
-    }
-
-    #[test]
-    fn test_ref_is_var_false() {
-        let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
-        assert!(!r.is_var());
     }
 
     #[test]
     fn test_ref_from_node_index() {
         let node_idx = NodeIndex::new(42);
         let r: Ref = node_idx.into();
-        match r {
-            Ref::Node(idx) => assert_eq!(idx, node_idx),
-            _ => panic!("Expected Node ref"),
-        }
-    }
-
-    #[test]
-    fn test_ref_from_vid() {
-        let vid = Vid::from("test");
-        let r: Ref = (&vid).into();
-        match r {
-            Ref::Var(v, idx) => {
-                assert_eq!(v, vid);
-                assert_eq!(idx, NodeIndex::new(0));
-            }
-            _ => panic!("Expected Var ref"),
-        }
-    }
-
-    #[test]
-    fn test_ref_from_str() {
-        let r: Ref = "test_var".into();
-        match r {
-            Ref::Var(v, idx) => {
-                assert_eq!(v, Vid::from("test_var"));
-                assert_eq!(idx, NodeIndex::new(0));
-            }
-            _ => panic!("Expected Var ref"),
-        }
+        assert_eq!(r.node(), node_idx);
     }
 }
 
@@ -677,17 +628,17 @@ mod op_additional_tests {
     }
 
     #[test]
-    fn test_op_sub_commutative_ifft() {
+    fn test_op_sub_commutative_interpolate() {
         let a = GOp::<C>::value(&scalar::<C>(5));
         let b = GOp::<C>::value(&scalar::<C>(2));
-        let ifft_a = Op::Ifft(mk::<C>(a));
-        let ifft_b = Op::Ifft(mk::<C>(b));
+        let interpolate_a = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(a));
+        let interpolate_b = Op::Interpolate(mk::<C>(GOp::index(0)), mk::<C>(b));
         let typ = ATyp::scalar();
-        let result = Op::sub(ifft_a, ifft_b, typ);
+        let result = Op::sub(interpolate_a, interpolate_b, typ);
 
         match result {
-            Op::Ifft(_) => (),
-            _ => panic!("Expected Ifft wrapper for sub of ifft values"),
+            Op::Interpolate(_, _) => (),
+            _ => panic!("Expected Interpolate wrapper for sub of interpolate values"),
         }
     }
 }

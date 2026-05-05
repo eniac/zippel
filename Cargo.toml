@@ -1,5 +1,6 @@
 [workspace]
 members = [ "lang", "runtime", "share" , "graph", "backend"]
+exclude = [ "sumcheck_compare" ]
 default-members = [ ".", "lang", "runtime", "share" , "graph", "backend"]
 resolver = "2"
 
@@ -67,6 +68,10 @@ path = "examples/cp/main.rs"
 [[example]]
 name = "sumcheck"
 path = "examples/sumcheck/main.rs"
+
+[[example]]
+name = "fft_interpolate"
+path = "examples/fft_interpolate/main.rs"
 
 [[example]]
 name = "zerocheck"

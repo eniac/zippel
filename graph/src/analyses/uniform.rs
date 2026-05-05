@@ -35,14 +35,19 @@ impl UniformityPropagation {
             Op::Poly(op) => self.op_ancestors(op),
             Op::Coef(op) => self.op_ancestors(op),
             Op::Reduce(_, v) => self.op_ancestors(v),
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let p_ancestors = self.op_ancestors(p);
                 let x_ancestors = self.op_ancestors(x);
                 p_ancestors.union(x_ancestors)
             }
+            Op::Interpolate(points, evals) => {
+                self.op_ancestors(points).union(self.op_ancestors(evals))
+            }
             Op::Ifft(op) => self.op_ancestors(op),
             Op::Fft(op) => self.op_ancestors(op),
             Op::Mle(op) => self.op_ancestors(op),
+            Op::Marginalize(op) => self.op_ancestors(op),
+            Op::Proj(op, _, _) => self.op_ancestors(op),
             Op::Random(_, _) => Set::new(),
             Op::Challenge(_, _) => Set::new(),
             Op::Vec(vs) => vs.iter().flat_map(|v| self.op_ancestors(v)).collect(),
@@ -74,7 +79,7 @@ impl UniformityPropagation {
             Op::Ram(a, _) => self.from_op(a),
             Op::Poly(a) => self.from_op(a),
             Op::Coef(op) => self.from_op(op),
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 let _dist_p = self.from_op(p)?;
                 let dist_x = self.from_op(x)?;
                 if self.is_independent(p, x) {
@@ -83,9 +88,23 @@ impl UniformityPropagation {
                     Some(Distribution::Nonuniform)
                 }
             }
+            Op::Interpolate(points, evals) => {
+                let dist_evals = self.from_op(evals)?;
+                let dist_points = self.from_op(points)?;
+                // Independence check mirrors Op::Evaluate above: interpolating
+                // uniform `evals` at points that share randomness with them is
+                // not uniform.
+                if self.is_independent(points, evals) {
+                    Some(dist_points.add(&dist_evals))
+                } else {
+                    Some(Distribution::Nonuniform)
+                }
+            }
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),
+            Op::Marginalize(a) => self.from_op(a),
+            Op::Proj(a, _, _) => self.from_op(a),
             Op::Bin(BinOp::Add, a, b, _) | Op::Bin(BinOp::Concat, a, b, _) => {
                 let dist_a = self.from_op(a)?;
                 let dist_b = self.from_op(b)?;
@@ -201,7 +220,7 @@ impl UniformityPropagation {
         let mut worklist = vec![inp];
         for n in dag.op_nodes() {
             if let Some(d) = self.from_op(&dag[n].clone().into_op()) {
-                self.distributions.insert(&Ref::Node(n), &d);
+                self.distributions.insert(&Ref(n), &d);
                 worklist.push(n.into());
             }
         }
@@ -212,14 +231,13 @@ impl UniformityPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => {
-                    for arg in args {
-                        self.distributions.insert(&arg.reference, &arg.distribution);
-                    }
+                Node::Inp(_) | Node::Rel(_) => {}
+                Node::Arg(_, _, _, dist, _) => {
+                    self.distributions.insert(&Ref(n), dist);
                 }
                 Node::Transcr(op, _) | Node::Op(op, _) => {
                     self.from_op(op)
-                        .and_then(|d| self.distributions.insert(&Ref::Node(n), &d));
+                        .and_then(|d| self.distributions.insert(&Ref(n), &d));
                 }
             }
 
@@ -274,7 +292,6 @@ mod tests {
     use share::unwrap;
 
     #[test]
-    #[ignore]
     fn uniformity_prop() {
         let ex = r#"
             proto foo<F: Field>(private uniform* s: F, public x: F) where true {
@@ -409,11 +426,11 @@ mod tests {
     }
 
     #[test]
-    fn test_uniformity_from_op_ifft() {
+    fn test_uniformity_from_op_interpolate() {
         let up = UniformityPropagation::new();
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
-        let op = Op::Ifft(mk::<ArkBls12_381>(inner));
+        let op = Op::Interpolate(mk::<ArkBls12_381>(GOp::index(0)), mk::<ArkBls12_381>(inner));
         let dist = up.from_op(&op);
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }

@@ -18,13 +18,13 @@ mod node_tests {
 
     #[test]
     fn test_node_is_op_false_inp() {
-        let node = Node::<C, Nothing>::Inp(Vid::from("test"), vec![]);
+        let node = Node::<C, Nothing>::Inp(Vid::from("test"));
         assert!(!node.is_op());
     }
 
     #[test]
     fn test_node_is_input_true() {
-        let node = Node::<C, Nothing>::Inp(Vid::from("test"), vec![]);
+        let node = Node::<C, Nothing>::Inp(Vid::from("test"));
         assert!(node.is_input());
     }
 
@@ -37,7 +37,7 @@ mod node_tests {
 
     #[test]
     fn test_node_is_relation_true() {
-        let node = Node::<C, Nothing>::Rel(Vid::from("rel"), vec![]);
+        let node = Node::<C, Nothing>::Rel(Vid::from("rel"));
         assert!(node.is_relation());
     }
 
@@ -51,7 +51,7 @@ mod node_tests {
     #[test]
     fn test_node_is_verifier_check_true() {
         let op = Op::<C, Ref>::check(Op::value(&scalar::<C>(1)));
-        let _node = Node::<C, Nothing>::Rel(Vid::from("check"), vec![]);
+        let _node = Node::<C, Nothing>::Rel(Vid::from("check"));
         // Note: is_verifier_check requires Op node with Check op
         let check_node = Node::Op(mk::<C>(op), Nothing);
         assert!(check_node.is_verifier_check());
@@ -88,15 +88,15 @@ mod node_tests {
 
     #[test]
     fn test_node_op_extraction_none() {
-        let node = Node::<C, Nothing>::Inp(Vid::from("test"), vec![]);
+        let node = Node::<C, Nothing>::Inp(Vid::from("test"));
         let extracted = node.op();
         assert!(extracted.is_none());
     }
 
     #[test]
     fn test_node_references_op() {
-        let ref1 = Ref::Node(NodeIndex::new(1));
-        let ref2 = Ref::Node(NodeIndex::new(2));
+        let ref1 = Ref(NodeIndex::new(1));
+        let ref2 = Ref(NodeIndex::new(2));
 
         let op = Op::<C, Ref>::add(
             Op::reference(ref1.clone(), ATyp::scalar()),
@@ -114,14 +114,14 @@ mod node_tests {
 
     #[test]
     fn test_node_references_inp() {
-        let node = Node::<C, Nothing>::Inp(Vid::from("test"), vec![]);
+        let node = Node::<C, Nothing>::Inp(Vid::from("test"));
         let refs = node.references();
         assert_eq!(refs.len(), 0);
     }
 
     #[test]
     fn test_node_map_node_indices() {
-        let ref1 = Ref::Node(NodeIndex::new(1));
+        let ref1 = Ref(NodeIndex::new(1));
         let op = Op::<C, Ref>::reference(ref1, ATyp::scalar());
         let node = Node::Op(mk::<C>(op), Nothing);
 
@@ -136,7 +136,7 @@ mod node_tests {
     #[test]
     fn test_node_name_with_vid() {
         let vid = Vid::from("my_var");
-        let node = Node::<C, Nothing>::Inp(vid.clone(), vec![]);
+        let node = Node::<C, Nothing>::Inp(vid.clone());
 
         let name = node.name();
         assert_eq!(name, Some(&vid));

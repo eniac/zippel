@@ -83,17 +83,42 @@ fn test_mul_comm() {
 #[test]
 fn coef_eval_test() {
     let mut rng = test_rng();
+    let coeffs = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
+    let poly = coeffs.value_poly();
+    let recovered_poly = poly.value_fft().value_interpolate(None);
+    assert_deq!(&recovered_poly, &poly);
 
     // Vec(F, 8) -[ifft]-> Poly(F, 1, 8) -[fft]-> Vec(F, 8) round-trips.
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(8));
-    let c = a.value_ifft().value_fft();
+    let c = a.value_interpolate(None).value_fft();
     assert_deq!(&c, &a);
 
     // Poly(F, 1, 8) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 8) round-trips.
     // Compare via coefficient vectors to avoid wrapper-shape sensitivity.
     let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(8));
-    let p2 = p.value_fft().value_ifft();
+    let p2 = p.value_fft().value_interpolate(None);
     assert_deq!(&p2.value_coef(), &p.value_coef());
+}
+
+#[test]
+fn interpolate_with_points_uses_general_interpolation() {
+    let coeffs = Value::<TestConfig>::VecScalar(vec![
+        Fr::from(3u64),
+        Fr::from(2u64),
+        Fr::from(5u64),
+        Fr::from(7u64),
+    ]);
+    let poly = coeffs.value_poly();
+    let points = Value::<TestConfig>::VecScalar(vec![
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(4u64),
+        Fr::from(8u64),
+    ]);
+    let evals = poly.clone().value_eval(points.clone());
+
+    let recovered_poly = evals.value_interpolate(Some(&points));
+    assert_deq!(&recovered_poly, &poly);
 }
 
 // Equivalence relation tests for value_equ
@@ -1157,6 +1182,39 @@ fn test_div_by_non_constant_poly_panics() {
     let scalar_val = Value::<TestConfig>::Scalar(Fr::from(100u64));
     let poly_val = Value::<TestConfig>::Poly(vp);
     let _result = &scalar_val / &poly_val;
+}
+
+// Regression: `serialize_value(Value::Poly)` must use `VirtualPolynomial`'s
+// `CanonicalSerialize` encoding (same as transcript hashing / `value_to_bytes`).
+#[test]
+fn sumcheck_style_vp_serializes() {
+    use crate::VirtualPolynomial;
+    use crate::values::{serialize_value, value_to_bytes};
+    use ark_poly::DenseMultilinearExtension;
+    use ark_serialize::CanonicalSerialize;
+    use ark_std::UniformRand;
+
+    type F = Fr;
+    let num_vars = 10usize;
+    let max_degree = 10usize;
+    let eval_count = 1usize << num_vars;
+    let mut rng = test_rng();
+    let base_evals: Vec<F> = (0..eval_count).map(|_| F::rand(&mut rng)).collect();
+
+    let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, base_evals.clone());
+    let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(mle.clone()));
+
+    let mut full_poly = base.clone();
+    for _ in 1..max_degree {
+        full_poly = full_poly.poly_mul(&base).unwrap();
+    }
+
+    let mut buf = Vec::new();
+    assert!(full_poly.serialize_compressed(&mut buf).is_ok());
+
+    let mut buf2 = Vec::new();
+    assert!(serialize_value(&Value::<TestConfig>::Poly(full_poly.clone()), &mut buf2).is_ok());
+    assert!(value_to_bytes(&Value::<TestConfig>::Poly(full_poly)).is_ok());
 }
 
 #[cfg(test)]

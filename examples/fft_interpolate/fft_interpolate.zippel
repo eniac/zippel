@@ -1,0 +1,33 @@
+// Roots-of-unity case: points are fixed to the size-4 FFT domain over F17.
+// Expected runtime behavior:
+// - evs are computed by direct evaluation at these points
+// - interpolate(points, evs) should hit the fast FFT-based path
+proto fft_interpolate_roots<F: Field>(
+    public coeffs: [F; 16],
+    public points: [F; 16]
+) where let p = poly(coeffs);
+        let evs = eval(p, points);
+        let p_back = interpolate(points, evs);
+        coef(p_back) == coeffs {
+    let p = poly(coeffs);
+    let evs = eval(p, points);
+    let p_back = interpolate(points, evs);
+    verify(coef(p_back) == coeffs)
+}
+
+// Arbitrary-point case: points are passed as input.
+// Expected runtime behavior:
+// - evs are computed by direct evaluation at arbitrary points
+// - interpolate(points, evs) should use the general interpolation fallback path
+proto fft_interpolate_random<F: Field>(
+    public coeffs: [F; 16],
+    public points: [F; 16]
+) where let p = poly(coeffs);
+        let evs = eval(p, points);
+        let p_back = interpolate(points, evs);
+        coef(p_back) == coeffs {
+    let p = poly(coeffs);
+    let evs = eval(p, points);
+    let p_back = interpolate(points, evs);
+    verify(coef(p_back) == coeffs)
+}

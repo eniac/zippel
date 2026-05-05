@@ -24,14 +24,9 @@ fn make_remap_fn(node_map: &HashMap<NodeIndex, Ref>) -> impl Fn(&PRef) -> PRef +
         .collect();
 
     move |pref: &PRef| {
-        if let Some((old_idx, original_ref)) = inverse.get(&pref.node()) {
-            let new_ref = match (original_ref, &pref.reference) {
-                (Ref::Var(v, _), _) => Ref::Var(v.clone(), *old_idx),
-                (Ref::Node(_), Ref::Var(v, _)) => Ref::Var(v.clone(), *old_idx),
-                (Ref::Node(_), Ref::Node(_)) => Ref::Node(*old_idx),
-            };
+        if let Some((old_idx, _)) = inverse.get(&pref.node()) {
             PRef {
-                reference: new_ref,
+                reference: Ref(*old_idx),
                 ..pref.clone()
             }
         } else {
@@ -52,8 +47,12 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let prover_remap = make_remap_fn(&prover_node_map);
         g_prover.remap_vars(&prover_remap);
 
-        // Build relation basis directly from full DAG (shared namespace)
+        // Build relation basis directly from full DAG (shared namespace).
+        // Phase B: register input args first so that `x` referenced by
+        // relation polynomials canonicalises to the same `Ref` used by
+        // the prover basis.
         let mut g_rel = GroebnerBuilder::new();
+        g_rel.register_input_args(dag);
         g_rel.add_relation(dag);
 
         // Combine: prover + relation
@@ -117,7 +116,6 @@ mod tests {
     use share::unwrap;
 
     #[test]
-    #[ignore]
     fn completeness_test() {
         let ex = r#"
             proto ex_complete<F: Field>(private s: F, private s': F) where s == s' {
