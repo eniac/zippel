@@ -1,0 +1,73 @@
+// Groth16 zkSNARK Protocol
+// Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
+// 
+// This implements the Groth16 proof system for R1CS circuits over bilinear groups.
+// The proving key contains structured reference string (SRS) elements; the verification
+// key contains the CRS elements needed by the verifier. The proof consists of three
+// group elements (A in G1, B in G2, C in G1) and verification reduces to a single
+// pairing equation:
+//
+//   e(A, B) = e(α, β) + e(IC, γ) + e(C, δ)
+//
+// where IC = Σ γ_abc_i · x_i is the public input commitment.
+//
+// Size parameters:
+//   N: number of rows in QAP (domain size), length of a_query/b_query/full_assignment
+//   M: number of public inputs (including the constant 1), length of γ_abc and public_inputs
+//   L: number of private witness variables, length of l_query and aux_assignment
+//   H: domain size minus one, length of h_query and h_coeffs
+//
+// The `where` clause is trivial (identity) because the public input vector is declared
+// as both a public input and the binding obligation — the prover cannot tamper with it.
+//
+// Notation mapping:
+//   alpha_g1      = [α]₁      a_query       = {αᵢ}₁
+//   beta_g1       = [β]₁      b_g1_query    = {βᵢ}₁
+//   beta_g2       = [β]₂      b_g2_query    = {βᵢ}₂
+//   gamma_g2      = [γ]₂      h_query       = {βᵢ}₁  (H query)
+//   delta_g1      = [δ]₁      l_query       = {δᵢ}₁  (L query)
+//   delta_g2      = [δ]₂      gamma_abc_g1 = {[γ⁻¹(β·uᵢ(x) + α·vᵢ(x) + wᵢ(x))]}₁
+
+proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: Size, H: Size>(
+    public alpha_g1: G1,
+    public beta_g2: G2,
+    public gamma_g2: G2,
+    public delta_g2: G2,
+    public gamma_abc_g1: [G1; M],
+    public beta_g1: G1,
+    public delta_g1: G1,
+    public a_query: [G1; N],
+    public b_g1_query: [G1; N],
+    public b_g2_query: [G2; N],
+    public h_query: [G1; H],
+    public l_query: [G1; L],
+    public public_inputs: [F; M],
+    private r: F,
+    private s: F,
+    private full_assignment: [F; N],
+    private h_coeffs: [F; H],
+    private aux_assignment: [F; L]
+) where public_inputs == public_inputs {
+    // --- Prover: compute proof elements A, B, C ---
+    // A = [α + Σ aᵢ·Aᵢ + δ·r]₁
+    a_proof <- alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
+    // B = [β + Σ aᵢ·Bᵢ + δ·s]₂
+    b_proof <- beta_g2 + dot(b_g2_query, full_assignment) + delta_g2 * s;
+
+    // C = [Σ aᵢ·(β·uᵢ(x) + α·vᵢ(x) + wᵢ(x)) + Σ bᵢ·Lᵢ + H(x)·B(x) + A·s + B'·r − δ·r·s]₁
+    let a_val = alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
+    let b_g1_val = beta_g1 + dot(b_g1_query, full_assignment) + delta_g1 * s;
+    let c_h = dot(h_query, h_coeffs);
+    let c_l = dot(l_query, aux_assignment);
+    c_proof <- c_h + c_l + a_val * s + b_g1_val * r - delta_g1 * (r * s);
+
+    // --- Verifier: pairing check ---
+    // IC = Σ γ_abc_i · x_i  (public input commitment)
+    let ic = dot(gamma_abc_g1, public_inputs);
+
+    // e(A, B) = e(α, β) + e(IC, γ) + e(C, δ)
+    let lhs = pair(a_proof, b_proof);
+    let rhs = pair(alpha_g1, beta_g2) + pair(ic, gamma_g2) + pair(c_proof, delta_g2);
+
+    verify(lhs == rhs)
+}
