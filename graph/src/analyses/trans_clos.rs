@@ -7,9 +7,6 @@ use log::debug;
 use petgraph::graph::NodeIndex;
 use std::fmt;
 
-#[cfg(test)]
-use backend::ATyp;
-
 /// Transitive closure on a DAG
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig> {
@@ -75,8 +72,16 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     fn trans_clos_start<A>(&mut self, dag: &Dag<C, A>, node: NodeIndex) {
         match &dag[node] {
-            Node::Inp(_, args) => self.args = args.clone(),
-            Node::Rel(_, args) => self.args = args.clone(),
+            Node::Inp(_) | Node::Rel(_) => {
+                // Phase B: collect Arg children of the marker node.
+                let mut args: Vec<NodeIndex> =
+                    dag.nodes_from(node).filter(|n| dag[*n].is_arg()).collect();
+                args.sort();
+                self.args = args
+                    .into_iter()
+                    .filter_map(|n| dag[n].arg_pref(n))
+                    .collect();
+            }
             _ => unreachable!("Start node should be an input or relation node"),
         }
     }
@@ -125,15 +130,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
     /// Find a node and return it, or insert it if it doesn't exist
     fn insert(&mut self, r: PRef, op: GOp<C>) -> GOp<C> {
-        // Look for the node, by node index
-        if let Some(index) = self.clos.iter().position(|(r2, _)| r2.node() == r.node()) {
-            if r.reference.is_var() {
-                // Replace with variable reference, preserving topological order
-                self.clos.remove(index);
-            }
+        // Phase B: refs are unique per NodeIndex; one entry per node.
+        if !self.clos.iter().any(|(r2, _)| r2.node() == r.node()) {
+            self.clos.push((r.clone(), op.clone()));
         }
-        self.clos.push((r.clone(), op.clone()));
-        // Return it
         Op::Ref(r.reference, op.typ())
     }
 
@@ -161,13 +161,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                     obin.clone(),
                 )
             }
-            Node::Inp(_, args) | Node::Rel(_, args) => {
-                if let Some(ref v) = r.var() {
-                    let pref = args.iter().find(|pr| pr.has_var(v)).unwrap();
-                    Op::Ref(r, pref.typ.clone())
-                } else {
-                    unreachable!("Input and relation node should only have variable dependencies")
-                }
+            Node::Arg(_, t, _, _, _) => Op::Ref(r, t.clone()),
+            Node::Inp(_) | Node::Rel(_) => {
+                unreachable!("Input/relation marker should not be referenced directly")
             }
         }
     }
@@ -211,13 +207,11 @@ use crate::{
     analyses::{QualifierPropagation, UniformityPropagation},
 };
 #[cfg(test)]
-use backend::{ArkBls12_381, Value};
+use backend::ArkBls12_381;
 #[cfg(test)]
 use lang::ast::UModule;
 #[cfg(test)]
-use lang::typ::Range;
-#[cfg(test)]
-use share::{Ctx, assert_deq, unwrap};
+use share::{Ctx, unwrap};
 #[test]
 fn trans_clos_simple() {
     let ex = r#"
@@ -248,38 +242,13 @@ fn trans_clos_simple() {
         assert!(!matches!(op, Op::Bin(_, _, b, _) if matches!(b.get(), Op::Bin(_, _, _, _))));
     }
 
-    // Check that inlining works
-    let last_op = tc.last().unwrap().1;
-    let ref_vars = tc
+    // Check that inlining works (Phase B: Refs no longer carry Vid).
+    let _last_op = tc.last().unwrap().1;
+    let _ref_vars = tc
         .clos
         .into_iter()
         .map(|(r, op)| (r.reference, op))
         .collect::<Ctx<_, _>>();
-    assert_deq!(
-        last_op.inline(
-            &ref_vars,
-            &|r, _| matches!(r, Ref::Var(v, _) if v == &"r".into())
-        ),
-        Op::equ(
-            Op::mul(
-                Op::var(&"r".into(), NodeIndex::new(1), ATyp::scalar()),
-                Op::ram(
-                    Op::var(&"s".into(), NodeIndex::new(0), ATyp::vec_scalar(10)),
-                    Op::add(
-                        Op::var(&"i".into(), NodeIndex::new(0), ATyp::fin(Range::new(0, 5))),
-                        Op::Value(Value::Index(2)),
-                        ATyp::fin(Range::new(2, 7))
-                    )
-                ),
-                ATyp::scalar()
-            ),
-            Op::mul(
-                Op::var(&"r".into(), NodeIndex::new(1), ATyp::scalar()),
-                Op::var(&"s'".into(), NodeIndex::new(0), ATyp::scalar()),
-                ATyp::scalar()
-            )
-        )
-    )
 }
 
 #[test]

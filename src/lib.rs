@@ -19,7 +19,6 @@ use std::path::PathBuf;
 use std::process;
 
 use graph::PRef;
-use graph::Ref;
 use graph::scheduler::local_scheduler::LocalScheduler;
 use graph::scheduler::{AsymptoticCost, Scheduler, TDag};
 use runtime::MutexGraph;
@@ -218,7 +217,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .clone()
             .iter()
             .filter(|arg| arg.is_public())
-            .map(|arg| arg.var().unwrap())
+            .map(|arg| arg.name().cloned().unwrap())
             .collect();
         let public_inputs = inputs
             .clone()
@@ -264,13 +263,21 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
         let verifier_args = verifier.args();
         debug!("Verifier args: {:?}", verifier_args);
+        let prover_arg_names: std::collections::HashSet<&Vid> =
+            prover_args.iter().filter_map(|p| p.name()).collect();
         let pg_additional_args = verifier_args
             .iter()
-            .filter(|arg| !prover_args.contains(arg))
+            .filter(|arg| match arg.name() {
+                Some(v) => !prover_arg_names.contains(v),
+                None => true,
+            })
             .zip(proof.iter())
-            .map(|(arg, val)| match &arg.reference {
-                Ref::Node(_node) => panic!("Node reference not supported"),
-                Ref::Var(v, _) => (v.clone(), val.clone()),
+            .map(|(arg, val)| {
+                let v = arg
+                    .name()
+                    .cloned()
+                    .expect("Verifier transcript arg must have a name");
+                (v, val.clone())
             })
             .collect::<Ctx<Vid, Value<C>>>();
         let inputs = self.public_inputs.as_ref().unwrap().clone();

@@ -4,7 +4,8 @@
 //! then builds an expected graph manually and asserts structural equality
 //! via the `PartialEq` (graph isomorphism) implementation.
 
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
+use crate::node::ArgKind;
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
@@ -34,37 +35,56 @@ fn try_parse_and_build(src: &str) -> Result<UDags<B>, GraphError> {
     UDags::<B>::from_module(m)
 }
 
-/// Helper to build a PRef for a Public scalar argument.
-fn pub_scalar_pref(name: &str) -> PRef {
-    PRef::from_var(
+/// Phase B: an `Inp`/`Rel` marker is followed by one `Node::Arg` per source
+/// argument, connected via a `Dep::data()` edge from marker to arg.
+/// `expected_inp` mirrors what `add_decl` produces for the protocol/function
+/// implementation (so `ArgKind::Input`); `expected_rel` mirrors the relation
+/// half of a `proto` (so `ArgKind::Relation`).
+type ArgSpec = (Vid, ATyp, Qualifier, Distribution);
+
+fn expected_inp(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Vec<NodeIndex>) {
+    let inp = g.add_node(Node::inp(Vid::new(name)));
+    let mut idxs = Vec::with_capacity(args.len());
+    for (n, t, q, d) in args {
+        let a = g.add_node(Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Input));
+        g.add_edge(inp, a, Dep::data());
+        idxs.push(a);
+    }
+    (inp, idxs)
+}
+
+fn expected_rel(g: &mut UDag<B>, name: &str, args: &[ArgSpec]) -> (NodeIndex, Vec<NodeIndex>) {
+    let rel = g.add_node(Node::rel(Vid::new(name)));
+    let mut idxs = Vec::with_capacity(args.len());
+    for (n, t, q, d) in args {
+        let a = g.add_node(Node::arg(n.clone(), t.clone(), *q, *d, ArgKind::Relation));
+        g.add_edge(rel, a, Dep::data());
+        idxs.push(a);
+    }
+    (rel, idxs)
+}
+
+/// Per-test arg-spec helpers used by the transformed test bodies.
+fn pub_s(name: &str) -> ArgSpec {
+    (
         Vid::new(name),
-        NodeIndex::new(0),
         ATyp::scalar(),
-        0,
         Qualifier::Public,
         Distribution::Nonuniform,
     )
 }
-
-/// Helper to build a PRef for a Private scalar argument.
-fn priv_scalar_pref(name: &str) -> PRef {
-    PRef::from_var(
+fn priv_s(name: &str) -> ArgSpec {
+    (
         Vid::new(name),
-        NodeIndex::new(0),
         ATyp::scalar(),
-        0,
         Qualifier::Private,
         Distribution::Nonuniform,
     )
 }
-
-/// Helper to build a PRef for a Public argument with a custom type.
-fn pub_pref(name: &str, typ: ATyp) -> PRef {
-    PRef::from_var(
+fn pub_t(name: &str, typ: ATyp) -> ArgSpec {
+    (
         Vid::new(name),
-        NodeIndex::new(0),
         typ,
-        0,
         Qualifier::Public,
         Distribution::Nonuniform,
     )
@@ -85,8 +105,9 @@ fn pin_func_lit_in_binop() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
     let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &lit_1, &s));
     expected.add_edges(DepType::Data, bin, var_a);
@@ -95,17 +116,19 @@ fn pin_func_lit_in_binop() {
 }
 
 /// Func declaration returning its argument.
-/// Tests: CExp::Var, op_from_var (Ref::Var passthrough), ret-node with data edge.
+/// Tests: CExp::Var resolves to a `Ref(arg)` op; since `Op::is_ref()` holds,
+/// `add_top_exp` short-circuits and emits no `Ret` node.
 #[test]
 fn pin_func_var() {
     let gs = parse_and_build("fn f<F: Field>(public a: F) -> F { a }");
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let ret = expected.add_node(Node::ret(&var_a));
-    expected.add_edges(DepType::Data, ret, var_a);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let _arg_a = _inp_args[0];
+    // Body `a` resolves to a Ref → add_top_exp does not add a Ret
+    // (`if !op.is_ref() { add Ret }` short-circuits).
+    let _ = a;
 
     assert!(gs[0] == expected);
 }
@@ -124,11 +147,11 @@ fn pin_proto_simple() {
 
     let mut expected = UDag::<B>::new();
     let s = Vid::new("s");
-    let pref_s = priv_scalar_pref("s");
 
     // Body: Inp + Bin(Equ) + Check
-    let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![pref_s.clone()]));
-    let var_s_body = GOp::<B>::var(&s, inp, ATyp::scalar());
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let arg_s = _inp_args[0];
+    let var_s_body = GOp::<B>::var(&s, arg_s, ATyp::scalar());
 
     let equ_body = expected.add_node(Node::bin(
         BinOp::Equ,
@@ -145,8 +168,9 @@ fn pin_proto_simple() {
     expected.add_edge(inp, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
-    let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![pref_s]));
-    let var_s_rel = GOp::<B>::var(&s, rel, ATyp::scalar());
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let rel_arg_s = _rel_args[0];
+    let var_s_rel = GOp::<B>::var(&s, rel_arg_s, ATyp::scalar());
     let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
@@ -173,11 +197,9 @@ fn pin_bool() {
     // doesn't create a node (Let(None) just evaluates both sides).
     // Only `a` matters for the graph structure.
     let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let ret = expected.add_node(Node::ret(&var_a));
-    expected.add_edges(DepType::Data, ret, var_a);
+    let _a = Vid::new("a");
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    // Body resolves to `a` (a Ref) → add_top_exp does not add a Ret.
 
     assert!(gs[0] == expected);
 }
@@ -196,19 +218,12 @@ fn pin_range() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vs10 = ATyp::vec_scalar(10);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        vs10.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vs10);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs10.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vs10);
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::range(lang::typ::CRange::new(0, 5)));
 
-    // Not Ref::Node → ret node
+    // add_exp returned a non-Ref op → add_top_exp adds a Ret node.
     let ret = expected.add_node(Node::ret(&ram_op));
     expected.add_edges(DepType::Data, ret, ram_op);
 
@@ -235,12 +250,11 @@ fn assert_binop(op_str: &str, binop: BinOp, result_typ: ATyp) {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let var_b = GOp::<B>::var(&b, inp, ATyp::scalar());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
+    let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
     let bin = expected.add_node(Node::bin(binop, &var_a, &var_b, &result_typ));
     expected.add_edges(DepType::Data, bin, var_a);
     expected.add_edges(DepType::Data, bin, var_b);
@@ -285,7 +299,8 @@ fn pin_random() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
+    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let _arg_a = __inp_args[0];
     let _rand = expected.add_node(Node::random(&ATyp::scalar(), false));
 
     assert!(gs[0] == expected);
@@ -298,7 +313,8 @@ fn pin_random_nz() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
+    let (_inp, __inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let _arg_a = __inp_args[0];
     let _rand = expected.add_node(Node::random(&ATyp::scalar(), true));
 
     assert!(gs[0] == expected);
@@ -312,7 +328,8 @@ fn pin_challenge() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let _arg_a = _inp_args[0];
     let ch = expected.add_node(Node::challenge(&ATyp::scalar(), false));
     expected.add_edge(inp, ch, Dep::transcript());
 
@@ -326,7 +343,8 @@ fn pin_challenge_nz() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let _arg_a = _inp_args[0];
     let ch = expected.add_node(Node::challenge(&ATyp::scalar(), true));
     expected.add_edge(inp, ch, Dep::transcript());
 
@@ -338,7 +356,7 @@ fn pin_challenge_nz() {
 // ============================================================================
 
 /// Let binding: `let c = a + b; c`.
-/// Tests: CExp::Let(Some), variable context update, op_from_var Ref::Node->Ref::Var.
+/// Tests: CExp::Let(Some), variable context update, op_from_var maps Vid → Ref(arg_or_node).
 #[test]
 fn pin_let_named() {
     let src = r#"
@@ -354,22 +372,20 @@ fn pin_let_named() {
     let b = Vid::new("b");
     let c = Vid::new("c");
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
-    let var_b = GOp::<B>::var(&b, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, s.clone());
 
     // a + b creates a bin node
     let bin = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, bin, var_a);
     expected.add_edges(DepType::Data, bin, var_b);
 
-    // `c` resolves to Ref::Var("c", bin) via op_from_var, triggers ret node
-    let var_c = GOp::<B>::var(&c, bin, s.clone());
-    let ret = expected.add_node(Node::ret(&var_c));
-    expected.add_edges(DepType::Data, ret, var_c);
+    // `c` resolves to Ref(bin); since the body is a Ref, add_top_exp does
+    // not add a Ret node.
+    let _ = c;
 
     assert!(gs[0] == expected);
 }
@@ -390,19 +406,18 @@ fn pin_let_anon() {
     let a = Vid::new("a");
     let b = Vid::new("b");
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
-    let var_b = GOp::<B>::var(&b, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, s.clone());
 
     // let _ = a + b → Bin(Add) node (result discarded)
     let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, add, var_a.clone());
     expected.add_edges(DepType::Data, add, var_b.clone());
 
-    // a * b → Bin(Mul) node (this is the return value, Ref::Node so no ret)
+    // a * b → Bin(Mul) node (this is the return value; add_exp returns Ref(mul) so add_top_exp skips Ret)
     let mul = expected.add_node(Node::bin(BinOp::Mul, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, mul, var_a);
     expected.add_edges(DepType::Data, mul, var_b);
@@ -424,12 +439,11 @@ fn pin_assert() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let var_b = GOp::<B>::var(&b, inp, ATyp::scalar());
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
+    let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
     // a == b → Bin(Equ) node
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
@@ -459,12 +473,11 @@ fn pin_verify() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let var_b = GOp::<B>::var(&b, inp, ATyp::scalar());
+    let (inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, ATyp::scalar());
+    let var_b = GOp::<B>::var(&b, arg_b, ATyp::scalar());
 
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ, var_a);
@@ -499,8 +512,9 @@ fn pin_log_node_ref() {
     let a_vid = Vid::new("a");
 
     // Body
-    let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![priv_scalar_pref("s")]));
-    let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let arg_s = _inp_args[0];
+    let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
     // s + s → Bin(Add) node, then set_transcript converts it to Transcr
     let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
@@ -508,7 +522,7 @@ fn pin_log_node_ref() {
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
 
     let bin_add_ref = GOp::<B>::underscore(bin_add, ATyp::scalar());
-    let transcr_op = GOp::<B>::Ref(Ref::Node(bin_add), ATyp::scalar());
+    let transcr_op = GOp::<B>::Ref(Ref(bin_add), ATyp::scalar());
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected.add_edges(DepType::Data, transcr, bin_add_ref.clone());
     expected.add_edge(inp, transcr, Dep::transcript());
@@ -527,8 +541,9 @@ fn pin_log_node_ref() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
-    let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));
-    let var_s_rel = GOp::<B>::var(&s_vid, rel, ATyp::scalar());
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let rel_arg_s = _rel_args[0];
+    let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
@@ -553,7 +568,8 @@ fn pin_log_new_transcr() {
     let a_vid = Vid::new("a");
 
     // Body
-    let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![priv_scalar_pref("s")]));
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let arg_s = _inp_args[0];
 
     // `1` is Value(Index(1)), not a Ref → second branch of Log: creates new Transcr node
     let lit_op = GOp::<B>::Value(backend::Value::Index(1));
@@ -563,7 +579,7 @@ fn pin_log_new_transcr() {
     expected.add_edge(inp, transcr, Dep::transcript());
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
-    let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
+    let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
     let equ_body = expected.add_node(Node::bin(BinOp::Equ, &var_s, &var_s, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ_body, var_s.clone());
     expected.add_edges(DepType::Data, equ_body, var_s);
@@ -574,8 +590,9 @@ fn pin_log_new_transcr() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
-    let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));
-    let var_s_rel = GOp::<B>::var(&s_vid, rel, ATyp::scalar());
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let rel_arg_s = _rel_args[0];
+    let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ, var_s_rel);
@@ -601,16 +618,9 @@ fn pin_poly() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        vec_typ.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vec_typ);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
     let poly = expected.add_node(Node::poly(&var_a));
     expected.add_edges(DepType::Data, poly, var_a);
@@ -632,16 +642,9 @@ fn pin_coef() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::vpoly(1, 4);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        poly_typ.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, poly_typ);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
     let coef_node = expected.add_node(Node::coef(&var_a));
     expected.add_edges(DepType::Data, coef_node, var_a);
@@ -663,16 +666,9 @@ fn pin_interpolate() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        vec_typ.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vec_typ);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
     let points = GOp::<B>::vec(vec![
         GOp::index(0),
@@ -702,16 +698,9 @@ fn pin_fft() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let poly_typ = ATyp::vpoly(1, 4);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        poly_typ.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, poly_typ);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
     let fft_node = expected.add_node(Node::fft(&var_a));
     expected.add_edges(DepType::Data, fft_node, var_a);
@@ -733,16 +722,9 @@ fn pin_mle() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let vec_typ = ATyp::vec_scalar(4);
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        vec_typ.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vec_typ);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vec_typ.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vec_typ);
 
     let mle_node = expected.add_node(Node::mle(&var_a));
     expected.add_edges(DepType::Data, mle_node, var_a);
@@ -766,17 +748,16 @@ fn pin_vec() {
     let gs = parse_and_build(src);
 
     // [a, b] produces GOp::Vec([Ref(Var(a, inp)), Ref(Var(b, inp))])
-    // This is not a Ref::Node, so add_top_exp creates a ret node.
+    // add_exp returned a non-Ref op, so add_top_exp creates a Ret node.
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
-    let var_b = GOp::<B>::var(&b, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, s.clone());
     let vec_op = GOp::<B>::vec(vec![var_a.clone(), var_b.clone()]);
     let ret = expected.add_node(Node::ret(&vec_op));
     expected.add_edges(DepType::Data, ret, vec_op);
@@ -800,15 +781,14 @@ fn pin_record() {
     let gs = parse_and_build(src);
 
     // {| x: a, y: b |} produces GOp::Record({x: Var(a, inp), y: Var(b, inp)})
-    // Not a Ref::Node → ret node created
+    // Not a Ref → ret node created
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&Vid::new("a"), inp, s.clone());
-    let var_b = GOp::<B>::var(&Vid::new("b"), inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&Vid::new("a"), arg_a, s.clone());
+    let var_b = GOp::<B>::var(&Vid::new("b"), arg_b, s.clone());
 
     let mut rec_fields = Ctx::<String, HOp<B>>::new();
     rec_fields.insert(&"x".to_string(), &mk::<B>(var_a));
@@ -832,17 +812,10 @@ fn pin_proj_record_literal() {
     "#;
     let gs = parse_and_build(src);
 
-    // { x: a, y: b }.x → reduces to just `a` (direct field extraction)
-    // So the graph should be the same as pin_func_var
+    // { x: a, y: b }.x reduces directly to `a`, which is a Ref → no Ret.
     let mut expected = UDag::<B>::new();
-    let a = Vid::new("a");
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::scalar());
-    let ret = expected.add_node(Node::ret(&var_a));
-    expected.add_edges(DepType::Data, ret, var_a);
+    let _a = Vid::new("a");
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
 
     assert!(gs[0] == expected);
 }
@@ -870,8 +843,9 @@ fn pin_app_function() {
     let mut expected_f = UDag::<B>::new();
     let a = Vid::new("a");
     let s = ATyp::scalar();
-    let inp = expected_f.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected_f, "f", &[pub_s("a")]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let bin = expected_f.add_node(Node::bin(BinOp::Add, &var_a, &var_a, &s));
     expected_f.add_edges(DepType::Data, bin, var_a.clone());
     expected_f.add_edges(DepType::Data, bin, var_a);
@@ -919,8 +893,9 @@ fn pin_bin_pow() {
     let a = Vid::new("a");
     let s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pub_scalar_pref("a")]));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a")]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
     let lit_2 = GOp::<B>::Value(backend::Value::Index(2));
 
     let bin = expected.add_node(Node::bin(BinOp::Pow, &var_a, &lit_2, &s));
@@ -945,26 +920,15 @@ fn pin_bin_dot() {
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("a", vs2.clone()), pub_t("b", vs2.clone())],
     );
-    let pref_b = PRef::from_var(
-        Vid::new("b"),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
-    let var_a = GOp::<B>::var(&a, inp, vs2.clone());
-    let var_b = GOp::<B>::var(&b, inp, vs2.clone());
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, vs2.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, vs2.clone());
 
     let dot_node = expected.add_node(Node::bin(BinOp::Dot, &var_a, &var_b, &s));
     expected.add_edges(DepType::Data, dot_node, var_a);
@@ -988,26 +952,15 @@ fn pin_bin_concat() {
     let vs2 = ATyp::vec_scalar(2);
     let vs4 = ATyp::vec_scalar(4);
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("a", vs2.clone()), pub_t("b", vs2.clone())],
     );
-    let pref_b = PRef::from_var(
-        Vid::new("b"),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
-    let var_a = GOp::<B>::var(&a, inp, vs2.clone());
-    let var_b = GOp::<B>::var(&b, inp, vs2.clone());
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, vs2.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, vs2.clone());
 
     let concat_node = expected.add_node(Node::bin(BinOp::Concat, &var_a, &var_b, &vs4));
     expected.add_edges(DepType::Data, concat_node, var_a);
@@ -1032,26 +985,15 @@ fn pin_bin_rem() {
     let at_b = ATyp::vpoly(1, 2);
     let at_res = ATyp::vpoly(1, 1);
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        at_a.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("a", at_a.clone()), pub_t("b", at_b.clone())],
     );
-    let pref_b = PRef::from_var(
-        Vid::new("b"),
-        NodeIndex::new(0),
-        at_b.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
-    let var_a = GOp::<B>::var(&a, inp, at_a);
-    let var_b = GOp::<B>::var(&b, inp, at_b);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, at_a);
+    let var_b = GOp::<B>::var(&b, arg_b, at_b);
 
     let rem_node = expected.add_node(Node::bin(BinOp::Rem, &var_a, &var_b, &at_res));
     expected.add_edges(DepType::Data, rem_node, var_a);
@@ -1077,12 +1019,11 @@ fn pin_bin_and() {
     let s = ATyp::scalar();
     let bl = ATyp::bool();
 
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&a, inp, s.clone());
-    let var_b = GOp::<B>::var(&b, inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, s.clone());
+    let var_b = GOp::<B>::var(&b, arg_b, s.clone());
 
     // First: a == b → Bin(Equ)
     let equ1 = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_b, &bl));
@@ -1122,16 +1063,9 @@ fn pin_map() {
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vs2);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs2.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
     // Iteration 0: x = Ram(var_a, Index(0)); x + x → Bin(Add)
     let ram0 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
@@ -1145,7 +1079,7 @@ fn pin_map() {
     expected.add_edges(DepType::Data, bin1, ram1.clone());
     expected.add_edges(DepType::Data, bin1, ram1);
 
-    // Result: Vec([ref_bin0, ref_bin1]) — not Ref::Node → ret node
+    // Result: Vec([ref_bin0, ref_bin1]) — non-Ref op → ret node
     let ref_bin0 = GOp::<B>::underscore(bin0, s.clone());
     let ref_bin1 = GOp::<B>::underscore(bin1, s.clone());
     let vec_op = GOp::<B>::vec(vec![ref_bin0, ref_bin1]);
@@ -1168,20 +1102,13 @@ fn pin_ram_expr() {
     let a = Vid::new("a");
     let vs4 = ATyp::vec_scalar(4);
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        vs4.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vs4);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs4.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vs4);
 
     // a[0] → Ram(var_a, Value(Index(0))) — no graph node created
     let ram_op = GOp::<B>::ram(var_a, GOp::<B>::index(0));
-    // Not Ref::Node → ret node created
+    // Not a Ref → ret node created
     let ret = expected.add_node(Node::ret(&ram_op));
     expected.add_edges(DepType::Data, ret, ram_op);
 
@@ -1203,30 +1130,19 @@ fn pin_eval() {
     let at_p = ATyp::vpoly(1, 4);
     let at_x = ATyp::vec_scalar(2);
 
-    let pref_p = PRef::from_var(
-        Vid::new("p"),
-        NodeIndex::new(0),
-        at_p.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("p", at_p.clone()), pub_t("x", at_x.clone())],
     );
-    let pref_x = PRef::from_var(
-        Vid::new("x"),
-        NodeIndex::new(0),
-        at_x.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_p, pref_x]));
-    let var_p = GOp::<B>::var(&p, inp, at_p);
-    let var_x = GOp::<B>::var(&x, inp, at_x);
+    let arg_p = _inp_args[0];
+    let arg_x = _inp_args[1];
+    let var_p = GOp::<B>::var(&p, arg_p, at_p);
+    let var_x = GOp::<B>::var(&x, arg_x, at_x);
 
     // evaluate(p, x) → Evaluate(var_p, var_x) — no graph node
     let eval_op = GOp::<B>::evaluate(var_p, var_x);
-    // Not Ref::Node → ret node created
+    // Not a Ref → ret node created
     let ret = expected.add_node(Node::ret(&eval_op));
     expected.add_edges(DepType::Data, ret, eval_op);
 
@@ -1252,26 +1168,15 @@ fn pin_pair() {
     let a = Vid::new("a");
     let b = Vid::new("b");
 
-    let pref_a = PRef::from_var(
-        Vid::new("a"),
-        NodeIndex::new(0),
-        ATyp::g1(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("a", ATyp::g1()), pub_t("b", ATyp::g2())],
     );
-    let pref_b = PRef::from_var(
-        Vid::new("b"),
-        NodeIndex::new(0),
-        ATyp::g2(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a, pref_b]));
-    let var_a = GOp::<B>::var(&a, inp, ATyp::g1());
-    let var_b = GOp::<B>::var(&b, inp, ATyp::g2());
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&a, arg_a, ATyp::g1());
+    let var_b = GOp::<B>::var(&b, arg_b, ATyp::g2());
 
     // pair(a, b) → Pair(var_a, var_b, gt()) — no graph node
     let pair_op = GOp::<B>::pair(var_a, var_b, ATyp::gt());
@@ -1286,7 +1191,7 @@ fn pin_pair() {
 // ============================================================================
 
 /// Record projection from variable: `r.x` returns Ref(Var(r, inp), scalar).
-/// Tests: CExp::Proj + CExp::Var → GOp::Ref(Ref::Var) with field type.
+/// Tests: CExp::Proj + CExp::Var → GOp::Ref(Ref(arg)) with field type.
 #[test]
 fn pin_proj_var() {
     let src = r#"
@@ -1302,21 +1207,10 @@ fn pin_proj_var() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let pref_r = PRef::from_var(
-        Vid::new("r"),
-        NodeIndex::new(0),
-        record_typ,
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("r", record_typ)]);
+    let _arg_r = _inp_args[0];
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_r]));
-
-    // r.x → Ref(Var(r, inp), scalar) — not Ref::Node → ret node
-    let proj_result = GOp::<B>::var(&Vid::new("r"), inp, s);
-    let ret = expected.add_node(Node::ret(&proj_result));
-    expected.add_edges(DepType::Data, ret, proj_result);
+    // r.x → Ref(arg_r); since the body is a Ref, no Ret is added.
 
     assert!(gs[0] == expected);
 }
@@ -1340,30 +1234,22 @@ fn pin_set_record() {
     record_fields.insert(&"y".to_string(), &s);
     let record_typ = ATyp::Record(record_fields);
 
-    let pref_r = PRef::from_var(
-        Vid::new("r"),
-        NodeIndex::new(0),
-        record_typ,
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let pref_v = pub_scalar_pref("v");
-
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_r, pref_v]));
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("r", record_typ), pub_s("v")]);
+    let arg_r = _inp_args[0];
+    let arg_v = _inp_args[1];
 
     // SetRecord desugars to: Record({ x: v, y: r.y })
     // x field: CExp::Var(v) → Ref(Var(v, inp), scalar)
     // y field: CExp::Proj(CExp::Var(r), "y") → Ref(Var(r, inp), scalar)
-    let var_v = GOp::<B>::Ref(Ref::Var(Vid::new("v"), inp), s.clone());
-    let var_r = GOp::<B>::Ref(Ref::Var(Vid::new("r"), inp), s.clone());
+    let var_v = GOp::<B>::Ref(Ref(arg_v), s.clone());
+    let var_r = GOp::<B>::Ref(Ref(arg_r), s.clone());
 
     let mut rec_fields = Ctx::<String, HOp<B>>::new();
     rec_fields.insert(&"x".to_string(), &mk::<B>(var_v));
     rec_fields.insert(&"y".to_string(), &mk::<B>(var_r));
     let record_op = GOp::<B>::Record(rec_fields);
 
-    // Not Ref::Node → ret node
+    // Not a Ref → ret node
     let ret = expected.add_node(Node::ret(&record_op));
     expected.add_edges(DepType::Data, ret, record_op);
 
@@ -1371,11 +1257,11 @@ fn pin_set_record() {
 }
 
 // ============================================================================
-// Group 16: Log with Var reference (tests Ref::Var branch of Log match)
+// Group 16: Log on a let-bound name (vs. an inline op)
 // ============================================================================
 
-/// Log with a let-bound variable exercises the Ref::Var path in Log's match.
-/// Tests: CExp::Log match arm `Ref::Var(_, n)` (vs `Ref::Node(n)` in pin_log_node_ref).
+/// Log with a let-bound name: `Vid` is resolved via `op_from_var` to a `Ref(arg_or_node)`.
+/// Companion test `pin_log_node_ref` exercises Log on an inline op result.
 #[test]
 fn pin_log_var_ref() {
     let src = r#"
@@ -1391,21 +1277,22 @@ fn pin_log_var_ref() {
     let s_vid = Vid::new("s");
     let a_vid = Vid::new("a");
     // Body
-    let inp = expected.add_node(Node::inp(Vid::new("foo"), vec![priv_scalar_pref("s")]));
-    let var_s = GOp::<B>::var(&s_vid, inp, ATyp::scalar());
+    let (inp, _inp_args) = expected_inp(&mut expected, "foo", &[priv_s("s")]);
+    let arg_s = _inp_args[0];
+    let var_s = GOp::<B>::var(&s_vid, arg_s, ATyp::scalar());
 
     // let x = s + s → Bin(Add) node
     let bin_add = expected.add_node(Node::bin(BinOp::Add, &var_s, &var_s, &ATyp::scalar()));
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
     expected.add_edges(DepType::Data, bin_add, var_s.clone());
-    let transcr_op = GOp::<B>::Ref(Ref::Var(Vid::new("x"), bin_add), ATyp::scalar());
+    let transcr_op = GOp::<B>::Ref(Ref(bin_add), ATyp::scalar());
     let transcr = expected.add_node(Node::transcr(&transcr_op));
     expected[transcr].set_transcript();
     expected.add_edges(DepType::Data, transcr, transcr_op.clone());
     expected.add_edge(inp, transcr, Dep::transcript());
     expected.vctx.insert(&transcr, &a_vid);
     expected.transcript_vars.insert(&transcr, &true);
-    // because Log's first arm uses `ol.clone()` which is op_from_var(x) = Ref(Var(x, bin_add), scalar)
+    // because Log's first arm uses `ol.clone()` which is op_from_var(x) = GOp::Ref(Ref(bin_add), scalar)
     let var_a = GOp::<B>::var(&a_vid, transcr, ATyp::scalar());
     let equ = expected.add_node(Node::bin(BinOp::Equ, &var_a, &var_s, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ, var_a);
@@ -1418,8 +1305,9 @@ fn pin_log_var_ref() {
     expected.add_edge(transcr, check, Dep::transcript());
 
     // Relation: Rel + Bin(Equ, s, s)
-    let rel = expected.add_node(Node::rel(Vid::new("foo"), vec![priv_scalar_pref("s")]));
-    let var_s_rel = GOp::<B>::var(&s_vid, rel, ATyp::scalar());
+    let (_rel, _rel_args) = expected_rel(&mut expected, "foo", &[priv_s("s")]);
+    let rel_arg_s = _rel_args[0];
+    let var_s_rel = GOp::<B>::var(&s_vid, rel_arg_s, ATyp::scalar());
     let equ_rel = expected.add_node(Node::bin(BinOp::Equ, &var_s_rel, &var_s_rel, &ATyp::bool()));
     expected.add_edges(DepType::Data, equ_rel, var_s_rel.clone());
     expected.add_edges(DepType::Data, equ_rel, var_s_rel);
@@ -1446,18 +1334,13 @@ fn pin_proj_var_record() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let s = ATyp::scalar();
+    let _s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let _arg_a = _inp_args[0];
+    let _arg_b = _inp_args[1];
 
-    // r.x extracts field x from the Record, which is Ref(Var(a, inp), scalar)
-    // Since that's Ref::Var (not Ref::Node), add_top_exp creates a ret node
-    let var_a = GOp::<B>::var(&Vid::new("a"), inp, s);
-    let ret = expected.add_node(Node::ret(&var_a));
-    expected.add_edges(DepType::Data, ret, var_a);
+    // r = {x: a, y: b}; r.x reduces to `a`, a Ref → no Ret added.
 
     assert!(gs[0] == expected);
 }
@@ -1479,30 +1362,16 @@ fn pin_app_univariate_poly() {
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![
-            PRef::from_var(
-                Vid::new("p"),
-                NodeIndex::new(0),
-                ATyp::vpoly(1, 2),
-                0,
-                Qualifier::Public,
-                Distribution::Nonuniform,
-            ),
-            PRef::from_var(
-                Vid::new("x"),
-                NodeIndex::new(0),
-                s.clone(),
-                0,
-                Qualifier::Public,
-                Distribution::Nonuniform,
-            ),
-        ],
-    ));
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("p", ATyp::vpoly(1, 2)), pub_t("x", s.clone())],
+    );
+    let arg_p = _inp_args[0];
+    let arg_x = _inp_args[1];
 
-    let var_p = GOp::<B>::var(&Vid::new("p"), inp, ATyp::vpoly(1, 2));
-    let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
+    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
+    let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
     // x^0 simplifies to Value(Scalar(one)), x^1 simplifies to var_x
     let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
@@ -1537,7 +1406,7 @@ fn pin_fun_lit() {
 
     let mut expected = UDag::<B>::new();
 
-    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
+    let (_inp, _) = expected_inp(&mut expected, "f", &[]);
 
     // fun x => x → DensePolynomial [0, 1] representing the identity
     let poly = DensePolynomial::from_coefficients_vec(vec![F::zero(), F::one()]);
@@ -1545,7 +1414,7 @@ fn pin_fun_lit() {
     let vp = VirtualPolynomial::from_poly(pv);
     let val = GOp::<B>::Value(Value::Poly(vp));
 
-    // Value is not Ref::Node → add_top_exp creates ret node
+    // Value is not a Ref → add_top_exp creates ret node
     let ret = expected.add_node(Node::ret(&val));
     // Value has no references → no edges
     expected.add_edges(DepType::Data, ret, val);
@@ -1701,10 +1570,10 @@ fn pin_node_edge_counts() {
     let gs = parse_and_build(src);
     let dag = &gs[0];
 
-    // Inp node + Bin(Add) node = 2 nodes
-    assert_eq!(dag.node_count(), 2);
-    // Two data edges: a→bin, b→bin
-    assert_eq!(dag.edge_count(), 2);
+    // Phase B: Inp marker + Arg(a) + Arg(b) + Bin(Add) = 4 nodes
+    assert_eq!(dag.node_count(), 4);
+    // Edges: Inp→Arg(a), Inp→Arg(b), Arg(a)→Bin, Arg(b)→Bin = 4 data edges
+    assert_eq!(dag.edge_count(), 4);
 }
 
 /// op_nodes returns only operation nodes, excluding Inp and Rel.
@@ -1729,7 +1598,7 @@ fn pin_op_nodes_filter() {
     assert!(op_nodes.len() >= 2);
 }
 
-/// find_var returns the Vid for a node, find_ref returns Ref::Var or Ref::Node.
+/// find_var returns the Vid for a node; find_ref returns a `Ref(node)` reference.
 #[test]
 fn pin_find_var_find_ref() {
     let src = r#"
@@ -2319,12 +2188,11 @@ fn pin_nested_let_chain() {
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("x"), pub_scalar_pref("y")],
-    ));
-    let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
-    let var_y = GOp::<B>::var(&Vid::new("y"), inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("x"), pub_s("y")]);
+    let arg_x = _inp_args[0];
+    let arg_y = _inp_args[1];
+    let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
+    let var_y = GOp::<B>::var(&Vid::new("y"), arg_y, s.clone());
 
     // a = x + y
     let add_a = expected.add_node(Node::bin(BinOp::Add, &var_x, &var_y, &s));
@@ -2343,10 +2211,9 @@ fn pin_nested_let_chain() {
     expected.add_edges(DepType::Data, add_c, ref_b);
     expected.add_edges(DepType::Data, add_c, var_y);
 
-    // `c` resolves to Ref::Var("c", add_c) → triggers ret node
-    let ref_c = GOp::<B>::var(&Vid::new("c"), add_c, s.clone());
-    let ret = expected.add_node(Node::ret(&ref_c));
-    expected.add_edges(DepType::Data, ret, ref_c);
+    // `c` resolves to Ref(add_c); since the body is a Ref, add_top_exp
+    // does not add a Ret node.
+    let _ = add_c;
 
     assert!(gs[0] == expected);
 }
@@ -2400,7 +2267,7 @@ fn pin_fun_multilinear() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let _inp = expected.add_node(Node::inp(Vid::new("f"), vec![]));
+    let (_inp, _) = expected_inp(&mut expected, "f", &[]);
 
     // fun x, y => x + y
     // x is variable 0, y is variable 1
@@ -2431,16 +2298,9 @@ fn pin_map_nested_binop() {
     let a = Vid::new("a");
     let vs2 = ATyp::vec_scalar(2);
     let s = ATyp::scalar();
-    let pref_a = PRef::from_var(
-        a.clone(),
-        NodeIndex::new(0),
-        vs2.clone(),
-        0,
-        Qualifier::Public,
-        Distribution::Nonuniform,
-    );
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![pref_a]));
-    let var_a = GOp::<B>::var(&a, inp, vs2);
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", vs2.clone())]);
+    let arg_a = _inp_args[0];
+    let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
     // Iteration 0: x = Ram(a, 0); x*x → mul0; mul0 + x → add0
     let ram0 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
@@ -2486,12 +2346,11 @@ fn pin_diamond_dag() {
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_scalar_pref("a"), pub_scalar_pref("b")],
-    ));
-    let var_a = GOp::<B>::var(&Vid::new("a"), inp, s.clone());
-    let var_b = GOp::<B>::var(&Vid::new("b"), inp, s.clone());
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
+    let arg_a = _inp_args[0];
+    let arg_b = _inp_args[1];
+    let var_a = GOp::<B>::var(&Vid::new("a"), arg_a, s.clone());
+    let var_b = GOp::<B>::var(&Vid::new("b"), arg_b, s.clone());
 
     // c = a + b
     let add = expected.add_node(Node::bin(BinOp::Add, &var_a, &var_b, &s));
@@ -2562,11 +2421,9 @@ fn pin_reduce_add() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_pref("v", ATyp::vec_scalar(3))],
-    ));
-    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(3))]);
+    let arg_v = _inp_args[0];
+    let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 
     let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Add, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);
@@ -2586,11 +2443,9 @@ fn pin_reduce_mul() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_pref("v", ATyp::vec_scalar(4))],
-    ));
-    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(4));
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(4))]);
+    let arg_v = _inp_args[0];
+    let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(4));
 
     let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Mul, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);
@@ -2610,11 +2465,9 @@ fn pin_reduce_sub() {
     let _dag = &gs[0];
 
     let mut expected = UDag::<B>::new();
-    let inp = expected.add_node(Node::inp(
-        Vid::new("f"),
-        vec![pub_pref("v", ATyp::vec_scalar(3))],
-    ));
-    let var_v = GOp::<B>::var(&Vid::new("v"), inp, ATyp::vec_scalar(3));
+    let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("v", ATyp::vec_scalar(3))]);
+    let arg_v = _inp_args[0];
+    let var_v = GOp::<B>::var(&Vid::new("v"), arg_v, ATyp::vec_scalar(3));
 
     let reduce = expected.add_node(Node::ret(&GOp::reduce(BinOp::Sub, var_v.clone())));
     expected.add_edges(DepType::Data, reduce, var_v);

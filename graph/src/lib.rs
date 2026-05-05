@@ -14,7 +14,7 @@ pub use analyses::StaticAnalysis;
 pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
-pub use node::Node;
+pub use node::{ArgKind, Node};
 pub use pref::PRef;
 
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
@@ -108,29 +108,6 @@ impl GraphError {
     }
 }
 
-/// Compare two `Ref` values for isomorphism-compatible equality,
-/// ignoring `NodeIndex` (which differs between isomorphic graphs).
-fn refs_isomorphic_eq(a: &Ref, b: &Ref) -> bool {
-    match (a, b) {
-        (Ref::Node(_), Ref::Node(_)) => true,
-        (Ref::Var(v1, _), Ref::Var(v2, _)) => v1 == v2,
-        _ => false,
-    }
-}
-
-/// Compare two `PRef` slices for isomorphism-compatible equality.
-fn prefs_isomorphic_eq(a: &[PRef], b: &[PRef]) -> bool {
-    a.len() == b.len()
-        && a.iter().zip(b.iter()).all(|(x, y)| {
-            refs_isomorphic_eq(&x.reference, &y.reference)
-                && x.index == y.index
-                && x.typ == y.typ
-                && x.qualifier == y.qualifier
-                && x.distribution == y.distribution
-                && x.from_transcript == y.from_transcript
-        })
-}
-
 /// Compare two `Node` values for isomorphism-compatible equality.
 /// Erases `NodeIndex` inside `GOp` and `PRef` so that structurally
 /// identical nodes from different graphs compare as equal.
@@ -140,8 +117,11 @@ fn nodes_isomorphic_eq<C: HasOpFactory, A: PartialEq + Clone>(
 ) -> bool {
     let erase = |_: NodeIndex| NodeIndex::new(0);
     match (a, b) {
-        (Node::Inp(v1, p1), Node::Inp(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
-        (Node::Rel(v1, p1), Node::Rel(v2, p2)) => v1 == v2 && prefs_isomorphic_eq(p1, p2),
+        (Node::Inp(v1), Node::Inp(v2)) => v1 == v2,
+        (Node::Rel(v1), Node::Rel(v2)) => v1 == v2,
+        (Node::Arg(v1, t1, q1, d1, k1), Node::Arg(v2, t2, q2, d2, k2)) => {
+            v1 == v2 && t1 == t2 && q1 == q2 && d1 == d2 && k1 == k2
+        }
         (Node::Op(op1, ann1), Node::Op(op2, ann2)) => {
             op1.map_node_indices(&erase) == op2.map_node_indices(&erase) && ann1 == ann2
         }
@@ -216,12 +196,40 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .collect()
     }
 
+    /// All `Arg` nodes belonging to the input marker, in NodeIndex (= source) order.
+    pub fn input_args(&self) -> Vec<NodeIndex> {
+        let mut out: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|n| self[*n].is_input_arg())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// All `Arg` nodes belonging to the relation marker, in NodeIndex order.
+    pub fn relation_args(&self) -> Vec<NodeIndex> {
+        let mut out: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|n| self[*n].is_relation_arg())
+            .collect();
+        out.sort();
+        out
+    }
+
     pub fn args(&self) -> Vec<PRef> {
-        match &self[self.input_node()] {
-            Node::Inp(_, args) => args.clone(),
-            Node::Rel(_, args) => args.clone(),
-            _ => unreachable!("All Dags should have an input node"),
-        }
+        self.input_args()
+            .into_iter()
+            .filter_map(|n| self[n].arg_pref(n))
+            .collect()
+    }
+
+    pub fn relation_args_prefs(&self) -> Vec<PRef> {
+        self.relation_args()
+            .into_iter()
+            .filter_map(|n| self[n].arg_pref(n))
+            .collect()
     }
 
     /// Dep deduplication
@@ -264,17 +272,17 @@ impl<C: ArkConfig, A> Dag<C, A> {
         &mut self.graph[it]
     }
 
-    /// Find the variable name for a node via vctx dictionary lookup
+    /// Find the variable name for a node via vctx (let/transcript bindings)
+    /// or by reading the name off `Node::Arg`/`Node::Inp`/`Node::Rel` markers.
     pub fn find_var(&self, node: NodeIndex) -> Option<Vid> {
-        self.vctx.get(&node).cloned()
+        if let Some(v) = self.vctx.get(&node).cloned() {
+            return Some(v);
+        }
+        self[node].name().cloned()
     }
 
     pub fn find_ref(&self, node: NodeIndex) -> Ref {
-        if let Some(v) = self.find_var(node) {
-            Ref::Var(v, node)
-        } else {
-            Ref::Node(node)
-        }
+        Ref(node)
     }
 
     pub fn node_indices(&self) -> NodeIndices {
@@ -303,8 +311,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
                 |_, node| match node {
                     Node::Op(op, ann) => Node::Op(op.clone(), f(op, ann)),
                     Node::Transcr(op, ann) => Node::Transcr(op.clone(), f(op, ann)),
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
+                    Node::Inp(a) => Node::Inp(a.clone()),
+                    Node::Rel(a) => Node::Rel(a.clone()),
+                    Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
                 },
                 |_, e| e.clone(),
             ),
@@ -417,8 +426,9 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Dag {
             graph: self.graph.map(
                 |_, node| match node {
-                    Node::Inp(a, b) => Node::Inp(a.clone(), b.clone()),
-                    Node::Rel(a, b) => Node::Rel(a.clone(), b.clone()),
+                    Node::Inp(a) => Node::Inp(a.clone()),
+                    Node::Rel(a) => Node::Rel(a.clone()),
+                    Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
                     Node::Op(op, _) => Node::Op(op.clone(), Nothing),
                     Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
                 },
@@ -549,7 +559,13 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 
         // Add input node first, so it is NodeIndex::new(0)
         let n_input = prover.add_node(self[self.input_node()].clone());
-        node_map.insert(self.input_node(), Ref::Node(n_input));
+        node_map.insert(self.input_node(), Ref(n_input));
+        // Replicate input Arg nodes (so the projected dag has the same arg structure).
+        for arg_idx in self.input_args() {
+            let new_arg = prover.add_node(self[arg_idx].clone());
+            prover.add_edge(n_input, new_arg, Dep::data());
+            node_map.insert(arg_idx, Ref(new_arg));
+        }
 
         while let Some(n) = worklist.pop() {
             if node_map.contains_key(&n) {
@@ -557,11 +573,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             }
             // Add node to prover graph
             let new_node = prover.add_node(self[n].clone());
-            if let Some(v) = self.find_var(n) {
-                node_map.insert(n, Ref::Var(v, new_node));
-            } else {
-                node_map.insert(n, Ref::Node(new_node));
-            }
+            node_map.insert(n, Ref(new_node));
 
             // Add previous neighbors to worklist
             for e in self.graph.edges_directed(n, Direction::Incoming) {
@@ -654,21 +666,17 @@ impl<C: HasOpFactory, A> Dag<C, A> {
     where
         A: Clone,
     {
-        let arg_names: Vec<String> = self.args().iter().map(|arg| arg.var().unwrap().0).collect();
-        debug!("args_name: {:?}", arg_names);
-        let mut result = self.map_ops(&|op| {
-            op.map_refs(&|r| match r {
-                Ref::Var(Vid(s), n) => {
-                    if arg_names.contains(&s) {
-                        Ref::Var(Vid(s), n)
-                    } else {
-                        Ref::Var(Vid(s + &format!("_{:?}", n)), n)
-                    }
-                }
-                _ => r,
-            })
-        });
-        // Also rename vctx entries for non-argument variables
+        // Phase B: Ref carries only NodeIndex; arg names live on Arg nodes
+        // and let-binding names live in `vctx`. Renaming inner refs is now
+        // a no-op (the structural change in Phase B already disambiguates
+        // them by NodeIndex), but we still mangle vctx entries for non-arg
+        // bindings to keep PDF labels unique across compositions.
+        let arg_names: Vec<String> = self
+            .input_args()
+            .iter()
+            .filter_map(|n| self[*n].name().map(|v| v.0.clone()))
+            .collect();
+        let mut result = self.clone();
         let mut new_vctx = Ctx::new();
         for (k, v) in result.vctx.iter() {
             if arg_names.contains(&v.0) {
@@ -706,45 +714,40 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         A: Clone,
     {
         let mut verifier = Dag::new();
-        let proof_nodes = self.get_proof_nodes();
 
-        // Rebuild the input node to take transcript arguments
-        let mut args = self
-            .args()
+        // Public inputs that survive into the verifier (with their source-dag NodeIndex).
+        let public_args: Vec<(NodeIndex, PRef)> = self
+            .input_args()
             .into_iter()
-            .filter(|pr| pr.is_public())
-            .collect::<Vec<_>>();
+            .filter_map(|n| {
+                let pref = self[n].arg_pref(n)?;
+                if pref.is_public() {
+                    Some((n, pref))
+                } else {
+                    None
+                }
+            })
+            .collect();
         let name = self.name();
 
-        // Add the transcript nodes (public) to the arguments
-        for node in &proof_nodes {
-            let transcript_var = self
-                .find_var(*node)
-                .ok_or(GraphError::node_not_found(*node))?;
-            if args.iter().any(|a| a.var() == Some(transcript_var.clone())) {
-                continue;
-            }
-            args.push(
-                PRef::from_var(
-                    transcript_var,
-                    self.input_node(),
-                    self[*node].clone().into_op().typ(),
-                    0,
-                    Qualifier::Public,
-                    Distribution::default(),
-                )
-                .mark_transcript_source(),
-            );
-        }
         // Associate old node indices with new node indices
         let mut node_map_self = HashMap::<NodeIndex, NodeIndex>::new();
 
-        // Make new input node
-        let n_input = verifier.add_node(Node::Inp(name, args));
+        // Make new input node + replicate public Args.
+        let n_input = verifier.add_node(Node::Inp(name));
         node_map_self.insert(self.input_node(), n_input);
+
+        for (old_arg_idx, _) in &public_args {
+            let new_arg = verifier.add_node(self[*old_arg_idx].clone());
+            verifier.add_edge(n_input, new_arg, Dep::data());
+            node_map_self.insert(*old_arg_idx, new_arg);
+        }
+
         let mut non_challenge_transcripts: HashSet<NodeIndex> = HashSet::new();
 
-        // Add transcript nodes to verifier graph
+        // Add transcript nodes to verifier graph (source ops are kept as-is;
+        // they will be rewritten *after* `map_node_indices` so verifier-local
+        // indices are not subject to remapping).
         for &n_transcr in &self.transcript_nodes() {
             let node = &self[n_transcr];
             if node.is_challenge() {
@@ -753,18 +756,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 continue;
             }
             non_challenge_transcripts.insert(n_transcr);
-            if let Some(transcript_var) = self.find_var(n_transcr) {
-                let typ = node.op().expect("Transcript node must have op").typ();
-                let mut new_node = node.clone();
-                if let Node::Transcr(op, _) = &mut new_node {
-                    *op = mk::<C>(GOp::var(&transcript_var, n_input, typ));
-                }
-                let new_idx = verifier.add_node(new_node);
-                verifier.add_edge(n_input, new_idx, Dep::data());
-                node_map_self.insert(n_transcr, new_idx);
-            } else {
-                node_map_self.insert(n_transcr, n_input);
-            }
+            let new_idx = verifier.add_node(node.clone());
+            node_map_self.insert(n_transcr, new_idx);
         }
 
         // Add the verifier nodes, start with the verifier assertions
@@ -782,15 +775,14 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             // Check if the node refers to a private argument, then it is a leak
             let op = self[n].clone().into_op();
             for r in op.references() {
-                if r.node() == self.input_node() {
-                    if let Some(r_var) = r.var() {
-                        let is_private_input = self
-                            .args()
-                            .iter()
-                            .any(|a| a.var().as_ref() == Some(&r_var) && a.is_private());
-                        if is_private_input {
-                            return Err(GraphError::private_node_in_verifier(&op, &r));
-                        }
+                let target = r.node();
+                if self[target].is_input_arg() {
+                    let is_private_input = self[target]
+                        .arg_pref(target)
+                        .map(|pr| pr.is_private())
+                        .unwrap_or(false);
+                    if is_private_input {
+                        return Err(GraphError::private_node_in_verifier(&op, &r));
                     }
                 }
             }
@@ -801,7 +793,6 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 
             // Add parent neighbors to worklist
             for e in self.graph.edges_directed(n, Direction::Incoming) {
-                // Add neighbors to worklist
                 if !node_map_self.contains_key(&e.source()) {
                     debug!(
                         "Adding parent {} of {} to worklist",
@@ -836,7 +827,66 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                 verifier.add_edge(*new_source_idx, *new_target_idx, weight);
             }
         }
-        Ok(verifier.map_node_indices(&|n| node_map_self[&n]))
+
+        // Translate all source-local node indices in cloned ops to verifier-local indices.
+        let mut verifier =
+            verifier.map_node_indices(&|n| node_map_self.get(&n).copied().unwrap_or(n));
+
+        // Now that map_node_indices is done, materialise verifier-local
+        // Arg nodes for transcript proof values and rewrite each
+        // non-challenge Transcr op to reference its Arg. These freshly
+        // allocated indices will not be re-mapped.
+        let mut transcript_arg_nodes: HashMap<Vid, NodeIndex> = HashMap::new();
+        // Snapshot the transcript nodes we added (now at their verifier-local indices).
+        // Iterate in source-graph transcript order so that the verifier's
+        // transcript Arg nodes are created in the same order the prover
+        // emits proof values.
+        let transcr_pairs: Vec<(NodeIndex, Vid)> = self
+            .transcript_nodes()
+            .iter()
+            .filter(|src| non_challenge_transcripts.contains(src))
+            .filter_map(|src| {
+                let new_idx = node_map_self.get(src).copied()?;
+                let v = self.find_var(*src)?;
+                Some((new_idx, v))
+            })
+            .collect();
+
+        for (new_idx, transcript_var) in transcr_pairs {
+            // Determine/create the Arg node for this transcript var.
+            let arg_node = if let Some(&n) = transcript_arg_nodes.get(&transcript_var) {
+                n
+            } else if let Some((old, _)) = public_args
+                .iter()
+                .find(|(_, pr)| pr.name() == Some(&transcript_var))
+            {
+                node_map_self[old]
+            } else {
+                let typ = match &verifier[new_idx] {
+                    Node::Transcr(op, _) => op.typ(),
+                    _ => unreachable!("non-challenge transcript must be Transcr"),
+                };
+                let arg_node = verifier.add_node(Node::Arg(
+                    transcript_var.clone(),
+                    typ,
+                    Qualifier::Public,
+                    Distribution::default(),
+                    ArgKind::TranscriptInput,
+                ));
+                verifier.add_edge(n_input, arg_node, Dep::data());
+                transcript_arg_nodes.insert(transcript_var.clone(), arg_node);
+                arg_node
+            };
+
+            // Rewrite Transcr op to reference the Arg, and add the data edge.
+            if let Node::Transcr(op, _) = &mut verifier[new_idx] {
+                let typ = op.typ();
+                *op = mk::<C>(GOp::var(&transcript_var, arg_node, typ));
+            }
+            verifier.add_edge(arg_node, new_idx, Dep::data());
+        }
+
+        Ok(verifier)
     }
 }
 
@@ -860,8 +910,9 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
                 .to_string()
             },
             &|_, n| match n.1 {
-                Node::Inp(_, _) => "shape = \"box\"".to_string(),
-                Node::Rel(_, _) => "shape = \"note\"".to_string(),
+                Node::Inp(_) => "shape = \"box\"".to_string(),
+                Node::Rel(_) => "shape = \"note\"".to_string(),
+                Node::Arg(_, _, _, _, _) => "shape = \"parallelogram\"".to_string(),
                 Node::Transcr(_, _) => "color = \"red\"".to_string(),
                 _ => "shape = \"ellipse\"".to_string(),
             },
@@ -1027,7 +1078,7 @@ impl<C: HasOpFactory> UDag<C> {
     ) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
         let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
-        if !matches!(op, GOp::Ref(Ref::Node(_), _)) {
+        if !op.is_ref() {
             let nr = self.add_node(Node::ret(&op));
             self.add_edges(DepType::Data, nr, op);
         };
@@ -1085,12 +1136,25 @@ impl<C: HasOpFactory> UDag<C> {
         match body {
             CBody::Proto { body, relation } => {
                 debug!("Adding proto: {:?}", sig);
-                // Start node
-                let mut start = self.add_node(Node::inp(sig.name.clone(), asig.clone()));
-                let mut vars: Ctx<Vid, GOp<C>> = atyps
-                    .iter()
-                    .map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone())))
-                    .collect();
+                // Start node (input marker)
+                let mut start = self.add_node(Node::inp(sig.name.clone()));
+                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
+                for (id, typ) in atyps.iter() {
+                    let pref = asig
+                        .iter()
+                        .find(|p| p.name() == Some(id))
+                        .cloned()
+                        .expect("PRef built from sig must be present");
+                    let arg_node = self.add_node(Node::arg(
+                        id.clone(),
+                        typ.clone(),
+                        pref.qualifier,
+                        pref.distribution,
+                        ArgKind::Input,
+                    ));
+                    self.graph.add_edge(start, arg_node, Dep::data());
+                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
+                }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind {
                         if r.step == 1 && r.end == r.start + 1 {
@@ -1100,12 +1164,27 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
-                // Relation start
-                start = self.add_node(Node::rel(sig.name.clone(), asig));
-                let mut vars: Ctx<Vid, GOp<C>> = atyps
-                    .iter()
-                    .map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone())))
-                    .collect();
+                // Relation start: its own per-arg `Node::Arg` children so
+                // walking the relation does not pull in the protocol body
+                // through shared `Arg` nodes.
+                start = self.add_node(Node::rel(sig.name.clone()));
+                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
+                for (id, typ) in atyps.iter() {
+                    let pref = asig
+                        .iter()
+                        .find(|p| p.name() == Some(id))
+                        .cloned()
+                        .expect("PRef built from sig must be present");
+                    let arg_node = self.add_node(Node::arg(
+                        id.clone(),
+                        typ.clone(),
+                        pref.qualifier,
+                        pref.distribution,
+                        ArgKind::Relation,
+                    ));
+                    self.graph.add_edge(start, arg_node, Dep::data());
+                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
+                }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind {
                         if r.step == 1 && r.end == r.start + 1 {
@@ -1117,11 +1196,24 @@ impl<C: HasOpFactory> UDag<C> {
                 self.add_top_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
             }
             CBody::Func { body } => {
-                let mut start = self.add_node(Node::inp(sig.name.clone(), asig));
-                let mut vars: Ctx<Vid, GOp<C>> = atyps
-                    .iter()
-                    .map(|(id, typ)| (id.clone(), GOp::var(id, start, typ.clone())))
-                    .collect();
+                let mut start = self.add_node(Node::inp(sig.name.clone()));
+                let mut vars: Ctx<Vid, GOp<C>> = Ctx::new();
+                for (id, typ) in atyps.iter() {
+                    let pref = asig
+                        .iter()
+                        .find(|p| p.name() == Some(id))
+                        .cloned()
+                        .expect("PRef built from sig must be present");
+                    let arg_node = self.add_node(Node::arg(
+                        id.clone(),
+                        typ.clone(),
+                        pref.qualifier,
+                        pref.distribution,
+                        ArgKind::Input,
+                    ));
+                    self.graph.add_edge(start, arg_node, Dep::data());
+                    vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
+                }
                 for (tid, kind) in kctx.iter() {
                     if let CKind::Range(r) = kind {
                         if r.step == 1 && r.end == r.start + 1 {
@@ -1143,13 +1235,9 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// Variables to operations by lookup in [vars]
     fn op_from_var(id: &Vid, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
-        let nop = vars
-            .get(&id)
-            .ok_or_else(|| GraphError::var_not_found(&id))?;
-        match nop {
-            GOp::Ref(Ref::Node(n), typ) => Ok(GOp::Ref(Ref::Var(id.clone(), *n), typ.clone())),
-            op => Ok(op.clone()),
-        }
+        vars.get(&id)
+            .cloned()
+            .ok_or_else(|| GraphError::var_not_found(&id))
     }
 
     /// Convert a Fun expression body to a PolyVariant
@@ -1666,30 +1754,28 @@ impl<C: HasOpFactory> UDag<C> {
                     let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Record transcript interaction
                     let transcr_op = match &ol {
-                        GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _)
-                            if self[*n].is_transcript()
-                                && !self.vctx.get(n).map(|v| v != &id).unwrap_or(false) =>
+                        GOp::Ref(r, _)
+                            if self[r.node()].is_transcript()
+                                && !self.vctx.get(&r.node()).map(|v| v != &id).unwrap_or(false) =>
                         {
+                            let n = r.node();
                             // Node is already a transcript node and either has no name
                             // or the same name — register directly.
-                            self.vctx.insert(n, &id);
-                            self.transcript_vars.insert(n, &true);
-                            GOp::Ref(Ref::Var(id.clone(), *n), ol.typ())
+                            self.vctx.insert(&n, &id);
+                            self.transcript_vars.insert(&n, &true);
+                            GOp::Ref(Ref(n), ol.typ())
                         }
-                        GOp::Ref(Ref::Node(n) | Ref::Var(_, n), _) => {
+                        GOp::Ref(r, _) => {
+                            let n = r.node();
                             // Reuse: create a wrapper transcript node.
-                            let wrapper_ref = match &ol {
-                                GOp::Ref(Ref::Var(v, n), _) => Ref::Var(v.clone(), *n),
-                                _ => Ref::Node(*n),
-                            };
-                            let nl = self.add_node(Node::transcr(&GOp::Ref(wrapper_ref, ol.typ())));
+                            let nl = self.add_node(Node::transcr(&GOp::Ref(Ref(n), ol.typ())));
                             self.add_edges(DepType::Data, nl, ol.clone());
                             self.add_edge(*transcr, nl, Dep::transcript());
                             self.graph.node_weight_mut(nl).unwrap().set_transcript();
                             self.vctx.insert(&nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
-                            GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
+                            GOp::Ref(Ref(nl), ol.typ())
                         }
                         _ => {
                             // Add new transcript node
@@ -1700,7 +1786,7 @@ impl<C: HasOpFactory> UDag<C> {
                             self.vctx.insert(&nl, &id);
                             self.transcript_vars.insert(&nl, &true);
                             *transcr = nl;
-                            GOp::Ref(Ref::Var(id.clone(), nl), ol.typ())
+                            GOp::Ref(Ref(nl), ol.typ())
                         }
                     };
                     // Add [id] to the variable context (clone-on-write)
@@ -1858,26 +1944,7 @@ impl<C: HasOpFactory> UDag<C> {
                                                 })
                                                 .map(|op| (**op).clone())
                                         }
-                                        Op::Ref(Ref::Var(vid, node), _op_typ) => {
-                                            let field_typ_atyp =
-                                                ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
-                                                    || {
-                                                        GraphError::Type(TypeError::ark(
-                                                            kctx,
-                                                            &vctx,
-                                                            &CExp::Var(id_clone.clone()),
-                                                            field_typ_ctyp,
-                                                        ))
-                                                    },
-                                                )?;
-
-                                            // The field is accessed via projection, so we return a Ref with the field type
-                                            return Ok(Op::Ref(
-                                                Ref::Var(vid.clone(), *node),
-                                                field_typ_atyp,
-                                            ));
-                                        }
-                                        Op::Ref(Ref::Node(node), _op_typ) => {
+                                        Op::Ref(r, _op_typ) => {
                                             // Record produced by a node (e.g. marginalize); add Proj node
                                             let field_typ_atyp =
                                                 ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
@@ -1890,13 +1957,19 @@ impl<C: HasOpFactory> UDag<C> {
                                                         ))
                                                     },
                                                 )?;
+                                            // If the record source is an Arg node we don't need
+                                            // to materialise a Proj node — the field is selected
+                                            // directly off the typed reference.
+                                            if self[r.node()].is_arg() {
+                                                return Ok(Op::Ref(Ref(r.node()), field_typ_atyp));
+                                            }
                                             let proj_node = self.add_node(Node::proj(
                                                 record_op,
                                                 &field_name,
                                                 &field_typ_atyp,
                                             ));
                                             self.add_edges(edge_type, proj_node, record_op.clone());
-                                            Ok(Op::Ref(Ref::Node(proj_node), field_typ_atyp))
+                                            Ok(Op::Ref(Ref(proj_node), field_typ_atyp))
                                         }
                                         _ => Err(GraphError::Type(TypeError::not_a_record(
                                             kctx,

@@ -9,7 +9,13 @@ use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 use backend::{ATyp, Value};
 use std::fmt;
 
-/// A reference to a node in the graph, with all associated metadata
+/// A reference to a node in the graph, with all associated metadata.
+///
+/// Issue #83 / Phase B: `Ref` is now a thin newtype around `NodeIndex`.
+/// The variable name (when applicable) is stored on `PRef` directly via
+/// the optional `name` field, populated at construction time from the
+/// owning `Node::Arg` (or transcript variable). It is metadata only —
+/// `PRef` equality is still ultimately driven by `reference`/`index`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct PRef {
     pub reference: Ref,
@@ -18,6 +24,10 @@ pub struct PRef {
     pub qualifier: Qualifier,
     pub distribution: Distribution,
     pub from_transcript: bool,
+    /// Source-level variable name, if any. For `Node::Arg` PRefs this
+    /// is the argument's `Vid`; for transcript-source PRefs it is the
+    /// log-variable name.
+    pub name: Option<Vid>,
 }
 
 impl PRef {
@@ -35,8 +45,29 @@ impl PRef {
             qualifier,
             distribution,
             from_transcript: false,
+            name: None,
         }
     }
+
+    pub fn new_named(
+        reference: Ref,
+        name: Vid,
+        typ: ATyp,
+        index: usize,
+        qualifier: Qualifier,
+        distribution: Distribution,
+    ) -> Self {
+        PRef {
+            reference,
+            index,
+            typ,
+            qualifier,
+            distribution,
+            from_transcript: false,
+            name: Some(name),
+        }
+    }
+
     pub fn from_node(
         node: NodeIndex,
         typ: ATyp,
@@ -45,14 +76,18 @@ impl PRef {
         distribution: Distribution,
     ) -> Self {
         PRef {
-            reference: Ref::Node(node),
+            reference: Ref(node),
             index,
             typ,
             qualifier,
             distribution,
             from_transcript: false,
+            name: None,
         }
     }
+
+    /// Construct a PRef referencing the `Arg` node at `node`, carrying
+    /// the variable name `v` as metadata.
     pub fn from_var(
         v: Vid,
         node: NodeIndex,
@@ -62,14 +97,16 @@ impl PRef {
         distribution: Distribution,
     ) -> Self {
         PRef {
-            reference: Ref::Var(v, node),
+            reference: Ref(node),
             index,
             typ,
             qualifier,
             distribution,
             from_transcript: false,
+            name: Some(v),
         }
     }
+
     pub fn from_ref(
         reference: Ref,
         typ: ATyp,
@@ -83,8 +120,11 @@ impl PRef {
             qualifier,
             distribution,
             from_transcript: false,
+            name: None,
         }
     }
+
+    /// Construct a `PRef` for an arg expected to live at the `Arg` node `node`.
     pub fn from_arg(arg: &CArg, node: NodeIndex, kctx: &Ctx<Tid, CKind>) -> Option<Self> {
         let atyp = ATyp::from_ctyp(&arg.typ, kctx)?;
         Some(PRef::from_var(
@@ -96,6 +136,7 @@ impl PRef {
             arg.distribution,
         ))
     }
+
     pub fn is_public(&self) -> bool {
         self.qualifier.is_public()
     }
@@ -130,23 +171,14 @@ impl PRef {
     }
 
     pub fn node(&self) -> NodeIndex {
-        match self.reference {
-            Ref::Node(node) => node,
-            Ref::Var(_, node) => node,
-        }
+        self.reference.node()
     }
-    pub fn var(&self) -> Option<Vid> {
-        match &self.reference {
-            Ref::Node(_) => None,
-            Ref::Var(id, _) => Some(id.clone()),
-        }
+
+    /// Source-level variable name, if known (set at construction).
+    pub fn name(&self) -> Option<&Vid> {
+        self.name.as_ref()
     }
-    pub fn has_var(&self, v: &Vid) -> bool {
-        self.var() == Some(v.clone())
-    }
-    pub fn is_var(&self) -> bool {
-        self.var().is_some()
-    }
+
     pub fn into_op<C: HasOpFactory>(&self) -> HOp<C> {
         if self.typ.size() > 1 {
             mk::<C>(GOp::Ram(
@@ -166,37 +198,33 @@ impl PRef {
             qualifier: self.qualifier.clone(),
             distribution: self.distribution.clone(),
             from_transcript: self.from_transcript,
+            name: self.name.clone(),
         }
     }
 
     pub fn verbose(&self) -> String {
+        let label: String = match &self.name {
+            Some(v) => format!("{}", v),
+            None => format!("{}", self.reference),
+        };
         if self.typ.size() > 1 && self.distribution.is_uniform() {
             format!(
                 "{} uniform {}[{}]: {}",
-                self.qualifier, self.reference, self.index, self.typ
+                self.qualifier, label, self.index, self.typ
             )
         } else if self.typ.size() > 1 && self.distribution.is_uniform_nz() {
             format!(
                 "{} uniform* {}[{}]: {}",
-                self.qualifier, self.reference, self.index, self.typ
+                self.qualifier, label, self.index, self.typ
             )
         } else if self.typ.size() > 1 {
-            format!(
-                "{} {}[{}]: {}",
-                self.qualifier, self.reference, self.index, self.typ
-            )
+            format!("{} {}[{}]: {}", self.qualifier, label, self.index, self.typ)
         } else if self.distribution.is_uniform() {
-            format!(
-                "{} uniform {}: {}",
-                self.qualifier, self.reference, self.typ
-            )
+            format!("{} uniform {}: {}", self.qualifier, label, self.typ)
         } else if self.distribution.is_uniform_nz() {
-            format!(
-                "{} uniform* {}: {}",
-                self.qualifier, self.reference, self.typ
-            )
+            format!("{} uniform* {}: {}", self.qualifier, label, self.typ)
         } else {
-            format!("{} {}: {}", self.qualifier, self.reference, self.typ)
+            format!("{} {}: {}", self.qualifier, label, self.typ)
         }
     }
 }
@@ -216,8 +244,10 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        self.reference.pretty(allocator)
-        //allocator.text(self.verbose())
+        match self.name {
+            Some(v) => allocator.text(format!("{}", v)),
+            None => self.reference.pretty(allocator),
+        }
     }
 
     fn is_nil(&self) -> bool {

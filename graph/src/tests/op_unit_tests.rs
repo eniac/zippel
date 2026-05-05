@@ -370,79 +370,20 @@ mod op_construction_tests {
 #[cfg(test)]
 mod ref_tests {
     use crate::Ref;
-    use lang::id::Vid;
     use petgraph::graph::NodeIndex;
 
     #[test]
     fn test_ref_node_extraction() {
         let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
+        let r = Ref(node_idx);
         assert_eq!(r.node(), node_idx);
-    }
-
-    #[test]
-    fn test_ref_var_extraction_some() {
-        let vid = Vid::from("test_var");
-        let node_idx = NodeIndex::new(0);
-        let r = Ref::Var(vid.clone(), node_idx);
-        assert_eq!(r.var(), Some(vid));
-    }
-
-    #[test]
-    fn test_ref_var_extraction_none() {
-        let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
-        assert_eq!(r.var(), None);
-    }
-
-    #[test]
-    fn test_ref_is_var_true() {
-        let vid = Vid::from("test_var");
-        let node_idx = NodeIndex::new(0);
-        let r = Ref::Var(vid, node_idx);
-        assert!(r.is_var());
-    }
-
-    #[test]
-    fn test_ref_is_var_false() {
-        let node_idx = NodeIndex::new(42);
-        let r = Ref::Node(node_idx);
-        assert!(!r.is_var());
     }
 
     #[test]
     fn test_ref_from_node_index() {
         let node_idx = NodeIndex::new(42);
         let r: Ref = node_idx.into();
-        match r {
-            Ref::Node(idx) => assert_eq!(idx, node_idx),
-            _ => panic!("Expected Node ref"),
-        }
-    }
-
-    #[test]
-    fn test_ref_from_vid() {
-        let vid = Vid::from("test");
-        let r: Ref = (&vid).into();
-        match r {
-            Ref::Var(v, idx) => {
-                assert_eq!(v, vid);
-                assert_eq!(idx, NodeIndex::new(0));
-            }
-            _ => panic!("Expected Var ref"),
-        }
-    }
-
-    #[test]
-    fn test_ref_from_str() {
-        let r: Ref = "test_var".into();
-        match r {
-            Ref::Var(v, idx) => {
-                assert_eq!(v, Vid::from("test_var"));
-                assert_eq!(idx, NodeIndex::new(0));
-            }
-            _ => panic!("Expected Var ref"),
-        }
+        assert_eq!(r.node(), node_idx);
     }
 }
 

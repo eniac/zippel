@@ -220,7 +220,7 @@ impl UniformityPropagation {
         let mut worklist = vec![inp];
         for n in dag.op_nodes() {
             if let Some(d) = self.from_op(&dag[n].clone().into_op()) {
-                self.distributions.insert(&Ref::Node(n), &d);
+                self.distributions.insert(&Ref(n), &d);
                 worklist.push(n.into());
             }
         }
@@ -231,14 +231,13 @@ impl UniformityPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => {
-                    for arg in args {
-                        self.distributions.insert(&arg.reference, &arg.distribution);
-                    }
+                Node::Inp(_) | Node::Rel(_) => {}
+                Node::Arg(_, _, _, dist, _) => {
+                    self.distributions.insert(&Ref(n), dist);
                 }
                 Node::Transcr(op, _) | Node::Op(op, _) => {
                     self.from_op(op)
-                        .and_then(|d| self.distributions.insert(&Ref::Node(n), &d));
+                        .and_then(|d| self.distributions.insert(&Ref(n), &d));
                 }
             }
 
@@ -293,7 +292,6 @@ mod tests {
     use share::unwrap;
 
     #[test]
-    #[ignore]
     fn uniformity_prop() {
         let ex = r#"
             proto foo<F: Field>(private uniform* s: F, public x: F) where true {

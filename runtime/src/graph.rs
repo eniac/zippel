@@ -72,7 +72,7 @@ pub struct MutexGraph<C: ArkConfig> {
 /// `Op` nodes are compute-only and run on the thread pool.
 fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
     match &g.mutex_graph[node_idx] {
-        Node::Inp(_, _) | Node::Transcr(_, _) => true,
+        Node::Inp(_) | Node::Transcr(_, _) => true,
         Node::Op(op, _) if matches!(**op, Op::Challenge(_, _)) => true,
         _ => false,
     }
@@ -130,10 +130,16 @@ fn update_successors<C: ArkConfig>(
                     });
                 }
             }
-            // Inp and Rel nodes have no remaining_deps counter;
-            // they should never appear as successors.
-            Node::Inp(_, _) | Node::Rel(_, _) => {
-                unreachable!("Inp/Rel node {:?} on sync channel", node_idx)
+            // Inp/Rel markers and Arg nodes have no compute and no
+            // remaining_deps counter. They appear as successors of one
+            // another (Inp → Arg) and as successors of compute paths is
+            // never expected. Pass through Args by recursively notifying
+            // *their* successors so downstream Ops can decrement properly.
+            Node::Inp(_) | Node::Rel(_) => {
+                unreachable!("Inp/Rel marker {:?} on sync channel", node_idx)
+            }
+            Node::Arg(_, _, _, _, _) => {
+                update_successors(g, inputs, tx.clone(), dependent);
             }
         }
     }
@@ -212,16 +218,18 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let return_val = annotation.return_value.lock().unwrap();
                 match &*return_val {
                     Some(val) => val.clone(),
-                    None => panic!("Value should exist"),
+                    None => panic!("Value should exist for node {:?}", node),
                 }
             }
-            Node::Inp(_, _) | Node::Rel(_, _) => {
-                let vid = r.var().expect("Input should be a variable");
-                inputs
-                    .get(&vid)
-                    .expect(format!("Value for {} should exist", vid).as_str())
-                    .clone()
+            Node::Inp(_) | Node::Rel(_) => {
+                // Should not be referenced directly in Phase B; values
+                // come from Arg nodes.
+                panic!("get_value on Inp/Rel marker node {:?}", node)
             }
+            Node::Arg(vid, _, _, _, _) => inputs
+                .get(vid)
+                .expect(format!("Value for {} should exist", vid).as_str())
+                .clone(),
         }
     }
 
@@ -463,8 +471,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             }
-            Node::Inp(_, _) => {}
-            Node::Rel(_, _) => {}
+            Node::Inp(_) => {}
+            Node::Rel(_) => {}
+            Node::Arg(_, _, _, _, _) => {}
         }
     }
 
@@ -538,8 +547,9 @@ impl<C: ArkConfig> MutexGraph<C> {
                         _ => {}
                     }
                 }
-                Node::Inp(_, _) => {}
-                Node::Rel(_, _) => {}
+                Node::Inp(_) => {}
+                Node::Rel(_) => {}
+                Node::Arg(_, _, _, _, _) => {}
             }
         }
         let result_indices: Vec<NodeIndex> = match result_kind {
@@ -593,11 +603,12 @@ impl<C: ArkConfig> MutexGraph<C> {
                         }
                     }
                 }
-                Node::Inp(_, _) => {
+                Node::Inp(_) => {
                     debug!("[run_graph] pushing initial sync node {:?}", ni);
                     tx.push(ni);
                 }
-                Node::Rel(_, _) => {}
+                Node::Rel(_) => {}
+                Node::Arg(_, _, _, _, _) => {}
             }
         }
 
@@ -617,20 +628,29 @@ impl<C: ArkConfig> MutexGraph<C> {
             );
 
             match &g.mutex_graph[node_idx] {
-                Node::Inp(_, prefs) => {
+                Node::Inp(_) => {
+                    // Walk Arg children to send public values through the sponge.
+                    let mut arg_children: Vec<NodeIndex> = g
+                        .mutex_graph
+                        .nodes_from(node_idx)
+                        .filter(|n| g.mutex_graph[*n].is_arg())
+                        .collect();
+                    arg_children.sort();
                     debug!(
-                        "[run_graph] node {:?} is Inp/Rel with {} prefs",
+                        "[run_graph] node {:?} is Inp with {} arg children",
                         node_idx,
-                        prefs.len()
+                        arg_children.len()
                     );
-                    // Send public values through the sponge.
-                    for pref in prefs.clone() {
-                        if pref.qualifier.is_public() && !pref.from_transcript {
-                            prover_state.public_message(
-                                value_to_bytes(inputs.get(&pref.var().unwrap()).unwrap())
-                                    .unwrap()
-                                    .as_slice(),
-                            );
+                    for arg_idx in arg_children {
+                        if let Some(pref) = g.mutex_graph[arg_idx].arg_pref(arg_idx) {
+                            if pref.qualifier.is_public() && !pref.from_transcript {
+                                let vid = pref.name().expect("Arg node must carry a name").clone();
+                                prover_state.public_message(
+                                    value_to_bytes(inputs.get(&vid).unwrap())
+                                        .unwrap()
+                                        .as_slice(),
+                                );
+                            }
                         }
                     }
                 }
@@ -650,10 +670,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                         prover_state.public_message(serialized.as_slice());
                     }
                 }
-                Node::Op(_, _) | Node::Rel(_, _) => {
-                    // Non-sync Op and Rel nodes should never appear on the sync
+                Node::Op(_, _) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {
+                    // Non-sync Op and Rel/Arg nodes should never appear on the sync
                     // channel. Panic indicates a logic error in scheduling.
-                    unreachable!("non-sync Op node {:?} on sync channel", node_idx)
+                    unreachable!("non-sync node {:?} on sync channel", node_idx)
                 }
             };
 

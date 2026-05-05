@@ -30,10 +30,8 @@ impl LocalScheduler {
         let mut cost_map: HashMap<NodeIndex, usize> = HashMap::new();
         for node in nodes {
             match &dag[node] {
-                Node::Inp(_, _) | Node::Rel(_, _) => {
-                    for _ in 0..1 {
-                        cost_map.insert(node, 1);
-                    }
+                Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {
+                    cost_map.insert(node, 1);
                 }
                 Node::Op(op, _) | Node::Transcr(op, _) => {
                     let starting = cost_model.cost(op, 1).0;

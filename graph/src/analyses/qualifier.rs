@@ -73,10 +73,11 @@ impl QualifierPropagation {
             }
 
             match &dag[n] {
-                Node::Inp(_, args) | Node::Rel(_, args) => {
-                    for arg in args {
-                        qp.quals.insert(&arg.reference.node(), &arg.qualifier);
-                    }
+                Node::Inp(_) | Node::Rel(_) => {
+                    continue;
+                }
+                Node::Arg(_, _, qual, _, _) => {
+                    qp.quals.insert(&n, qual);
                     continue;
                 }
                 Node::Transcr(_, _) => {
@@ -129,7 +130,6 @@ mod tests {
     use share::unwrap;
 
     #[test]
-    #[ignore]
     fn qualifier_prop() {
         let ex = r#"
             proto foo<F: Field, N: 2..4>(private s: [F; N], private s': F, public i: Fin<2>) where s == s {

@@ -15,13 +15,16 @@ use std::ops::{
 };
 use std::sync::RwLock;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug, Hash)]
-pub enum Ref {
-    /// Reference to a node in the graph
-    Node(NodeIndex),
-    /// Reference to a variable
-    Var(Vid, NodeIndex),
-}
+/// A reference to a node in the graph by `NodeIndex`.
+///
+/// Issue #83 / Phase B: this is now a thin newtype around `NodeIndex`.
+/// Previously a sum type `Node(NodeIndex) | Var(Vid, NodeIndex)`, the
+/// `Var` variant existed solely to disambiguate scalar arguments that
+/// would otherwise hash-cons identically when all sharing one `Inp` node.
+/// Phase B splits each argument into its own `Node::Arg` with a unique
+/// `NodeIndex`, making the `Vid` carrier on `Ref` redundant.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
+pub struct Ref(pub NodeIndex);
 
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
@@ -110,22 +113,18 @@ pub fn mk<C: HasOpFactory>(op: GOp<C>) -> HOp<C> {
 }
 
 impl Ref {
+    pub fn new(n: NodeIndex) -> Self {
+        Ref(n)
+    }
+
     pub fn node(&self) -> NodeIndex {
-        match self {
-            Ref::Node(n) => *n,
-            Ref::Var(_, n) => *n,
-        }
+        self.0
     }
+}
 
-    pub fn var(&self) -> Option<Vid> {
-        match self {
-            Ref::Node(_) => None,
-            Ref::Var(v, _) => Some(v.clone()),
-        }
-    }
-
-    pub fn is_var(&self) -> bool {
-        self.var().is_some()
+impl From<Ref> for NodeIndex {
+    fn from(r: Ref) -> Self {
+        r.0
     }
 }
 
@@ -822,19 +821,19 @@ fn v_inner_clone<C: ArkConfig>(op: &GOp<C>) -> GOp<C> {
 
 impl<C: ArkConfig> GOp<C> {
     pub fn underscore(n: NodeIndex, typ: ATyp) -> Self {
-        Op::Ref(Ref::Node(n), typ)
+        Op::Ref(Ref(n), typ)
     }
 
-    pub fn var(v: &Vid, n: NodeIndex, typ: ATyp) -> Self {
-        Op::Ref(Ref::Var(v.clone(), n), typ)
+    /// Construct a `GOp::Ref` for a variable. After Phase B, `var` and
+    /// `underscore` are operationally identical: both produce
+    /// `Op::Ref(Ref(n), typ)`. The `Vid` parameter is retained as a
+    /// callsite-documentation aid but no longer carried on `Ref`.
+    pub fn var(_v: &Vid, n: NodeIndex, typ: ATyp) -> Self {
+        Op::Ref(Ref(n), typ)
     }
 
-    pub fn is_var(&self) -> bool {
-        matches!(self, Op::Ref(Ref::Var(_, _), _))
-    }
-
-    pub fn is_underscore(&self) -> bool {
-        matches!(self, Op::Ref(Ref::Node(_), _))
+    pub fn is_ref(&self) -> bool {
+        matches!(self, Op::Ref(_, _))
     }
 
     pub fn references(&self) -> Vec<Ref> {
@@ -869,8 +868,7 @@ impl<C: ArkConfig> GOp<C> {
 impl<C: HasOpFactory> GOp<C> {
     pub fn map_node_indices<F: Fn(NodeIndex) -> NodeIndex>(&self, f: &F) -> GOp<C> {
         match self {
-            Op::Ref(Ref::Node(n), typ) => Op::Ref(Ref::Node(f(*n)), typ.clone()),
-            Op::Ref(Ref::Var(v, n), typ) => Op::Ref(Ref::Var(v.clone(), f(*n)), typ.clone()),
+            Op::Ref(r, typ) => Op::Ref(Ref(f(r.0)), typ.clone()),
             Op::Bin(op, a, b, typ) => Op::Bin(
                 *op,
                 mk::<C>(a.map_node_indices(f)),
@@ -1023,10 +1021,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        match self {
-            Ref::Node(n) => allocator.text(format!("n{}", n.index())),
-            Ref::Var(v, _) => allocator.text(format!("{}", v)),
-        }
+        allocator.text(format!("n{}", self.0.index()))
     }
 
     fn is_nil(&self) -> bool {
@@ -1044,19 +1039,7 @@ impl fmt::Display for Ref {
 
 impl From<NodeIndex> for Ref {
     fn from(n: NodeIndex) -> Self {
-        Ref::Node(n)
-    }
-}
-
-impl<'a> From<&'a Vid> for Ref {
-    fn from(v: &'a Vid) -> Self {
-        Ref::Var(v.clone(), NodeIndex::new(0))
-    }
-}
-
-impl<'a> From<&'a str> for Ref {
-    fn from(v: &'a str) -> Self {
-        Ref::Var(Vid::from(v), NodeIndex::new(0))
+        Ref(n)
     }
 }
 
