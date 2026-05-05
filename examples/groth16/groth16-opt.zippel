@@ -1,19 +1,17 @@
-// Groth16 zkSNARK Protocol (computes h-polynomial via division)
+// Groth16 zkSNARK Protocol (h-coefficients provided externally)
 // Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
 //
-// H(x) = (A(x)·B(x) - C(x)) / Z_H(x) computed inside zippel,
-// with the QAP relation asserted in the where clause:
-//   (A·B - C) % Z_H == 0  (remainder is zero)
+// This variant accepts h_coeffs as a private input, computed externally
+// by the Rust R1CS-to-QAP conversion. Compare with groth16.zippel which
+// computes h_coeffs inside zippel via polynomial division.
 //
 // Size parameters:
 //   N: number of QAP variables (a_query length = num_inputs + num_witness)
 //   M: number of public inputs (including the constant 1)
 //   L: number of private witness variables
-//   D: domain size (length of a/b/c coefficient vectors after IFFT)
-//   H: length of h_query (= D - 1)
-//   Z: length of z_h_coeffs (= D + 1, for x^D - 1)
+//   H: length of h_query and h_coeffs (= domain_size - 1)
 
-proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: Size, D: Size, H: D-1, Z: D+1>(
+proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: Size, H: Size>(
     public alpha_g1: G1,
     public beta_g2: G2,
     public gamma_g2: G2,
@@ -30,19 +28,9 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: S
     private r: F,
     private s: F,
     private full_assignment: [F; N],
-    private a_coeffs: [F; D],
-    private b_coeffs: [F; D],
-    private c_coeffs: [F; D],
-    private z_h_coeffs: [F; Z],
+    private h_coeffs: [F; H],
     private aux_assignment: [F; L]
-) where (poly(a_coeffs) * poly(b_coeffs) - poly(c_coeffs)) % poly(z_h_coeffs) == poly([0]) {
-    let a_poly = poly(a_coeffs);
-    let b_poly = poly(b_coeffs);
-    let c_poly = poly(c_coeffs);
-    let z_h_poly = poly(z_h_coeffs);
-    let h_poly = (a_poly * b_poly - c_poly) / z_h_poly;
-    let h_coeffs = coef(h_poly);
-
+) where public_inputs == public_inputs {
     a_proof <- alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
     b_proof <- beta_g2 + dot(b_g2_query, full_assignment) + delta_g2 * s;
 
