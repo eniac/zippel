@@ -4,7 +4,7 @@
 // The entire h(X) = (A(X)·B(X) - C(X)) / Z_H(X) computation is done in zippel:
 //   1. Dense matvec: a_evals[i] = Σ_j mat_A[i,j] * assignment[j]
 //   2. IFFT evals → coefficients
-//   3. Coset FFT: coeffs * [omega^i] → fft → coset evals
+//   3. Coset FFT: coeffs * [omega^i] → eval → coset evals
 //   4. Pointwise: (A*B - C) / Z_H in coset domain
 //   5. Inverse coset IFFT → h coefficients
 //   6. Trim trailing zero coefficient
@@ -59,18 +59,18 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     let c_evals_full = [reduce(+, [mat_c[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..D];
 
     // Step 2: IFFT evaluations → polynomial coefficients
-    let a_coeff = coef(ifft(a_evals_full));
-    let b_coeff = coef(ifft(b_evals_full));
-    let c_coeff = coef(ifft(c_evals_full));
+    let a_coeff = coef(interpolate(a_evals_full));
+    let b_coeff = coef(interpolate(b_evals_full));
+    let c_coeff = coef(interpolate(c_evals_full));
 
     // Step 3: Coset FFT — multiply coefficients by shift_fwd, then FFT
     let shift_fwd = [omega^i for i in 0..D];
     let omega_inv = 1/omega;
     let shift_inv = [omega_inv^i for i in 0..D];
 
-    let a_coset = fft(poly(a_coeff * shift_fwd));
-    let b_coset = fft(poly(b_coeff * shift_fwd));
-    let c_coset = fft(poly(c_coeff * shift_fwd));
+    let a_coset = eval(poly(a_coeff * shift_fwd));
+    let b_coset = eval(poly(b_coeff * shift_fwd));
+    let c_coset = eval(poly(c_coeff * shift_fwd));
 
     // Step 4: Pointwise computation in coset domain
     // Z_H(h·ω^i) = h^D - 1 is constant in the coset
@@ -78,7 +78,7 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     let h_coset = (a_coset * b_coset - c_coset) * v_inv;
 
     // Step 5: Inverse coset IFFT → h coefficients (trim trailing zero)
-    let h_coeffs = coef(ifft(h_coset)) * shift_inv;
+    let h_coeffs = coef(interpolate(h_coset)) * shift_inv;
     let h_trimmed = h_coeffs[0..H];
 
     // Witness portion of full_assignment (private inputs)
