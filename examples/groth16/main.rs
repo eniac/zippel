@@ -1,6 +1,6 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::AffineRepr;
-use ark_ff::{One, PrimeField, UniformRand, Zero};
+use ark_ff::{FftField, One, PrimeField, UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_poly::EvaluationDomain;
 use ark_relations::gr1cs::{
@@ -57,20 +57,25 @@ struct DoubleMulCircuit {
 impl ConstraintSynthesizer<F> for DoubleMulCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
         let a_var = cs.new_witness_variable(|| {
-            self.a.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+            self.a
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
         })?;
         let b_var = cs.new_witness_variable(|| {
-            self.b.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+            self.b
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
         })?;
         let d_var = cs.new_witness_variable(|| {
-            self.d.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+            self.d
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
         })?;
         let c1_var = cs.new_input_variable(|| {
-            self.a.and_then(|a| self.b.map(|b| a * b))
+            self.a
+                .and_then(|a| self.b.map(|b| a * b))
                 .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
         })?;
         let c2_var = cs.new_input_variable(|| {
-            self.a.and_then(|a| self.d.map(|d| a * d))
+            self.a
+                .and_then(|a| self.d.map(|d| a * d))
                 .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
         })?;
         cs.enforce_constraint_arity_3(
@@ -89,7 +94,7 @@ impl ConstraintSynthesizer<F> for DoubleMulCircuit {
     }
 }
 
-fn evaluate_constraint<F: PrimeField>(terms: &[(F, usize)], assignment: &[F]) -> F {
+fn _evaluate_constraint<F: PrimeField>(terms: &[(F, usize)], assignment: &[F]) -> F {
     let mut sum = F::zero();
     for (coeff, index) in terms {
         sum += &(*coeff * assignment[*index]);
@@ -144,11 +149,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         v.resize(h_size, F::zero());
         v
     };
-    let aux_assignment_padded = {
-        let mut v = witness_assignment.to_vec();
-        v.resize(l, F::zero());
-        v
-    };
 
     let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
@@ -180,10 +180,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
             Vid("h_coeffs".to_string()),
             Value::VecScalar(h_coeffs_padded),
         ),
-        (
-            Vid("aux_assignment".to_string()),
-            Value::VecScalar(aux_assignment_padded),
-        ),
     ]);
 
     let public_input_names = [
@@ -205,7 +201,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &n);
     sizes.insert(&Tid::new("M"), &m);
     sizes.insert(&Tid::new("L"), &l);
     sizes.insert(&Tid::new("H"), &h_size);
@@ -307,38 +302,58 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let m = vk.gamma_abc_g1.len();
     let l = pk.l_query.len();
 
-    type D<FF> = GeneralEvaluationDomain<FF>;
-    let domain = D::<F>::new(num_constraints + num_inputs).unwrap();
+    type Dm<FF> = GeneralEvaluationDomain<FF>;
+    let domain = Dm::<F>::new(num_constraints + num_inputs).unwrap();
     let domain_size = domain.size();
 
-    let mut a_evals = vec![F::zero(); domain_size];
-    let mut b_evals = vec![F::zero(); domain_size];
-    for (i, (at_i, bt_i)) in matrices[0].iter().zip(&matrices[1]).enumerate() {
-        a_evals[i] = evaluate_constraint(at_i, &full_assignment_raw);
-        b_evals[i] = evaluate_constraint(bt_i, &full_assignment_raw);
+    // Build flat D×N dense matrices from sparse R1CS matrices
+    // Rows 0..num_constraints: constraint rows (sparse, padded with zeros)
+    // Rows num_constraints..num_constraints+num_inputs: identity rows (A only) or zeros
+    // Rows num_constraints+num_inputs..domain_size: zeros
+    // Note: arkworks adds identity rows for A only (for input variables), not B or C.
+    fn build_dense_matrix_a(
+        sparse: &ark_relations::gr1cs::Matrix<F>,
+        num_constraints: usize,
+        num_inputs: usize,
+        domain_size: usize,
+        n: usize,
+    ) -> Vec<F> {
+        let mut dense = vec![F::zero(); domain_size * n];
+        for (i, row) in sparse.iter().enumerate() {
+            for (coeff, col) in row {
+                dense[i * n + col] = *coeff;
+            }
+        }
+        for i in 0..num_inputs {
+            let row = num_constraints + i;
+            dense[row * n + i] = F::one();
+        }
+        dense
     }
-    a_evals[num_constraints..num_constraints + num_inputs]
-        .copy_from_slice(&full_assignment_raw[..num_inputs]);
 
-    domain.ifft_in_place(&mut a_evals);
-    domain.ifft_in_place(&mut b_evals);
-
-    let mut c_evals = vec![F::zero(); domain_size];
-    for (i, ct_i) in matrices[2].iter().enumerate() {
-        c_evals[i] = evaluate_constraint(ct_i, &full_assignment_raw);
+    fn build_dense_matrix_bc(
+        sparse: &ark_relations::gr1cs::Matrix<F>,
+        _num_constraints: usize,
+        domain_size: usize,
+        n: usize,
+    ) -> Vec<F> {
+        let mut dense = vec![F::zero(); domain_size * n];
+        for (i, row) in sparse.iter().enumerate() {
+            for (coeff, col) in row {
+                dense[i * n + col] = *coeff;
+            }
+        }
+        dense
     }
-    domain.ifft_in_place(&mut c_evals);
 
-    // Coefficient vectors for QAP polynomials A, B, C (degree at most n-1)
-    let a_coeffs_vec = a_evals;
-    let b_coeffs_vec = b_evals;
-    let c_coeffs_vec = c_evals;
+    let mat_a_flat =
+        build_dense_matrix_a(&matrices[0], num_constraints, num_inputs, domain_size, n);
+    let mat_b_flat = build_dense_matrix_bc(&matrices[1], num_constraints, domain_size, n);
+    let mat_c_flat = build_dense_matrix_bc(&matrices[2], num_constraints, domain_size, n);
 
-    // Vanishing polynomial Z_H(x) = x^n - 1: coefficients [-1, 0, ..., 0, 1] of length n+1
-    let z = domain_size + 1;
-    let mut z_h_coeffs = vec![F::zero(); z];
-    z_h_coeffs[0] = F::zero() - F::one();
-    z_h_coeffs[domain_size] = F::one();
+    // Coset offset: omega = F::GENERATOR
+    // Shift vectors and v_inv are computed inside zippel from omega
+    let coset_offset = F::GENERATOR;
 
     let alpha_g1 = pk.vk.alpha_g1.into_group();
     let beta_g1 = pk.beta_g1.into_group();
@@ -362,11 +377,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let full_assignment_padded = {
         let mut v = full_assignment_raw.to_vec();
         v.resize(n, F::zero());
-        v
-    };
-    let aux_assignment_padded = {
-        let mut v = witness_assignment.to_vec();
-        v.resize(l, F::zero());
         v
     };
 
@@ -396,14 +406,10 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
             Vid("full_assignment".to_string()),
             Value::VecScalar(full_assignment_padded),
         ),
-        (Vid("a_coeffs".to_string()), Value::VecScalar(a_coeffs_vec)),
-        (Vid("b_coeffs".to_string()), Value::VecScalar(b_coeffs_vec)),
-        (Vid("c_coeffs".to_string()), Value::VecScalar(c_coeffs_vec)),
-        (Vid("z_h_coeffs".to_string()), Value::VecScalar(z_h_coeffs)),
-        (
-            Vid("aux_assignment".to_string()),
-            Value::VecScalar(aux_assignment_padded),
-        ),
+        (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
+        (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
+        (Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)),
+        (Vid("omega".to_string()), Value::Scalar(coset_offset)),
     ]);
 
     let public_input_names = [
@@ -431,9 +437,9 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &n);
     sizes.insert(&Tid::new("M"), &m);
     sizes.insert(&Tid::new("L"), &l);
+    sizes.insert(&Tid::new("C"), &num_constraints);
     sizes.insert(&Tid::new("D"), &domain_size);
     handler.compile(&sizes);
 
@@ -484,7 +490,9 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "noh".to_string());
-    let circuit_name = std::env::args().nth(2).unwrap_or_else(|| "single".to_string());
+    let circuit_name = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "single".to_string());
     println!("=== Groth16 (ArkBls12_381) — mode: {mode}, circuit: {circuit_name} ===");
     let mut rng = rand::rngs::OsRng;
 
@@ -492,12 +500,19 @@ fn main() {
         let a_val = F::rand(&mut rng);
         let b_val = F::rand(&mut rng);
         let d_val = F::rand(&mut rng);
-        let circuit = DoubleMulCircuit { a: Some(a_val), b: Some(b_val), d: Some(d_val) };
+        let circuit = DoubleMulCircuit {
+            a: Some(a_val),
+            b: Some(b_val),
+            d: Some(d_val),
+        };
         setup_and_run(circuit, mode);
     } else {
         let a_val = F::rand(&mut rng);
         let b_val = F::rand(&mut rng);
-        let circuit = MultiplyCircuit { a: Some(a_val), b: Some(b_val) };
+        let circuit = MultiplyCircuit {
+            a: Some(a_val),
+            b: Some(b_val),
+        };
         setup_and_run(circuit, mode);
     }
 }
@@ -545,15 +560,15 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
     use ark_poly::GeneralEvaluationDomain;
     type D<FF> = GeneralEvaluationDomain<FF>;
 
-    let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
-        &matrices,
-        num_inputs,
-        num_constraints,
-        &full_assignment_raw,
-    )
-    .unwrap();
-
     if mode == "opt" {
+        let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
+            &matrices,
+            num_inputs,
+            num_constraints,
+            &full_assignment_raw,
+        )
+        .unwrap();
+
         run_opt(
             &pk,
             &vk,
@@ -576,4 +591,3 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
         );
     }
 }
-
