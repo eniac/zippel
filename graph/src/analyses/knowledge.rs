@@ -196,9 +196,7 @@ fn knowledge_foo() {
 
     // Propagate qualifiers
     let g = QualifierPropagation::from_dag(&gs[0]);
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     // Compute Groebner basis for the implementation
     let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -233,8 +231,7 @@ fn groebner_bar() {
 
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
     // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
+    let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
 
     // Create an object computing the Groebner basis
     let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -269,8 +266,7 @@ fn groebner_baz() {
     let g_inp = QualifierPropagation::from_dag(&gs[0]);
 
     // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g_inp);
+    let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
     // Create an object computing the Groebner basis
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
@@ -312,8 +308,7 @@ fn groebner_ex3() {
     let g = QualifierPropagation::from_dag(&gs[0]);
 
     // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     // Create an object computing the Groebner basis
     let mut kz = KnowledgeAnalysis::from_input(&g);
@@ -337,8 +332,7 @@ fn schnorr_zk() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -364,8 +358,7 @@ fn zk_regression_direct_secret_leak() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     let result = kz.run();
@@ -393,8 +386,7 @@ fn zk_leak_unblinded_linear_combination() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -419,8 +411,7 @@ fn zk_leak_no_random_blinding() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -445,8 +436,7 @@ fn zk_leak_secret_difference_on_transcript() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -473,8 +463,7 @@ fn zk_safe_schnorr_with_blinding() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -503,8 +492,7 @@ fn zk_multiple_verify_one_safe_one_subtle_leak() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
@@ -534,8 +522,7 @@ fn zk_multiple_verify_both_safe() {
         .unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(

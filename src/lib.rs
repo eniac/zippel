@@ -161,8 +161,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
         let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
 
-        let mut up = UniformityPropagation::new();
-        let g_analyze = up.from_dag(&g_analyze);
+        let g_analyze = UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze);
         self.analyze_graph = Some(g_analyze);
 
         // Extract protocol subgraph and rename inner nodes

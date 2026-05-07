@@ -230,9 +230,7 @@ fn trans_clos_simple() {
     // Propagate qualifiers
     let g = QualifierPropagation::from_dag(&gs[0]);
 
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     // Compute transitive closure
     let tc = TransClos::from_input(&g);
@@ -269,9 +267,7 @@ fn trans_clos_many() {
     // Propagate qualifiers
     let g = QualifierPropagation::from_dag(&gs[0]);
 
-    // Uniformity propagation
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     // Compute transitive closure
     let tc = TransClos::from_input(&g);
