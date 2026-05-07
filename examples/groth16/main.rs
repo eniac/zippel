@@ -1,6 +1,6 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::AffineRepr;
-use ark_ff::{FftField, One, PrimeField, UniformRand, Zero};
+use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_poly::EvaluationDomain;
 use ark_relations::gr1cs::{
@@ -157,20 +157,11 @@ impl ConstraintSynthesizer<F> for TripleMulCircuit {
     }
 }
 
-fn _evaluate_constraint<F: PrimeField>(terms: &[(F, usize)], assignment: &[F]) -> F {
-    let mut sum = F::zero();
-    for (coeff, index) in terms {
-        sum += &(*coeff * assignment[*index]);
-    }
-    sum
-}
-
 fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     h_coeffs: &[F],
     full_assignment_raw: &[F],
-    witness_assignment: &[F],
     num_inputs: usize,
     circuit: C,
 ) {
@@ -350,7 +341,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     vk: &ark_groth16::VerifyingKey<E>,
     matrices: &[ark_relations::gr1cs::Matrix<F>],
     full_assignment_raw: &[F],
-    witness_assignment: &[F],
     num_inputs: usize,
     num_constraints: usize,
     circuit: C,
@@ -629,7 +619,7 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
     let num_constraints = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
     let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
-    let full_assignment_raw: Vec<F> = [instance_assignment, witness_assignment.clone()].concat();
+    let full_assignment_raw: Vec<F> = [instance_assignment, witness_assignment].concat();
 
     use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
     use ark_poly::GeneralEvaluationDomain;
@@ -649,7 +639,6 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &vk,
             &h_coeffs,
             &full_assignment_raw,
-            &witness_assignment,
             num_inputs,
             circuit,
         );
@@ -659,7 +648,6 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &vk,
             &matrices,
             &full_assignment_raw,
-            &witness_assignment,
             num_inputs,
             num_constraints,
             circuit,

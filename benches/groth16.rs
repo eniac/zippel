@@ -64,7 +64,6 @@ struct BenchData {
     pk: ark_groth16::ProvingKey<E>,
     vk: ark_groth16::VerifyingKey<E>,
     full_assignment: Vec<F>,
-    witness_assignment: Vec<F>,
     h_coeffs: Vec<F>,
     matrices: Vec<ark_relations::gr1cs::Matrix<F>>,
     r: F,
@@ -132,7 +131,7 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let num_cons = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
     let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
-    let full_assignment: Vec<F> = [instance_assignment, witness_assignment.clone()].concat();
+    let full_assignment: Vec<F> = [instance_assignment, witness_assignment].concat();
 
     type D<FF> = GeneralEvaluationDomain<FF>;
     let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
@@ -142,10 +141,15 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let domain = D::<F>::new(num_cons + num_inputs).unwrap();
     let domain_size = domain.size();
 
+    let n = pk.a_query.len();
+    let m = vk.gamma_abc_g1.len();
+    let l = pk.l_query.len();
+    let h_size = pk.h_query.len();
+
     BenchData {
-        pk, vk, full_assignment, witness_assignment, h_coeffs, matrices, r, s,
+        pk, vk, full_assignment, h_coeffs, matrices, r, s,
         num_inputs, num_constraints: num_cons,
-        n: 0, m: 0, l: 0, h_size: 0, domain_size,
+        n, m, l, h_size, domain_size,
     }
 }
 
@@ -157,11 +161,7 @@ fn groth16_bench(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(30));
 
     for &size in &sizes {
-        let mut data = setup_bench(size);
-        data.n = data.pk.a_query.len();
-        data.m = data.vk.gamma_abc_g1.len();
-        data.l = data.pk.l_query.len();
-        data.h_size = data.pk.h_query.len();
+        let data = setup_bench(size);
 
         // Arkworks prover
         group.bench_with_input(BenchmarkId::new("arkworks_prover", size), &data, |b, data| {
