@@ -157,6 +157,67 @@ impl ConstraintSynthesizer<F> for TripleMulCircuit {
     }
 }
 
+#[derive(Clone)]
+struct ComplexCircuit {
+    a: Option<F>,
+    b: Option<F>,
+    c: Option<F>,
+    d: Option<F>,
+    e: Option<F>,
+    f: Option<F>,
+    g: Option<F>,
+    h: Option<F>,
+    p: Option<F>,
+    q: Option<F>,
+}
+
+impl ConstraintSynthesizer<F> for ComplexCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
+        let alloc = |opt: Option<F>| {
+            opt.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        };
+        let a = cs.new_witness_variable(|| alloc(self.a))?;
+        let b = cs.new_witness_variable(|| alloc(self.b))?;
+        let c = cs.new_witness_variable(|| alloc(self.c))?;
+        let d = cs.new_witness_variable(|| alloc(self.d))?;
+        let e = cs.new_witness_variable(|| alloc(self.e))?;
+        let f = cs.new_witness_variable(|| alloc(self.f))?;
+        let g = cs.new_witness_variable(|| alloc(self.g))?;
+        let h = cs.new_witness_variable(|| alloc(self.h))?;
+        let p = cs.new_witness_variable(|| alloc(self.p))?;
+        let q = cs.new_witness_variable(|| alloc(self.q))?;
+        let mul2 = |x: Option<F>, y: Option<F>| {
+            x.and_then(|x| y.map(|y| x * y))
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        };
+        let o1 = cs.new_input_variable(|| mul2(self.a, self.b))?;
+        let o2 = cs.new_input_variable(|| mul2(self.c, self.d))?;
+        let o3 = cs.new_input_variable(|| mul2(self.e, self.f))?;
+        let o4 = cs.new_input_variable(|| mul2(self.g, self.h))?;
+        let o5 = cs.new_input_variable(|| mul2(self.a, self.c))?;
+        let o6 = cs.new_input_variable(|| mul2(self.b, self.e))?;
+        let o7 = cs.new_input_variable(|| mul2(self.d, self.g))?;
+        let o8 = cs.new_input_variable(|| mul2(self.f, self.h))?;
+        let o9 = cs.new_input_variable(|| mul2(self.p, self.q))?;
+        let o10 = cs.new_input_variable(|| mul2(self.a, self.p))?;
+        let o11 = cs.new_input_variable(|| mul2(self.e, self.p))?;
+        let o12 = cs.new_input_variable(|| mul2(self.h, self.q))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(b), || LinearCombination::from(o1))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(c), || LinearCombination::from(d), || LinearCombination::from(o2))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(e), || LinearCombination::from(f), || LinearCombination::from(o3))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(g), || LinearCombination::from(h), || LinearCombination::from(o4))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(c), || LinearCombination::from(o5))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(b), || LinearCombination::from(e), || LinearCombination::from(o6))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(d), || LinearCombination::from(g), || LinearCombination::from(o7))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(f), || LinearCombination::from(h), || LinearCombination::from(o8))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(p), || LinearCombination::from(q), || LinearCombination::from(o9))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(p), || LinearCombination::from(o10))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(e), || LinearCombination::from(p), || LinearCombination::from(o11))?;
+        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(h), || LinearCombination::from(q), || LinearCombination::from(o12))?;
+        Ok(())
+    }
+}
+
 fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
@@ -308,9 +369,10 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         }
     );
 
-    run_analysis("examples/groth16/groth16-opt.zippel", "opt");
+    // run_analysis("examples/groth16/groth16-opt.zippel", "opt");
 }
 
+#[allow(dead_code)]
 fn run_analysis(zippel_file: &str, mode_name: &str) {
     println!("\n--- Static Analysis ({mode_name}) ---");
     let analysis_start = Instant::now();
@@ -538,7 +600,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         }
     );
 
-    run_analysis("examples/groth16/groth16.zippel", "noh");
+    // run_analysis("examples/groth16/groth16.zippel", "noh");
 }
 
 fn main() {
@@ -569,6 +631,20 @@ fn main() {
             b: Some(b_val),
             d: Some(d_val),
             e: Some(e_val),
+        };
+        setup_and_run(circuit, mode);
+    } else if circuit_name == "complex" {
+        let circuit = ComplexCircuit {
+            a: Some(F::rand(&mut rng)),
+            b: Some(F::rand(&mut rng)),
+            c: Some(F::rand(&mut rng)),
+            d: Some(F::rand(&mut rng)),
+            e: Some(F::rand(&mut rng)),
+            f: Some(F::rand(&mut rng)),
+            g: Some(F::rand(&mut rng)),
+            h: Some(F::rand(&mut rng)),
+            p: Some(F::rand(&mut rng)),
+            q: Some(F::rand(&mut rng)),
         };
         setup_and_run(circuit, mode);
     } else {
