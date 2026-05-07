@@ -173,9 +173,8 @@ struct ComplexCircuit {
 
 impl ConstraintSynthesizer<F> for ComplexCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let alloc = |opt: Option<F>| {
-            opt.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        };
+        let alloc =
+            |opt: Option<F>| opt.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing);
         let a = cs.new_witness_variable(|| alloc(self.a))?;
         let b = cs.new_witness_variable(|| alloc(self.b))?;
         let c = cs.new_witness_variable(|| alloc(self.c))?;
@@ -202,18 +201,78 @@ impl ConstraintSynthesizer<F> for ComplexCircuit {
         let o10 = cs.new_input_variable(|| mul2(self.a, self.p))?;
         let o11 = cs.new_input_variable(|| mul2(self.e, self.p))?;
         let o12 = cs.new_input_variable(|| mul2(self.h, self.q))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(b), || LinearCombination::from(o1))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(c), || LinearCombination::from(d), || LinearCombination::from(o2))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(e), || LinearCombination::from(f), || LinearCombination::from(o3))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(g), || LinearCombination::from(h), || LinearCombination::from(o4))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(c), || LinearCombination::from(o5))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(b), || LinearCombination::from(e), || LinearCombination::from(o6))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(d), || LinearCombination::from(g), || LinearCombination::from(o7))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(f), || LinearCombination::from(h), || LinearCombination::from(o8))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(p), || LinearCombination::from(q), || LinearCombination::from(o9))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(a), || LinearCombination::from(p), || LinearCombination::from(o10))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(e), || LinearCombination::from(p), || LinearCombination::from(o11))?;
-        cs.enforce_constraint_arity_3(R1CS_PREDICATE_LABEL, || LinearCombination::from(h), || LinearCombination::from(q), || LinearCombination::from(o12))?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(a),
+            || LinearCombination::from(b),
+            || LinearCombination::from(o1),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(c),
+            || LinearCombination::from(d),
+            || LinearCombination::from(o2),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(e),
+            || LinearCombination::from(f),
+            || LinearCombination::from(o3),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(g),
+            || LinearCombination::from(h),
+            || LinearCombination::from(o4),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(a),
+            || LinearCombination::from(c),
+            || LinearCombination::from(o5),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(b),
+            || LinearCombination::from(e),
+            || LinearCombination::from(o6),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(d),
+            || LinearCombination::from(g),
+            || LinearCombination::from(o7),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(f),
+            || LinearCombination::from(h),
+            || LinearCombination::from(o8),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(p),
+            || LinearCombination::from(q),
+            || LinearCombination::from(o9),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(a),
+            || LinearCombination::from(p),
+            || LinearCombination::from(o10),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(e),
+            || LinearCombination::from(p),
+            || LinearCombination::from(o11),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(h),
+            || LinearCombination::from(q),
+            || LinearCombination::from(o12),
+        )?;
         Ok(())
     }
 }

@@ -9,20 +9,20 @@ use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::AffineRepr;
 use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
+use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination,
-    SynthesisMode, R1CS_PREDICATE_LABEL,
+    R1CS_PREDICATE_LABEL, SynthesisMode,
 };
-use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use backend::{ArkBls12_381, Value};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use lang::id::{Tid, Vid};
 use share::Ctx;
 use std::path::PathBuf;
 use std::time::Duration;
 use zippel::*;
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 type E = Bls12_381;
 type F = Fr;
@@ -114,19 +114,26 @@ fn build_dense_matrix_bc(
 fn setup_bench(num_constraints: usize) -> BenchData {
     let mut rng = rand::rngs::OsRng;
     let circuit = BenchCircuit { num_constraints };
-    let pk = Groth16::<E>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng).unwrap();
+    let pk =
+        Groth16::<E>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng).unwrap();
     let vk = pk.vk.clone();
     let r = F::rand(&mut rng);
     let s = F::rand(&mut rng);
 
     let cs = ConstraintSystem::<F>::new_ref();
-    cs.set_mode(SynthesisMode::Prove { construct_matrices: true, generate_lc_assignments: false });
+    cs.set_mode(SynthesisMode::Prove {
+        construct_matrices: true,
+        generate_lc_assignments: false,
+    });
     circuit.clone().generate_constraints(cs.clone()).unwrap();
     cs.finalize();
 
     let cs_borrowed = cs.borrow().unwrap();
     let matrices_map = cs_borrowed.to_matrices().unwrap();
-    let matrices: Vec<_> = matrices_map.get(R1CS_PREDICATE_LABEL).cloned().unwrap_or_default();
+    let matrices: Vec<_> = matrices_map
+        .get(R1CS_PREDICATE_LABEL)
+        .cloned()
+        .unwrap_or_default();
     let num_inputs = cs_borrowed.num_instance_variables();
     let num_cons = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
@@ -135,8 +142,12 @@ fn setup_bench(num_constraints: usize) -> BenchData {
 
     type D<FF> = GeneralEvaluationDomain<FF>;
     let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
-        &matrices, num_inputs, num_cons, &full_assignment,
-    ).unwrap();
+        &matrices,
+        num_inputs,
+        num_cons,
+        &full_assignment,
+    )
+    .unwrap();
 
     let domain = D::<F>::new(num_cons + num_inputs).unwrap();
     let domain_size = domain.size();
@@ -147,9 +158,20 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let h_size = pk.h_query.len();
 
     BenchData {
-        pk, vk, full_assignment, h_coeffs, matrices, r, s,
-        num_inputs, num_constraints: num_cons,
-        n, m, l, h_size, domain_size,
+        pk,
+        vk,
+        full_assignment,
+        h_coeffs,
+        matrices,
+        r,
+        s,
+        num_inputs,
+        num_constraints: num_cons,
+        n,
+        m,
+        l,
+        h_size,
+        domain_size,
     }
 }
 
@@ -164,25 +186,43 @@ fn groth16_bench(c: &mut Criterion) {
         let data = setup_bench(size);
 
         // Arkworks prover
-        group.bench_with_input(BenchmarkId::new("arkworks_prover", size), &data, |b, data| {
-            let circuit = BenchCircuit { num_constraints: size };
-            b.iter(|| {
-                Groth16::<E>::create_random_proof_with_reduction(
-                    circuit.clone(), &data.pk, &mut rand::rngs::OsRng
-                ).unwrap()
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("arkworks_prover", size),
+            &data,
+            |b, data| {
+                let circuit = BenchCircuit {
+                    num_constraints: size,
+                };
+                b.iter(|| {
+                    Groth16::<E>::create_random_proof_with_reduction(
+                        circuit.clone(),
+                        &data.pk,
+                        &mut rand::rngs::OsRng,
+                    )
+                    .unwrap()
+                });
+            },
+        );
 
         // Arkworks verifier
-        group.bench_with_input(BenchmarkId::new("arkworks_verifier", size), &data, |b, data| {
-            let pvk = ark_groth16::prepare_verifying_key(&data.vk);
-            let circuit = BenchCircuit { num_constraints: size };
-            let proof = Groth16::<E>::create_random_proof_with_reduction(circuit, &data.pk, &mut rand::rngs::OsRng).unwrap();
-            let public_inputs = &data.full_assignment[1..data.num_inputs];
-            b.iter(|| {
-                Groth16::<E>::verify_proof(&pvk, &proof, public_inputs).unwrap()
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("arkworks_verifier", size),
+            &data,
+            |b, data| {
+                let pvk = ark_groth16::prepare_verifying_key(&data.vk);
+                let circuit = BenchCircuit {
+                    num_constraints: size,
+                };
+                let proof = Groth16::<E>::create_random_proof_with_reduction(
+                    circuit,
+                    &data.pk,
+                    &mut rand::rngs::OsRng,
+                )
+                .unwrap();
+                let public_inputs = &data.full_assignment[1..data.num_inputs];
+                b.iter(|| Groth16::<E>::verify_proof(&pvk, &proof, public_inputs).unwrap());
+            },
+        );
 
         // --- Zippel opt mode prover ---
         {
@@ -193,12 +233,22 @@ fn groth16_bench(c: &mut Criterion) {
             let delta_g1: G1Projective = data.pk.delta_g1.into_group();
             let delta_g2: G2Projective = data.pk.vk.delta_g2.into_group();
 
-            let a_query_proj: Vec<G1Projective> = data.pk.a_query.iter().map(|p| p.into_group()).collect();
-            let b_g1_query_proj: Vec<G1Projective> = data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
-            let b_g2_query_proj: Vec<G2Projective> = data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
-            let h_query_proj: Vec<G1Projective> = data.pk.h_query.iter().map(|p| p.into_group()).collect();
-            let l_query_proj: Vec<G1Projective> = data.pk.l_query.iter().map(|p| p.into_group()).collect();
-            let gamma_abc_g1_proj: Vec<G1Projective> = data.vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
+            let a_query_proj: Vec<G1Projective> =
+                data.pk.a_query.iter().map(|p| p.into_group()).collect();
+            let b_g1_query_proj: Vec<G1Projective> =
+                data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
+            let b_g2_query_proj: Vec<G2Projective> =
+                data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
+            let h_query_proj: Vec<G1Projective> =
+                data.pk.h_query.iter().map(|p| p.into_group()).collect();
+            let l_query_proj: Vec<G1Projective> =
+                data.pk.l_query.iter().map(|p| p.into_group()).collect();
+            let gamma_abc_g1_proj: Vec<G1Projective> = data
+                .vk
+                .gamma_abc_g1
+                .iter()
+                .map(|p| p.into_group())
+                .collect();
 
             let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
             let mut public_inputs_padded: Vec<F> = vec![F::one()];
@@ -214,7 +264,10 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
                 (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
                 (Vid("delta_g2".to_string()), Value::G2(delta_g2)),
-                (Vid("gamma_abc_g1".to_string()), Value::VecG1(gamma_abc_g1_proj)),
+                (
+                    Vid("gamma_abc_g1".to_string()),
+                    Value::VecG1(gamma_abc_g1_proj),
+                ),
                 (Vid("beta_g1".to_string()), Value::G1(beta_g1)),
                 (Vid("delta_g1".to_string()), Value::G1(delta_g1)),
                 (Vid("a_query".to_string()), Value::VecG1(a_query_proj)),
@@ -222,11 +275,20 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("b_g2_query".to_string()), Value::VecG2(b_g2_query_proj)),
                 (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
                 (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
-                (Vid("public_inputs".to_string()), Value::VecScalar(public_inputs_padded)),
+                (
+                    Vid("public_inputs".to_string()),
+                    Value::VecScalar(public_inputs_padded),
+                ),
                 (Vid("r".to_string()), Value::Scalar(data.r)),
                 (Vid("s".to_string()), Value::Scalar(data.s)),
-                (Vid("full_assignment".to_string()), Value::VecScalar(full_assignment_padded)),
-                (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs_padded)),
+                (
+                    Vid("full_assignment".to_string()),
+                    Value::VecScalar(full_assignment_padded),
+                ),
+                (
+                    Vid("h_coeffs".to_string()),
+                    Value::VecScalar(h_coeffs_padded),
+                ),
             ]);
 
             let m = data.m;
@@ -234,19 +296,22 @@ fn groth16_bench(c: &mut Criterion) {
             let h = data.h_size;
 
             // Zippel opt prover
-            group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(m, l, h), |b, dims| {
-                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                let mut sizes = Ctx::new();
-                sizes.insert(&Tid::new("M"), &dims.0);
-                sizes.insert(&Tid::new("L"), &dims.1);
-                sizes.insert(&Tid::new("H"), &dims.2);
-                handler.compile(&sizes);
-                let scheduled = handler.default_schedule_prover();
-                b.iter(|| {
-                    handler.run_prover(scheduled.clone(), zippel_inputs.clone())
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new("zippel_opt_prover", size),
+                &(m, l, h),
+                |b, dims| {
+                    let args =
+                        ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                    let mut sizes = Ctx::new();
+                    sizes.insert(&Tid::new("M"), &dims.0);
+                    sizes.insert(&Tid::new("L"), &dims.1);
+                    sizes.insert(&Tid::new("H"), &dims.2);
+                    handler.compile(&sizes);
+                    let scheduled = handler.default_schedule_prover();
+                    b.iter(|| handler.run_prover(scheduled.clone(), zippel_inputs.clone()));
+                },
+            );
 
             // Zippel opt verifier
             {
@@ -259,9 +324,19 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
 
                 let public_input_names = [
-                    "alpha_g1", "beta_g2", "gamma_g2", "delta_g2", "gamma_abc_g1",
-                    "beta_g1", "delta_g1", "a_query", "b_g1_query", "b_g2_query",
-                    "h_query", "l_query", "public_inputs",
+                    "alpha_g1",
+                    "beta_g2",
+                    "gamma_g2",
+                    "delta_g2",
+                    "gamma_abc_g1",
+                    "beta_g1",
+                    "delta_g1",
+                    "a_query",
+                    "b_g1_query",
+                    "b_g2_query",
+                    "h_query",
+                    "l_query",
+                    "public_inputs",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = zippel_inputs
                     .clone()
@@ -273,11 +348,13 @@ fn groth16_bench(c: &mut Criterion) {
                 let proof = handler.run_prover(scheduled_prover, zippel_inputs.clone());
                 let scheduled_verifier = handler.default_schedule_verifier();
 
-                group.bench_with_input(BenchmarkId::new("zippel_opt_verifier", size), &(), |b, _| {
-                    b.iter(|| {
-                        handler.run_verifier(scheduled_verifier.clone(), proof.clone())
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("zippel_opt_verifier", size),
+                    &(),
+                    |b, _| {
+                        b.iter(|| handler.run_verifier(scheduled_verifier.clone(), proof.clone()));
+                    },
+                );
             }
         }
 
@@ -290,12 +367,22 @@ fn groth16_bench(c: &mut Criterion) {
             let delta_g1: G1Projective = data.pk.delta_g1.into_group();
             let delta_g2: G2Projective = data.pk.vk.delta_g2.into_group();
 
-            let a_query_proj: Vec<G1Projective> = data.pk.a_query.iter().map(|p| p.into_group()).collect();
-            let b_g1_query_proj: Vec<G1Projective> = data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
-            let b_g2_query_proj: Vec<G2Projective> = data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
-            let h_query_proj: Vec<G1Projective> = data.pk.h_query.iter().map(|p| p.into_group()).collect();
-            let l_query_proj: Vec<G1Projective> = data.pk.l_query.iter().map(|p| p.into_group()).collect();
-            let gamma_abc_g1_proj: Vec<G1Projective> = data.vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
+            let a_query_proj: Vec<G1Projective> =
+                data.pk.a_query.iter().map(|p| p.into_group()).collect();
+            let b_g1_query_proj: Vec<G1Projective> =
+                data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
+            let b_g2_query_proj: Vec<G2Projective> =
+                data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
+            let h_query_proj: Vec<G1Projective> =
+                data.pk.h_query.iter().map(|p| p.into_group()).collect();
+            let l_query_proj: Vec<G1Projective> =
+                data.pk.l_query.iter().map(|p| p.into_group()).collect();
+            let gamma_abc_g1_proj: Vec<G1Projective> = data
+                .vk
+                .gamma_abc_g1
+                .iter()
+                .map(|p| p.into_group())
+                .collect();
 
             let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
             let mut public_inputs_padded: Vec<F> = vec![F::one()];
@@ -304,7 +391,13 @@ fn groth16_bench(c: &mut Criterion) {
             let mut full_assignment_padded = data.full_assignment.clone();
             full_assignment_padded.resize(data.n, F::zero());
 
-            let mat_a_flat = build_dense_matrix_a(&data.matrices[0], data.num_constraints, data.num_inputs, data.domain_size, data.n);
+            let mat_a_flat = build_dense_matrix_a(
+                &data.matrices[0],
+                data.num_constraints,
+                data.num_inputs,
+                data.domain_size,
+                data.n,
+            );
             let mat_b_flat = build_dense_matrix_bc(&data.matrices[1], data.domain_size, data.n);
             let mat_c_flat = build_dense_matrix_bc(&data.matrices[2], data.domain_size, data.n);
             let coset_offset = F::GENERATOR;
@@ -314,7 +407,10 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
                 (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
                 (Vid("delta_g2".to_string()), Value::G2(delta_g2)),
-                (Vid("gamma_abc_g1".to_string()), Value::VecG1(gamma_abc_g1_proj)),
+                (
+                    Vid("gamma_abc_g1".to_string()),
+                    Value::VecG1(gamma_abc_g1_proj),
+                ),
                 (Vid("beta_g1".to_string()), Value::G1(beta_g1)),
                 (Vid("delta_g1".to_string()), Value::G1(delta_g1)),
                 (Vid("a_query".to_string()), Value::VecG1(a_query_proj)),
@@ -322,10 +418,16 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("b_g2_query".to_string()), Value::VecG2(b_g2_query_proj)),
                 (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
                 (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
-                (Vid("public_inputs".to_string()), Value::VecScalar(public_inputs_padded)),
+                (
+                    Vid("public_inputs".to_string()),
+                    Value::VecScalar(public_inputs_padded),
+                ),
                 (Vid("r".to_string()), Value::Scalar(data.r)),
                 (Vid("s".to_string()), Value::Scalar(data.s)),
-                (Vid("full_assignment".to_string()), Value::VecScalar(full_assignment_padded)),
+                (
+                    Vid("full_assignment".to_string()),
+                    Value::VecScalar(full_assignment_padded),
+                ),
                 (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
                 (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
                 (Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)),
@@ -338,20 +440,22 @@ fn groth16_bench(c: &mut Criterion) {
             let d = data.domain_size;
 
             // Zippel noh prover
-            group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(m, l, c, d), |b, dims| {
-                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
-                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                let mut sizes = Ctx::new();
-                sizes.insert(&Tid::new("M"), &dims.0);
-                sizes.insert(&Tid::new("L"), &dims.1);
-                sizes.insert(&Tid::new("C"), &dims.2);
-                sizes.insert(&Tid::new("D"), &dims.3);
-                handler.compile(&sizes);
-                let scheduled = handler.default_schedule_prover();
-                b.iter(|| {
-                    handler.run_prover(scheduled.clone(), noh_inputs.clone())
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new("zippel_noh_prover", size),
+                &(m, l, c, d),
+                |b, dims| {
+                    let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                    let mut sizes = Ctx::new();
+                    sizes.insert(&Tid::new("M"), &dims.0);
+                    sizes.insert(&Tid::new("L"), &dims.1);
+                    sizes.insert(&Tid::new("C"), &dims.2);
+                    sizes.insert(&Tid::new("D"), &dims.3);
+                    handler.compile(&sizes);
+                    let scheduled = handler.default_schedule_prover();
+                    b.iter(|| handler.run_prover(scheduled.clone(), noh_inputs.clone()));
+                },
+            );
 
             // Zippel noh verifier
             {
@@ -365,9 +469,19 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
 
                 let public_input_names = [
-                    "alpha_g1", "beta_g2", "gamma_g2", "delta_g2", "gamma_abc_g1",
-                    "beta_g1", "delta_g1", "a_query", "b_g1_query", "b_g2_query",
-                    "h_query", "l_query", "public_inputs",
+                    "alpha_g1",
+                    "beta_g2",
+                    "gamma_g2",
+                    "delta_g2",
+                    "gamma_abc_g1",
+                    "beta_g1",
+                    "delta_g1",
+                    "a_query",
+                    "b_g1_query",
+                    "b_g2_query",
+                    "h_query",
+                    "l_query",
+                    "public_inputs",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
                     .clone()
@@ -379,11 +493,13 @@ fn groth16_bench(c: &mut Criterion) {
                 let proof = handler.run_prover(scheduled_prover, noh_inputs.clone());
                 let scheduled_verifier = handler.default_schedule_verifier();
 
-                group.bench_with_input(BenchmarkId::new("zippel_noh_verifier", size), &(), |b, _| {
-                    b.iter(|| {
-                        handler.run_verifier(scheduled_verifier.clone(), proof.clone())
-                    });
-                });
+                group.bench_with_input(
+                    BenchmarkId::new("zippel_noh_verifier", size),
+                    &(),
+                    |b, _| {
+                        b.iter(|| handler.run_verifier(scheduled_verifier.clone(), proof.clone()));
+                    },
+                );
             }
         }
     }
