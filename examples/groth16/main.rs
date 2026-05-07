@@ -94,6 +94,69 @@ impl ConstraintSynthesizer<F> for DoubleMulCircuit {
     }
 }
 
+#[derive(Clone)]
+struct TripleMulCircuit {
+    a: Option<F>,
+    b: Option<F>,
+    d: Option<F>,
+    e: Option<F>,
+}
+
+impl ConstraintSynthesizer<F> for TripleMulCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
+        let a_var = cs.new_witness_variable(|| {
+            self.a
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let b_var = cs.new_witness_variable(|| {
+            self.b
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let d_var = cs.new_witness_variable(|| {
+            self.d
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let e_var = cs.new_witness_variable(|| {
+            self.e
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let c1_var = cs.new_input_variable(|| {
+            self.a
+                .and_then(|a| self.b.map(|b| a * b))
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let c2_var = cs.new_input_variable(|| {
+            self.a
+                .and_then(|a| self.d.map(|d| a * d))
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        let c3_var = cs.new_input_variable(|| {
+            self.b
+                .and_then(|b| self.e.map(|e| b * e))
+                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
+        })?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(a_var),
+            || LinearCombination::from(b_var),
+            || LinearCombination::from(c1_var),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(a_var),
+            || LinearCombination::from(d_var),
+            || LinearCombination::from(c2_var),
+        )?;
+        cs.enforce_constraint_arity_3(
+            R1CS_PREDICATE_LABEL,
+            || LinearCombination::from(b_var),
+            || LinearCombination::from(e_var),
+            || LinearCombination::from(c3_var),
+        )?;
+        Ok(())
+    }
+}
+
 fn _evaluate_constraint<F: PrimeField>(terms: &[(F, usize)], assignment: &[F]) -> F {
     let mut sum = F::zero();
     for (coeff, index) in terms {
@@ -504,6 +567,18 @@ fn main() {
             a: Some(a_val),
             b: Some(b_val),
             d: Some(d_val),
+        };
+        setup_and_run(circuit, mode);
+    } else if circuit_name == "triple" {
+        let a_val = F::rand(&mut rng);
+        let b_val = F::rand(&mut rng);
+        let d_val = F::rand(&mut rng);
+        let e_val = F::rand(&mut rng);
+        let circuit = TripleMulCircuit {
+            a: Some(a_val),
+            b: Some(b_val),
+            d: Some(d_val),
+            e: Some(e_val),
         };
         setup_and_run(circuit, mode);
     } else {

@@ -29,15 +29,7 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     private s: F,
     private full_assignment: [F; M+L],
     private h_coeffs: [F; H]
-) where
-    // QAP relation at the secret evaluation point τ:
-    // A(τ)·B(τ) - C(τ) = H(τ)·Z(τ)
-    // In the pairing equation: e(A,B) = e(α,β) + e(IC,γ) + e(C,δ)
-    // This is verified in the body; the where clause checks the
-    // bilinear equation holds under the secret randomness r, s:
-    // A·B = α·β + [a_query]·[w]·β + [b_g1_query]·[w]·α + ... (complex, deferred to body)
-    // Simplified to: A·B is consistent with the proof commitments.
-    alpha_g1 == alpha_g1
+) where alpha_g1 == alpha_g1
 {
     let aux = full_assignment[M..M+L];
 

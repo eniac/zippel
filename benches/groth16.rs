@@ -1,14 +1,15 @@
 //! Criterion benchmarks comparing arkworks Groth16 prover/verifier with Zippel's
-//! across different circuit sizes (2^10 to 2^15 constraints).
+//! across different circuit sizes (2^10 to 2^13 constraints).
 //!
-//! Uses a simple R1CS circuit with multiplication constraints.
+//! Supports both noh (matvec + FFT inside zippel) and opt (h_coeffs external) modes.
 //!
 //! Run with: `cargo bench --bench groth16`
 
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::AffineRepr;
-use ark_ff::{One, UniformRand, Zero};
+use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
+use ark_poly::EvaluationDomain;
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination,
@@ -65,13 +66,50 @@ struct BenchData {
     full_assignment: Vec<F>,
     witness_assignment: Vec<F>,
     h_coeffs: Vec<F>,
+    matrices: Vec<ark_relations::gr1cs::Matrix<F>>,
     r: F,
     s: F,
     num_inputs: usize,
+    num_constraints: usize,
     n: usize,
     m: usize,
     l: usize,
     h_size: usize,
+    domain_size: usize,
+}
+
+fn build_dense_matrix_a(
+    sparse: &ark_relations::gr1cs::Matrix<F>,
+    num_constraints: usize,
+    num_inputs: usize,
+    domain_size: usize,
+    n: usize,
+) -> Vec<F> {
+    let mut dense = vec![F::zero(); domain_size * n];
+    for (i, row) in sparse.iter().enumerate() {
+        for (coeff, col) in row {
+            dense[i * n + col] = *coeff;
+        }
+    }
+    for i in 0..num_inputs {
+        let row = num_constraints + i;
+        dense[row * n + i] = F::one();
+    }
+    dense
+}
+
+fn build_dense_matrix_bc(
+    sparse: &ark_relations::gr1cs::Matrix<F>,
+    domain_size: usize,
+    n: usize,
+) -> Vec<F> {
+    let mut dense = vec![F::zero(); domain_size * n];
+    for (i, row) in sparse.iter().enumerate() {
+        for (coeff, col) in row {
+            dense[i * n + col] = *coeff;
+        }
+    }
+    dense
 }
 
 fn setup_bench(num_constraints: usize) -> BenchData {
@@ -101,9 +139,13 @@ fn setup_bench(num_constraints: usize) -> BenchData {
         &matrices, num_inputs, num_cons, &full_assignment,
     ).unwrap();
 
+    let domain = D::<F>::new(num_cons + num_inputs).unwrap();
+    let domain_size = domain.size();
+
     BenchData {
-        pk, vk, full_assignment, witness_assignment, h_coeffs, r, s,
-        num_inputs, n: 0, m: 0, l: 0, h_size: 0,
+        pk, vk, full_assignment, witness_assignment, h_coeffs, matrices, r, s,
+        num_inputs, num_constraints: num_cons,
+        n: 0, m: 0, l: 0, h_size: 0, domain_size,
     }
 }
 
@@ -142,72 +184,208 @@ fn groth16_bench(c: &mut Criterion) {
             });
         });
 
-        // Zippel prover
-        let alpha_g1: G1Projective = data.pk.vk.alpha_g1.into_group();
-        let beta_g1: G1Projective = data.pk.beta_g1.into_group();
-        let beta_g2: G2Projective = data.pk.vk.beta_g2.into_group();
-        let gamma_g2: G2Projective = data.pk.vk.gamma_g2.into_group();
-        let delta_g1: G1Projective = data.pk.delta_g1.into_group();
-        let delta_g2: G2Projective = data.pk.vk.delta_g2.into_group();
+        // --- Zippel opt mode prover ---
+        {
+            let alpha_g1: G1Projective = data.pk.vk.alpha_g1.into_group();
+            let beta_g1: G1Projective = data.pk.beta_g1.into_group();
+            let beta_g2: G2Projective = data.pk.vk.beta_g2.into_group();
+            let gamma_g2: G2Projective = data.pk.vk.gamma_g2.into_group();
+            let delta_g1: G1Projective = data.pk.delta_g1.into_group();
+            let delta_g2: G2Projective = data.pk.vk.delta_g2.into_group();
 
-        let a_query_proj: Vec<G1Projective> = data.pk.a_query.iter().map(|p| p.into_group()).collect();
-        let b_g1_query_proj: Vec<G1Projective> = data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
-        let b_g2_query_proj: Vec<G2Projective> = data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
-        let h_query_proj: Vec<G1Projective> = data.pk.h_query.iter().map(|p| p.into_group()).collect();
-        let l_query_proj: Vec<G1Projective> = data.pk.l_query.iter().map(|p| p.into_group()).collect();
-        let gamma_abc_g1_proj: Vec<G1Projective> = data.vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
+            let a_query_proj: Vec<G1Projective> = data.pk.a_query.iter().map(|p| p.into_group()).collect();
+            let b_g1_query_proj: Vec<G1Projective> = data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
+            let b_g2_query_proj: Vec<G2Projective> = data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
+            let h_query_proj: Vec<G1Projective> = data.pk.h_query.iter().map(|p| p.into_group()).collect();
+            let l_query_proj: Vec<G1Projective> = data.pk.l_query.iter().map(|p| p.into_group()).collect();
+            let gamma_abc_g1_proj: Vec<G1Projective> = data.vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
 
-        let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
-        let mut public_inputs_padded: Vec<F> = vec![F::one()];
-        public_inputs_padded.extend_from_slice(public_inputs_raw);
+            let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
+            let mut public_inputs_padded: Vec<F> = vec![F::one()];
+            public_inputs_padded.extend_from_slice(public_inputs_raw);
 
-        let mut full_assignment_padded = data.full_assignment.clone();
-        full_assignment_padded.resize(data.n, F::zero());
-        let mut h_coeffs_padded = data.h_coeffs.clone();
-        h_coeffs_padded.resize(data.h_size, F::zero());
-        let mut aux_assignment_padded = data.witness_assignment.clone();
-        aux_assignment_padded.resize(data.l, F::zero());
+            let mut full_assignment_padded = data.full_assignment.clone();
+            full_assignment_padded.resize(data.n, F::zero());
+            let mut h_coeffs_padded = data.h_coeffs.clone();
+            h_coeffs_padded.resize(data.h_size, F::zero());
 
-        let zippel_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-            (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
-            (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
-            (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
-            (Vid("delta_g2".to_string()), Value::G2(delta_g2)),
-            (Vid("gamma_abc_g1".to_string()), Value::VecG1(gamma_abc_g1_proj)),
-            (Vid("beta_g1".to_string()), Value::G1(beta_g1)),
-            (Vid("delta_g1".to_string()), Value::G1(delta_g1)),
-            (Vid("a_query".to_string()), Value::VecG1(a_query_proj)),
-            (Vid("b_g1_query".to_string()), Value::VecG1(b_g1_query_proj)),
-            (Vid("b_g2_query".to_string()), Value::VecG2(b_g2_query_proj)),
-            (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
-            (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
-            (Vid("public_inputs".to_string()), Value::VecScalar(public_inputs_padded)),
-            (Vid("r".to_string()), Value::Scalar(data.r)),
-            (Vid("s".to_string()), Value::Scalar(data.s)),
-            (Vid("full_assignment".to_string()), Value::VecScalar(full_assignment_padded)),
-            (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs_padded)),
-            (Vid("aux_assignment".to_string()), Value::VecScalar(aux_assignment_padded)),
-        ]);
+            let zippel_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
+                (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
+                (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
+                (Vid("delta_g2".to_string()), Value::G2(delta_g2)),
+                (Vid("gamma_abc_g1".to_string()), Value::VecG1(gamma_abc_g1_proj)),
+                (Vid("beta_g1".to_string()), Value::G1(beta_g1)),
+                (Vid("delta_g1".to_string()), Value::G1(delta_g1)),
+                (Vid("a_query".to_string()), Value::VecG1(a_query_proj)),
+                (Vid("b_g1_query".to_string()), Value::VecG1(b_g1_query_proj)),
+                (Vid("b_g2_query".to_string()), Value::VecG2(b_g2_query_proj)),
+                (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
+                (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
+                (Vid("public_inputs".to_string()), Value::VecScalar(public_inputs_padded)),
+                (Vid("r".to_string()), Value::Scalar(data.r)),
+                (Vid("s".to_string()), Value::Scalar(data.s)),
+                (Vid("full_assignment".to_string()), Value::VecScalar(full_assignment_padded)),
+                (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs_padded)),
+            ]);
 
-        let n = data.n;
-        let m = data.m;
-        let l = data.l;
-        let h = data.h_size;
+            let m = data.m;
+            let l = data.l;
+            let h = data.h_size;
 
-        group.bench_with_input(BenchmarkId::new("zippel_prover", size), &(n, m, l, h), |b, dims| {
-            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
-            let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("N"), &dims.0);
-            sizes.insert(&Tid::new("M"), &dims.1);
-            sizes.insert(&Tid::new("L"), &dims.2);
-            sizes.insert(&Tid::new("H"), &dims.3);
-            handler.compile(&sizes);
-            let scheduled = handler.default_schedule_prover();
-            b.iter(|| {
-                handler.run_prover(scheduled.clone(), zippel_inputs.clone())
+            // Zippel opt prover
+            group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(m, l, h), |b, dims| {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &dims.0);
+                sizes.insert(&Tid::new("L"), &dims.1);
+                sizes.insert(&Tid::new("H"), &dims.2);
+                handler.compile(&sizes);
+                let scheduled = handler.default_schedule_prover();
+                b.iter(|| {
+                    handler.run_prover(scheduled.clone(), zippel_inputs.clone())
+                });
             });
-        });
+
+            // Zippel opt verifier
+            {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &m);
+                sizes.insert(&Tid::new("L"), &l);
+                sizes.insert(&Tid::new("H"), &h);
+                handler.compile(&sizes);
+
+                let public_input_names = [
+                    "alpha_g1", "beta_g2", "gamma_g2", "delta_g2", "gamma_abc_g1",
+                    "beta_g1", "delta_g1", "a_query", "b_g1_query", "b_g2_query",
+                    "h_query", "l_query", "public_inputs",
+                ];
+                let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = zippel_inputs
+                    .clone()
+                    .into_iter()
+                    .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
+                    .collect();
+                handler.set_public_inputs(public_inputs_ctx);
+                let scheduled_prover = handler.default_schedule_prover();
+                let proof = handler.run_prover(scheduled_prover, zippel_inputs.clone());
+                let scheduled_verifier = handler.default_schedule_verifier();
+
+                group.bench_with_input(BenchmarkId::new("zippel_opt_verifier", size), &(), |b, _| {
+                    b.iter(|| {
+                        handler.run_verifier(scheduled_verifier.clone(), proof.clone())
+                    });
+                });
+            }
+        }
+
+        // --- Zippel noh mode prover ---
+        {
+            let alpha_g1: G1Projective = data.pk.vk.alpha_g1.into_group();
+            let beta_g1: G1Projective = data.pk.beta_g1.into_group();
+            let beta_g2: G2Projective = data.pk.vk.beta_g2.into_group();
+            let gamma_g2: G2Projective = data.pk.vk.gamma_g2.into_group();
+            let delta_g1: G1Projective = data.pk.delta_g1.into_group();
+            let delta_g2: G2Projective = data.pk.vk.delta_g2.into_group();
+
+            let a_query_proj: Vec<G1Projective> = data.pk.a_query.iter().map(|p| p.into_group()).collect();
+            let b_g1_query_proj: Vec<G1Projective> = data.pk.b_g1_query.iter().map(|p| p.into_group()).collect();
+            let b_g2_query_proj: Vec<G2Projective> = data.pk.b_g2_query.iter().map(|p| p.into_group()).collect();
+            let h_query_proj: Vec<G1Projective> = data.pk.h_query.iter().map(|p| p.into_group()).collect();
+            let l_query_proj: Vec<G1Projective> = data.pk.l_query.iter().map(|p| p.into_group()).collect();
+            let gamma_abc_g1_proj: Vec<G1Projective> = data.vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
+
+            let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
+            let mut public_inputs_padded: Vec<F> = vec![F::one()];
+            public_inputs_padded.extend_from_slice(public_inputs_raw);
+
+            let mut full_assignment_padded = data.full_assignment.clone();
+            full_assignment_padded.resize(data.n, F::zero());
+
+            let mat_a_flat = build_dense_matrix_a(&data.matrices[0], data.num_constraints, data.num_inputs, data.domain_size, data.n);
+            let mat_b_flat = build_dense_matrix_bc(&data.matrices[1], data.domain_size, data.n);
+            let mat_c_flat = build_dense_matrix_bc(&data.matrices[2], data.domain_size, data.n);
+            let coset_offset = F::GENERATOR;
+
+            let noh_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+                (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
+                (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
+                (Vid("gamma_g2".to_string()), Value::G2(gamma_g2)),
+                (Vid("delta_g2".to_string()), Value::G2(delta_g2)),
+                (Vid("gamma_abc_g1".to_string()), Value::VecG1(gamma_abc_g1_proj)),
+                (Vid("beta_g1".to_string()), Value::G1(beta_g1)),
+                (Vid("delta_g1".to_string()), Value::G1(delta_g1)),
+                (Vid("a_query".to_string()), Value::VecG1(a_query_proj)),
+                (Vid("b_g1_query".to_string()), Value::VecG1(b_g1_query_proj)),
+                (Vid("b_g2_query".to_string()), Value::VecG2(b_g2_query_proj)),
+                (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
+                (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
+                (Vid("public_inputs".to_string()), Value::VecScalar(public_inputs_padded)),
+                (Vid("r".to_string()), Value::Scalar(data.r)),
+                (Vid("s".to_string()), Value::Scalar(data.s)),
+                (Vid("full_assignment".to_string()), Value::VecScalar(full_assignment_padded)),
+                (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
+                (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
+                (Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)),
+                (Vid("omega".to_string()), Value::Scalar(coset_offset)),
+            ]);
+
+            let m = data.m;
+            let l = data.l;
+            let c = data.num_constraints;
+            let d = data.domain_size;
+
+            // Zippel noh prover
+            group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(m, l, c, d), |b, dims| {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &dims.0);
+                sizes.insert(&Tid::new("L"), &dims.1);
+                sizes.insert(&Tid::new("C"), &dims.2);
+                sizes.insert(&Tid::new("D"), &dims.3);
+                handler.compile(&sizes);
+                let scheduled = handler.default_schedule_prover();
+                b.iter(|| {
+                    handler.run_prover(scheduled.clone(), noh_inputs.clone())
+                });
+            });
+
+            // Zippel noh verifier
+            {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &m);
+                sizes.insert(&Tid::new("L"), &l);
+                sizes.insert(&Tid::new("C"), &c);
+                sizes.insert(&Tid::new("D"), &d);
+                handler.compile(&sizes);
+
+                let public_input_names = [
+                    "alpha_g1", "beta_g2", "gamma_g2", "delta_g2", "gamma_abc_g1",
+                    "beta_g1", "delta_g1", "a_query", "b_g1_query", "b_g2_query",
+                    "h_query", "l_query", "public_inputs",
+                ];
+                let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
+                    .clone()
+                    .into_iter()
+                    .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
+                    .collect();
+                handler.set_public_inputs(public_inputs_ctx);
+                let scheduled_prover = handler.default_schedule_prover();
+                let proof = handler.run_prover(scheduled_prover, noh_inputs.clone());
+                let scheduled_verifier = handler.default_schedule_verifier();
+
+                group.bench_with_input(BenchmarkId::new("zippel_noh_verifier", size), &(), |b, _| {
+                    b.iter(|| {
+                        handler.run_verifier(scheduled_verifier.clone(), proof.clone())
+                    });
+                });
+            }
+        }
     }
 
     group.finish();
