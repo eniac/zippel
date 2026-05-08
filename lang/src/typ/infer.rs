@@ -504,17 +504,6 @@ impl Typeable for CExp {
                                 }
                                 Ok(CTyp::vec(&CTyp::Base(tid), n))
                             }
-                            CTyp::Poly(tid, n, 1) => {
-                                let k = kctx.get(&tid).ok_or(TypeError::lub(
-                                    TypeError::exp(kctx, vctx, self),
-                                    LubError::kind_not_found(&tid),
-                                ))?;
-                                if k.is_scalar() {
-                                    Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
-                                } else {
-                                    Err(TypeError::evaluate_grid(kctx, vctx, p, &t))
-                                }
-                            }
                             _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
                         }
                     }
@@ -523,11 +512,6 @@ impl Typeable for CExp {
 
             // Infer the type of an MLE from 2^n evaluations in a bool hypercube (as a vector)
             CExp::Mle(box v) => {
-                // Infer the type of its argument
-                let _typ = v
-                    .infer(kctx, fctx, vctx)
-                    .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
-
                 // It must be a vector of fields, or a vector of Fin
                 let typ = v
                     .infer(kctx, fctx, vctx)
@@ -1722,6 +1706,58 @@ mod tests {
         let eval_bad = CExp::evaluate_grid(CExp::vec(vec![CExp::varstr("f1")]));
 
         assert!(eval_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Unary `eval(p)` is FFT-grid evaluation; only valid on univariate polynomials.
+    // `m` in VAR_CTX has type Poly(F, 8, 1) (MLE in 8 vars), so eval(m) must be
+    // rejected at the type-inference layer rather than silently producing
+    // Vec(F, 256) and panicking later in Op::Fft.typ() at the IR level.
+    #[test]
+    fn test_evaluate_on_mle_rejected() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        let eval_mle = CExp::evaluate_grid(CExp::varstr("m"));
+
+        assert!(eval_mle.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    // Characterization tests for CExp::Mle inference: pin the observable behavior
+    // so the redundant-infer cleanup in this arm cannot silently regress it.
+    #[test]
+    fn test_mle_pow2_vec() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // v2: Vec(F, 4) — 4 = 2^2, so MLE in 2 vars.
+        let m = CExp::mle(CExp::varstr("v2"));
+
+        assert_eq!(
+            m.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 2, 1))
+        );
+    }
+
+    #[test]
+    fn test_mle_rejects_scalar_arg() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // f1 is a scalar (not a vector); mle(f1) must be rejected.
+        let m_bad = CExp::mle(CExp::varstr("f1"));
+
+        assert!(m_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
+    }
+
+    #[test]
+    fn test_mle_rejects_non_pow2_vec() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+
+        // v1: Vec(F, 5) — 5 is not a power of two; mle(v1) must be rejected.
+        let m_bad = CExp::mle(CExp::varstr("v1"));
+
+        assert!(m_bad.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
     // Test for function application
