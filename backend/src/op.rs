@@ -261,7 +261,39 @@ impl<C: ArkConfig, R> Op<C, R> {
                 | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
                 t => panic!("Op::Poly: input must be Vec(Scalar | Fin, n); got {}", t),
             },
-            Op::Evaluate(_p, x) => x.typ(),
+            Op::Evaluate(p, x) => match (p.typ(), x.typ()) {
+                // Case #1: univariate × Vec<scalar | fin, k> → Vec<scalar, k>.
+                // VPoly(1, _) is the canonical IR form of a univariate polynomial
+                // alongside Uni(_) (see Op::Fft and Op::Coef rules above).
+                (
+                    ATyp::Uni(_) | ATyp::VPoly(1, _),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), k)
+                    | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), k),
+                ) => ATyp::vec_scalar(k),
+
+                // Case #2a: multivariate full eval (k == n) → scalar
+                (
+                    ATyp::VPoly(n, _) | ATyp::Mle(n),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), k)
+                    | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), k),
+                ) if k == n => ATyp::scalar(),
+
+                // Case #2b: VPoly partial eval (k < n) → VPoly(n - k, d)
+                (
+                    ATyp::VPoly(n, d),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), k)
+                    | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), k),
+                ) if k < n => ATyp::vpoly(n - k, d),
+
+                // Case #2b': Mle partial eval (k < n) → Mle(n - k)
+                (
+                    ATyp::Mle(n),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), k)
+                    | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), k),
+                ) if k < n => ATyp::mle(n - k),
+
+                (pt, xt) => panic!("Op::Evaluate: bad shapes (poly: {}, point: {})", pt, xt),
+            },
             Op::Coef(op) => match op.typ() {
                 ATyp::Uni(n) | ATyp::VPoly(1, n) => ATyp::vec_scalar(n),
                 t => panic!(

@@ -331,6 +331,73 @@ mod op_construction_tests {
         }
     }
 
+    // -------------------------------------------------------------------
+    // Characterization tests for Op::Evaluate.typ()
+    //
+    // Pin the IR-level type rule for the four shapes admitted by lang
+    // inference (lang/src/typ/infer.rs:462-486). The runtime
+    // (backend/src/values.rs:1873-1925) already produces values of
+    // these shapes; the IR rule must report the matching ATyp so that
+    // downstream consumers (notably trans_clos.rs which wraps in
+    // Op::Ref(_, op.typ())) see the correct type.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn evaluate_typ_univariate_times_vec_returns_vec() {
+        // p : Uni(8), x : Vec<scalar, 4>  =>  Vec<scalar, 4>
+        let p = GOp::<C>::random(ATyp::uni(8));
+        let x = GOp::<C>::random(ATyp::vec_scalar(4));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::vec_scalar(4));
+    }
+
+    #[test]
+    fn evaluate_typ_vpoly1_times_vec_returns_vec() {
+        // VPoly(1, d) is the IR's canonical alternative form for a univariate
+        // polynomial (see Op::Fft / Op::Coef rules). It must follow the same
+        // case-#1 rule as Uni(d).
+        let p = GOp::<C>::random(ATyp::vpoly(1, 16));
+        let x = GOp::<C>::random(ATyp::vec_scalar(16));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::vec_scalar(16));
+    }
+
+    #[test]
+    fn evaluate_typ_multivariate_full_vpoly_returns_scalar() {
+        // p : VPoly(3, 2), x : Vec<scalar, 3> (full eval, k == n)  =>  Scalar
+        let p = GOp::<C>::random(ATyp::vpoly(3, 2));
+        let x = GOp::<C>::random(ATyp::vec_scalar(3));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::scalar());
+    }
+
+    #[test]
+    fn evaluate_typ_multivariate_full_mle_returns_scalar() {
+        // p : Mle(3), x : Vec<scalar, 3> (full eval, k == n)  =>  Scalar
+        let p = GOp::<C>::random(ATyp::mle(3));
+        let x = GOp::<C>::random(ATyp::vec_scalar(3));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::scalar());
+    }
+
+    #[test]
+    fn evaluate_typ_partial_vpoly_returns_smaller_vpoly() {
+        // p : VPoly(3, 2), x : Vec<scalar, 1> (partial eval, k < n)  =>  VPoly(2, 2)
+        let p = GOp::<C>::random(ATyp::vpoly(3, 2));
+        let x = GOp::<C>::random(ATyp::vec_scalar(1));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::vpoly(2, 2));
+    }
+
+    #[test]
+    fn evaluate_typ_partial_mle_returns_smaller_mle() {
+        // p : Mle(4), x : Vec<scalar, 2> (partial eval, k < n)  =>  Mle(2)
+        let p = GOp::<C>::random(ATyp::mle(4));
+        let x = GOp::<C>::random(ATyp::vec_scalar(2));
+        let eval = Op::evaluate(p, x);
+        assert_eq!(eval.typ(), ATyp::mle(2));
+    }
+
     #[test]
     fn test_index_construction() {
         let index_op = GOp::<C>::index(42);

@@ -199,7 +199,26 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Check(op) => cost += self.cost(op, nthreads).0,
             Op::Poly(_op) => cost += 1.0,
             Op::Mle(_op) => cost += 1.0,
-            Op::Evaluate(_p, _x) => cost += 1.0,
+            Op::Evaluate(p, x) => {
+                // Shape-aware work estimate. We deliberately do not recurse into
+                // child costs, matching the convention of Op::Poly/Op::Mle/Op::Coef
+                // (which also charge a flat per-op cost, ignoring child cost).
+                let work = match (p.typ(), x.typ()) {
+                    // Univariate × Vec<_, k>: Horner per point ≈ deg * k scalar muls.
+                    (ATyp::Uni(d), ATyp::Vec(_, k)) | (ATyp::VPoly(1, d), ATyp::Vec(_, k)) => {
+                        (d as f64) * (k as f64) * Self::SCALAR_MUL
+                    }
+                    // MLE full or partial eval: a fix-variable pass collapses the
+                    // 2^n hypercube. Cost is dominated by the initial pass: O(2^n).
+                    (ATyp::Mle(n), _) => ((1usize << n) as f64) * Self::SCALAR_MUL,
+                    // VPoly: same shape, but each evaluation point touches `d` factors.
+                    (ATyp::VPoly(n, d), _) => {
+                        ((1usize << n) as f64) * (d as f64) * Self::SCALAR_MUL
+                    }
+                    _ => 1.0,
+                };
+                cost += work / nthreads as f64;
+            }
             Op::Coef(_op) => cost += 1.0,
             Op::Reduce(_, v) => {
                 let (_, n) = v.typ().into_vec();
@@ -209,5 +228,67 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Proj(op, _, _) => cost += self.cost(op, nthreads).0,
         };
         cost.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::test_helpers::TestConfig;
+
+    type C = TestConfig;
+
+    /// `Op::Evaluate` cost must scale with the polynomial size, not be flat.
+    /// Specifically, doubling the number of MLE variables roughly doubles cost
+    /// (it's dominated by 2^n hypercube traversal).
+    #[test]
+    fn evaluate_cost_scales_with_mle_size() {
+        let cm = AsymptoticCost::<C>::new();
+
+        let small_p = GOp::<C>::random(ATyp::mle(3));
+        let small_x = GOp::<C>::random(ATyp::vec_scalar(3));
+        let small = Op::evaluate(small_p, small_x);
+
+        let big_p = GOp::<C>::random(ATyp::mle(6));
+        let big_x = GOp::<C>::random(ATyp::vec_scalar(6));
+        let big = Op::evaluate(big_p, big_x);
+
+        let cs: f64 = cm.cost(&small, 1).0;
+        let cb: f64 = cm.cost(&big, 1).0;
+
+        // n: 3 → 6 means 2^n: 8 → 64, so cost ratio should be ~8x.
+        // We assert at least 4x to leave headroom for child/overhead noise.
+        assert!(
+            cb >= 4.0 * cs,
+            "Op::Evaluate cost should scale with 2^n; got small={} big={}",
+            cs,
+            cb
+        );
+    }
+
+    /// Cost for a univariate evaluation at multiple points must scale with
+    /// both the degree and the number of points.
+    #[test]
+    fn evaluate_cost_scales_with_univariate_degree_and_points() {
+        let cm = AsymptoticCost::<C>::new();
+
+        let p_small = GOp::<C>::random(ATyp::uni(4));
+        let x_small = GOp::<C>::random(ATyp::vec_scalar(2));
+        let small = Op::evaluate(p_small, x_small);
+
+        let p_big = GOp::<C>::random(ATyp::uni(16));
+        let x_big = GOp::<C>::random(ATyp::vec_scalar(8));
+        let big = Op::evaluate(p_big, x_big);
+
+        let cs: f64 = cm.cost(&small, 1).0;
+        let cb: f64 = cm.cost(&big, 1).0;
+
+        // (16 * 8) / (4 * 2) = 16x.
+        assert!(
+            cb >= 8.0 * cs,
+            "Op::Evaluate cost should scale with deg*k; got small={} big={}",
+            cs,
+            cb
+        );
     }
 }
