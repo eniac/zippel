@@ -26,9 +26,7 @@ fn op_ancestors_of<C: ArkConfig>(
         Op::Poly(op) => op_ancestors_of(op, ancestors),
         Op::Coef(op) => op_ancestors_of(op, ancestors),
         Op::Reduce(_, v) => op_ancestors_of(v, ancestors),
-        Op::Evaluate(p, x) => {
-            op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors))
-        }
+        Op::Evaluate(p, x) => op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors)),
         Op::Interpolate(points, evals) => {
             op_ancestors_of(points, ancestors).union(op_ancestors_of(evals, ancestors))
         }
@@ -254,8 +252,8 @@ impl fmt::Display for UniformityPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyses::QualifierPropagation;
     use crate::UDags;
+    use crate::analyses::QualifierPropagation;
     use backend::ArkBls12_381;
     use lang::ast::UModule;
     use petgraph::graph::NodeIndex;
@@ -330,8 +328,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_value() {
-        let op =
-            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(42u64)));
+        let op = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(42u64)));
         let dist = compute_distribution(&op, &Ctx::new(), &Ctx::new());
         assert_eq!(dist, Some(Distribution::Nonuniform));
     }
@@ -366,8 +363,7 @@ mod tests {
 
     #[test]
     fn test_op_ancestors_of_value() {
-        let op =
-            GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
+        let op = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let ancestors = op_ancestors_of(&op, &Ctx::new());
         assert_eq!(ancestors.len(), 0);
     }
