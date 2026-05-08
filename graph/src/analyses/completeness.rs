@@ -133,8 +133,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
 
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok());
@@ -157,8 +156,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
@@ -183,8 +181,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         // This only passes if the relation `a == b` is in the same namespace
@@ -212,8 +209,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -242,8 +238,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -273,8 +268,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -316,8 +310,7 @@ mod tests {
         );
 
         let g = QualifierPropagation::from_dag(caller);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -387,8 +380,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
@@ -415,8 +407,7 @@ mod tests {
             .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
