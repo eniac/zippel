@@ -24,14 +24,14 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public b_g2_query: [G2; M+L],
     public h_query: [G1; H],
     public l_query: [G1; L],
-    public public_inputs: [F; M],
+    public instance_assignment: [F; M],
     private r: F,
     private s: F,
-    private full_assignment: [F; M+L],
+    private witness_assignment: [F; L],
     private h_coeffs: [F; H]
 ) where alpha_g1 == alpha_g1
 {
-    let aux = full_assignment[M..M+L];
+    let full_assignment = instance_assignment ++ witness_assignment;
 
     a_proof <- alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
     b_proof <- beta_g2 + dot(b_g2_query, full_assignment) + delta_g2 * s;
@@ -39,10 +39,10 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     let a_val = alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
     let b_g1_val = beta_g1 + dot(b_g1_query, full_assignment) + delta_g1 * s;
     let c_h = dot(h_query, h_coeffs);
-    let c_l = dot(l_query, aux);
+    let c_l = dot(l_query, witness_assignment);
     c_proof <- c_h + c_l + a_val * s + b_g1_val * r - delta_g1 * (r * s);
 
-    let ic = dot(gamma_abc_g1, public_inputs);
+    let ic = dot(gamma_abc_g1, instance_assignment);
 
     let lhs = pair(a_proof, b_proof);
     let rhs = pair(alpha_g1, beta_g2) + pair(ic, gamma_g2) + pair(c_proof, delta_g2);

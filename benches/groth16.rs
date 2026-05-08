@@ -63,6 +63,8 @@ impl ConstraintSynthesizer<F> for BenchCircuit {
 struct BenchData {
     pk: ark_groth16::ProvingKey<E>,
     vk: ark_groth16::VerifyingKey<E>,
+    instance_assignment: Vec<F>,
+    witness_assignment: Vec<F>,
     full_assignment: Vec<F>,
     h_coeffs: Vec<F>,
     matrices: Vec<ark_relations::gr1cs::Matrix<F>>,
@@ -138,7 +140,8 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let num_cons = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
     let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
-    let full_assignment: Vec<F> = [instance_assignment, witness_assignment].concat();
+    let full_assignment: Vec<F> =
+        [instance_assignment.clone(), witness_assignment.clone()].concat();
 
     type D<FF> = GeneralEvaluationDomain<FF>;
     let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
@@ -160,6 +163,8 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     BenchData {
         pk,
         vk,
+        instance_assignment,
+        witness_assignment,
         full_assignment,
         h_coeffs,
         matrices,
@@ -250,12 +255,6 @@ fn groth16_bench(c: &mut Criterion) {
                 .map(|p| p.into_group())
                 .collect();
 
-            let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
-            let mut public_inputs_padded: Vec<F> = vec![F::one()];
-            public_inputs_padded.extend_from_slice(public_inputs_raw);
-
-            let mut full_assignment_padded = data.full_assignment.clone();
-            full_assignment_padded.resize(data.n, F::zero());
             let mut h_coeffs_padded = data.h_coeffs.clone();
             h_coeffs_padded.resize(data.h_size, F::zero());
 
@@ -276,14 +275,14 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
                 (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
                 (
-                    Vid("public_inputs".to_string()),
-                    Value::VecScalar(public_inputs_padded),
+                    Vid("instance_assignment".to_string()),
+                    Value::VecScalar(data.instance_assignment.clone()),
                 ),
                 (Vid("r".to_string()), Value::Scalar(data.r)),
                 (Vid("s".to_string()), Value::Scalar(data.s)),
                 (
-                    Vid("full_assignment".to_string()),
-                    Value::VecScalar(full_assignment_padded),
+                    Vid("witness_assignment".to_string()),
+                    Value::VecScalar(data.witness_assignment.clone()),
                 ),
                 (
                     Vid("h_coeffs".to_string()),
@@ -336,7 +335,7 @@ fn groth16_bench(c: &mut Criterion) {
                     "b_g2_query",
                     "h_query",
                     "l_query",
-                    "public_inputs",
+                    "instance_assignment",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = zippel_inputs
                     .clone()
@@ -384,13 +383,6 @@ fn groth16_bench(c: &mut Criterion) {
                 .map(|p| p.into_group())
                 .collect();
 
-            let public_inputs_raw = &data.full_assignment[1..data.num_inputs];
-            let mut public_inputs_padded: Vec<F> = vec![F::one()];
-            public_inputs_padded.extend_from_slice(public_inputs_raw);
-
-            let mut full_assignment_padded = data.full_assignment.clone();
-            full_assignment_padded.resize(data.n, F::zero());
-
             let mat_a_flat = build_dense_matrix_a(
                 &data.matrices[0],
                 data.num_constraints,
@@ -419,14 +411,14 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
                 (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
                 (
-                    Vid("public_inputs".to_string()),
-                    Value::VecScalar(public_inputs_padded),
+                    Vid("instance_assignment".to_string()),
+                    Value::VecScalar(data.instance_assignment.clone()),
                 ),
                 (Vid("r".to_string()), Value::Scalar(data.r)),
                 (Vid("s".to_string()), Value::Scalar(data.s)),
                 (
-                    Vid("full_assignment".to_string()),
-                    Value::VecScalar(full_assignment_padded),
+                    Vid("witness_assignment".to_string()),
+                    Value::VecScalar(data.witness_assignment.clone()),
                 ),
                 (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
                 (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
@@ -481,7 +473,7 @@ fn groth16_bench(c: &mut Criterion) {
                     "b_g2_query",
                     "h_query",
                     "l_query",
-                    "public_inputs",
+                    "instance_assignment",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
                     .clone()

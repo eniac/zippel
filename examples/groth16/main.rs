@@ -1,5 +1,5 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
-use ark_ec::AffineRepr;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_poly::EvaluationDomain;
@@ -281,15 +281,14 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     h_coeffs: &[F],
-    full_assignment_raw: &[F],
-    num_inputs: usize,
-    circuit: C,
+    instance_assignment: &[F],
+    witness_assignment: &[F],
+    _circuit: C,
 ) {
     let mut rng = rand::rngs::OsRng;
     let r = F::rand(&mut rng);
     let s = F::rand(&mut rng);
 
-    let n = pk.a_query.len();
     let m = vk.gamma_abc_g1.len();
     let l = pk.l_query.len();
     let h_size = pk.h_query.len();
@@ -309,15 +308,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     let gamma_abc_g1_proj: Vec<G1Projective> =
         vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
 
-    let public_inputs_raw = &full_assignment_raw[1..num_inputs];
-    let mut public_inputs_padded: Vec<F> = vec![F::one()];
-    public_inputs_padded.extend_from_slice(public_inputs_raw);
-
-    let full_assignment_padded = {
-        let mut v = full_assignment_raw.to_vec();
-        v.resize(n, F::zero());
-        v
-    };
     let h_coeffs_padded = {
         let mut v = h_coeffs.to_vec();
         v.resize(h_size, F::zero());
@@ -341,14 +331,14 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
         (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
         (
-            Vid("public_inputs".to_string()),
-            Value::VecScalar(public_inputs_padded),
+            Vid("instance_assignment".to_string()),
+            Value::VecScalar(instance_assignment.to_vec()),
         ),
         (Vid("r".to_string()), Value::Scalar(r)),
         (Vid("s".to_string()), Value::Scalar(s)),
         (
-            Vid("full_assignment".to_string()),
-            Value::VecScalar(full_assignment_padded),
+            Vid("witness_assignment".to_string()),
+            Value::VecScalar(witness_assignment.to_vec()),
         ),
         (
             Vid("h_coeffs".to_string()),
@@ -369,7 +359,7 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         "b_g2_query",
         "h_query",
         "l_query",
-        "public_inputs",
+        "instance_assignment",
     ];
 
     let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
@@ -403,7 +393,7 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     verifier_handler.set_public_inputs(public_inputs_ctx);
     let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof);
+    let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof.clone());
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -414,13 +404,25 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         std::process::exit(1);
     }
 
-    let proof_ark =
-        Groth16::<E>::create_random_proof_with_reduction(circuit, pk, &mut rng).unwrap();
     let pvk = ark_groth16::prepare_verifying_key(vk);
+    let proof_ark = ark_groth16::Proof::<E> {
+        a: match &proof[0] {
+            Value::G1(p) => p.into_affine(),
+            _ => panic!("expected G1 for a_proof"),
+        },
+        b: match &proof[1] {
+            Value::G2(p) => p.into_affine(),
+            _ => panic!("expected G2 for b_proof"),
+        },
+        c: match &proof[2] {
+            Value::G1(p) => p.into_affine(),
+            _ => panic!("expected G1 for c_proof"),
+        },
+    };
     let ark_verify =
-        Groth16::<E>::verify_proof(&pvk, &proof_ark, &full_assignment_raw[1..num_inputs]).unwrap();
+        Groth16::<E>::verify_proof(&pvk, &proof_ark, &instance_assignment[1..]).unwrap();
     println!(
-        "\nArkworks reference verification: {}",
+        "\nArkworks cross-verification (zippel proof → arkworks verifier): {}",
         if ark_verify {
             "✓ PASSED"
         } else {
@@ -461,10 +463,10 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     matrices: &[ark_relations::gr1cs::Matrix<F>],
-    full_assignment_raw: &[F],
-    num_inputs: usize,
+    instance_assignment: &[F],
+    witness_assignment: &[F],
     num_constraints: usize,
-    circuit: C,
+    _circuit: C,
 ) {
     use ark_poly::GeneralEvaluationDomain;
 
@@ -475,6 +477,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let n = pk.a_query.len();
     let m = vk.gamma_abc_g1.len();
     let l = pk.l_query.len();
+    let num_inputs = instance_assignment.len();
 
     type Dm<FF> = GeneralEvaluationDomain<FF>;
     let domain = Dm::<F>::new(num_constraints + num_inputs).unwrap();
@@ -544,16 +547,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let gamma_abc_g1_proj: Vec<G1Projective> =
         vk.gamma_abc_g1.iter().map(|p| p.into_group()).collect();
 
-    let public_inputs_raw = &full_assignment_raw[1..num_inputs];
-    let mut public_inputs_padded: Vec<F> = vec![F::one()];
-    public_inputs_padded.extend_from_slice(public_inputs_raw);
-
-    let full_assignment_padded = {
-        let mut v = full_assignment_raw.to_vec();
-        v.resize(n, F::zero());
-        v
-    };
-
     let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
         (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
@@ -571,14 +564,14 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         (Vid("h_query".to_string()), Value::VecG1(h_query_proj)),
         (Vid("l_query".to_string()), Value::VecG1(l_query_proj)),
         (
-            Vid("public_inputs".to_string()),
-            Value::VecScalar(public_inputs_padded),
+            Vid("instance_assignment".to_string()),
+            Value::VecScalar(instance_assignment.to_vec()),
         ),
         (Vid("r".to_string()), Value::Scalar(r)),
         (Vid("s".to_string()), Value::Scalar(s)),
         (
-            Vid("full_assignment".to_string()),
-            Value::VecScalar(full_assignment_padded),
+            Vid("witness_assignment".to_string()),
+            Value::VecScalar(witness_assignment.to_vec()),
         ),
         (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
         (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
@@ -599,7 +592,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         "b_g2_query",
         "h_query",
         "l_query",
-        "public_inputs",
+        "instance_assignment",
     ];
 
     let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = inputs
@@ -634,7 +627,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     verifier_handler.set_public_inputs(public_inputs_ctx);
     let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof);
+    let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof.clone());
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Zippel verifier time: {verifier_elapsed:.2?}");
@@ -645,13 +638,25 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         std::process::exit(1);
     }
 
-    let proof_ark =
-        Groth16::<E>::create_random_proof_with_reduction(circuit, pk, &mut rng).unwrap();
     let pvk = ark_groth16::prepare_verifying_key(vk);
+    let proof_ark = ark_groth16::Proof::<E> {
+        a: match &proof[0] {
+            Value::G1(p) => p.into_affine(),
+            _ => panic!("expected G1 for a_proof"),
+        },
+        b: match &proof[1] {
+            Value::G2(p) => p.into_affine(),
+            _ => panic!("expected G2 for b_proof"),
+        },
+        c: match &proof[2] {
+            Value::G1(p) => p.into_affine(),
+            _ => panic!("expected G1 for c_proof"),
+        },
+    };
     let ark_verify =
-        Groth16::<E>::verify_proof(&pvk, &proof_ark, &full_assignment_raw[1..num_inputs]).unwrap();
+        Groth16::<E>::verify_proof(&pvk, &proof_ark, &instance_assignment[1..]).unwrap();
     println!(
-        "\nArkworks reference verification: {}",
+        "\nArkworks cross-verification (zippel proof → arkworks verifier): {}",
         if ark_verify {
             "✓ PASSED"
         } else {
@@ -754,13 +759,14 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
     let num_constraints = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
     let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
-    let full_assignment_raw: Vec<F> = [instance_assignment, witness_assignment].concat();
 
     use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
     use ark_poly::GeneralEvaluationDomain;
     type D<FF> = GeneralEvaluationDomain<FF>;
 
     if mode == "opt" {
+        let full_assignment_raw: Vec<F> =
+            [instance_assignment.clone(), witness_assignment.clone()].concat();
         let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
             &matrices,
             num_inputs,
@@ -773,8 +779,8 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &pk,
             &vk,
             &h_coeffs,
-            &full_assignment_raw,
-            num_inputs,
+            &instance_assignment,
+            &witness_assignment,
             circuit,
         );
     } else {
@@ -782,8 +788,8 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &pk,
             &vk,
             &matrices,
-            &full_assignment_raw,
-            num_inputs,
+            &instance_assignment,
+            &witness_assignment,
             num_constraints,
             circuit,
         );
