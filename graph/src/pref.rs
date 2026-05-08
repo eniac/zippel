@@ -1,12 +1,11 @@
-use crate::{GOp, HOp, Op, Ref, mk};
-use backend::op::HasOpFactory;
+use crate::Ref;
 use lang::id::Tid;
 use lang::typ::{CKind, Qualifier};
 use lang::{ast::CArg, id::Vid, typ::Distribution};
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
-use backend::{ATyp, Value};
+use backend::ATyp;
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
@@ -177,17 +176,6 @@ impl PRef {
     /// Source-level variable name, if known (set at construction).
     pub fn name(&self) -> Option<&Vid> {
         self.name.as_ref()
-    }
-
-    pub fn into_op<C: HasOpFactory>(&self) -> HOp<C> {
-        if self.typ.size() > 1 {
-            mk::<C>(GOp::Ram(
-                mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone())),
-                mk::<C>(Op::Value(Value::Index(self.index))),
-            ))
-        } else {
-            mk::<C>(GOp::Ref(self.reference.clone(), self.typ.clone()))
-        }
     }
 
     pub fn with_index(&self, index: usize) -> Self {

@@ -1489,9 +1489,6 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Billinear pairing
                 CExp::Pair(box a, box b) => {
-                    a.infer(kctx, &fctx.keys(), &vctx)?;
-                    b.infer(kctx, &fctx.keys(), &vctx)?;
-
                     let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
@@ -1506,9 +1503,6 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 // Create a new [bin] node
                 CExp::Bin(op, box a, box b) => {
-                    a.infer(kctx, &fctx.keys(), &vctx)?;
-                    b.infer(kctx, &fctx.keys(), &vctx)?;
-
                     // Add children first
                     let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;

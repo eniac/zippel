@@ -45,11 +45,11 @@ pub trait Monomial:
 pub struct MonoTerm(Ctx<PRef, usize>); // (var index, power)
 
 /// A monomial term with elimination ordering
-#[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ElimTerm(MonoTerm);
 
 /// A monomial term with grevlex ordering
-#[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GrevLexTerm(MonoTerm);
 
 /// From constructors for ElimTerm and GrevLexTerm
@@ -460,7 +460,6 @@ impl Monomial for ElimTerm {
 /// Define elimination order comparison. First, we compare principals such that if any variable has
 /// Principal::Any > Principal::Verifier and Principal::Any > Principal::Prover, then the same is true for MonoTerm.
 /// If the principals are equal, then perform a grevlex comparison on the powers of the variables (graded, reverse lexicographic order).
-#[allow(clippy::derive_ord_xor_partial_ord)]
 impl Ord for ElimTerm {
     fn cmp(&self, other: &Self) -> Ordering {
         let elim_self = MonoTerm(
@@ -509,10 +508,21 @@ impl Ord for ElimTerm {
     }
 }
 
+impl PartialOrd for ElimTerm {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// Define grevlex order comparison.
-#[allow(clippy::derive_ord_xor_partial_ord)]
 impl Ord for GrevLexTerm {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.grevlex(&other.0)
+    }
+}
+
+impl PartialOrd for GrevLexTerm {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
