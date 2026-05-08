@@ -621,6 +621,61 @@ fn test_grevlex_degrevlex_counterexamples() {
     assert_eq!(a.cmp(&b), Ordering::Less, "higher degree is leading");
 }
 
+/// Regression test: `PartialOrd` and `Ord` impls must agree on `ElimTerm` and
+/// `GrevLexTerm`. This is exactly what `clippy::derive_ord_xor_partial_ord`
+/// guards. If anyone re-derives `PartialOrd` (auto field-by-field tuple order)
+/// without re-checking it matches the manual `Ord`, this test catches it.
+#[test]
+fn test_partial_ord_agrees_with_ord() {
+    let x1 = elim_var("x1");
+    let x2 = elim_var("x2");
+    let x3 = elim_var("x3");
+
+    let elim_terms: Vec<ElimTerm> = vec![
+        elim_term(vec![]),                             // 1
+        elim_term(vec![(&x1, 2)]),                     // x1^2
+        elim_term(vec![(&x1, 1), (&x2, 1)]),           // x1 x2
+        elim_term(vec![(&x2, 2)]),                     // x2^2
+        elim_term(vec![(&x1, 1), (&x3, 1)]),           // x1 x3
+        elim_term(vec![(&x2, 1), (&x3, 1)]),           // x2 x3
+        elim_term(vec![(&x3, 2)]),                     // x3^2
+        elim_term(vec![(&x1, 3)]),                     // x1^3
+        elim_term(vec![(&x1, 1), (&x2, 1), (&x3, 1)]), // x1 x2 x3
+    ];
+
+    for a in &elim_terms {
+        for b in &elim_terms {
+            assert_eq!(
+                a.partial_cmp(b),
+                Some(a.cmp(b)),
+                "ElimTerm: PartialOrd and Ord disagree on ({a:?}, {b:?})"
+            );
+        }
+    }
+
+    let grevlex_terms: Vec<GrevLexTerm> = vec![
+        grevlex_term(vec![]),
+        grevlex_term(vec![(&x1, 2)]),
+        grevlex_term(vec![(&x1, 1), (&x2, 1)]),
+        grevlex_term(vec![(&x2, 2)]),
+        grevlex_term(vec![(&x1, 1), (&x3, 1)]),
+        grevlex_term(vec![(&x2, 1), (&x3, 1)]),
+        grevlex_term(vec![(&x3, 2)]),
+        grevlex_term(vec![(&x1, 3)]),
+        grevlex_term(vec![(&x1, 1), (&x2, 1), (&x3, 1)]),
+    ];
+
+    for a in &grevlex_terms {
+        for b in &grevlex_terms {
+            assert_eq!(
+                a.partial_cmp(b),
+                Some(a.cmp(b)),
+                "GrevLexTerm: PartialOrd and Ord disagree on ({a:?}, {b:?})"
+            );
+        }
+    }
+}
+
 // A simple test case for a linear system, this should work as Gaussian elimination
 #[test]
 fn test_linear() {
