@@ -1926,3 +1926,520 @@ mod tid_lub_tests {
         assert_eq!(result.unwrap(), f);
     }
 }
+
+/// Property-based tests pinning the polynomial-shape rules of `CTyp::lub_*`
+/// under the **Phase-14 `Poly(F, n, m)` convention where `m` is the max
+/// polynomial degree** (coefficient count = m + 1).
+///
+/// Two families:
+/// 1. Shape grids (one PBT per arm) verifying the result `(n_out, m_out)`
+///    formula for each `lub_*` arm.
+/// 2. Algebraic property PBTs (symmetry, associativity, unit) that hold
+///    structurally and survive future arm-removal refactors.
+///
+/// Shape rules:
+/// - `lub_add` / `lub_sub`: `Poly(F, n1, m1) ± Poly(F, n2, m2) = Poly(F, max(n1, n2), max(m1, m2))`
+/// - `lub_mul`: `Poly(F, n1, m1) * Poly(F, n2, m2) = Poly(F, max(n1, n2), m1 + m2)`
+/// - `lub_div`: `Uni(F, ma) / Uni(F, mb) = Uni(F, ma - mb)` for `ma >= mb`
+/// - `lub_concat`: see arms in `lub_concat` impl
+#[cfg(test)]
+mod ctyp_lub_poly_tests {
+    use super::*;
+    use arbitrary::Unstructured;
+    use share::Set;
+
+    /// The canonical `KIND_CTX` used in tests — mirrors `infer.rs::tests::KIND_CTX`
+    /// so the polynomial Tid `F` is `Field`, `G` is `Group`, and `S` is `Scalar(G)`.
+    fn kind_ctx() -> Ctx<Tid, CKind> {
+        let mut kctx = Ctx::new();
+        kctx.insert(&Tid::from("F"), &Kind::Field);
+        kctx.insert(&Tid::from("G"), &Kind::Group);
+        kctx.insert(&Tid::from("S"), &Kind::Scalar(Set::from([Tid::from("G")])));
+        kctx
+    }
+
+    fn f() -> Tid {
+        Tid::from("F")
+    }
+
+    fn tf() -> CTyp {
+        CTyp::base(&f())
+    }
+
+    // ----- arbtest generators -----
+
+    /// Sample `n ∈ 1..=4` for polynomial num-vars.
+    fn arb_n(u: &mut Unstructured) -> arbitrary::Result<usize> {
+        u.int_in_range(1..=4)
+    }
+
+    /// Sample `m ∈ 0..=4` for polynomial degree.
+    fn arb_m(u: &mut Unstructured) -> arbitrary::Result<usize> {
+        u.int_in_range(0..=4)
+    }
+
+    /// Sample Vec length `k ∈ 1..=4`.
+    fn arb_k(u: &mut Unstructured) -> arbitrary::Result<usize> {
+        u.int_in_range(1..=4)
+    }
+
+    /// Arbitrary polynomial `CTyp` over `F`: any `Poly(F, n, m)` for
+    /// `n ∈ 1..=4`, `m ∈ 0..=4`. Covers Uni (n=1), Mle (m=1), and general
+    /// VPoly.
+    fn arb_poly(u: &mut Unstructured) -> arbitrary::Result<CTyp> {
+        Ok(CTyp::Poly(f(), arb_n(u)?, arb_m(u)?))
+    }
+
+    /// Arbitrary `Vec(F, k)` for `k ∈ 1..=4`.
+    fn arb_vec(u: &mut Unstructured) -> arbitrary::Result<CTyp> {
+        Ok(CTyp::vec(&tf(), arb_k(u)?))
+    }
+
+    /// Arbitrary `CTyp` from `{Poly, Vec, Base(F)}` — the surface area
+    /// exercised by the polynomial / Vec / scalar arms of every `lub_*`.
+    /// Used by the algebraic property PBTs (symmetry / associativity / unit).
+    fn arb_ctyp(u: &mut Unstructured) -> arbitrary::Result<CTyp> {
+        match u.int_in_range(0..=2u8)? {
+            0 => arb_poly(u),
+            1 => arb_vec(u),
+            _ => Ok(tf()),
+        }
+    }
+
+    // ----- Shape-grid PBTs (one per lub_* arm) -----
+
+    /// `lub_add(Poly, Poly) = Poly(max(n1, n2), max(m1, m2))` — covers Uni-Uni,
+    /// Mle-Mle, mixed Uni-Mle, and general VPoly under the general arm
+    /// introduced in Phase 14.
+    #[test]
+    fn lub_add_poly_grid() {
+        arbtest::arbtest(|u| {
+            let n1 = arb_n(u)?;
+            let m1 = arb_m(u)?;
+            let n2 = arb_n(u)?;
+            let m2 = arb_m(u)?;
+            let a = CTyp::Poly(f(), n1, m1);
+            let b = CTyp::Poly(f(), n2, m2);
+            let expected = CTyp::Poly(f(), n1.max(n2), m1.max(m2));
+            assert_eq!(
+                CTyp::lub_add(&a, &b, &kind_ctx()),
+                Ok(expected),
+                "lub_add(Poly(F,{},{}), Poly(F,{},{}))",
+                n1,
+                m1,
+                n2,
+                m2
+            );
+            Ok(())
+        });
+    }
+
+    /// `lub_sub(Poly, Poly) = Poly(max(n1, n2), max(m1, m2))` — same shape
+    /// rule as `lub_add`. Subtraction can't grow degree.
+    #[test]
+    fn lub_sub_poly_grid() {
+        arbtest::arbtest(|u| {
+            let n1 = arb_n(u)?;
+            let m1 = arb_m(u)?;
+            let n2 = arb_n(u)?;
+            let m2 = arb_m(u)?;
+            let a = CTyp::Poly(f(), n1, m1);
+            let b = CTyp::Poly(f(), n2, m2);
+            let expected = CTyp::Poly(f(), n1.max(n2), m1.max(m2));
+            assert_eq!(
+                CTyp::lub_sub(&a, &b, &kind_ctx()),
+                Ok(expected),
+                "lub_sub(Poly(F,{},{}), Poly(F,{},{}))",
+                n1,
+                m1,
+                n2,
+                m2
+            );
+            Ok(())
+        });
+    }
+
+    /// `lub_mul(Poly, Poly) = Poly(max(n1, n2), m1 + m2)` — Phase-14 degrees
+    /// add under multiplication; the general `(Poly, Poly)` arm handles
+    /// arbitrary `(n, m)` shapes including mixed Uni-Mle and general VPoly.
+    #[test]
+    fn lub_mul_poly_grid() {
+        arbtest::arbtest(|u| {
+            let n1 = arb_n(u)?;
+            let m1 = arb_m(u)?;
+            let n2 = arb_n(u)?;
+            let m2 = arb_m(u)?;
+            let a = CTyp::Poly(f(), n1, m1);
+            let b = CTyp::Poly(f(), n2, m2);
+            let expected = CTyp::Poly(f(), n1.max(n2), m1 + m2);
+            assert_eq!(
+                CTyp::lub_mul(&a, &b, &kind_ctx()),
+                Ok(expected),
+                "lub_mul(Poly(F,{},{}), Poly(F,{},{}))",
+                n1,
+                m1,
+                n2,
+                m2
+            );
+            Ok(())
+        });
+    }
+
+    /// `Vec(F, k) ++ Uni(F, n) = Uni(F, k + n)` — vec on the left.
+    #[test]
+    fn lub_concat_vec_uni_grid() {
+        arbtest::arbtest(|u| {
+            let k = arb_k(u)?;
+            let n = arb_m(u)?; // Uni degree
+            let vec_t = CTyp::vec(&tf(), k);
+            let uni_t = CTyp::uni(&f(), n);
+            let expected = CTyp::uni(&f(), k + n);
+            assert_eq!(
+                CTyp::lub_concat(&vec_t, &uni_t, &kind_ctx()),
+                Ok(expected),
+                "lub_concat(Vec(F,{}), Uni(F,{}))",
+                k,
+                n
+            );
+            Ok(())
+        });
+    }
+
+    /// `Uni(F, n) ++ Vec(F, k) = Uni(F, n + k)` — commute the operand order,
+    /// pin the result (symmetric rule).
+    #[test]
+    fn lub_concat_uni_vec_grid() {
+        arbtest::arbtest(|u| {
+            let n = arb_m(u)?;
+            let k = arb_k(u)?;
+            let uni_t = CTyp::uni(&f(), n);
+            let vec_t = CTyp::vec(&tf(), k);
+            let expected = CTyp::uni(&f(), n + k);
+            assert_eq!(
+                CTyp::lub_concat(&uni_t, &vec_t, &kind_ctx()),
+                Ok(expected),
+                "lub_concat(Uni(F,{}), Vec(F,{}))",
+                n,
+                k
+            );
+            Ok(())
+        });
+    }
+
+    /// `Mle(F, n) ++ Vec(F, n) = Mle(F, n + 1)` — MLE dimension promotion when
+    /// the Vec length equals the MLE's variable count (per the arm's `n == m`
+    /// guard). NOTE: we use `n >= 2` because `Mle(F, 1) == Uni(F, 1)` at the
+    /// `Poly` level (both are `Poly(F, 1, 1)`), so the Uni-Vec arm wins
+    /// textually for `n == 1` and the result becomes `Uni(F, 1 + n) = Poly(F, 1, 2)`
+    /// instead of `Poly(F, 2, 1)`. See `lub_concat_mle1_vec_routes_via_uni`.
+    #[test]
+    fn lub_concat_mle_vec_promote() {
+        arbtest::arbtest(|u| {
+            let n = u.int_in_range(2..=4usize)?;
+            let mle_t = CTyp::mle(&f(), n);
+            let vec_t = CTyp::vec(&tf(), n);
+            let expected = CTyp::mle(&f(), n + 1);
+            assert_eq!(
+                CTyp::lub_concat(&mle_t, &vec_t, &kind_ctx()),
+                Ok(expected),
+                "lub_concat(Mle(F,{}), Vec(F,{}))",
+                n,
+                n
+            );
+            Ok(())
+        });
+    }
+
+    /// `Mle(F, 1)` and `Uni(F, 1)` collide at the `Poly(F, 1, 1)` level; the
+    /// Uni-Vec arm appears first textually in `lub_concat`, so it wins and
+    /// the result is `Uni(F, 1 + m) = Poly(F, 1, 1 + m)` rather than the
+    /// MLE-promotion path. Pin that here so any future re-ordering of the
+    /// arms is caught.
+    #[test]
+    fn lub_concat_mle1_vec_routes_via_uni() {
+        let ctx = kind_ctx();
+        for m in [1usize, 2, 3] {
+            // Construct Mle(F, 1) explicitly even though it's identical to
+            // Uni(F, 1) — this is the point: the type system can't tell them
+            // apart, and the Uni-Vec arm matches first.
+            let mle1 = CTyp::Poly(f(), 1, 1);
+            let vec_t = CTyp::vec(&tf(), m);
+            let expected = CTyp::Poly(f(), 1, 1 + m);
+            assert_eq!(
+                CTyp::lub_concat(&mle1, &vec_t, &ctx),
+                Ok(expected),
+                "lub_concat(Mle(F,1)==Uni(F,1), Vec(F,{}))",
+                m
+            );
+        }
+    }
+
+    /// `lub_concat(Mle(F, n), Vec(F, m))` where `n != m` and `n >= 2` — the
+    /// MLE-Vec promotion arm has an `n == m` guard, so this falls through.
+    /// With `n >= 2` the Uni-Vec arm doesn't match either (Uni needs slot 1
+    /// to be `1` in the polynomial). It then hits the generic `Vec ++ b` arm,
+    /// which calls `lub_equ(Base(F), Poly(F, n, 1))`. That equality routes
+    /// through the `to_scalar` catch-all in `lub_equ`, but `Poly.to_scalar`
+    /// is `None`, so equality fails and the whole concat returns an error.
+    /// Pin that behavior here.
+    #[test]
+    fn lub_concat_mle_vec_mismatch_errors() {
+        arbtest::arbtest(|u| {
+            let n = u.int_in_range(2..=4usize)?;
+            let m = u.int_in_range(1..=4usize)?;
+            if n == m {
+                return Ok(()); // promotion arm handles this; tested separately
+            }
+            let mle_t = CTyp::mle(&f(), n);
+            let vec_t = CTyp::vec(&tf(), m);
+            let result = CTyp::lub_concat(&mle_t, &vec_t, &kind_ctx());
+            assert!(
+                result.is_err(),
+                "lub_concat(Mle(F,{}), Vec(F,{})) should error when n != m and n >= 2, got {:?}",
+                n,
+                m,
+                result
+            );
+            Ok(())
+        });
+    }
+
+    /// `Uni(F, ma) / Uni(F, mb) = Uni(F, ma - mb)` for `ma >= mb`.
+    /// In Phase-14 the `m` field is max polynomial degree, so the quotient
+    /// has degree `ma - mb` (one fewer than coefficient count).
+    #[test]
+    fn lub_div_uni_uni_quotient_shape() {
+        arbtest::arbtest(|u| {
+            let ma = arb_m(u)?;
+            let mb = u.int_in_range(0..=ma)?; // guarantee ma >= mb
+            let a = CTyp::uni(&f(), ma);
+            let b = CTyp::uni(&f(), mb);
+            let expected = CTyp::uni(&f(), ma - mb);
+            assert_eq!(
+                CTyp::lub_div(&a, &b, &kind_ctx()),
+                Ok(expected),
+                "lub_div(Uni(F,{}), Uni(F,{}))",
+                ma,
+                mb
+            );
+            Ok(())
+        });
+    }
+
+    /// `Uni(F, ma) / Uni(F, mb)` when `ma < mb` — the `Poly`/`Poly` div arm
+    /// has an `ma >= mb` guard, so this falls through to an error (no fallback
+    /// arm rescues it). Pin that contract.
+    #[test]
+    fn lub_div_uni_uni_underflow_errors() {
+        arbtest::arbtest(|u| {
+            let mb = u.int_in_range(1..=4usize)?;
+            let ma = u.int_in_range(0..=mb - 1)?; // ma < mb
+            let a = CTyp::uni(&f(), ma);
+            let b = CTyp::uni(&f(), mb);
+            let result = CTyp::lub_div(&a, &b, &kind_ctx());
+            assert!(
+                result.is_err(),
+                "lub_div(Uni(F,{}), Uni(F,{})) should error when ma < mb, got {:?}",
+                ma,
+                mb,
+                result
+            );
+            Ok(())
+        });
+    }
+
+    /// Sanity round-trip: `lub_mul(q, p) = Uni(F, (ma - mb) + mb) = Uni(F, ma)`.
+    /// I.e., multiplying the quotient back by the divisor yields a poly with
+    /// the same degree as the dividend (degree relation only, not value).
+    #[test]
+    fn lub_mul_round_trip_after_div() {
+        arbtest::arbtest(|u| {
+            let ma = u.int_in_range(1..=4usize)?;
+            let mb = u.int_in_range(0..=ma)?;
+            let ctx = kind_ctx();
+            let dividend = CTyp::uni(&f(), ma);
+            let divisor = CTyp::uni(&f(), mb);
+            let quotient = CTyp::lub_div(&dividend, &divisor, &ctx).expect("div should succeed");
+            let reconstructed = CTyp::lub_mul(&quotient, &divisor, &ctx)
+                .expect("mul of quotient * divisor should succeed");
+            // Phase-14 degree algebra: (ma - mb) + mb = ma.
+            assert_eq!(
+                reconstructed,
+                CTyp::uni(&f(), ma),
+                "round-trip mul(div({}, {}), {}) should preserve degree {}",
+                ma,
+                mb,
+                mb,
+                ma
+            );
+            Ok(())
+        });
+    }
+
+    // ----- Algebraic property PBTs (survive Phase B intact) -----
+
+    /// Helper for symmetric ops: assert `lub_op(a, b) == lub_op(b, a)`,
+    /// treating both-`Err` outcomes as symmetric (the `LubError` variants
+    /// may carry asymmetric operand orderings, so we only require both
+    /// directions to succeed or both to fail).
+    fn assert_symmetric<F>(a: &CTyp, b: &CTyp, op_name: &str, lub: F)
+    where
+        F: Fn(&CTyp, &CTyp) -> Result<CTyp, LubError>,
+    {
+        let r1 = lub(a, b);
+        let r2 = lub(b, a);
+        match (&r1, &r2) {
+            (Ok(t1), Ok(t2)) => assert_eq!(
+                t1, t2,
+                "{}({:?}, {:?}) = {:?} but reversed = {:?}",
+                op_name, a, b, t1, t2
+            ),
+            (Err(_), Err(_)) => {}
+            _ => panic!(
+                "{} asymmetric: ({:?}, {:?}) = {:?}, reversed = {:?}",
+                op_name, a, b, r1, r2
+            ),
+        }
+    }
+
+    /// `lub_add` is symmetric across `Poly`, `Vec`, and `Base` inputs.
+    /// Holds both today and after the planned Phase-B removal of polynomial↔Vec
+    /// arms (both directions either succeed with the same result or both error).
+    #[test]
+    fn pbt_lub_add_symmetric() {
+        arbtest::arbtest(|u| {
+            let a = arb_ctyp(u)?;
+            let b = arb_ctyp(u)?;
+            let ctx = kind_ctx();
+            assert_symmetric(&a, &b, "lub_add", |x, y| CTyp::lub_add(x, y, &ctx));
+            Ok(())
+        });
+    }
+
+    /// `lub_sub` is symmetric across `Poly`, `Vec`, and `Base` inputs.
+    /// (Type-level only — subtraction is not value-symmetric, but the result
+    /// `CTyp` is identical for `a - b` and `b - a`.)
+    #[test]
+    fn pbt_lub_sub_symmetric() {
+        arbtest::arbtest(|u| {
+            let a = arb_ctyp(u)?;
+            let b = arb_ctyp(u)?;
+            let ctx = kind_ctx();
+            assert_symmetric(&a, &b, "lub_sub", |x, y| CTyp::lub_sub(x, y, &ctx));
+            Ok(())
+        });
+    }
+
+    /// `lub_mul` is symmetric across `Poly`, `Vec`, and `Base` inputs.
+    #[test]
+    fn pbt_lub_mul_symmetric() {
+        arbtest::arbtest(|u| {
+            let a = arb_ctyp(u)?;
+            let b = arb_ctyp(u)?;
+            let ctx = kind_ctx();
+            assert_symmetric(&a, &b, "lub_mul", |x, y| CTyp::lub_mul(x, y, &ctx));
+            Ok(())
+        });
+    }
+
+    /// `lub_equ` is symmetric.
+    #[test]
+    fn pbt_lub_equ_symmetric() {
+        arbtest::arbtest(|u| {
+            let a = arb_ctyp(u)?;
+            let b = arb_ctyp(u)?;
+            let ctx = kind_ctx();
+            assert_symmetric(&a, &b, "lub_equ", |x, y| CTyp::lub_equ(x, y, &ctx));
+            Ok(())
+        });
+    }
+
+    /// `lub_add` is associative on the polynomial sub-lattice:
+    /// `lub_add(a, lub_add(b, c)) == lub_add(lub_add(a, b), c)` whenever
+    /// both groupings succeed. Skips runs where any intermediate errors.
+    #[test]
+    fn pbt_lub_add_associative_poly() {
+        arbtest::arbtest(|u| {
+            let a = arb_poly(u)?;
+            let b = arb_poly(u)?;
+            let c = arb_poly(u)?;
+            let ctx = kind_ctx();
+            let bc = match CTyp::lub_add(&b, &c, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let ab = match CTyp::lub_add(&a, &b, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let left = CTyp::lub_add(&a, &bc, &ctx);
+            let right = CTyp::lub_add(&ab, &c, &ctx);
+            assert_eq!(
+                left, right,
+                "lub_add not associative: a={:?}, b={:?}, c={:?}",
+                a, b, c
+            );
+            Ok(())
+        });
+    }
+
+    /// `lub_mul` is associative on the polynomial sub-lattice.
+    #[test]
+    fn pbt_lub_mul_associative_poly() {
+        arbtest::arbtest(|u| {
+            let a = arb_poly(u)?;
+            let b = arb_poly(u)?;
+            let c = arb_poly(u)?;
+            let ctx = kind_ctx();
+            let bc = match CTyp::lub_mul(&b, &c, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let ab = match CTyp::lub_mul(&a, &b, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let left = CTyp::lub_mul(&a, &bc, &ctx);
+            let right = CTyp::lub_mul(&ab, &c, &ctx);
+            assert_eq!(
+                left, right,
+                "lub_mul not associative: a={:?}, b={:?}, c={:?}",
+                a, b, c
+            );
+            Ok(())
+        });
+    }
+
+    /// `Base(F)` is a unit for `lub_add` over Uni and Mle polynomials:
+    /// `lub_add(a, Base(F)) == a` (and symmetric). The current
+    /// `(Base, Poly(_, 1, n))` / `(Poly(_, n, 1), Base)` arms support this;
+    /// general VPoly with `n > 1` and `m > 1` is *not* covered by the unit
+    /// law and is excluded here.
+    #[test]
+    fn pbt_lub_add_unit_base() {
+        arbtest::arbtest(|u| {
+            // Pick either Uni (n=1, m arbitrary) or Mle (m=1, n arbitrary).
+            let a = if u.arbitrary::<bool>()? {
+                CTyp::uni(&f(), arb_m(u)?)
+            } else {
+                CTyp::mle(&f(), arb_n(u)?)
+            };
+            let ctx = kind_ctx();
+            assert_eq!(
+                CTyp::lub_add(&a, &tf(), &ctx),
+                Ok(a.clone()),
+                "lub_add({:?}, Base(F)) != {:?}",
+                a,
+                a
+            );
+            assert_eq!(
+                CTyp::lub_add(&tf(), &a, &ctx),
+                Ok(a.clone()),
+                "lub_add(Base(F), {:?}) != {:?}",
+                a,
+                a
+            );
+            Ok(())
+        });
+    }
+}
