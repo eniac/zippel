@@ -625,76 +625,26 @@ mod tests {
     use lang::typ::Nothing;
     use lang::typ::lub::Lub;
 
+    /// `Uni(d) * Mle(n) == VPoly(n, d+1)` (and reverse) — mixed univariate × multilinear product.
     #[test]
-    fn uni_mul_uni_is_uni() {
-        let result = ATyp::lub_mul(&ATyp::uni(3), &ATyp::uni(4), &Nothing).unwrap();
-        assert_eq!(result, ATyp::uni(7));
-    }
-
-    #[test]
-    fn mle_mul_mle_is_vpoly() {
-        let result = ATyp::lub_mul(&ATyp::mle(2), &ATyp::mle(3), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(3, 2));
-    }
-
-    #[test]
-    fn uni_mul_mle_is_vpoly() {
-        let result = ATyp::lub_mul(&ATyp::uni(5), &ATyp::mle(3), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(3, 6));
-    }
-
-    #[test]
-    fn mle_mul_uni_is_vpoly() {
-        let result = ATyp::lub_mul(&ATyp::mle(4), &ATyp::uni(2), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(4, 3));
-    }
-
-    #[test]
-    fn vpoly_mul_vpoly() {
-        let result = ATyp::lub_mul(&ATyp::vpoly(3, 4), &ATyp::vpoly(5, 2), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(5, 6));
-    }
-
-    #[test]
-    fn vpoly_mul_uni() {
-        let result = ATyp::lub_mul(&ATyp::vpoly(2, 3), &ATyp::uni(4), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(2, 7));
-    }
-
-    #[test]
-    fn vpoly_mul_mle() {
-        let result = ATyp::lub_mul(&ATyp::vpoly(2, 3), &ATyp::mle(5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(5, 4));
-    }
-
-    #[test]
-    fn scalar_mul_uni_preserves() {
-        let result = ATyp::lub_mul(&ATyp::scalar(), &ATyp::uni(5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::uni(5));
-    }
-
-    #[test]
-    fn scalar_mul_mle_preserves() {
-        let result = ATyp::lub_mul(&ATyp::mle(3), &ATyp::scalar(), &Nothing).unwrap();
-        assert_eq!(result, ATyp::mle(3));
-    }
-
-    #[test]
-    fn uni_add_uni() {
-        let result = ATyp::lub_add(&ATyp::uni(3), &ATyp::uni(5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::uni(5));
-    }
-
-    #[test]
-    fn mle_add_mle_same_vars() {
-        let result = ATyp::lub_add(&ATyp::mle(3), &ATyp::mle(3), &Nothing).unwrap();
-        assert_eq!(result, ATyp::mle(3));
-    }
-
-    #[test]
-    fn vpoly_add_vpoly() {
-        let result = ATyp::lub_add(&ATyp::vpoly(2, 3), &ATyp::vpoly(4, 5), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(4, 5));
+    fn lub_mul_uni_mle_pins_vpoly() {
+        for (d, n) in &[(0usize, 1usize), (1, 2), (2, 3), (4, 1), (5, 3)] {
+            let left = ATyp::lub_mul(&ATyp::uni(*d), &ATyp::mle(*n), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::mle(*n), &ATyp::uni(*d), &Nothing).unwrap();
+            let expected = ATyp::vpoly(*n, d + 1);
+            assert_eq!(
+                left,
+                expected,
+                "Uni({d}) * Mle({n}) should equal VPoly({n}, {})",
+                d + 1,
+            );
+            assert_eq!(
+                right,
+                expected,
+                "Mle({n}) * Uni({d}) should equal VPoly({n}, {})",
+                d + 1,
+            );
+        }
     }
 
     #[test]
@@ -732,12 +682,6 @@ mod tests {
         let ctyp = CTyp::Poly(Tid::from("F"), 3, 5);
         let atyp = ATyp::from_ctyp(&ctyp, &kctx).unwrap();
         assert_eq!(atyp, ATyp::vpoly(3, 5));
-    }
-
-    #[test]
-    fn scalar_mul_vpoly_preserves() {
-        let result = ATyp::lub_mul(&ATyp::scalar(), &ATyp::vpoly(3, 4), &Nothing).unwrap();
-        assert_eq!(result, ATyp::vpoly(3, 4));
     }
 
     // ========================================================================
@@ -887,7 +831,7 @@ mod tests {
     /// the num_vars and 2 for the degree.  Pins that behaviour.
     #[test]
     fn lub_mul_mle_distinct_vars_pins_max_and_deg_2() {
-        for (n1, n2) in &[(1usize, 2usize), (2, 1), (1, 4), (4, 2), (3, 5)] {
+        for (n1, n2) in &[(1usize, 2usize), (2, 1), (1, 4), (4, 2), (2, 3), (3, 5)] {
             let result = ATyp::lub_mul(&ATyp::mle(*n1), &ATyp::mle(*n2), &Nothing).unwrap();
             assert_eq!(
                 result,
@@ -900,7 +844,13 @@ mod tests {
     /// `VPoly(n1,m1) * VPoly(n2,m2) == VPoly(max(n1,n2), m1+m2)`.
     #[test]
     fn lub_mul_vpoly_vpoly_pins_max_vars_and_sum_degree() {
-        for (n1, m1, n2, m2) in &[(1, 1, 1, 1), (2, 1, 2, 2), (2, 2, 3, 1), (3, 2, 1, 1)] {
+        for (n1, m1, n2, m2) in &[
+            (1, 1, 1, 1),
+            (2, 1, 2, 2),
+            (2, 2, 3, 1),
+            (3, 2, 1, 1),
+            (3, 4, 5, 2),
+        ] {
             let result =
                 ATyp::lub_mul(&ATyp::vpoly(*n1, *m1), &ATyp::vpoly(*n2, *m2), &Nothing).unwrap();
             assert_eq!(
@@ -914,7 +864,13 @@ mod tests {
     /// `VPoly(n,m) * Uni(d) == VPoly(n, m+d)` (in both orders).
     #[test]
     fn lub_mul_vpoly_uni_pins_degree_sum() {
-        for (n, m, d) in &[(1usize, 1usize, 0usize), (2, 2, 1), (3, 0, 4), (4, 5, 2)] {
+        for (n, m, d) in &[
+            (1usize, 1usize, 0usize),
+            (2, 2, 1),
+            (3, 0, 4),
+            (4, 5, 2),
+            (2, 3, 4),
+        ] {
             let left = ATyp::lub_mul(&ATyp::vpoly(*n, *m), &ATyp::uni(*d), &Nothing).unwrap();
             let right = ATyp::lub_mul(&ATyp::uni(*d), &ATyp::vpoly(*n, *m), &Nothing).unwrap();
             let expected = ATyp::vpoly(*n, m + d);
@@ -937,7 +893,13 @@ mod tests {
     /// `m + 1` for the degree (multilinear contributes +1 to degree).
     #[test]
     fn lub_mul_vpoly_mle_pins_degree_plus_one() {
-        for (n, m, n_mle) in &[(1usize, 1usize, 1usize), (2, 2, 3), (3, 0, 1), (4, 5, 4)] {
+        for (n, m, n_mle) in &[
+            (1usize, 1usize, 1usize),
+            (2, 2, 3),
+            (3, 0, 1),
+            (4, 5, 4),
+            (2, 3, 5),
+        ] {
             let left = ATyp::lub_mul(&ATyp::vpoly(*n, *m), &ATyp::mle(*n_mle), &Nothing).unwrap();
             let right = ATyp::lub_mul(&ATyp::mle(*n_mle), &ATyp::vpoly(*n, *m), &Nothing).unwrap();
             let expected = ATyp::vpoly(*n.max(n_mle), m + 1);
@@ -957,7 +919,7 @@ mod tests {
     /// `Uni(m1) + Uni(m2) == Uni(max(m1, m2))` — sum cannot exceed the larger degree.
     #[test]
     fn lub_add_uni_uni_pins_max_degree() {
-        for (m1, m2) in &[(0, 0), (0, 1), (1, 2), (2, 3), (3, 4)] {
+        for (m1, m2) in &[(0, 0), (0, 1), (1, 2), (2, 3), (3, 4), (3, 5)] {
             let result = ATyp::lub_add(&ATyp::uni(*m1), &ATyp::uni(*m2), &Nothing).unwrap();
             assert_eq!(
                 result,
@@ -998,7 +960,13 @@ mod tests {
     /// `VPoly(n1,m1) + VPoly(n2,m2) == VPoly(max(n1,n2), max(m1,m2))`.
     #[test]
     fn lub_add_vpoly_vpoly_pins_max_max() {
-        for (n1, m1, n2, m2) in &[(1, 1, 1, 1), (2, 1, 2, 2), (2, 2, 3, 1), (3, 2, 1, 1)] {
+        for (n1, m1, n2, m2) in &[
+            (1, 1, 1, 1),
+            (2, 1, 2, 2),
+            (2, 2, 3, 1),
+            (3, 2, 1, 1),
+            (2, 3, 4, 5),
+        ] {
             let result =
                 ATyp::lub_add(&ATyp::vpoly(*n1, *m1), &ATyp::vpoly(*n2, *m2), &Nothing).unwrap();
             assert_eq!(
