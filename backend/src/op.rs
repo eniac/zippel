@@ -313,7 +313,11 @@ impl<C: ArkConfig, R> Op<C, R> {
                             m, n
                         );
                     }
-                    ATyp::uni(n)
+                    // Under the phase-14 degree convention, n evaluations
+                    // uniquely determine a polynomial of max degree n-1
+                    // (n coefficients). Matches the runtime
+                    // `value_interpolate` and the lang `infer()` rule.
+                    ATyp::uni(n.saturating_sub(1))
                 }
                 (tp, te) => panic!(
                     "Op::Interpolate: both arguments must be Vec(Scalar | Fin, n); got points: {}, evals: {}",
