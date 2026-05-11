@@ -1718,6 +1718,49 @@ mod tests {
         assert!(eval_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 
+    /// Issue #116: `eval(p)` (unary FFT-grid eval) must reject a polynomial
+    /// whose coefficient count `m+1` is not a power of two. Under the m+1
+    /// convention `Poly<F, 1, m>` has `m+1` coefficients, and the runtime
+    /// `value_fft` calls `GeneralEvaluationDomain::new(m+1)` which pads to
+    /// `next_pow2(m+1)` evaluations — so accepting non-pow2-coef inputs at
+    /// the type level would leave the declared `Op::Fft::typ()` shape and
+    /// the runtime output length disagreeing. The static type checker must
+    /// catch this.
+    ///
+    /// - Negative: `Poly<F, 1, 2>` has 3 coefficients (not pow2) → rejected.
+    /// - Positive: `Poly<F, 1, 3>` has 4 coefficients (pow2)        → accepted.
+    #[test]
+    fn eval_unary_rejects_non_pow2_coefficient_count() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("p3"), &CTyp::Poly(Tid::from("F"), 1, 2)); // 3 coefs
+        vctx.insert(&Vid::from("p4"), &CTyp::Poly(Tid::from("F"), 1, 3)); // 4 coefs
+
+        // Negative case: 3 coefficients is not a power of two — must be
+        // rejected with EvaluateGridNotPow2.
+        let bad = CExp::evaluate_grid(CExp::varstr("p3"));
+        let bad_result = bad.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            matches!(
+                bad_result,
+                Err(TypeError::EvaluateGridNotPow2(_, _, _, _, _))
+            ),
+            "eval(Poly<F, 1, 2>) has 3 coefficients (not pow2); infer() must \
+             reject with EvaluateGridNotPow2. Got: {:?}",
+            bad_result
+        );
+
+        // Positive case: 4 coefficients IS a power of two — must be accepted.
+        let good = CExp::evaluate_grid(CExp::varstr("p4"));
+        let good_result = good.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            good_result.is_ok(),
+            "eval(Poly<F, 1, 3>) has 4 coefficients (pow2); infer() must \
+             accept it. Got: {:?}",
+            good_result
+        );
+    }
+
     // Phase 14 encoding regression tests: exercise the degree convention on
     // poly / coef explicitly, independent of the legacy tests above.
     #[test]
