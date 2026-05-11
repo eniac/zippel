@@ -102,7 +102,7 @@ pub enum TypeError {
     EvaluateGrid(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error(
-        "EvaluateGridError: Unary [eval] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- eval ( {2}: {4})"
+        "EvaluateGridError: Unary [eval] requires the polynomial's coefficient count (m+1) to be a power of two; got max_degree={3} (m+1={3}+1 coefficients):\n\t{0}, {1} |- eval ( {2}: {4})"
     )]
     EvaluateGridNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
 
@@ -504,12 +504,18 @@ impl Typeable for CExp {
                                 if !k.is_scalar() {
                                     return Err(TypeError::evaluate_grid(kctx, vctx, p, &t));
                                 }
-                                if !n.is_power_of_two() {
+                                // Phase 14 m+1 convention: Poly<F, 1, n> has n+1
+                                // coefficients. The runtime FFT requires the
+                                // coefficient count to be a power of two
+                                // (`GeneralEvaluationDomain::new(n+1)` else pads).
+                                // Check the coefficient count, not the max-degree.
+                                let coef_count = n + 1;
+                                if !coef_count.is_power_of_two() {
                                     return Err(TypeError::evaluate_grid_not_pow2(
                                         kctx, vctx, p, n, &t,
                                     ));
                                 }
-                                Ok(CTyp::vec(&CTyp::Base(tid), n))
+                                Ok(CTyp::vec(&CTyp::Base(tid), coef_count))
                             }
                             _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
                         }
