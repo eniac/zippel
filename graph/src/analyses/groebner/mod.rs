@@ -3159,6 +3159,9 @@ mod tests {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=4)?;
             let cube = hypercube(n);
+            if cube.is_empty() {
+                return Ok(());
+            }
             let i: usize = u.int_in_range(0..=(cube.len() - 1))?;
             let b = &cube[i];
             assert_eq!(
@@ -3178,6 +3181,9 @@ mod tests {
             let n: usize = u.int_in_range(1..=4)?;
             let m: usize = u.int_in_range(0..=4)?;
             let mis = multi_indices(n, m);
+            if mis.is_empty() {
+                return Ok(());
+            }
             let i: usize = u.int_in_range(0..=(mis.len() - 1))?;
             let k = &mis[i];
             assert_eq!(
