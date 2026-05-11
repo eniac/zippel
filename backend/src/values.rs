@@ -2321,6 +2321,18 @@ impl<C: ArkConfig> Value<C> {
                 *self = Value::VecG1(v.par_iter().map(|i| (*i).into()).collect());
                 self.into_vec_g1_mut()
             }
+            Value::Vec(v) => {
+                *self = Value::VecG1(
+                    v.iter()
+                        .map(|val| match val {
+                            Value::G1(g) => *g,
+                            Value::G1Affine(g) => (*g).into(),
+                            _ => panic!("Expected G1 element in vec, found {}", val),
+                        })
+                        .collect(),
+                );
+                self.into_vec_g1_mut()
+            }
             _ => panic!("Expected mut vec group1, found {}", self),
         }
     }
@@ -2329,6 +2341,18 @@ impl<C: ArkConfig> Value<C> {
             Value::VecG2(v) => v,
             Value::VecG2Affine(v) => {
                 *self = Value::VecG2(v.par_iter().map(|i| (*i).into()).collect());
+                self.into_vec_g2_mut()
+            }
+            Value::Vec(v) => {
+                *self = Value::VecG2(
+                    v.iter()
+                        .map(|val| match val {
+                            Value::G2(g) => *g,
+                            Value::G2Affine(g) => (*g).into(),
+                            _ => panic!("Expected G2 element in vec, found {}", val),
+                        })
+                        .collect(),
+                );
                 self.into_vec_g2_mut()
             }
             _ => panic!("Expected mut vec group2, found {}", self),
@@ -2374,6 +2398,17 @@ impl<C: ArkConfig> Value<C> {
     pub fn into_vec_bool_mut(&mut self) -> &mut Vec<bool> {
         match self {
             Value::VecBool(v) => v,
+            Value::Vec(v) => {
+                *self = Value::VecBool(
+                    v.iter()
+                        .map(|val| match val {
+                            Value::Bool(b) => *b,
+                            _ => panic!("Expected Bool element in vec, found {}", val),
+                        })
+                        .collect(),
+                );
+                self.into_vec_bool_mut()
+            }
             _ => panic!("Expected mut vec bool, found {}", self),
         }
     }

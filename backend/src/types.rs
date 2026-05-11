@@ -197,6 +197,7 @@ impl Lub for ABase {
             (ABase::G2, ABase::G2) => Ok(ABase::G2),
             (ABase::GT, ABase::GT) => Ok(ABase::GT),
             (ABase::Scalar, ABase::Scalar) => Ok(ABase::Scalar),
+            (ABase::Bool, ABase::Bool) => Ok(ABase::Bool),
             (a, b) => Err(LubError::equ(&a, &b)),
         }
     }
