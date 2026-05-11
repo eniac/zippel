@@ -688,8 +688,11 @@ fn pin_interpolate() {
 /// Tests: CExp::Evaluate(_, None), Node::fft.
 #[test]
 fn pin_fft() {
+    // Phase 14 m+1 convention + issue #116: Uni<F, 3> has 4 coefficients
+    // (pow2 — required for FFT-grid eval to typecheck). eval() returns a
+    // length-4 vector matching the coefficient count.
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 3>) -> [F; 4] {
             eval(a)
         }
     "#;
@@ -697,7 +700,7 @@ fn pin_fft() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::vpoly(1, 4);
+    let poly_typ = ATyp::vpoly(1, 3);
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
