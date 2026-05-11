@@ -82,7 +82,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         self.basis.retain(|p| p.terms.iter().any(|(t, _)| !f(t)));
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut SparsePolynomial<F, T>> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut SparsePolynomial<F, T>> {
         self.basis.iter_mut()
     }
 
@@ -198,7 +198,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             }
         }
 
-        while pairs.len() > 0 {
+        while !pairs.is_empty() {
             let mut ps = g.pairs_select(&mut pairs);
             // F4 symbolic reduction
             g.pairs_reduce(&mut ps);
@@ -234,10 +234,10 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
                     // If the reduced S-polynomial is not zero, return it
                     if !s_reduced.is_zero() {
                         debug!("  S(G[{}], G[{}]) reduces to non-zero polynomial.", i, j);
-                        return Some(s_reduced);
+                        Some(s_reduced)
                     } else {
                         debug!("  S(G[{}], G[{}]) reduces to 0", i, j);
-                        return None;
+                        None
                     }
                 })
                 .collect();
@@ -280,13 +280,12 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             // Buchberger's second criterion: skip pairs (l, k) if there exists an [i] such that LCM(LT(l), LT(k)) is a multiple of LT(i)
             // and (l, i) and (i, k) have been seen before
             return (0..g.len()).into_par_iter().any(|i| {
-                if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m) {
-                    if ml.lcm(&mk).is_divided(&lt_i)
-                        && seen.contains(&(l, i))
-                        && seen.contains(&(i, k))
-                    {
-                        return true;
-                    }
+                if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m)
+                    && ml.lcm(&mk).is_divided(&lt_i)
+                    && seen.contains(&(l, i))
+                    && seen.contains(&(i, k))
+                {
+                    return true;
                 }
                 false
             });
@@ -441,7 +440,7 @@ use petgraph::graph::NodeIndex;
 use share::assert_deq;
 
 #[cfg(test)]
-fn elim_var<'a>(name: &'a str) -> PRef {
+fn elim_var(name: &str) -> PRef {
     PRef::from_var(
         Vid::new(name),
         NodeIndex::new(0),
@@ -453,7 +452,7 @@ fn elim_var<'a>(name: &'a str) -> PRef {
 }
 
 #[cfg(test)]
-fn noelim_var<'a>(name: &'a str) -> PRef {
+fn noelim_var(name: &str) -> PRef {
     PRef::from_var(
         Vid::new(name),
         NodeIndex::new(0),
@@ -578,7 +577,7 @@ fn test_grevlex_ordering() {
     //   x1^2  >  x1*x2  >  x2^2  >  x1*x3  >  x2*x3  >  x3^2  >  1
     let mut terms = vec![&f3, &f4, &f1, &f5, &f6, &f2, &f7]
         .into_iter()
-        .map(|t| t.clone())
+        .cloned()
         .collect::<Vec<_>>();
 
     terms.sort_unstable_by(|a, b| a.cmp(b));

@@ -33,7 +33,7 @@ pub type UKind = Kind<Size>;
 pub type CKind = Kind<usize>;
 
 impl<N> Kind<N> {
-    pub fn scalar1<'a>(a: &'a str) -> Self {
+    pub fn scalar1(a: &str) -> Self {
         Kind::Scalar(Set::singleton(Tid::new(a)))
     }
     pub fn scalar2<'a>(a: &'a str, b: &'a str) -> Self {
@@ -46,17 +46,10 @@ impl<N> Kind<N> {
         Kind::Range(Range { start, step, end })
     }
     pub fn is_scalar(&self) -> bool {
-        match self {
-            Kind::Field => true,
-            Kind::Scalar(_) => true,
-            _ => false,
-        }
+        matches!(self, Kind::Field | Kind::Scalar(_))
     }
     pub fn is_group(&self) -> bool {
-        match self {
-            Kind::Group | Kind::Pairing(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Kind::Group | Kind::Pairing(_, _))
     }
     pub fn is_pairing(&self, a: &Tid, b: &Tid) -> bool {
         match self {

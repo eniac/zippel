@@ -174,17 +174,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 C::F::zero()
             })],
             Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
-            Value::Vec(v) => v.into_iter().flat_map(|v| self.to_poly_value(v)).collect(),
+            Value::Vec(v) => v.iter().flat_map(|v| self.to_poly_value(v)).collect(),
             Value::VecBool(v) => v
-                .into_iter()
+                .iter()
                 .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
                 .collect::<Vec<_>>(),
-            Value::VecScalar(v) => v
-                .into_iter()
-                .map(|s| SparsePolynomial::lit(s))
-                .collect::<Vec<_>>(),
+            Value::VecScalar(v) => v.iter().map(SparsePolynomial::lit).collect::<Vec<_>>(),
             Value::VecIndex(v) => v
-                .into_iter()
+                .iter()
                 .map(|i| SparsePolynomial::lit(&C::FOps::from_usize(*i)))
                 .collect::<Vec<_>>(),
             _ => unreachable!("Unsupported value: {}", v),
@@ -199,7 +196,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let pf = self.find_ref(&v);
                 match typ {
                     ATyp::Vec(box t, n) => (0..*n)
-                        .into_iter()
                         .map(|i| {
                             let mut pf = pf.clone();
                             pf.index = i;
@@ -208,7 +204,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         })
                         .collect::<Vec<_>>(),
                     ATyp::Uni(n) => (0..*n)
-                        .into_iter()
                         .map(|i| {
                             let mut pf = pf.clone();
                             pf.index = i;
@@ -220,7 +215,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             Op::Value(v) => self.to_poly_value(v),
-            Op::Vec(v) => v.into_iter().flat_map(|v| self.to_poly(v)).collect(),
+            Op::Vec(v) => v.iter().flat_map(|v| self.to_poly(v)).collect(),
             Op::Ram(a, b) => {
                 match (a.get(), b.get()) {
                     (Op::Ref(n, _), Op::Value(v)) => {
@@ -237,19 +232,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Add | BinOp::And, a, b, _) => self
                 .to_poly(a)
                 .into_iter()
-                .zip(self.to_poly(b).into_iter())
+                .zip(self.to_poly(b))
                 .map(|(a, b)| a + b)
                 .collect(),
             Op::Bin(BinOp::Sub, a, b, _) => self
                 .to_poly(a)
                 .into_iter()
-                .zip(self.to_poly(b).into_iter())
+                .zip(self.to_poly(b))
                 .map(|(a, b)| a - b)
                 .collect(),
             Op::Bin(BinOp::Mul, a, b, _) => self
                 .to_poly(a)
                 .into_iter()
-                .zip(self.to_poly(b).into_iter())
+                .zip(self.to_poly(b))
                 .map(|(a, b)| a * b)
                 .collect(),
             Op::Bin(BinOp::Dot, a, b, _) => {
@@ -356,7 +351,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Add | BinOp::And, a, b, _) => self
                 .to_poly(&a)
                 .into_iter()
-                .zip(self.to_poly(&b).into_iter())
+                .zip(self.to_poly(&b))
                 .enumerate()
                 .for_each(|(i, (a, b))| {
                     let pf = pr.clone().with_index(i);
@@ -366,7 +361,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Sub, a, b, _) => self
                 .to_poly(&a)
                 .into_iter()
-                .zip(self.to_poly(&b).into_iter())
+                .zip(self.to_poly(&b))
                 .enumerate()
                 .for_each(|(i, (a, b))| {
                     let pf = pr.clone().with_index(i);
@@ -376,7 +371,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Mul, a, b, _) => self
                 .to_poly(&a)
                 .into_iter()
-                .zip(self.to_poly(&b).into_iter())
+                .zip(self.to_poly(&b))
                 .enumerate()
                 .for_each(|(i, (a, b))| {
                     let pf = pr.clone().with_index(i);
@@ -387,7 +382,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let sum = self
                     .to_poly(&a)
                     .into_iter()
-                    .zip(self.to_poly(&b).into_iter())
+                    .zip(self.to_poly(&b))
                     .map(|(a, b)| a * b)
                     .sum();
                 self.pl.insert(&pr, &sum);
@@ -396,7 +391,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Div, ref a, ref b, _) => self
                 .to_poly(a)
                 .into_iter()
-                .zip(self.to_poly(b).into_iter())
+                .zip(self.to_poly(b))
                 .enumerate()
                 .for_each(|(i, (a, b))| {
                     let pf = pr.clone().with_index(i);
@@ -407,7 +402,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Equ, a, b, _) => self
                 .to_poly(&a)
                 .into_iter()
-                .zip(self.to_poly(&b).into_iter())
+                .zip(self.to_poly(&b))
                 .for_each(|(a, b)| {
                     self.pl.insert(&pr, &(&a - &b));
                     self.pl.insert(&pr, &SparsePolynomial::lit(&C::F::zero()));

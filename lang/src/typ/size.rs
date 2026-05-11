@@ -41,7 +41,7 @@ impl Size {
         Size::Var(id)
     }
 
-    pub fn varstr<'a>(v: &'a str) -> Self {
+    pub fn varstr(v: &str) -> Self {
         Size::var(Tid::from(v))
     }
 

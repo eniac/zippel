@@ -116,12 +116,12 @@ impl AliasSubsts {
         let mut eqclass = Set::from([a.clone(), b.clone()]);
 
         // Add equivalence classes of [a] into [eqclass]
-        for v in self.0.get(a).map(|x| x.clone()).unwrap_or(Set::new()) {
+        for v in self.0.get(a).cloned().unwrap_or(Set::new()) {
             eqclass.insert(v.clone());
         }
 
         // Add equivalence classes of [b] into [eqclass]
-        for v in self.0.get(b).map(|x| x.clone()).unwrap_or(Set::new()) {
+        for v in self.0.get(b).cloned().unwrap_or(Set::new()) {
             eqclass.insert(v.clone());
         }
 

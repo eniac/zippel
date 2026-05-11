@@ -143,10 +143,10 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             if Self::is_leak(p) {
                 // Skip polynomials derivable from the relation (precondition).
                 // The verifier already knows these — they're not new leaks.
-                if let Some(ref rel_basis) = self.relation_basis {
-                    if rel_basis.contains_poly(p) {
-                        continue;
-                    }
+                if let Some(ref rel_basis) = self.relation_basis
+                    && rel_basis.contains_poly(p)
+                {
+                    continue;
                 }
                 warn!("Leak found: {}", p);
                 return Err(AnalysisError::KnowledgeLeak(p.clone()));

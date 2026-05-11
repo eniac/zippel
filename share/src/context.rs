@@ -289,7 +289,7 @@ impl<K, V> Ctx<K, V> {
     where
         K: Ord + Clone,
     {
-        Set(self.0.keys().map(|x| x.clone()).collect::<BTreeSet<_>>())
+        Set(self.0.keys().cloned().collect::<BTreeSet<_>>())
     }
     pub fn values(&self) -> Vec<V>
     where
@@ -304,7 +304,7 @@ impl<K, V> Ctx<K, V> {
     {
         self.0.contains_key(k)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + DoubleEndedIterator
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &V)>
     where
         K: Ord,
     {
@@ -485,13 +485,13 @@ where
 
 impl<V: Ord, const N: usize> From<[V; N]> for Set<V> {
     fn from(v: [V; N]) -> Self {
-        Set(BTreeSet::from_iter(v.into_iter()))
+        Set(BTreeSet::from_iter(v))
     }
 }
 
 impl<V: Ord> From<Vec<V>> for Set<V> {
     fn from(v: Vec<V>) -> Self {
-        Set(BTreeSet::from_iter(v.into_iter()))
+        Set(BTreeSet::from_iter(v))
     }
 }
 

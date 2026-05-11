@@ -81,7 +81,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkField17>> {
     let p_initial_commitment: Value<ArkField17> =
         g_vec.clone().dot(a_vec_witness.clone()) + h_vec.clone().dot(b_vec_witness.clone());
 
-    let inputs = Ctx::<Vid, Value<ArkField17>>::from_iter([
+    Ctx::<Vid, Value<ArkField17>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
         (
@@ -92,7 +92,5 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkField17>> {
         (Vid("u_aux_base".to_string()), u_aux_base),
         (Vid("a_vec_witness".to_string()), a_vec_witness),
         (Vid("b_vec_witness".to_string()), b_vec_witness),
-    ]);
-
-    return inputs;
+    ])
 }

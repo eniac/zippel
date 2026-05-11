@@ -103,11 +103,11 @@ pub trait ArkScalarOps<F: PrimeField> {
             return;
         }
         let mut i = i;
-        while (i % 2) == 0 {
+        while i.is_multiple_of(2) {
             f1.square_in_place();
             i /= 2;
         }
-        *f1 = f1.pow(&[i as u64])
+        *f1 = f1.pow([i])
     }
 
     #[inline]
@@ -165,11 +165,11 @@ pub trait ArkScalarOps<F: PrimeField> {
     fn vec_pow(f1: &mut Vec<F>, i: u64) {
         f1.par_iter_mut().for_each(|x| {
             let mut i = i;
-            while (i % 2) == 0 {
+            while i.is_multiple_of(2) {
                 x.square_in_place();
                 i /= 2;
             }
-            *x = x.pow(&[i as u64]);
+            *x = x.pow([i]);
         });
     }
 
@@ -193,7 +193,7 @@ pub trait ArkScalarOps<F: PrimeField> {
     }
 
     fn challenge<H: DuplexSpongeInterface<U = u8>>(state: &mut ProverState<H>) -> F {
-        let byte_size = (F::MODULUS_BIT_SIZE as usize + 7) / 8;
+        let byte_size = (F::MODULUS_BIT_SIZE as usize).div_ceil(8);
         let challenge_bytes: [u8; 32] = state.verifier_message();
         F::from_le_bytes_mod_order(&challenge_bytes[..byte_size.min(32)])
     }
@@ -343,7 +343,7 @@ pub trait ArkPairingOps<P: Pairing> {
             .fold_with(PairingOutput::zero(), |acc, (g1, g2)| {
                 P::pairing(*g1, *g2) + acc
             })
-            .reduce(|| PairingOutput::zero(), |acc, gt| gt + acc)
+            .reduce(PairingOutput::zero, |acc, gt| gt + acc)
     }
 }
 

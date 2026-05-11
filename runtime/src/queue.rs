@@ -82,7 +82,7 @@ impl SyncReceiver {
     ///   before `RecvError` even after all senders are dropped, so
     ///   no sync nodes are lost when the last task finishes.
     pub fn pop(&self) -> Option<SyncMessage> {
-        return self.rx.recv().ok();
+        self.rx.recv().ok()
     }
 }
 

@@ -187,7 +187,7 @@ impl UDecl {
     }
 
     /// Concretize a declaration with a given size substitution
-    pub fn concretize<'a, 'b>(&'a self, substs: &'b SizeSubsts) -> Result<CDecl, DeclError> {
+    pub fn concretize(&self, substs: &SizeSubsts) -> Result<CDecl, DeclError> {
         let mut csig = self.sig.clone().traverse1(&mut |x| x.eval(&substs.0))?;
         let cbody = self.body.clone().traverse1(&mut |x| x.eval(&substs.0))?;
 
@@ -281,7 +281,10 @@ impl CBody {
                 if tr == CTyp::Bool && br == CTyp::Bool {
                     Ok(())
                 } else {
-                    Err(TypeError::decl(&sig.name, TypeError::bool(&kctx, &vctx, &relation)).into())
+                    Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::bool(&kctx, &vctx, &relation),
+                    ))
                 }
             }
             Body::Func { body } => {
@@ -292,8 +295,7 @@ impl CBody {
                     Err(TypeError::decl(
                         &sig.name,
                         TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br),
-                    )
-                    .into())
+                    ))
                 }
             }
             Body::TypeAlias => Ok(()),

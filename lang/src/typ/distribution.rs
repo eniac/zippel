@@ -5,10 +5,11 @@ use std::fmt;
 use crate::parser::*;
 use share::{BoxAllocator, DocAllocator, DocBuilder, Pretty};
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Default)]
 pub enum Distribution {
     Uniform,
     UniformNonZero,
+    #[default]
     Nonuniform,
 }
 
@@ -92,12 +93,6 @@ impl Distribution {
             Distribution::UniformNonZero => Distribution::Uniform,
             _ => Distribution::Nonuniform,
         }
-    }
-}
-
-impl Default for Distribution {
-    fn default() -> Self {
-        Distribution::Nonuniform
     }
 }
 

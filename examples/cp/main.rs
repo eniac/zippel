@@ -63,13 +63,11 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let v = g.clone() * beta.clone();
     let w = u.clone() * beta.clone();
 
-    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("beta".to_string()), beta),
         (Vid("g".to_string()), g),
         (Vid("u".to_string()), u),
         (Vid("v".to_string()), v),
         (Vid("w".to_string()), w),
-    ]);
-
-    inputs
+    ])
 }

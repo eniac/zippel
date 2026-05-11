@@ -55,10 +55,8 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([(
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([(
         Vid("x".to_string()),
         Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar()),
-    )]);
-
-    return inputs;
+    )])
 }

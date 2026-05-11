@@ -187,14 +187,13 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Vec(vs) => {
                 let mut typ = vs[0].typ();
                 for v in vs.iter().skip(1) {
-                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).expect(
-                        format!(
+                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).unwrap_or_else(|_| {
+                        panic!(
                             "UncaughtError: Vector operands must be of the same type: {} != {}",
                             typ,
                             v.typ()
                         )
-                        .as_str(),
-                    );
+                    });
                 }
                 ATyp::vec(&typ, vs.len())
             }
@@ -393,39 +392,31 @@ impl<C: HasOpFactory> GOp<C> {
     /// Random access simplifications
     pub fn ram(v: Self, i: Self) -> Self {
         // Handle nested Ram optimizations (need to inspect HOp children)
-        match (&v, &i) {
-            (Op::Ram(_, idx_inner), _) => {
-                if let Op::Value(Value::VecIndex(vl)) = idx_inner.get() {
-                    match &i {
-                        Op::Value(Value::VecIndex(vr)) => {
-                            return Op::ram(
-                                v_inner_clone(&v),
-                                Op::Value(Value::VecIndex(
-                                    vr.iter()
-                                        .map(|j| vl[*j as usize].clone())
-                                        .collect::<Vec<_>>(),
-                                )),
-                            );
-                        }
-                        Op::Value(Value::Index(j)) => {
-                            return Op::ram(
-                                v_inner_clone(&v),
-                                Op::Value(Value::Index(vl[*j].clone())),
-                            );
-                        }
-                        _ => {}
-                    }
+        if let (Op::Ram(_, idx_inner), _) = (&v, &i)
+            && let Op::Value(Value::VecIndex(vl)) = idx_inner.get()
+        {
+            match &i {
+                Op::Value(Value::VecIndex(vr)) => {
+                    return Op::ram(
+                        v_inner_clone(&v),
+                        Op::Value(Value::VecIndex(
+                            vr.iter().map(|j| vl[*j].clone()).collect::<Vec<_>>(),
+                        )),
+                    );
                 }
+                Op::Value(Value::Index(j)) => {
+                    return Op::ram(v_inner_clone(&v), Op::Value(Value::Index(vl[*j].clone())));
+                }
+                _ => {}
             }
-            _ => {}
         }
         match (v, i) {
             // [e0, e1, ..., en][i] = e_i
-            (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i as usize].get().clone(),
+            (Op::Vec(vs), Op::Value(Value::Index(i))) => vs[i].get().clone(),
             // [e0, e1, ..., en][r] = [e_i for i in r]
             (Op::Vec(vs), Op::Value(Value::VecIndex(vr))) => Op::vec(
                 vr.into_iter()
-                    .map(|i| vs[i as usize].get().clone())
+                    .map(|i| vs[i].get().clone())
                     .collect::<Vec<_>>(),
             ),
             // v[v2]
@@ -476,8 +467,8 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.clone().into_vec();
                 Op::vec(
                     v.into_vec_mut()
-                        .into_iter()
-                        .zip(l.into_iter())
+                        .iter_mut()
+                        .zip(l.iter())
                         .map(|(v, l)| Op::add(Op::Value(v.clone()), l.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -488,7 +479,7 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.into_vec();
                 Op::vec(
                     l.into_iter()
-                        .zip(r.into_iter())
+                        .zip(r)
                         .map(|(l, r)| Op::add(l.get().clone(), r.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -520,8 +511,8 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.clone().into_vec();
                 Op::vec(
                     v.into_vec_mut()
-                        .into_iter()
-                        .zip(l.into_iter())
+                        .iter_mut()
+                        .zip(l.iter())
                         .map(|(v, l)| Op::sub(Op::Value(v.clone()), l.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -532,7 +523,7 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.into_vec();
                 Op::vec(
                     l.into_iter()
-                        .zip(r.into_iter())
+                        .zip(r)
                         .map(|(l, r)| Op::sub(l.get().clone(), r.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -567,8 +558,8 @@ impl<C: HasOpFactory> GOp<C> {
                 if v.is_vec() {
                     Op::vec(
                         v.into_vec_mut()
-                            .into_iter()
-                            .zip(l.into_iter())
+                            .iter_mut()
+                            .zip(l.iter())
                             .map(|(v, l)| Op::mul(Op::Value(v.clone()), l.get().clone(), t.clone()))
                             .collect(),
                     )
@@ -585,7 +576,7 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.into_vec();
                 Op::vec(
                     l.into_iter()
-                        .zip(r.into_iter())
+                        .zip(r)
                         .map(|(l, r)| Op::mul(l.get().clone(), r.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -608,8 +599,8 @@ impl<C: HasOpFactory> GOp<C> {
                 if v.is_vec() {
                     Op::vec(
                         v.into_vec_mut()
-                            .into_iter()
-                            .zip(l.into_iter())
+                            .iter_mut()
+                            .zip(l.iter())
                             .map(|(v, l)| Op::div(Op::Value(v.clone()), l.get().clone(), t.clone()))
                             .collect(),
                     )
@@ -626,7 +617,7 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.into_vec();
                 Op::vec(
                     l.into_iter()
-                        .zip(r.into_iter())
+                        .zip(r)
                         .map(|(l, r)| Op::div(l.get().clone(), r.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -656,8 +647,8 @@ impl<C: HasOpFactory> GOp<C> {
                 if v.is_vec() {
                     Op::vec(
                         v.into_vec_mut()
-                            .into_iter()
-                            .zip(l.into_iter())
+                            .iter_mut()
+                            .zip(l.iter())
                             .map(|(v, l)| Op::rem(Op::Value(v.clone()), l.get().clone(), t.clone()))
                             .collect(),
                     )
@@ -674,7 +665,7 @@ impl<C: HasOpFactory> GOp<C> {
                 let (t, _) = typ.into_vec();
                 Op::vec(
                     l.into_iter()
-                        .zip(r.into_iter())
+                        .zip(r)
                         .map(|(l, r)| Op::rem(l.get().clone(), r.get().clone(), t.clone()))
                         .collect(),
                 )
@@ -712,8 +703,8 @@ impl<C: HasOpFactory> GOp<C> {
 
     pub fn pow(v1: Self, v2: Self, typ: ATyp) -> Self {
         match v2 {
-            Op::Value(Value::Index(i)) if i == 0 => Op::one(&typ),
-            Op::Value(Value::Index(i)) if i == 1 => v1,
+            Op::Value(Value::Index(0)) => Op::one(&typ),
+            Op::Value(Value::Index(1)) => v1,
             v2 => Op::Bin(BinOp::Pow, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
@@ -839,12 +830,10 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![n.clone()],
-            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => a
-                .references()
-                .into_iter()
-                .chain(b.references().into_iter())
-                .collect(),
-            Op::Vec(vs) => vs.into_iter().flat_map(|v| v.references()).collect(),
+            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
+                a.references().into_iter().chain(b.references()).collect()
+            }
+            Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
             Op::Interpolate(points, v) => points
                 .references()
@@ -879,11 +868,7 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(a.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
             ),
-            Op::Vec(vs) => Op::Vec(
-                vs.into_iter()
-                    .map(|v| mk::<C>(v.map_node_indices(f)))
-                    .collect(),
-            ),
+            Op::Vec(vs) => Op::Vec(vs.iter().map(|v| mk::<C>(v.map_node_indices(f))).collect()),
             Op::Record(fields) => Op::Record(
                 fields
                     .iter()
@@ -928,7 +913,7 @@ impl<C: HasOpFactory> GOp<C> {
                 typ.clone(),
             ),
             Op::Ram(a, b) => Op::Ram(mk::<C>(a.map_refs(f)), mk::<C>(b.map_refs(f))),
-            Op::Vec(vs) => Op::Vec(vs.into_iter().map(|v| mk::<C>(v.map_refs(f))).collect()),
+            Op::Vec(vs) => Op::Vec(vs.iter().map(|v| mk::<C>(v.map_refs(f))).collect()),
             Op::Record(fields) => Op::Record(
                 fields
                     .iter()
@@ -986,7 +971,7 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Ram(mk::<C>(oa), mk::<C>(ob))
             }
             Op::Vec(vs) => Op::Vec(
-                vs.into_iter()
+                vs.iter()
                     .map(|v| mk::<C>(v.inline(vars, except)))
                     .collect::<Vec<_>>(),
             ),
@@ -1282,7 +1267,7 @@ where
                 }
                 allocator.concat([
                     allocator.text("{|"),
-                    allocator.intersperse(field_docs.into_iter(), ", "),
+                    allocator.intersperse(field_docs, ", "),
                     allocator.text("|}"),
                 ])
             }

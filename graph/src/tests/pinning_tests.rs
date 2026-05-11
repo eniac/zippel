@@ -1494,7 +1494,7 @@ fn pin_get_relation_basic() {
     // Relation should have the Rel node
     assert!(relation.relation_node().is_some());
     // Relation should have the Equ operation from `s == v`
-    assert!(relation.op_nodes().len() > 0);
+    assert!(!relation.op_nodes().is_empty());
 }
 
 /// Regression: get_relation had a duplicate outgoing-edge loop that doubled
@@ -2162,9 +2162,8 @@ fn pin_error_fun_unbound_var() {
     // This may fail at parse/typecheck (unwrap in try_parse_and_build) or at graph building
     let result = std::panic::catch_unwind(|| try_parse_and_build(src));
     // Either it panics or returns Err — either way it should not succeed
-    match result {
-        Ok(Ok(_)) => panic!("Unbound variable in Fun should fail"),
-        _ => {} // Error or panic — both acceptable
+    if let Ok(Ok(_)) = result {
+        panic!("Unbound variable in Fun should fail");
     }
 }
 

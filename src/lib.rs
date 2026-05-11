@@ -95,16 +95,17 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     fn get_protocol_subgraph<'a>(&self, gs: &'a UDags<C>) -> &'a UDag<C> {
         if let Some(main_proto) = &self.args.subgraph {
             debug!("Getting protocol: {}", main_proto);
-            gs.get_proto(main_proto).expect(&format!(
-                "Protocol {} not found in {}",
-                main_proto,
-                self.args.file_path.display()
-            ))
+            gs.get_proto(main_proto).unwrap_or_else(|| {
+                panic!(
+                    "Protocol {} not found in {}",
+                    main_proto,
+                    self.args.file_path.display()
+                )
+            })
         } else {
-            gs.protocols().first().expect(&format!(
-                "No protocols found in {}",
-                self.args.file_path.display()
-            ))
+            gs.protocols().first().unwrap_or_else(|| {
+                panic!("No protocols found in {}", self.args.file_path.display())
+            })
         }
     }
 
@@ -122,7 +123,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     }
 
     /// Will output a PDF if a path is provided, noop otherwise
-    pub fn output_pdf<'a, D: WritePdf>(&self, g: &D, msg: &'a str) {
+    pub fn output_pdf<D: WritePdf>(&self, g: &D, msg: &str) {
         if let Some(pdf_path) = &self.args.pdf_path_opt {
             let os_str = pdf_path.clone().into_os_string();
             let mut str_path = os_str.into_string().unwrap();
@@ -232,13 +233,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.prover_args = Some(prover_args);
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
-        let result = MutexGraph::run_graph(
+        MutexGraph::run_graph(
             Arc::new(MutexGraph::new(prover_scheduled)),
             Arc::new(inputs.clone()),
             &mut prover_state,
             ResultKind::Prover,
-        );
-        result
+        )
     }
 
     //Schedule verifier with default scheduler
@@ -292,13 +292,12 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // For now, use prover state since we don't have narg_string yet
         // TODO: Fix this to use proper verifier state when narg_string is available
         let mut verifier_state = verifier_seperator.std_prover();
-        let result = MutexGraph::run_graph(
+        MutexGraph::run_graph(
             Arc::new(MutexGraph::new(verifier_scheduled)),
             Arc::new(inputs),
             &mut verifier_state,
             ResultKind::Verifier,
-        );
-        result
+        )
     }
 
     pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
@@ -353,10 +352,10 @@ pub fn find_minimal_sizes(module: &UModule) -> Ctx<Tid, usize> {
     let mut size_vars: Vec<Tid> = Vec::new();
     for (sig, _body) in module.iter() {
         for tv in sig.typevars.0.iter() {
-            if let Kind::SizeVar = &tv.kind {
-                if !size_vars.contains(&tv.id) {
-                    size_vars.push(tv.id.clone());
-                }
+            if let Kind::SizeVar = &tv.kind
+                && !size_vars.contains(&tv.id)
+            {
+                size_vars.push(tv.id.clone());
             }
         }
     }

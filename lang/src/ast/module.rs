@@ -92,10 +92,10 @@ impl<N: Ord> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&Sig<N>, &Body<N>)> + DoubleEndedIterator {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N>, &Body<N>)> {
         self.0.iter()
     }
-    pub fn get_names<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+    pub fn get_names(&self) -> impl Iterator<Item = &str> {
         self.0.iter().map(|(sig, _)| sig.name.0.as_str())
     }
 }

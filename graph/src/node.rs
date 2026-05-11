@@ -121,9 +121,8 @@ impl<C: ArkConfig, N> Node<C, N> {
     where
         N: Clone,
     {
-        match &self {
-            Node::Op(op, ann) => *self = Node::Transcr(op.clone(), ann.clone()),
-            _ => {}
+        if let Node::Op(op, ann) = &self {
+            *self = Node::Transcr(op.clone(), ann.clone());
         }
     }
 
@@ -320,9 +319,9 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
             Node::Op(op, ann) | Node::Transcr(op, ann) => {
                 let ann = ann.to_string();
                 if ann.is_empty() {
-                    return write!(f, "{}", &**op);
+                    write!(f, "{}", &**op)
                 } else {
-                    return write!(f, "{} @ {}", &**op, ann);
+                    write!(f, "{} @ {}", &**op, ann)
                 }
             }
         }

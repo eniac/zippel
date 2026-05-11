@@ -16,7 +16,7 @@ impl QualifierPropagation {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
             Op::Check(_) => Some(Qualifier::Public),
-            Op::Ref(r, _) => self.quals.get(&r.node()).map(|v| v.clone()),
+            Op::Ref(r, _) => self.quals.get(&r.node()).cloned(),
             Op::Ram(a, _) => self.from_op(a),
             Op::Poly(a) => self.from_op(a),
             Op::Mle(a) => self.from_op(a),

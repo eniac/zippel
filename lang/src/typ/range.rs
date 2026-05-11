@@ -80,7 +80,7 @@ impl CRange {
     pub fn from_num(start: usize, step: usize, end: usize) -> Result<Self, RangeError> {
         // Check if the range is well formed
         let rs = Range { start, step, end };
-        if (start <= end) && (step > 0) && ((end - start) % step == 0) {
+        if (start <= end) && (step > 0) && (end - start).is_multiple_of(step) {
             Ok(rs)
         } else {
             Err(RangeError::RangeOrder(start, step, end))
@@ -112,16 +112,16 @@ impl CRange {
         }
 
         // Check if the value aligns with the step
-        (value - self.start) % self.step == 0
+        (value - self.start).is_multiple_of(self.step)
     }
 
     pub fn concat(&self, other: &CRange) -> Option<CRange> {
         if self.step == other.step && self.end == other.start + 1 {
-            return Some(Range {
+            Some(Range {
                 start: self.start,
                 step: self.step,
                 end: other.end,
-            });
+            })
         } else {
             None
         }
@@ -163,14 +163,14 @@ impl CRange {
         // For end-exclusive ranges:
         // Calculate how many elements in the first range
         let elements_in_first = if self.start < self.end {
-            (self.end - self.start + self.step - 1) / self.step
+            (self.end - self.start).div_ceil(self.step)
         } else {
             0
         };
 
         // Calculate how many elements in the second range
         let elements_in_second = if other.start < other.end {
-            (other.end - other.start + other.step - 1) / other.step
+            (other.end - other.start).div_ceil(other.step)
         } else {
             0
         };

@@ -228,25 +228,21 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
             Node::Arg(vid, _, _, _, _) => inputs
                 .get(vid)
-                .expect(format!("Value for {} should exist", vid).as_str())
+                .unwrap_or_else(|| panic!("Value for {} should exist", vid))
                 .clone(),
         }
     }
 
     pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         match operation {
-            Op::Value(val) => {
-                return val.clone();
-            }
-            Op::Ref(r, _atyp) => {
-                return self.get_value(r.clone(), inputs);
-            }
+            Op::Value(val) => val.clone(),
+            Op::Ref(r, _atyp) => self.get_value(r.clone(), inputs),
             Op::Vec(vec) => {
                 let value_vector: Vec<Value<C>> = vec
                     .iter()
                     .map(|op| self.handle_op(&*op, Arc::clone(&inputs)))
                     .collect::<Vec<Value<C>>>();
-                return Value::value_vec(value_vector);
+                Value::value_vec(value_vector)
             }
             Op::Record(fields) => {
                 let mut record_values = share::Ctx::new();
@@ -254,19 +250,19 @@ impl<C: ArkConfig> MutexGraph<C> {
                     let field_value = self.handle_op(&*op, Arc::clone(&inputs));
                     record_values.insert(name, &field_value);
                 }
-                return Value::Record(record_values);
+                Value::Record(record_values)
             }
             Op::Ram(v, index_val) => {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let inputs_index_val_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
                 let index_val_value: Value<C> = self.handle_op(&*index_val, inputs_index_val_clone);
-                return v_val.ram(index_val_value);
+                v_val.ram(index_val_value)
             }
             Op::Check(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val;
+                a_val
             }
             Op::Bin(op, a, b, _typ) => {
                 let inputs_a_clone = Arc::clone(&inputs);
@@ -274,97 +270,77 @@ impl<C: ArkConfig> MutexGraph<C> {
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
                 match op {
-                    BinOp::Add => {
-                        return a_val + b_val;
-                    }
-                    BinOp::Mul => {
-                        return a_val * b_val;
-                    }
-                    BinOp::Equ => {
-                        return a_val.value_equ(&b_val);
-                    }
-                    BinOp::Sub => {
-                        return a_val - b_val;
-                    }
-                    BinOp::Div => {
-                        return a_val / b_val;
-                    }
-                    BinOp::Pow => {
-                        return a_val ^ b_val;
-                    }
-                    BinOp::Dot => {
-                        return a_val.dot(b_val);
-                    }
-                    BinOp::Concat => {
-                        return a_val.value_concat(b_val);
-                    }
-                    BinOp::Rem => {
-                        return a_val % b_val;
-                    }
-                    BinOp::And => {
-                        return a_val & b_val;
-                    }
+                    BinOp::Add => a_val + b_val,
+                    BinOp::Mul => a_val * b_val,
+                    BinOp::Equ => a_val.value_equ(&b_val),
+                    BinOp::Sub => a_val - b_val,
+                    BinOp::Div => a_val / b_val,
+                    BinOp::Pow => a_val ^ b_val,
+                    BinOp::Dot => a_val.dot(b_val),
+                    BinOp::Concat => a_val.value_concat(b_val),
+                    BinOp::Rem => a_val % b_val,
+                    BinOp::And => a_val & b_val,
                 }
             }
             Op::Random(typ, _) => {
                 let mut rng = ThreadRng::default();
-                return Value::random(&mut rng, typ);
+                Value::random(&mut rng, typ)
             }
             Op::Challenge(typ, _) => {
                 let mut rng = ThreadRng::default();
                 // TODO: Implement challenge
-                return Value::random(&mut rng, typ);
+                Value::random(&mut rng, typ)
             }
             Op::Evaluate(p, x) => {
                 let inputs_p_clone = Arc::clone(&inputs);
                 let inputs_x_clone = Arc::clone(&inputs);
                 let p_val: Value<C> = self.handle_op(&*p, inputs_p_clone);
                 let x_val: Value<C> = self.handle_op(&*x, inputs_x_clone);
-                return p_val.value_eval(x_val);
+                p_val.value_eval(x_val)
             }
             Op::Coef(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_coef();
+                a_val.value_coef()
             }
             Op::Pair(a, b, _) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let inputs_b_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
                 let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
-                return a_val.pair(b_val);
+                a_val.pair(b_val)
             }
             Op::Poly(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_poly();
+                a_val.value_poly()
             }
             Op::Interpolate(points, evals) => {
                 let inputs_points_clone = Arc::clone(&inputs);
                 let inputs_evals_clone = Arc::clone(&inputs);
                 let points_val: Value<C> = self.handle_op(&*points, inputs_points_clone);
                 let evals_val: Value<C> = self.handle_op(&*evals, inputs_evals_clone);
-                return evals_val.value_interpolate(Some(&points_val));
+                evals_val.value_interpolate(Some(&points_val))
             }
             Op::Ifft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_interpolate(None);
+                a_val.value_interpolate(None)
             }
             Op::Fft(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_fft();
+                a_val.value_fft()
             }
             Op::Mle(a) => {
                 let inputs_a_clone = Arc::clone(&inputs);
                 let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                return a_val.value_mle();
+                a_val.value_mle()
             }
             Op::Reduce(op, v) => {
                 let inputs_v_clone = Arc::clone(&inputs);
                 let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
-                return v_val.value_reduce(*op);
+                v_val.value_reduce(*op)
             }
             Op::Marginalize(a) => {
                 let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) =
@@ -443,7 +419,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
                 out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
 
-                return Value::Record(out_fields);
+                Value::Record(out_fields)
             }
 
             Op::Proj(record_op, field_name, _) => {
@@ -642,15 +618,16 @@ impl<C: ArkConfig> MutexGraph<C> {
                         arg_children.len()
                     );
                     for arg_idx in arg_children {
-                        if let Some(pref) = g.mutex_graph[arg_idx].arg_pref(arg_idx) {
-                            if pref.qualifier.is_public() && !pref.from_transcript {
-                                let vid = pref.name().expect("Arg node must carry a name").clone();
-                                prover_state.public_message(
-                                    value_to_bytes(inputs.get(&vid).unwrap())
-                                        .unwrap()
-                                        .as_slice(),
-                                );
-                            }
+                        if let Some(pref) = g.mutex_graph[arg_idx].arg_pref(arg_idx)
+                            && pref.qualifier.is_public()
+                            && !pref.from_transcript
+                        {
+                            let vid = pref.name().expect("Arg node must carry a name").clone();
+                            prover_state.public_message(
+                                value_to_bytes(inputs.get(&vid).unwrap())
+                                    .unwrap()
+                                    .as_slice(),
+                            );
                         }
                     }
                 }

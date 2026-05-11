@@ -7,7 +7,7 @@ use pest::iterators::Pairs;
 
 /// Generate a new identifier not in the set
 pub trait Fresh: Ord + Sized {
-    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self;
+    fn fresh(root: &str, s: &mut Set<Self>) -> Self;
 }
 
 /// Type variable identifier
@@ -60,7 +60,7 @@ impl Default for Tid {
 
 /// Fresh type variable generator
 impl Fresh for Tid {
-    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self {
+    fn fresh(root: &str, s: &mut Set<Self>) -> Self {
         let (root, mut i) = split_alphanumeric(root);
         loop {
             i += 1;
@@ -75,7 +75,7 @@ impl Fresh for Tid {
 
 /// Fresh variable generator
 impl Fresh for Vid {
-    fn fresh<'a>(root: &'a str, s: &mut Set<Self>) -> Self {
+    fn fresh(root: &str, s: &mut Set<Self>) -> Self {
         let (root, mut i) = split_alphanumeric(root);
         loop {
             i += 1;
@@ -99,7 +99,7 @@ impl<'a> Arbitrary<'a> for Tid {
 }
 
 impl Tid {
-    pub fn new<'a>(s: &'a str) -> Self {
+    pub fn new(s: &str) -> Self {
         Tid(s.to_string())
     }
 }
@@ -156,7 +156,7 @@ impl<'a> Arbitrary<'a> for Vid {
 }
 
 impl Vid {
-    pub fn new<'a>(s: &'a str) -> Self {
+    pub fn new(s: &str) -> Self {
         Vid(s.to_string())
     }
 }

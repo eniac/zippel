@@ -244,7 +244,7 @@ impl<'pest> FromPest<'pest> for UTypeVars {
                                 })
                                 .then(|| ())
                                 .ok_or(ConversionError::Malformed(InputError::ScalarGroup(
-                                    fs.clone().into(),
+                                    fs.clone(),
                                     tv.kind.clone(),
                                 )))?;
                             tvars.push(tv);

@@ -780,8 +780,8 @@ impl<C: ArkConfig> Value<C> {
             Value::GT(a) => match &other {
                 // GT * scalar multiplication
                 Value::Scalar(_) | Value::Index(_) => {
-                    let mut vr = vec![*other.into_scalar_mut()];
-                    let mut group = C::POps::vec_mul(a, &mut vr);
+                    let vr = vec![*other.into_scalar_mut()];
+                    let mut group = C::POps::vec_mul(a, &vr);
                     *other = Value::GT(group.remove(0));
                 }
                 // GT * Vec<Index>
@@ -807,9 +807,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<Index> * Scalar
                 Value::Scalar(_) => {
                     *other = Value::VecScalar(
-                        std::iter::repeat(other.into_scalar())
-                            .take(v.len())
-                            .collect::<Vec<_>>(),
+                        std::iter::repeat_n(other.into_scalar(), v.len()).collect::<Vec<_>>(),
                     );
                     v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
@@ -883,9 +881,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<Scalar> * Index
                 Value::Index(_) | Value::Scalar(_) => {
                     *other = Value::VecScalar(
-                        std::iter::repeat(other.into_scalar())
-                            .take(v.len())
-                            .collect::<Vec<_>>(),
+                        std::iter::repeat_n(other.into_scalar(), v.len()).collect::<Vec<_>>(),
                     );
                     v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
@@ -1113,7 +1109,7 @@ impl<C: ArkConfig> Value<C> {
                     let f = other
                         .into_scalar()
                         .inverse()
-                        .expect(format!("Failed to invert scalar {}", other).as_str());
+                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
                     let mut g = *a;
                     C::G1Ops::mul(&f, &mut g);
                     *other = Value::G1(g);
@@ -1137,7 +1133,7 @@ impl<C: ArkConfig> Value<C> {
                     let f = other
                         .into_scalar()
                         .inverse()
-                        .expect(format!("Failed to invert scalar {}", other).as_str());
+                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
                     let mut g = *a;
                     C::G2Ops::mul(&f, &mut g);
                     *other = Value::G2(g);
@@ -1163,7 +1159,7 @@ impl<C: ArkConfig> Value<C> {
                     let f = other
                         .into_scalar()
                         .inverse()
-                        .expect(format!("Failed to invert scalar {}", other).as_str());
+                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", other));
                     let mut g = *a;
                     C::POps::mul(&f, &mut g);
                     *other = Value::GT(g);
@@ -1189,9 +1185,7 @@ impl<C: ArkConfig> Value<C> {
                 // Vec<Index> / Scalar
                 Value::Scalar(_) => {
                     *other = Value::VecScalar(
-                        std::iter::repeat(other.into_scalar())
-                            .take(v.len())
-                            .collect::<Vec<_>>(),
+                        std::iter::repeat_n(other.into_scalar(), v.len()).collect::<Vec<_>>(),
                     );
                     v.par_iter()
                         .zip(other.into_vec_scalar_mut().par_iter_mut())
@@ -1220,10 +1214,9 @@ impl<C: ArkConfig> Value<C> {
                 Value::Index(_) | Value::Scalar(_) => {
                     let f = other.into_scalar_mut();
                     f.inverse()
-                        .expect(format!("Failed to invert scalar {}", f).as_str());
-                    let mut vr = std::iter::repeat(f.clone().inverse().unwrap())
-                        .take(v.len())
-                        .collect::<Vec<_>>();
+                        .unwrap_or_else(|| panic!("Failed to invert scalar {}", f));
+                    let mut vr =
+                        std::iter::repeat_n(f.inverse().unwrap(), v.len()).collect::<Vec<_>>();
                     v.par_iter()
                         .zip(vr.par_iter_mut())
                         .for_each(|(a, b)| C::FOps::mul(a, b));
@@ -1414,7 +1407,7 @@ impl<C: ArkConfig> Value<C> {
 
                 // Ensure coefficient vector length matches the inferred Uni size.
                 if coeffs.len() < *out_len {
-                    coeffs.extend(std::iter::repeat(C::F::zero()).take(*out_len - coeffs.len()));
+                    coeffs.extend(std::iter::repeat_n(C::F::zero(), *out_len - coeffs.len()));
                 } else if coeffs.len() > *out_len {
                     coeffs.truncate(*out_len);
                 }
@@ -1459,7 +1452,7 @@ impl<C: ArkConfig> Value<C> {
         fn pow64(a: usize, i: usize) -> usize {
             let mut i = i;
             let mut exp = a;
-            while i % 2 == 0 {
+            while i.is_multiple_of(2) {
                 exp *= exp;
                 i /= 2;
             }
@@ -1591,13 +1584,10 @@ impl<C: ArkConfig> Value<C> {
                             C::FOps::mul(b, &mut a);
                             a
                         })
-                        .reduce(
-                            || C::FOps::zero(),
-                            |mut a, b| {
-                                C::FOps::add(&b, &mut a);
-                                a
-                            },
-                        ),
+                        .reduce(C::FOps::zero, |mut a, b| {
+                            C::FOps::add(&b, &mut a);
+                            a
+                        }),
                 );
             }
             (Value::Vec(a), _) => a
@@ -1970,7 +1960,7 @@ impl<C: ArkConfig> Value<C> {
                     *r = Value::VecIndex(v);
                 }
                 Value::Index(b) => {
-                    *r = Value::VecIndex(a.iter().map(|a| *a).chain(std::iter::once(*b)).collect())
+                    *r = Value::VecIndex(a.iter().copied().chain(std::iter::once(*b)).collect())
                 }
                 Value::Vec(v) => {
                     let mut x = Vec::with_capacity(a.len() + v.len());
@@ -2095,14 +2085,14 @@ impl<C: ArkConfig> Value<C> {
     /// Generate a random value, given some parameters
     pub fn random<R: Rng + Sized>(rng: &mut R, typ: &ATyp) -> Self {
         match typ {
-            ATyp::Base(ABase::Bool) => Value::Bool(rng.next_u32() % 2 == 0),
-            ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) % 10 as usize),
+            ATyp::Base(ABase::Bool) => Value::Bool(rng.next_u32().is_multiple_of(2)),
+            ATyp::Base(ABase::Fin(r)) => Value::Index(r.random(rng) % 10),
             ATyp::Base(ABase::Scalar) => Value::Scalar(C::FOps::rand(rng)),
             ATyp::Base(ABase::G1) => Value::G1(C::G1Ops::rand(rng)),
             ATyp::Base(ABase::G2) => Value::G2(C::G2Ops::rand(rng)),
             ATyp::Base(ABase::GT) => Value::GT(C::POps::rand(rng)),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) => {
-                Value::VecIndex((0..*n).map(|_| r.random(rng) as usize).collect())
+                Value::VecIndex((0..*n).map(|_| r.random(rng)).collect())
             }
             ATyp::Vec(box ATyp::Base(ABase::Scalar), n) => {
                 Value::VecScalar(C::FOps::vec_rand(rng, *n))
@@ -2419,18 +2409,18 @@ impl<C: ArkConfig> Value<C> {
     }
 
     pub fn is_vec(&self) -> bool {
-        match self {
-            Value::Vec(_) => true,
-            Value::VecBool(_) => true,
-            Value::VecScalar(_) => true,
-            Value::VecG1(_) => true,
-            Value::VecG2(_) => true,
-            Value::VecGT(_) => true,
-            Value::VecG1Affine(_) => true,
-            Value::VecG2Affine(_) => true,
-            Value::VecIndex(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Value::Vec(_)
+                | Value::VecBool(_)
+                | Value::VecScalar(_)
+                | Value::VecG1(_)
+                | Value::VecG2(_)
+                | Value::VecGT(_)
+                | Value::VecG1Affine(_)
+                | Value::VecG2Affine(_)
+                | Value::VecIndex(_)
+        )
     }
 
     pub fn is_zero(&self) -> bool {
@@ -3768,7 +3758,6 @@ mod value_tests {
 
     #[test]
     fn test_g1_additive_identity() {
-        use ark_ec::CurveGroup;
         let a = random_g1();
         let zero = TestValue::G1(G1Projective::zero());
         assert_eq!(a.clone() + zero.clone(), a.clone());
@@ -3777,7 +3766,6 @@ mod value_tests {
 
     #[test]
     fn test_g2_additive_identity() {
-        use ark_ec::CurveGroup;
         let a = random_g2();
         let zero = TestValue::G2(G2Projective::zero());
         assert_eq!(a.clone() + zero.clone(), a.clone());

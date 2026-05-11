@@ -17,7 +17,7 @@ pub fn log2(u: usize) -> (usize, usize) {
     let mut exp = 0;
     let mut um = u;
 
-    while um % 2 == 0 && um > 0 {
+    while um.is_multiple_of(2) && um > 0 {
         exp += 1;
         um /= 2;
     }

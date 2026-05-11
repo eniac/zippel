@@ -361,7 +361,7 @@ impl Div for ElimTerm {
     type Output = Option<Self>;
 
     fn div(self, other: Self) -> Option<Self> {
-        self.0.div(other.0).map(|t| ElimTerm(t))
+        self.0.div(other.0).map(ElimTerm)
     }
 }
 
@@ -369,7 +369,7 @@ impl Div for GrevLexTerm {
     type Output = Option<Self>;
 
     fn div(self, other: Self) -> Option<Self> {
-        self.0.div(other.0).map(|t| GrevLexTerm(t))
+        self.0.div(other.0).map(GrevLexTerm)
     }
 }
 

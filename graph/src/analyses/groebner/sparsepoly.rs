@@ -72,7 +72,7 @@ impl<F: Field, T: Monomial> Add for SparsePolynomial<F, T> {
     }
 }
 
-impl<'a, F: Field, T: Monomial> Add for &'a SparsePolynomial<F, T> {
+impl<F: Field, T: Monomial> Add for &SparsePolynomial<F, T> {
     type Output = SparsePolynomial<F, T>;
 
     fn add(self, other: Self) -> SparsePolynomial<F, T> {
@@ -82,7 +82,7 @@ impl<'a, F: Field, T: Monomial> Add for &'a SparsePolynomial<F, T> {
     }
 }
 
-impl<'a, F: Field, T: Monomial> Sub for &'a SparsePolynomial<F, T> {
+impl<F: Field, T: Monomial> Sub for &SparsePolynomial<F, T> {
     type Output = SparsePolynomial<F, T>;
 
     fn sub(self, other: Self) -> SparsePolynomial<F, T> {
@@ -92,7 +92,7 @@ impl<'a, F: Field, T: Monomial> Sub for &'a SparsePolynomial<F, T> {
     }
 }
 
-impl<'a, F: Field, T: Monomial> Mul for &'a SparsePolynomial<F, T> {
+impl<F: Field, T: Monomial> Mul for &SparsePolynomial<F, T> {
     type Output = SparsePolynomial<F, T>;
 
     fn mul(self, other: Self) -> SparsePolynomial<F, T> {
@@ -228,7 +228,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             return;
         }
         let mut i = exp;
-        while (i % 2) == 0 {
+        while i.is_multiple_of(2) {
             self.square();
             i /= 2;
         }
@@ -355,7 +355,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         for (monomial, coefficient) in self.terms.iter() {
             let vars = monomial.vars();
             // Constants assigned to LHS, check if this is desired.
-            let is_lhs_term = vars.is_empty() || vars.iter().any(|v| factor(v));
+            let is_lhs_term = vars.is_empty() || vars.iter().any(factor);
 
             if is_lhs_term {
                 tmp_lhs_terms.insert(monomial, coefficient);
@@ -456,7 +456,7 @@ pub fn elim_sparse_poly<F: Field>(
                         })
                         .collect::<Vec<_>>(),
                 ),
-                coeff.into(),
+                coeff,
             )
         })
         .collect();
@@ -486,7 +486,7 @@ pub fn grevlex_sparse_poly<F: Field>(
                         })
                         .collect::<Vec<_>>(),
                 ),
-                coeff.into(),
+                coeff,
             )
         })
         .collect();

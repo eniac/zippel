@@ -61,7 +61,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let m1 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
     let r1 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
 
-    let m2 = m1.clone();
+    let m2 = m1;
     let r2 = <ArkSecp256k1 as ArkConfig>::F::rand(&mut rng);
 
     let g = <ArkSecp256k1 as ArkConfig>::G1::rand(&mut rng);

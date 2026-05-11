@@ -213,9 +213,9 @@ impl Lub for Range<usize> {
             .map_err(|e| LubError::next(LubError::concat(&a, &b), LubError::bad_range(&b, e)))?;
 
         if let Some(c) = a.concat(b) {
-            return Ok(c);
+            Ok(c)
         } else {
-            return Err(LubError::concat(&a, &b));
+            Err(LubError::concat(&a, &b))
         }
     }
     fn lub_and(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -1576,8 +1576,7 @@ mod range_lub_tests {
             end: 10,
         };
         let result = Range::lub_concat(&a, &b, &Nothing);
-        if result.is_ok() {
-            let concatenated = result.unwrap();
+        if let Ok(concatenated) = result {
             assert_eq!(concatenated.start, 1);
             assert_eq!(concatenated.end, 10);
         }

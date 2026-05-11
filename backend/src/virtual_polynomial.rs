@@ -658,11 +658,11 @@ impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
                     // Merge products with the same polynomial factors
                     let mut merged: Vec<CanonProduct<F>> = Vec::new();
                     for (coeff, polys) in prods {
-                        if let Some(last) = merged.last_mut() {
-                            if last.1 == polys {
-                                last.0 += coeff;
-                                continue;
-                            }
+                        if let Some(last) = merged.last_mut()
+                            && last.1 == polys
+                        {
+                            last.0 += coeff;
+                            continue;
                         }
                         merged.push((coeff, polys));
                     }

@@ -78,10 +78,10 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let n_size = 2;
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input.clone());
+    let g: Value<ArkBls12_381> = Value::G1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input.clone());
+    let h: Value<ArkBls12_381> = Value::G2(h_input);
 
     let s_temp: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
 
@@ -93,15 +93,11 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     // let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau = Value::<ArkBls12_381>::Scalar(tau_input.clone());
+    let tau = Value::<ArkBls12_381>::Scalar(tau_input);
 
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input.clone()).collect());
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
 
-    let ss_index = Value::VecScalar(
-        (0..n_size)
-            .map(|i| tau_input.clone().pow(&[i as u64]))
-            .collect(),
-    );
+    let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
     let ss = ss_g.clone() * ss_index.clone();
     let _s = s_temp.clone() * tau.clone();
@@ -111,9 +107,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
     // let y =  Value::<ArBls12_381>::random(&mut rng, &ATyp::scalar());
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input.clone() * tau_input.clone());
+    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
-    let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p".to_string()), p),
         (Vid("g".to_string()), g),
         (Vid("h".to_string()), h),
@@ -121,6 +117,5 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("y".to_string()), y),
         (Vid("ss".to_string()), ss),
         (Vid("h_val".to_string()), h_val),
-    ]);
-    return inputs;
+    ])
 }

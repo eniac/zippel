@@ -1,4 +1,3 @@
-use ark_ff::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;

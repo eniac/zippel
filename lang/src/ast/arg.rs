@@ -41,12 +41,7 @@ pub type CArg = Arg<Tid, usize>;
 pub type CArgs = Args<Tid, usize>;
 
 impl<T, N> Arg<T, N> {
-    pub fn new<'a>(
-        qualifier: Qualifier,
-        distribution: Distribution,
-        id: &'a str,
-        typ: Typ<T, N>,
-    ) -> Self {
+    pub fn new(qualifier: Qualifier, distribution: Distribution, id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier,
             distribution,
@@ -54,7 +49,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn public<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn public(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Public,
             distribution: Distribution::Nonuniform,
@@ -62,7 +57,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn private<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn private(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Private,
             distribution: Distribution::Nonuniform,
@@ -70,7 +65,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn uniform<'a>(qualifier: Qualifier, id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn uniform(qualifier: Qualifier, id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier,
             distribution: Distribution::Uniform,
@@ -78,7 +73,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn public_uniform<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn public_uniform(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Public,
             distribution: Distribution::Uniform,
@@ -86,7 +81,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn private_uniform<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn private_uniform(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Private,
             distribution: Distribution::Uniform,
@@ -94,7 +89,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn public_uniform_nz<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn public_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Public,
             distribution: Distribution::UniformNonZero,
@@ -102,7 +97,7 @@ impl<T, N> Arg<T, N> {
             typ,
         }
     }
-    pub fn private_uniform_nz<'a>(id: &'a str, typ: Typ<T, N>) -> Self {
+    pub fn private_uniform_nz(id: &str, typ: Typ<T, N>) -> Self {
         Arg {
             qualifier: Qualifier::Private,
             distribution: Distribution::UniformNonZero,

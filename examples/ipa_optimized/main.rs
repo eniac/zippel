@@ -97,7 +97,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let sum_vec: Value<ArkSecp256k1> =
         Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n_val_const));
 
-    let inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
+    Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
         (Vid("g_vec".to_string()), g_vec),
         (Vid("h_vec".to_string()), h_vec),
         (Vid("g_factors".to_string()), G_factors),
@@ -111,7 +111,5 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
         (Vid("a_vec_witness".to_string()), a_vec_witness),
         (Vid("b_vec_witness".to_string()), b_vec_witness),
         (Vid("sum_vec".to_string()), sum_vec),
-    ]);
-
-    return inputs;
+    ])
 }

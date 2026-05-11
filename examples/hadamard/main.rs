@@ -93,7 +93,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
     let mut v_h_coeffs = Vec::with_capacity(n_val_const);
     v_h_coeffs.push(one);
-    v_h_coeffs.extend(std::iter::repeat(zero).take(n_val_const));
+    v_h_coeffs.extend(std::iter::repeat_n(zero, n_val_const));
     let v_H = Value::<ArkSecp256k1>::VecScalar(v_h_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([

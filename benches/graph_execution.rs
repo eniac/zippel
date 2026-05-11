@@ -112,7 +112,7 @@ fn hadamard_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let one = <ArkSecp256k1 as ArkConfig>::F::one();
     let mut v_h_coeffs = Vec::with_capacity(n);
     v_h_coeffs.push(one);
-    v_h_coeffs.extend(std::iter::repeat(zero).take(n));
+    v_h_coeffs.extend(std::iter::repeat_n(zero, n));
     let v_H = Value::<ArkSecp256k1>::VecScalar(v_h_coeffs).value_poly();
 
     Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
@@ -630,29 +630,25 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input.clone());
+    let g: Value<ArkBls12_381> = Value::G1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input.clone());
+    let h: Value<ArkBls12_381> = Value::G2(h_input);
 
     let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
     let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let tau: Value<ArkBls12_381> = Value::Scalar(tau_input.clone());
+    let tau: Value<ArkBls12_381> = Value::Scalar(tau_input);
 
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input.clone()).collect());
-    let ss_index = Value::VecScalar(
-        (0..n_size)
-            .map(|i| tau_input.clone().pow(&[i as u64]))
-            .collect(),
-    );
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
+    let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
     let ss = ss_g.clone() * ss_index.clone();
     let _s = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)) * tau.clone();
 
     let z_val: Value<ArkBls12_381> =
         Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
     let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input.clone() * tau_input.clone());
+    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("p".to_string()), p),

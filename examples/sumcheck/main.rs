@@ -109,10 +109,10 @@ fn drop_one_eval_point_in_value(value: &mut Value<ArkBls12_381>) -> bool {
         Value::Record(fields) => {
             let keys: Vec<String> = fields.iter().map(|(k, _)| k.clone()).collect();
             for key in keys {
-                if let Some(inner) = fields.get_mut(&key) {
-                    if drop_one_eval_point_in_value(inner) {
-                        return true;
-                    }
+                if let Some(inner) = fields.get_mut(&key)
+                    && drop_one_eval_point_in_value(inner)
+                {
+                    return true;
                 }
             }
             false

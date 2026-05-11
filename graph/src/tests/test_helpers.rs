@@ -278,7 +278,7 @@ fn evaluate_op<C: HasOpFactory>(
             let Value::Record(record) = rec_val else {
                 unreachable!()
             };
-            record.get(&field_name).cloned().unwrap()
+            record.get(field_name).cloned().unwrap()
         }
         Op::Interpolate(_, _)
         | Op::Ifft(_)

@@ -643,7 +643,7 @@ impl<N> Exp<N> {
     where
         N: Clone,
     {
-        ts.into_iter().fold(a, |acc, a| Exp::seq(acc, a.clone()))
+        ts.iter().fold(a, |acc, a| Exp::seq(acc, a.clone()))
     }
     /// Annotated constructors
     pub fn lit(v: N) -> Self {
@@ -743,7 +743,7 @@ impl<N> Exp<N> {
     pub fn var(x: &Vid) -> Self {
         Exp::Var(x.clone())
     }
-    pub fn varstr<'a>(x: &'a str) -> Self {
+    pub fn varstr(x: &str) -> Self {
         Exp::Var(Vid::from(x))
     }
     pub fn assert(b: Exp<N>) -> Self {
@@ -1038,7 +1038,7 @@ where
                         ])
                     })
                     .collect();
-                docs.push(allocator.intersperse(field_docs.into_iter(), ", "));
+                docs.push(allocator.intersperse(field_docs, ", "));
                 docs.push(allocator.text("|}"));
                 allocator.concat(docs)
             }

@@ -188,13 +188,13 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             }
             Op::Ifft(op) => {
                 let n = op.typ().size() as f64;
-                cost += self.cost(op, nthreads).0
-                    + (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
+                cost +=
+                    self.cost(op, nthreads).0 + (n * n.log2() * Self::SCALAR_MUL / nthreads as f64)
             }
             Op::Fft(op) => {
                 let n = op.typ().size() as f64;
-                cost += self.cost(op, nthreads).0
-                    + (n * (n as f64).log2() * Self::SCALAR_MUL / nthreads as f64)
+                cost +=
+                    self.cost(op, nthreads).0 + (n * n.log2() * Self::SCALAR_MUL / nthreads as f64)
             }
             Op::Check(op) => cost += self.cost(op, nthreads).0,
             Op::Poly(_op) => cost += 1.0,

@@ -87,7 +87,7 @@ pub enum GraphError {
 
 /// A trait for writing a graph to a PDF file
 pub trait WritePdf {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()>;
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()>;
 }
 
 impl GraphError {
@@ -893,8 +893,8 @@ impl<C: HasOpFactory, A> Dag<C, A> {
 /// Write graphs with string annotations to PDF
 impl<C: ArkConfig> WritePdf for Dag<C, String> {
     /// Write graph to PDF
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
-        let fdot: String = format!("{}.dot", filename.to_string());
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
+        let fdot: String = format!("{filename}.dot");
         // Remove old file if there
         std::fs::remove_file(&fdot).ok();
 
@@ -921,7 +921,7 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
         // Write to file
         std::fs::write(fdot.clone(), graphviz.to_string())?;
 
-        let fpdf: String = format!("{}.pdf", filename.to_string());
+        let fpdf: String = format!("{filename}.pdf");
 
         // Convert to pdf
         Command::new("dot")
@@ -946,28 +946,28 @@ impl<C: ArkConfig> WritePdf for Dag<C, String> {
 }
 
 impl<C: ArkConfig> WritePdf for UDag<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, _| "".to_string())
             .write_pdf(filename)
     }
 }
 
 impl<C: ArkConfig> WritePdf for QDag<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, q| q.to_string())
             .write_pdf(filename)
     }
 }
 
 impl<C: ArkConfig> WritePdf for DQDag<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, (q, d)| format!("{} {}", q, d))
             .write_pdf(filename)
     }
 }
 
 impl<C: ArkConfig> WritePdf for Dags<C, String> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         let mut joined_graph = Dag::new();
         for g in self.0.iter() {
             joined_graph = joined_graph.combine_dag(g);
@@ -977,21 +977,21 @@ impl<C: ArkConfig> WritePdf for Dags<C, String> {
 }
 
 impl<C: ArkConfig> WritePdf for UDags<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, _| "".to_string())
             .write_pdf(filename)
     }
 }
 
 impl<C: ArkConfig> WritePdf for QDags<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, q| q.to_string())
             .write_pdf(filename)
     }
 }
 
 impl<C: ArkConfig> WritePdf for DQDags<C> {
-    fn write_pdf<'a, 'b>(&'a self, filename: &'b str) -> std::io::Result<()> {
+    fn write_pdf(&self, filename: &str) -> std::io::Result<()> {
         self.map_annotations(&|_, (q, d)| format!("{} {}", q, d))
             .write_pdf(filename)
     }
@@ -1122,10 +1122,11 @@ impl<C: HasOpFactory> UDag<C> {
         }
         // Expose singleton range typevars (e.g. N: 4) as term-level constants.
         for (tid, kind) in kctx.iter() {
-            if let CKind::Range(r) = kind {
-                if r.step == 1 && r.end == r.start + 1 {
-                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
-                }
+            if let CKind::Range(r) = kind
+                && r.step == 1
+                && r.end == r.start + 1
+            {
+                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
             }
         }
 
@@ -1156,11 +1157,12 @@ impl<C: HasOpFactory> UDag<C> {
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind {
-                        if r.step == 1 && r.end == r.start + 1 {
-                            let vid = Vid::new(&tid.0);
-                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
-                        }
+                    if let CKind::Range(r) = kind
+                        && r.step == 1
+                        && r.end == r.start + 1
+                    {
+                        let vid = Vid::new(&tid.0);
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
@@ -1186,11 +1188,12 @@ impl<C: HasOpFactory> UDag<C> {
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind {
-                        if r.step == 1 && r.end == r.start + 1 {
-                            let vid = Vid::new(&tid.0);
-                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
-                        }
+                    if let CKind::Range(r) = kind
+                        && r.step == 1
+                        && r.end == r.start + 1
+                    {
+                        let vid = Vid::new(&tid.0);
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
                 self.add_top_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
@@ -1215,11 +1218,12 @@ impl<C: HasOpFactory> UDag<C> {
                     vars.insert(id, &GOp::var(id, arg_node, typ.clone()));
                 }
                 for (tid, kind) in kctx.iter() {
-                    if let CKind::Range(r) = kind {
-                        if r.step == 1 && r.end == r.start + 1 {
-                            let vid = Vid::new(&tid.0);
-                            vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
-                        }
+                    if let CKind::Range(r) = kind
+                        && r.step == 1
+                        && r.end == r.start + 1
+                    {
+                        let vid = Vid::new(&tid.0);
+                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
                 self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
@@ -1710,12 +1714,13 @@ impl<C: HasOpFactory> UDag<C> {
                             vars = next_vars;
                             let fn_kctx = sig.typevars.to_ctx();
                             for (tid, kind) in fn_kctx.iter() {
-                                if let CKind::Range(r) = kind {
-                                    if r.step == 1 && r.end == r.start + 1 {
-                                        let vid = Vid::new(&tid.0);
-                                        vctx.insert(&vid, &CTyp::Fin(r.clone()));
-                                        vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
-                                    }
+                                if let CKind::Range(r) = kind
+                                    && r.step == 1
+                                    && r.end == r.start + 1
+                                {
+                                    let vid = Vid::new(&tid.0);
+                                    vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                                    vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                                 }
                             }
                             exp = body.body();

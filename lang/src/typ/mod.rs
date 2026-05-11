@@ -134,7 +134,7 @@ impl<T, N> Typ<T, N> {
 }
 
 impl<N> GTyp<N> {
-    pub fn varstr<'a>(b: &'a str) -> Self {
+    pub fn varstr(b: &str) -> Self {
         Typ::Base(Tid::new(b))
     }
     pub fn var(b: &Tid) -> Self {
@@ -411,7 +411,7 @@ where
                         ])
                     })
                     .collect();
-                docs.push(allocator.intersperse(field_docs.into_iter(), ", "));
+                docs.push(allocator.intersperse(field_docs, ", "));
                 docs.push(allocator.text("}"));
                 allocator.concat(docs)
             }
