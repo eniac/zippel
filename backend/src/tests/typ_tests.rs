@@ -8,9 +8,9 @@
 //! compute wrong types and panic or produce bogus results. See
 //! `backend/src/op.rs:193-256` and commit `03bee5f`.
 
-use crate::{Value, ATyp, GOp, Op, ArkConfig};
 use crate::config::ArkBls12_381;
-use crate::op::{mk, HOp, Ref};
+use crate::op::{HOp, Ref, mk};
+use crate::{ATyp, ArkConfig, GOp, Op, Value};
 use petgraph::graph::NodeIndex;
 
 type C = ArkBls12_381;
@@ -29,7 +29,7 @@ fn h(op: GOp<C>) -> HOp<C> {
 /// Build an `Op::Ref` carrying an explicit annotated type — mimics
 /// how graph-builder-produced ops feed into `typ()` consumers.
 fn ref_typ(t: ATyp) -> GOp<C> {
-    Op::Ref(Ref::Node(NodeIndex::new(0)), t)
+    Op::Ref(Ref::new(NodeIndex::new(0)), t)
 }
 
 // ───────── Op::Poly ─────────
@@ -66,7 +66,13 @@ fn mle_typ_from_vec_of_2_to_n_is_mle_n() {
         let vals: Vec<_> = (0..k as u64).map(|i| h(scalar(i))).collect();
         let vec: GOp<C> = Op::Vec(vals);
         let mle: GOp<C> = Op::Mle(h(vec));
-        assert_eq!(mle.typ(), ATyp::mle(n), "mle over Vec<_, {}> should be Mle({})", k, n);
+        assert_eq!(
+            mle.typ(),
+            ATyp::mle(n),
+            "mle over Vec<_, {}> should be Mle({})",
+            k,
+            n
+        );
     }
 }
 
@@ -143,7 +149,7 @@ fn eval_of_mle_full_shape_is_scalar() {
     let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
     let xs: Vec<_> = (0..4).map(|_| h(scalar(0))).collect();
     let xs_vec: GOp<C> = Op::Vec(xs);
-    let eval: GOp<C> = Op::Eval(h(mle), h(xs_vec)); // full evaluation
+    let eval: GOp<C> = Op::Evaluate(h(mle), h(xs_vec)); // full evaluation
     assert_eq!(eval.typ(), ATyp::scalar());
 }
 
@@ -153,7 +159,7 @@ fn eval_of_mle_partial_shape_is_residual_mle() {
     let evals: Vec<_> = (0..16).map(|i| h(scalar(i))).collect();
     let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
     let xs_vec: GOp<C> = Op::Vec(vec![h(scalar(0))]); // |xs| = 1, k < n
-    let eval: GOp<C> = Op::Eval(h(mle), h(xs_vec));
+    let eval: GOp<C> = Op::Evaluate(h(mle), h(xs_vec));
     assert_eq!(eval.typ(), ATyp::mle(3));
 }
 

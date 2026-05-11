@@ -290,8 +290,12 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
-            ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial::<C::F>::zero()))),
-            ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(DenseMultilinearExtension::<C::F>::zero()))),
+            ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                DensePolynomial::<C::F>::zero(),
+            ))),
+            ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                DenseMultilinearExtension::<C::F>::zero(),
+            ))),
             ATyp::VPoly(_, _) => Value::Poly(VirtualPolynomial::new()),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
@@ -2102,20 +2106,35 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-            ATyp::Uni(m) => Value::VecScalar(C::FOps::vec_rand(rng, *m + 1)),
-            ATyp::Mle(_n) => {
-                // For MLE random, create a random univariate polynomial first, then convert
-                // Actually, we should create a random MLE - but for now use a simple approach
-                let num_vars = 1;  // Minimum 1 variable
-                let evals = C::FOps::vec_rand(rng, 1 << num_vars);
-                Value::Poly(VirtualPolynomial::from_poly(
-                    PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(num_vars, evals))
-                ))
-            },
-            ATyp::VPoly(_, _) => {
-                // For Virtual random, create a random univariate polynomial wrapped in virtual
-                let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(p)))
+            // Univariate poly: m = max_degree, so m+1 coefficients.
+            ATyp::Uni(m) => {
+                let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                    DensePolynomial::from_coefficients_vec(coeffs),
+                )))
+            }
+            // Multilinear extension on the {0,1}^n hypercube: 2^n evaluations.
+            ATyp::Mle(n) => {
+                let evals = C::FOps::vec_rand(rng, 1usize << *n);
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::from_evaluations_vec(*n, evals),
+                )))
+            }
+            // n-variate poly, max total degree m. For n <= 1 produce a
+            // univariate of degree m; otherwise a multilinear extension as
+            // a representative inhabitant of the type.
+            ATyp::VPoly(n, m) => {
+                if *n <= 1 {
+                    let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                        DensePolynomial::from_coefficients_vec(coeffs),
+                    )))
+                } else {
+                    let evals = C::FOps::vec_rand(rng, 1usize << *n);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                        DenseMultilinearExtension::from_evaluations_vec(*n, evals),
+                    )))
+                }
             }
             ATyp::Record(fields) => {
                 let mut record_fields = Ctx::new();

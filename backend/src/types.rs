@@ -50,7 +50,7 @@ pub enum ATyp {
     /// Virtual (multivariate) polynomial `VPoly(n, m)`: `n` variables and
     /// **max total degree** `m`. Coefficient count is `C(m + n, n)`.
     /// See `docs/poly-encoding.md`.
-    VPoly(usize, usize)
+    VPoly(usize, usize),
 }
 
 impl ATyp {
@@ -110,7 +110,7 @@ impl ATyp {
         match self {
             ATyp::Vec(box b, n) => (b, n),
             ATyp::Uni(m) => (ATyp::scalar(), m + 1),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -166,9 +166,7 @@ impl ATyp {
         match self {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
-            ATyp::Record(fields) => {
-                fields.iter().map(|(_, t)| t.size()).sum()
-            }
+            ATyp::Record(fields) => fields.iter().map(|(_, t)| t.size()).sum(),
             ATyp::Uni(m) => *m + 1,
             ATyp::Mle(n) => 1usize << *n,
             ATyp::VPoly(n, m) => binomial(*m + *n, *n),
@@ -778,8 +776,8 @@ mod tests {
     #[test]
     fn lub_mul_ctyp_atyp_cross_consistency() {
         use lang::id::Tid;
-        use lang::typ::{CKind, CTyp};
         use lang::typ::lub::Lub as _;
+        use lang::typ::{CKind, CTyp};
 
         let f = Tid::from("F");
         let mut kctx = Ctx::new();
@@ -787,12 +785,12 @@ mod tests {
 
         // (vars_a, deg_a, vars_b, deg_b)
         let cases = &[
-            (1usize, 3usize, 1usize, 4usize),   // Uni * Uni
-            (2, 1, 2, 1),                        // Mle * Mle, same vars
-            (2, 1, 3, 1),                        // Mle * Mle, different vars
-            (1, 5, 3, 1),                        // Uni * Mle
-            (2, 3, 2, 4),                        // VPoly * VPoly, same vars
-            (2, 3, 4, 2),                        // VPoly * VPoly, different vars
+            (1usize, 3usize, 1usize, 4usize), // Uni * Uni
+            (2, 1, 2, 1),                     // Mle * Mle, same vars
+            (2, 1, 3, 1),                     // Mle * Mle, different vars
+            (1, 5, 3, 1),                     // Uni * Mle
+            (2, 3, 2, 4),                     // VPoly * VPoly, same vars
+            (2, 3, 4, 2),                     // VPoly * VPoly, different vars
         ];
 
         for (m1, n1, m2, n2) in cases.iter().copied() {
@@ -805,10 +803,12 @@ mod tests {
             let a2 = ATyp::from_ctyp(&c2, &kctx).unwrap();
             let a_mul = ATyp::lub_mul(&a1, &a2, &Nothing).unwrap();
 
-            assert_eq!(c_mul_lowered, a_mul,
+            assert_eq!(
+                c_mul_lowered, a_mul,
                 "CTyp and ATyp lub_mul disagree on Poly({}, {}) * Poly({}, {}): \
                  lowered CTyp says {}, direct ATyp says {}",
-                m1, n1, m2, n2, c_mul_lowered, a_mul);
+                m1, n1, m2, n2, c_mul_lowered, a_mul
+            );
         }
     }
 
