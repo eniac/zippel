@@ -3046,4 +3046,222 @@ mod tests {
             "scalar fallback row should be `a - b · var(result)`"
         );
     }
+
+    // -----------------------------------------------------------------
+    // Slot-count arithmetic: num_coeffs / multi_indices / hypercube /
+    // index_of. These pin the m+1 / 2^n / C(n+m, n) conventions from
+    // docs/poly-encoding.md so a refactor of `num_coeffs` cannot silently
+    // drift back to the old `m == length` convention.
+    // -----------------------------------------------------------------
+
+    /// Test-local binomial coefficient C(n, k). Pinned here rather than
+    /// importing a numeric crate so the test depends only on `num_coeffs`
+    /// + this arithmetic identity. Assumes `k <= n`.
+    fn binomial(n: usize, k: usize) -> usize {
+        let k = k.min(n - k);
+        (0..k).fold(1, |acc, i| acc * (n - i) / (i + 1))
+    }
+
+    #[test]
+    fn test_binomial_helper_sanity() {
+        // Pin a few well-known values so a bug in the helper doesn't
+        // mask bugs in num_coeffs.
+        assert_eq!(binomial(0, 0), 1);
+        assert_eq!(binomial(5, 0), 1);
+        assert_eq!(binomial(5, 5), 1);
+        assert_eq!(binomial(5, 2), 10);
+        assert_eq!(binomial(6, 3), 20);
+        assert_eq!(binomial(10, 4), 210);
+    }
+
+    #[test]
+    fn test_num_coeffs_vpoly_matches_binomial() {
+        // VPoly(n, m) has C(n + m, n) coefficient slots.
+        for &(n, m) in &[
+            (1usize, 0usize),
+            (1, 1),
+            (1, 5),
+            (2, 1),
+            (2, 2),
+            (3, 2),
+            (4, 2),
+            (3, 3),
+        ] {
+            let sum = n + m;
+            let expected = binomial(sum, n);
+            assert_eq!(
+                num_coeffs(&ATyp::VPoly(n, m)),
+                expected,
+                "num_coeffs(VPoly({n}, {m})) should be C({sum}, {n}) = {expected}",
+            );
+        }
+        // Spot-check the worker's headline case: VPoly(3, 2) = C(5, 3) = 10.
+        assert_eq!(num_coeffs(&ATyp::VPoly(3, 2)), 10);
+    }
+
+    #[test]
+    fn test_num_coeffs_mle_is_power_of_two() {
+        // Mle(n) is the multilinear extension over {0,1}^n, so 2^n slots.
+        for n in 0..=5usize {
+            assert_eq!(
+                num_coeffs(&ATyp::Mle(n)),
+                1usize << n,
+                "num_coeffs(Mle({n})) should be 2^{n}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_num_coeffs_uni_is_m_plus_one() {
+        // Phase-14 convention: Uni(m) has m+1 coefficient slots.
+        for m in &[0usize, 1, 2, 3, 7, 15] {
+            assert_eq!(
+                num_coeffs(&ATyp::Uni(*m)),
+                *m + 1,
+                "num_coeffs(Uni({m})) should be {} (m + 1)",
+                *m + 1,
+            );
+        }
+    }
+
+    #[test]
+    fn test_num_coeffs_vec_is_length() {
+        // Vec(t, n) is a base case: exactly n slots regardless of t.
+        let cases: Vec<(ATyp, usize)> = vec![
+            (ATyp::scalar(), 0),
+            (ATyp::scalar(), 1),
+            (ATyp::scalar(), 7),
+            (ATyp::bool(), 3),
+            (ATyp::g1(), 4),
+            (ATyp::g2(), 2),
+        ];
+        for (t, n) in &cases {
+            let typ = ATyp::vec(t, *n);
+            assert_eq!(
+                num_coeffs(&typ),
+                *n,
+                "num_coeffs(Vec(_, {n})) should be {n}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_num_coeffs_base_is_one() {
+        // Every scalar-shaped base type occupies exactly one PRef slot.
+        for typ in [
+            ATyp::scalar(),
+            ATyp::bool(),
+            ATyp::g1(),
+            ATyp::g2(),
+            ATyp::gt(),
+            ATyp::fin(lang::typ::range::CRange::default()),
+        ] {
+            assert_eq!(num_coeffs(&typ), 1, "num_coeffs({typ:?}) should be 1");
+        }
+    }
+
+    #[test]
+    fn test_multi_indices_len_matches_num_coeffs() {
+        // The formula num_coeffs(VPoly(n, m)) == multi_indices(n, m).len()
+        // is supposed to be definitional. Pin it across the same grid as
+        // test_num_coeffs_vpoly_matches_binomial.
+        for &(n, m) in &[
+            (1usize, 0usize),
+            (1, 1),
+            (1, 5),
+            (2, 1),
+            (2, 2),
+            (3, 2),
+            (4, 2),
+            (3, 3),
+        ] {
+            assert_eq!(
+                multi_indices(n, m).len(),
+                num_coeffs(&ATyp::VPoly(n, m)),
+                "multi_indices({n}, {m}).len() should equal num_coeffs(VPoly({n}, {m}))",
+            );
+        }
+    }
+
+    #[test]
+    fn test_hypercube_len_is_power_of_two() {
+        for n in 0..=5usize {
+            assert_eq!(
+                hypercube(n).len(),
+                1usize << n,
+                "hypercube({n}).len() should be 2^{n}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_index_of_vpoly_roundtrip_grid() {
+        // For each (n, m), every multi-index k in multi_indices(n, m)
+        // must satisfy multi_indices(n, m)[index_of(VPoly(n, m), k)] == k.
+        for &(n, m) in &[(2usize, 2usize), (3, 3), (2, 4)] {
+            let typ = ATyp::VPoly(n, m);
+            let mis = multi_indices(n, m);
+            for k in &mis {
+                let i = index_of(&typ, k);
+                assert_eq!(
+                    &mis[i], k,
+                    "VPoly({n}, {m}): index_of/multi_indices roundtrip failed for k = {k:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_index_of_mle_roundtrip_grid() {
+        for n in [2usize, 3, 4] {
+            let typ = ATyp::Mle(n);
+            let cube = hypercube(n);
+            for b in &cube {
+                let i = index_of(&typ, b);
+                assert_eq!(
+                    &cube[i], b,
+                    "Mle({n}): index_of/hypercube roundtrip failed for b = {b:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_index_of_vpoly_position_roundtrip() {
+        // For each position i in 0..num_coeffs, the multi-index at that
+        // position must map back to i via index_of.
+        for &(n, m) in &[(2usize, 2usize), (3, 2)] {
+            let typ = ATyp::VPoly(n, m);
+            let mis = multi_indices(n, m);
+            for (i, k) in mis.iter().enumerate() {
+                assert_eq!(
+                    index_of(&typ, k),
+                    i,
+                    "VPoly({n}, {m}): position {i} -> {k:?} did not round-trip",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_multi_indices_graded_lex_ordering() {
+        // multi_indices is documented as graded-lex: ascending by total
+        // degree, ties broken by lex on the index vector. Pin this for
+        // every consecutive pair across a representative grid.
+        for &(n, m) in &[(1usize, 0usize), (1, 5), (2, 2), (3, 2), (3, 3), (4, 2)] {
+            let mis = multi_indices(n, m);
+            for w in mis.windows(2) {
+                let a = &w[0];
+                let b = &w[1];
+                let da: usize = a.iter().sum();
+                let db: usize = b.iter().sum();
+                let ok = da < db || (da == db && a < b);
+                assert!(
+                    ok,
+                    "multi_indices({n}, {m}) violates graded-lex at pair {a:?} -> {b:?} \
+                     (sums {da} vs {db})",
+                );
+            }
+        }
+    }
 }
