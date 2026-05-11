@@ -463,6 +463,12 @@ impl Lub for CTyp {
                 *n.max(m),
                 1,
             )),
+            // General Poly<A, n, m> == Poly<B, n', m'>: unify to the larger shape in each dim.
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
+                Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
+                *na.max(nb),
+                *ma.max(mb),
+            )),
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => Ok(CTyp::vec(
                 &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
@@ -533,6 +539,12 @@ impl Lub for CTyp {
                 *n.max(m),
                 1,
             )),
+            // General Poly + Poly: vars and degree both take max.
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
+                Tid::lub_add(a, b, ctx).map_err(|e| LubError::next(LubError::add(&x, &y), e))?,
+                *na.max(nb),
+                *ma.max(mb),
+            )),
             // Vec<A> + Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
@@ -545,9 +557,9 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 }
             }
-            // Uni<A> + Vec<B> = Uni<C> where C = A = B
+            // Uni<F, n> + Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
             (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if n == m {
+                if *n + 1 == *m {
                     let tb = b
                         .to_scalar(ctx)
                         .ok_or(LubError::add(&x, &y))
@@ -557,14 +569,14 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 }
             }
-            // Vec<A> + Uni<B> = Uni<C> where C = A = B
+            // Vec<F, k> + Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
             (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if n == m {
+                if *n == *m + 1 {
                     let ta = a
                         .to_scalar(ctx)
                         .ok_or(LubError::add(&x, &y))
                         .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *n))
+                    Ok(CTyp::uni(&ta, *m))
                 } else {
                     Err(LubError::add(&x, &y))
                 }
@@ -624,6 +636,12 @@ impl Lub for CTyp {
                 *n.max(m),
                 1,
             )),
+            // General Poly - Poly: vars and degree both take max.
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
+                Tid::lub_sub(a, b, ctx).map_err(|e| LubError::next(LubError::sub(&x, &y), e))?,
+                *na.max(nb),
+                *ma.max(mb),
+            )),
             // Vec<A> - Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
@@ -636,9 +654,9 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 }
             }
-            // Uni<A> - Vec<B> = Uni<C> where C = A = B
+            // Uni<F, n> - Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
             (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if n == m {
+                if *n + 1 == *m {
                     let tb = b
                         .to_scalar(ctx)
                         .ok_or(LubError::sub(&x, &y))
@@ -648,14 +666,14 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 }
             }
-            // Vec<A> - Uni<B> = Uni<C> where C = A = B
+            // Vec<F, k> - Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
             (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if n == m {
+                if *n == *m + 1 {
                     let ta = a
                         .to_scalar(ctx)
                         .ok_or(LubError::sub(&x, &y))
                         .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *n))
+                    Ok(CTyp::uni(&ta, *m))
                 } else {
                     Err(LubError::sub(&x, &y))
                 }
@@ -703,16 +721,16 @@ impl Lub for CTyp {
                 Range::lub_mul(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
             )),
-            // General rule: Poly(F, n, m) * Poly(F, n', m') = Poly(F, max(n,n'), max(m+m'-1, 0))
-            // (N coefficients means degree N-1, so degrees add: (m-1)+(m'-1) = m+m'-2, which is m+m'-1 coefficients)
+            // General rule: Poly(F, n, m) * Poly(F, n', m') = Poly(F, max(n,n'), m+m')
+            // (N is the max total degree per Typ::Poly docs; degrees add under multiplication)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => {
                 let num_vars = *na.max(nb);
-                let coeffs = (*ma + *mb).saturating_sub(1);
+                let degree = *ma + *mb;
                 Ok(CTyp::Poly(
                     Tid::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
                     num_vars,
-                    coeffs,
+                    degree,
                 ))
             }
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
@@ -804,16 +822,16 @@ impl Lub for CTyp {
                 Range::lub_div(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
             )),
-            // General rule: Poly(F, n, m) / Poly(F, n', m') = Poly(F, max(n,n'), m-m'+1) if m >= m'
-            // (N coefficients means degree N-1, so division gives (m-1)-(m'-1) = m-m' degree, which is m-m'+1 coefficients)
+            // General rule: Poly(F, n, m) / Poly(F, n', m') = Poly(F, max(n,n'), m-m') if m >= m'
+            // (N is the max total degree; polynomial quotient degree is m - m'.)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if ma >= mb => {
                 let num_vars = *na.max(nb);
-                let coeffs = *ma - *mb + 1;
+                let degree = *ma - *mb;
                 Ok(CTyp::Poly(
                     Tid::lub_div(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
                     num_vars,
-                    coeffs,
+                    degree,
                 ))
             }
             // Vec<A> / Vec<B> = Vec<C> where C = A = B
@@ -859,12 +877,17 @@ impl Lub for CTyp {
                 Range::lub_rem(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
             )),
-            // Uni<A> % Uni<B> = Uni<C> where deg(C) = deg(B) - 1
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) if n >= m => Ok(CTyp::Poly(
-                Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
-                1,
-                m.saturating_sub(1),
-            )),
+            // General Poly<F,n1,m1> % Poly<F,n2,m2> = Poly<F, max(n1,n2), m2 - 1> if m2 >= 1.
+            // (Per poly-encoding spec: remainder has degree strictly less than divisor.)
+            (CTyp::Poly(a, na, _ma), CTyp::Poly(b, nb, mb)) if *mb >= 1 => {
+                let num_vars = *na.max(nb);
+                Ok(CTyp::Poly(
+                    Tid::lub_equ(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
+                    num_vars,
+                    *mb - 1,
+                ))
+            }
             // Vec<A> % Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
@@ -941,10 +964,10 @@ impl Lub for CTyp {
                     Err(LubError::dot(&x, &y))
                 }
             }
-            // Vec<A> . Uni<A> = A
+            // Vec<F, k> . Uni<F, m> = F if k == m + 1 (coeff count = degree + 1)
             (CTyp::Vec(box a, n), CTyp::Poly(b, 1, m))
             | (CTyp::Poly(b, 1, m), CTyp::Vec(box a, n)) => {
-                if n == m {
+                if *n == *m + 1 {
                     // Type [a] and [b] should be multiplied
                     Ok(CTyp::lub_mul(&a, &CTyp::base(b), ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
@@ -1232,6 +1255,211 @@ fn lub_typ() {
         CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx),
         Ok(CTyp::Bool)
     );
+
+    // Regression (phase 7): Poly * Poly degree math.
+    // Poly(F, n, m) = n variables, max total degree m. Product degrees add.
+    // Uni<F, 3> * Uni<F, 4> = Uni<F, 7>
+    assert_eq!(
+        CTyp::lub_mul(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
+        Ok(CTyp::uni(&f, 7))
+    );
+    // Mle<F, n> * Mle<F, n> = Poly<F, n, 2> (product of two multilinears is degree 2)
+    assert_eq!(
+        CTyp::lub_mul(&CTyp::mle(&f, 3), &CTyp::mle(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 3, 2))
+    );
+    // Mle<F, 2> * Mle<F, 3> = Poly<F, 3, 2> (max vars, degree 2)
+    assert_eq!(
+        CTyp::lub_mul(&CTyp::mle(&f, 2), &CTyp::mle(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 3, 2))
+    );
+    // Uni<F, 5> * Mle<F, 3> via general Poly*Poly: Poly(F,1,5) * Poly(F,3,1) = Poly(F, 3, 6)
+    assert_eq!(
+        CTyp::lub_mul(&CTyp::uni(&f, 5), &CTyp::mle(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 3, 6))
+    );
+    // Poly<F, 2, 3> * Poly<F, 2, 4> = Poly<F, 2, 7>
+    assert_eq!(
+        CTyp::lub_mul(
+            &CTyp::Poly(f.clone(), 2, 3),
+            &CTyp::Poly(f.clone(), 2, 4),
+            &ctx
+        ),
+        Ok(CTyp::Poly(f.clone(), 2, 7))
+    );
+    // Poly<F, 2, 3> * Poly<F, 4, 2> = Poly<F, 4, 5> (max vars, sum degrees)
+    assert_eq!(
+        CTyp::lub_mul(
+            &CTyp::Poly(f.clone(), 2, 3),
+            &CTyp::Poly(f.clone(), 4, 2),
+            &ctx
+        ),
+        Ok(CTyp::Poly(f.clone(), 4, 5))
+    );
+
+    // Regression (phase 7): Poly == Poly falls through to the general arm when
+    // the shapes don't match Uni==Uni or Mle==Mle specifically.
+    assert_eq!(
+        CTyp::lub_equ(
+            &CTyp::Poly(f.clone(), 2, 2),
+            &CTyp::Poly(f.clone(), 2, 2),
+            &ctx
+        ),
+        Ok(CTyp::Poly(f.clone(), 2, 2))
+    );
+    assert_eq!(
+        CTyp::lub_equ(
+            &CTyp::Poly(f.clone(), 2, 3),
+            &CTyp::Poly(f.clone(), 3, 2),
+            &ctx
+        ),
+        Ok(CTyp::Poly(f.clone(), 3, 3))
+    );
+
+    // Regression (phase 7): lub_div degree math. Poly<F,1,5> / Poly<F,1,5> = Poly<F,1,0>
+    assert_eq!(
+        CTyp::lub_div(&CTyp::uni(&f, 5), &CTyp::uni(&f, 5), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 0))
+    );
+    assert_eq!(
+        CTyp::lub_div(&CTyp::uni(&f, 7), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 4))
+    );
+
+    // Phase 14.C: poly-encoding unification (m = max degree).
+    // lub_rem Poly×Poly: Poly<F,1,5> % Poly<F,1,3> = Poly<F,1,2> (deg = 3 - 1).
+    assert_eq!(
+        CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 2))
+    );
+    // lub_rem requires m2 >= 1; Poly<F,1,n> % Poly<F,1,0> is an error.
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
+    // General Poly×Poly rem: Poly<F,2,5> % Poly<F,3,2> = Poly<F,3,1> (max vars, m2 - 1).
+    assert_eq!(
+        CTyp::lub_rem(
+            &CTyp::Poly(f.clone(), 2, 5),
+            &CTyp::Poly(f.clone(), 3, 2),
+            &ctx
+        ),
+        Ok(CTyp::Poly(f.clone(), 3, 1))
+    );
+
+    // lub_add Uni↔Vec consistency: k == m + 1 (coeff count = degree + 1).
+    // Poly<F,1,3> + Vec<F,4> = Poly<F,1,3> (4 coeffs ↔ degree 3).
+    assert_eq!(
+        CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3))
+    );
+    assert_eq!(
+        CTyp::lub_add(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::uni(&f, 3))
+    );
+    // Length mismatch rejected.
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+
+    // lub_mul Poly×Poly: degrees add. Poly<F,1,2> * Poly<F,1,3> = Poly<F,1,5>.
+    assert_eq!(
+        CTyp::lub_mul(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::uni(&f, 5))
+    );
+}
+
+/// Phase 15: Negative / off-by-one degree regressions for Poly type rules.
+/// Locks in the phase-14 convention that `m` in `Poly<F, n, m>` is the max
+/// polynomial degree (so a univariate polynomial of degree `m` has `m + 1`
+/// coefficients). Each assertion exercises a boundary where an off-by-one
+/// on the degree parameter would silently succeed before phase 14.
+#[test]
+fn test_ctyp_poly_degree_offbyone() {
+    let f = Tid::from("F");
+    let g1 = Tid::from("G1");
+    let g2 = Tid::from("G2");
+    let ctx = Ctx::from([
+        (f.clone(), Kind::Field),
+        (g1.clone(), Kind::Group),
+        (g2.clone(), Kind::Group),
+    ]);
+    let tf = CTyp::base(&f);
+    let tg1 = CTyp::base(&g1);
+
+    // ---- lub_add / lub_sub: Poly<F,1,n> ± Vec<F,k> requires k == n + 1 ----
+    // Positive boundary: k = n + 1 succeeds.
+    assert_eq!(
+        CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3))
+    );
+    assert_eq!(
+        CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(CTyp::uni(&f, 3))
+    );
+    // Off-by-one low: k = n rejected (Vec has too few coeffs for degree n).
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_add(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
+    // Off-by-one high: k = n + 2 rejected (Vec has too many coeffs).
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
+    assert!(CTyp::lub_add(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+
+    // ---- lub_mul: Vec×Vec requires matching lengths; element types enforced ----
+    // Length mismatch rejected (no off-by-one coercion for Vec×Vec).
+    assert!(CTyp::lub_mul(&CTyp::vec(&tf, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
+    // Element type mismatch rejected (field vs group base types).
+    assert!(CTyp::lub_mul(&CTyp::vec(&tf, 4), &CTyp::vec(&tg1, 4), &ctx).is_err());
+
+    // ---- lub_div: Poly<F,n1,m1> / Poly<F,n2,m2> requires m1 ≥ m2 ----
+    // Positive boundary: equal degrees yield Poly<F,_,0>.
+    assert_eq!(
+        CTyp::lub_div(&CTyp::uni(&f, 3), &CTyp::uni(&f, 3), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 0))
+    );
+    // Off-by-one: divisor degree one greater than dividend is rejected.
+    assert!(CTyp::lub_div(&CTyp::uni(&f, 2), &CTyp::uni(&f, 3), &ctx).is_err());
+    // General Poly/Poly: same off-by-one in multivariate.
+    assert!(CTyp::lub_div(
+        &CTyp::Poly(f.clone(), 2, 3),
+        &CTyp::Poly(f.clone(), 2, 4),
+        &ctx
+    )
+    .is_err());
+    // Far off: any m2 > m1 rejected.
+    assert!(CTyp::lub_div(&CTyp::uni(&f, 0), &CTyp::uni(&f, 5), &ctx).is_err());
+
+    // ---- lub_rem: Poly<F,n1,m1> % Poly<F,n2,m2> requires m2 ≥ 1 ----
+    // Divisor of degree 0 rejected (no remainder well-defined).
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 0), &ctx).is_err());
+    // Degree-only dividend with degree-0 divisor also rejected.
+    assert!(CTyp::lub_rem(&CTyp::uni(&f, 0), &CTyp::uni(&f, 0), &ctx).is_err());
+    // m1 < m2 is still allowed: remainder degree = m2 - 1 (full dividend fits).
+    assert_eq!(
+        CTyp::lub_rem(&CTyp::uni(&f, 3), &CTyp::uni(&f, 4), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 3))
+    );
+    // Boundary m2 = 1: remainder has degree 0.
+    assert_eq!(
+        CTyp::lub_rem(&CTyp::uni(&f, 5), &CTyp::uni(&f, 1), &ctx),
+        Ok(CTyp::Poly(f.clone(), 1, 0))
+    );
+
+    // ---- lub_dot: Vec<F,k> · Poly<F,1,m> requires k == m + 1 ----
+    // Positive boundary: k = m + 1.
+    assert_eq!(
+        CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
+        Ok(tf.clone())
+    );
+    assert_eq!(
+        CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
+        Ok(tf.clone())
+    );
+    // Off-by-one low: k = m rejected.
+    assert!(CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 4), &ctx).is_err());
+    assert!(CTyp::lub_dot(&CTyp::uni(&f, 4), &CTyp::vec(&tf, 4), &ctx).is_err());
+    // Off-by-one high: k = m + 2 rejected.
+    assert!(CTyp::lub_dot(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
 }
 
 #[cfg(test)]

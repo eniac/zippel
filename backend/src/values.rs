@@ -277,6 +277,11 @@ impl<C: ArkConfig> Value<C> {
         Value::Scalar(C::FOps::from_usize(i))
     }
 
+    /// Returns the zero value for `typ`. For polynomial types, the
+    /// arkworks zero polynomial is size-independent, so the `m` / `n`
+    /// parameters (which under the phase-14 encoding denote **max
+    /// degree** / **num variables**, not coefficient counts — see
+    /// `docs/poly-encoding.md`) are intentionally ignored.
     pub fn zero(typ: &ATyp) -> Self {
         match typ {
             ATyp::Base(ABase::Bool) => Value::Bool(false),
@@ -285,7 +290,7 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
-            ATyp::Uni(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                 DensePolynomial::<C::F>::zero(),
             ))),
             ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
@@ -2101,25 +2106,35 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::G2), n) => Value::VecG2(C::G2Ops::vec_rand(rng, *n)),
             ATyp::Vec(box ATyp::Base(ABase::GT), n) => Value::VecGT(C::POps::vec_rand(rng, *n)),
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, &t)).collect()),
-            ATyp::Uni(n) => {
-                // Match `Poly(F,1,n)` / FFT grid size `n`: `value_fft` uses `n` coefficients.
-                let len = (*n).max(1);
-                let coeffs = C::FOps::vec_rand(rng, len);
+            // Univariate poly: m = max_degree, so m+1 coefficients.
+            ATyp::Uni(m) => {
+                let coeffs = C::FOps::vec_rand(rng, *m + 1);
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                     DensePolynomial::from_coefficients_vec(coeffs),
                 )))
             }
-            ATyp::Mle(k) => {
-                let num_vars = *k;
-                let evals = C::FOps::vec_rand(rng, 1usize << num_vars);
+            // Multilinear extension on the {0,1}^n hypercube: 2^n evaluations.
+            ATyp::Mle(n) => {
+                let evals = C::FOps::vec_rand(rng, 1usize << *n);
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
+                    DenseMultilinearExtension::from_evaluations_vec(*n, evals),
                 )))
             }
-            ATyp::VPoly(_, _) => {
-                // For Virtual random, create a random univariate polynomial wrapped in virtual
-                let p = DensePolynomial::from_coefficients_vec(C::FOps::vec_rand(rng, 3));
-                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(p)))
+            // n-variate poly, max total degree m. For n <= 1 produce a
+            // univariate of degree m; otherwise a multilinear extension as
+            // a representative inhabitant of the type.
+            ATyp::VPoly(n, m) => {
+                if *n <= 1 {
+                    let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+                        DensePolynomial::from_coefficients_vec(coeffs),
+                    )))
+                } else {
+                    let evals = C::FOps::vec_rand(rng, 1usize << *n);
+                    Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                        DenseMultilinearExtension::from_evaluations_vec(*n, evals),
+                    )))
+                }
             }
             ATyp::Record(fields) => {
                 let mut record_fields = Ctx::new();

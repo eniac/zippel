@@ -102,7 +102,7 @@ pub enum TypeError {
     EvaluateGrid(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CTyp),
 
     #[error(
-        "EvaluateGridError: Unary [eval] requires the polynomial's max-degree to be a power of two; got n={3}:\n\t{0}, {1} |- eval ( {2}: {4})"
+        "EvaluateGridError: Unary [eval] requires the polynomial's coefficient count (m+1) to be a power of two; got max_degree={3} (m+1={3}+1 coefficients):\n\t{0}, {1} |- eval ( {2}: {4})"
     )]
     EvaluateGridNotPow2(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, usize, CTyp),
 
@@ -381,7 +381,11 @@ impl Typeable for CExp {
                                     kctx, vctx, self, n,
                                 ));
                             }
-                            Ok(CTyp::Poly(i, 1, n))
+                            // n evaluations on the n-th roots of unity uniquely
+                            // determine a polynomial of max degree n-1
+                            // (n coefficients under the m+1 convention).
+                            // Pow2 check above rules out n == 0, so n >= 1.
+                            Ok(CTyp::Poly(i, 1, n - 1))
                         }
                         _ => Err(TypeError::interpolate_unary(kctx, &vctx, self)),
                     },
@@ -401,7 +405,12 @@ impl Typeable for CExp {
                                 if ip != ie {
                                     return Err(TypeError::interpolate(kctx, &vctx, self));
                                 }
-                                Ok(CTyp::Poly(ie, 1, ne))
+                                // Lagrange interpolation at ne distinct points
+                                // yields a polynomial of max degree ne-1
+                                // (ne coefficients under the m+1 convention).
+                                // np == ne and ne >= 1 since vector typing
+                                // rejects empty literals upstream.
+                                Ok(CTyp::Poly(ie, 1, ne - 1))
                             }
                             _ => Err(TypeError::interpolate(kctx, &vctx, self)),
                         }
@@ -409,36 +418,43 @@ impl Typeable for CExp {
                 }
             }
 
+            // `poly(v: [F; k])` with `k >= 1` yields `Poly<F, 1, k - 1>`
+            // (degree convention: `m = k - 1`).
             CExp::Poly(box v) => {
                 let typ = v
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
-                    CTyp::Vec(box b, n) => {
+                    CTyp::Vec(box b, k) => {
+                        if k == 0 {
+                            return Err(TypeError::poly(kctx, &vctx, self));
+                        }
                         let i = b
                             .to_scalar(kctx)
                             .ok_or(TypeError::poly(kctx, &vctx, self))?;
-                        Ok(CTyp::Poly(i, 1, n))
+                        Ok(CTyp::Poly(i, 1, k - 1))
                     }
                     _ => Err(TypeError::poly(kctx, &vctx, self)),
                 }
             }
 
+            // `coef(p: Poly<F, 1, m>)` yields `[F; m + 1]` (coefficient count
+            // is degree + 1 under the Phase 14 degree convention).
             CExp::Coef(box p) => {
                 let typ = p
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match typ {
-                    CTyp::Poly(tid, 1, n) => {
+                    CTyp::Poly(tid, 1, m) => {
                         let k = kctx.get(&tid).ok_or(TypeError::lub(
                             TypeError::exp(kctx, vctx, self),
                             LubError::kind_not_found(&tid),
                         ))?;
                         // Only field elements can be evaluated
                         if k.is_scalar() {
-                            Ok(CTyp::vec(&CTyp::Base(tid), n))
+                            Ok(CTyp::vec(&CTyp::Base(tid), m + 1))
                         } else {
                             Err(TypeError::coef(kctx, vctx, self))
                         }
@@ -497,12 +513,18 @@ impl Typeable for CExp {
                                 if !k.is_scalar() {
                                     return Err(TypeError::evaluate_grid(kctx, vctx, p, &t));
                                 }
-                                if !n.is_power_of_two() {
+                                // Phase 14 m+1 convention: Poly<F, 1, n> has n+1
+                                // coefficients. The runtime FFT requires the
+                                // coefficient count to be a power of two
+                                // (`GeneralEvaluationDomain::new(n+1)` else pads).
+                                // Check the coefficient count, not the max-degree.
+                                let coef_count = n + 1;
+                                if !coef_count.is_power_of_two() {
                                     return Err(TypeError::evaluate_grid_not_pow2(
                                         kctx, vctx, p, n, &t,
                                     ));
                                 }
-                                Ok(CTyp::vec(&CTyp::Base(tid), n))
+                                Ok(CTyp::vec(&CTyp::Base(tid), coef_count))
                             }
                             _ => Err(TypeError::evaluate_grid(kctx, vctx, p, &t)),
                         }
@@ -1410,8 +1432,8 @@ mod tests {
         // Create expression p / p
         let uni_div = CExp::div(CExp::varstr("p"), CExp::varstr("p"));
         assert_eq!(
-            uni_div.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 1))
+            uni_div.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 1, 0))
         );
     }
 
@@ -1618,17 +1640,19 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Pow2 length required by the spec (radix-2 FFT).
+        // interpolate_grid([f1, 2, 3, 4]) : Poly<F, 1, 3> — 4 evaluations
+        // uniquely determine a polynomial of max degree 3 (4 coefficients
+        // under the m+1 convention).
         let interp1 = CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
-            CExp::lit(5),
+            CExp::lit(4),
         ]));
 
         assert_eq!(
             interp1.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 4))
+            Ok(CTyp::Poly(Tid::from("F"), 1, 3))
         );
 
         let interp_bad =
@@ -1636,13 +1660,13 @@ mod tests {
 
         assert!(interp_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
-        // Non-power-of-two length is rejected.
+        // Non-power-of-two length is rejected by interpolate_grid.
         let interp_non_pow2 = CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
         ]));
-        assert!(interp_non_pow2.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        assert!(interp_non_pow2.infer(&KIND_CTX, &fctx, &mut vctx).is_err());
     }
 
     #[test]
@@ -1650,7 +1674,7 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Create an interpolation expressionin poly([1, 2, 3], [1, 2, 3])
+        // Phase 14: poly([f1, 2, 3]) : Poly<F, 1, 2> (3 coefs -> degree 2).
         let interp1 = CExp::poly(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
@@ -1658,8 +1682,8 @@ mod tests {
         ]));
 
         assert_eq!(
-            interp1.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 3))
+            interp1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 1, 2))
         );
 
         let interp_bad = CExp::poly(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
@@ -1672,6 +1696,8 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
+        // Phase 14 roundtrip: poly([k elems]) : Poly<F, 1, k-1>,
+        // and coef(.) : [F; (k-1) + 1] = [F; k]. Here k = 3.
         let interp1 = CExp::coef(CExp::poly(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
@@ -1679,27 +1705,29 @@ mod tests {
         ])));
 
         assert_eq!(
-            interp1.infer(&KIND_CTX, &fctx, &vctx),
+            interp1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3))
         );
     }
 
-    // Test evaluation
+    // Test coef . interpolate_grid roundtrip (Phase 14 m+1 convention)
     #[test]
     fn test_fft() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // Pow2 length required by the spec (radix-2 FFT).
-        let eval1 = CExp::evaluate_grid(CExp::interpolate_grid(CExp::vec(vec![
+        // interpolate_grid([f1, 2, 3, 4]) yields Poly<F, 1, 3>: n=4 evaluations
+        // uniquely determine a polynomial of max degree 3 (4 coefficients
+        // under the m+1 convention). coef(Poly<F, 1, 3>) then yields [F; 4].
+        let eval1 = CExp::coef(CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
             CExp::lit(3),
-            CExp::lit(5),
+            CExp::lit(4),
         ])));
 
         assert_eq!(
-            eval1.infer(&KIND_CTX, &fctx, &vctx),
+            eval1.infer(&KIND_CTX, &fctx, &mut vctx),
             Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
 
@@ -1708,56 +1736,114 @@ mod tests {
         assert!(eval_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 
-    // Unary `eval(p)` is FFT-grid evaluation; only valid on univariate polynomials.
-    // `m` in VAR_CTX has type Poly(F, 8, 1) (MLE in 8 vars), so eval(m) must be
-    // rejected at the type-inference layer rather than silently producing
-    // Vec(F, 256) and panicking later in Op::Fft.typ() at the IR level.
+    /// Issue #116: `eval(p)` (unary FFT-grid eval) must reject a polynomial
+    /// whose coefficient count `m+1` is not a power of two. Under the m+1
+    /// convention `Poly<F, 1, m>` has `m+1` coefficients, and the runtime
+    /// `value_fft` calls `GeneralEvaluationDomain::new(m+1)` which pads to
+    /// `next_pow2(m+1)` evaluations — so accepting non-pow2-coef inputs at
+    /// the type level would leave the declared `Op::Fft::typ()` shape and
+    /// the runtime output length disagreeing. The static type checker must
+    /// catch this.
+    ///
+    /// - Negative: `Poly<F, 1, 2>` has 3 coefficients (not pow2) → rejected.
+    /// - Positive: `Poly<F, 1, 3>` has 4 coefficients (pow2)        → accepted.
     #[test]
-    fn test_evaluate_on_mle_rejected() {
+    fn eval_unary_rejects_non_pow2_coefficient_count() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("p3"), &CTyp::Poly(Tid::from("F"), 1, 2)); // 3 coefs
+        vctx.insert(&Vid::from("p4"), &CTyp::Poly(Tid::from("F"), 1, 3)); // 4 coefs
 
-        let eval_mle = CExp::evaluate_grid(CExp::varstr("m"));
+        // Negative case: 3 coefficients is not a power of two — must be
+        // rejected with EvaluateGridNotPow2.
+        let bad = CExp::evaluate_grid(CExp::varstr("p3"));
+        let bad_result = bad.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            matches!(
+                bad_result,
+                Err(TypeError::EvaluateGridNotPow2(_, _, _, _, _))
+            ),
+            "eval(Poly<F, 1, 2>) has 3 coefficients (not pow2); infer() must \
+             reject with EvaluateGridNotPow2. Got: {:?}",
+            bad_result
+        );
 
-        assert!(eval_mle.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        // Positive case: 4 coefficients IS a power of two — must be accepted.
+        let good = CExp::evaluate_grid(CExp::varstr("p4"));
+        let good_result = good.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            good_result.is_ok(),
+            "eval(Poly<F, 1, 3>) has 4 coefficients (pow2); infer() must \
+             accept it. Got: {:?}",
+            good_result
+        );
     }
 
-    // Characterization tests for CExp::Mle inference: pin the observable behavior
-    // so the redundant-infer cleanup in this arm cannot silently regress it.
+    // Phase 14 encoding regression tests: exercise the degree convention on
+    // poly / coef explicitly, independent of the legacy tests above.
     #[test]
-    fn test_mle_pow2_vec() {
+    fn test_phase14_poly_degree() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // v2: Vec(F, 4) — 4 = 2^2, so MLE in 2 vars.
-        let m = CExp::mle(CExp::varstr("v2"));
-
+        // poly([a, b, c]) : Poly<F, 1, 2>
+        let e = CExp::poly(CExp::vec(vec![
+            CExp::varstr("f1"),
+            CExp::varstr("f2"),
+            CExp::lit(3),
+        ]));
         assert_eq!(
-            m.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 2, 1))
+            e.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 1, 2))
+        );
+
+        // Singleton: poly([a]) : Poly<F, 1, 0> (constant polynomial).
+        let e1 = CExp::poly(CExp::vec(vec![CExp::varstr("f1")]));
+        assert_eq!(
+            e1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 1, 0))
         );
     }
 
     #[test]
-    fn test_mle_rejects_scalar_arg() {
+    fn test_phase14_coef_count() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // f1 is a scalar (not a vector); mle(f1) must be rejected.
-        let m_bad = CExp::mle(CExp::varstr("f1"));
+        // coef(poly([a, b, c])) : [F; 3] (degree 2 -> 3 coefs).
+        let e = CExp::coef(CExp::poly(CExp::vec(vec![
+            CExp::varstr("f1"),
+            CExp::varstr("f2"),
+            CExp::lit(3),
+        ])));
+        assert_eq!(
+            e.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 3))
+        );
 
-        assert!(m_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        // coef(poly([a])) : [F; 1] (constant polynomial -> 1 coef).
+        let e1 = CExp::coef(CExp::poly(CExp::vec(vec![CExp::varstr("f1")])));
+        assert_eq!(
+            e1.infer(&KIND_CTX, &fctx, &mut vctx),
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 1))
+        );
     }
 
     #[test]
-    fn test_mle_rejects_non_pow2_vec() {
+    fn test_phase14_coef_poly_roundtrip() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // v1: Vec(F, 5) — 5 is not a power of two; mle(v1) must be rejected.
-        let m_bad = CExp::mle(CExp::varstr("v1"));
-
-        assert!(m_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        // For every k in {1, 2, 3, 5, 7}: coef(poly(v : [F; k])) : [F; k].
+        for k in [1usize, 2, 3, 5, 7] {
+            let v = CExp::vec((0..k).map(|_| CExp::varstr("f1")).collect());
+            let e = CExp::coef(CExp::poly(v));
+            assert_eq!(
+                e.infer(&KIND_CTX, &fctx, &mut vctx),
+                Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), k)),
+                "roundtrip failed for k = {k}"
+            );
+        }
     }
 
     // Test for function application

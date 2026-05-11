@@ -5,7 +5,7 @@
 //! via the `PartialEq` (graph isomorphism) implementation.
 
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
@@ -609,7 +609,7 @@ fn pin_log_new_transcr() {
 #[test]
 fn pin_poly() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             poly(a)
         }
     "#;
@@ -633,7 +633,7 @@ fn pin_poly() {
 #[test]
 fn pin_coef() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
             coef(a)
         }
     "#;
@@ -656,8 +656,11 @@ fn pin_coef() {
 /// Tests: CExp::Interpolate, Node::interpolate.
 #[test]
 fn pin_interpolate() {
+    // 4 (point, eval) pairs uniquely determine a polynomial of max degree 3
+    // (4 coefficients under the m+1 convention), so the result type is
+    // Uni<F, 3>.
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             interpolate([0,1,2,3], a)
         }
     "#;
@@ -688,8 +691,11 @@ fn pin_interpolate() {
 /// Tests: CExp::Evaluate(_, None), Node::fft.
 #[test]
 fn pin_fft() {
+    // Phase 14 m+1 convention + issue #116: Uni<F, 3> has 4 coefficients
+    // (pow2 — required for FFT-grid eval to typecheck). eval() returns a
+    // length-4 vector matching the coefficient count.
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 3>) -> [F; 4] {
             eval(a)
         }
     "#;
@@ -697,7 +703,7 @@ fn pin_fft() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::vpoly(1, 4);
+    let poly_typ = ATyp::vpoly(1, 3);
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -1373,18 +1379,22 @@ fn pin_app_univariate_poly() {
     let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
-    // x^0 simplifies to Value(Scalar(one)), x^1 simplifies to var_x
+    // Phase-14 m+1 convention: Uni<F, 2> has 3 coefficients, so p(x) lowers
+    // to dot(p, [x^0, x^1, x^2]) — x^0 simplifies to Value(Scalar(one)),
+    // x^1 simplifies to var_x, x^2 stays as a Pow node.
     let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
-    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone()]);
+    let two_idx = GOp::<B>::Value(Value::Index(2));
+    let x_sq_idx = expected.add_node(Node::bin(BinOp::Pow, &var_x, &two_idx, &s));
+    let x_sq_ref = GOp::<B>::Ref(Ref(x_sq_idx), s.clone());
+    // Edge for the Pow node consuming var_x.
+    expected.add_edges(DepType::Data, x_sq_idx, var_x.clone());
+    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone(), x_sq_ref]);
 
-    // dot(p, [1, x]) → Bin(Dot) node
+    // dot(p, [1, x, x^2]) → Bin(Dot) node
     let dot = expected.add_node(Node::bin(BinOp::Dot, &var_p, &x_powers, &s));
-    // Edge from inp for var_p
     expected.add_edges(DepType::Data, dot, var_p);
-    // Edge from inp for var_x (inside the Vec)
     expected.add_edges(DepType::Data, dot, x_powers);
 
-    // Result is Ref(Node(dot), scalar) → no ret node
     assert!(gs[0] == expected);
 }
 

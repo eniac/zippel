@@ -5,6 +5,23 @@ use lang::typ::{CKind, CTyp, Nothing};
 use share::{Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 
+/// Binomial coefficient `C(n, k)` with saturating semantics.
+///
+/// Used by `ATyp::size` to count coefficients of `VPoly(n, m)` — the
+/// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
+/// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
+fn binomial(n: usize, k: usize) -> usize {
+    if k > n {
+        return 0;
+    }
+    let k = k.min(n - k);
+    let mut result: usize = 1;
+    for i in 0..k {
+        result = result.saturating_mul(n - i) / (i + 1);
+    }
+    result
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Hash)]
 pub enum ABase {
     G1,
@@ -23,11 +40,16 @@ pub enum ATyp {
     Vec(Box<ATyp>, usize),
     /// Record type with named fields
     Record(Ctx<String, ATyp>),
-    /// Univariate polynomial in coefficient form (max degree)
+    /// Univariate polynomial in coefficient form. The parameter is the
+    /// **max polynomial degree** (not the coefficient count); coefficient
+    /// count is `m + 1`. See `docs/poly-encoding.md`.
     Uni(usize),
-    /// Multilinear extension (num variables)
+    /// Multilinear extension over `n` boolean variables. Coefficient /
+    /// evaluation count is `2^n`. See `docs/poly-encoding.md`.
     Mle(usize),
-    /// Virtual polynomial - product of polynomials (num_vars, max_degree)
+    /// Virtual (multivariate) polynomial `VPoly(n, m)`: `n` variables and
+    /// **max total degree** `m`. Coefficient count is `C(m + n, n)`.
+    /// See `docs/poly-encoding.md`.
     VPoly(usize, usize),
 }
 
@@ -80,10 +102,14 @@ impl ATyp {
     pub fn vpoly(num_vars: usize, max_degree: usize) -> Self {
         ATyp::VPoly(num_vars, max_degree)
     }
+    /// View this type as `(element, length)`. For `Uni(m)`, the length
+    /// is the coefficient count `m + 1` (not the degree). This matches
+    /// `size()` and the `Vec<F, m + 1>` ↔ `Poly<F, 1, m>` consistency
+    /// rule in `docs/poly-encoding.md`.
     pub fn into_vec(self) -> (ATyp, usize) {
         match self {
             ATyp::Vec(box b, n) => (b, n),
-            ATyp::Uni(n) => (ATyp::scalar(), n),
+            ATyp::Uni(m) => (ATyp::scalar(), m + 1),
             _ => unreachable!(),
         }
     }
@@ -128,14 +154,22 @@ impl ATyp {
         }
     }
 
+    /// Number of flattened scalar slots needed to represent a value of
+    /// this type — i.e. the **coefficient count** under the canonical
+    /// polynomial encoding (see `docs/poly-encoding.md`).
+    ///
+    /// - `Uni(m)` has `m + 1` coefficients.
+    /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
+    /// - `VPoly(n, m)` has `C(m + n, n)` multi-indices with total
+    ///   degree `≤ m`.
     pub fn size(&self) -> usize {
         match self {
             ATyp::Vec(t, n) => t.size() * n,
             ATyp::Base(_) => 1,
             ATyp::Record(fields) => fields.iter().map(|(_, t)| t.size()).sum(),
-            ATyp::Uni(n) => *n,
-            ATyp::Mle(n) => *n,
-            ATyp::VPoly(m, n) => m * n,
+            ATyp::Uni(m) => *m + 1,
+            ATyp::Mle(n) => 1usize << *n,
+            ATyp::VPoly(n, m) => binomial(*m + *n, *n),
         }
     }
 
@@ -684,6 +718,49 @@ mod tests {
         assert_eq!(atyp, ATyp::vpoly(3, 5));
     }
 
+    /// Phase 7 regression: `lub_mul` on `CTyp::Poly` and on the lowered
+    /// `ATyp::VPoly` must produce the same ATyp. Without this, lang-level
+    /// type inference can return a polynomial with the wrong degree
+    /// relative to what the backend expects (blocking e.g. the Gröbner
+    /// builder on `eval(a*b, xs)` for `a, b : Mle<F, N>`).
+    #[test]
+    fn lub_mul_ctyp_atyp_cross_consistency() {
+        use lang::id::Tid;
+        use lang::typ::lub::Lub as _;
+        use lang::typ::{CKind, CTyp};
+
+        let f = Tid::from("F");
+        let mut kctx = Ctx::new();
+        kctx.insert(&f, &CKind::Field);
+
+        // (vars_a, deg_a, vars_b, deg_b)
+        let cases = &[
+            (1usize, 3usize, 1usize, 4usize), // Uni * Uni
+            (2, 1, 2, 1),                     // Mle * Mle, same vars
+            (2, 1, 3, 1),                     // Mle * Mle, different vars
+            (1, 5, 3, 1),                     // Uni * Mle
+            (2, 3, 2, 4),                     // VPoly * VPoly, same vars
+            (2, 3, 4, 2),                     // VPoly * VPoly, different vars
+        ];
+
+        for (m1, n1, m2, n2) in cases.iter().copied() {
+            let c1 = CTyp::Poly(f.clone(), m1, n1);
+            let c2 = CTyp::Poly(f.clone(), m2, n2);
+            let c_mul = CTyp::lub_mul(&c1, &c2, &kctx).unwrap();
+            let c_mul_lowered = ATyp::from_ctyp(&c_mul, &kctx).unwrap();
+
+            let a1 = ATyp::from_ctyp(&c1, &kctx).unwrap();
+            let a2 = ATyp::from_ctyp(&c2, &kctx).unwrap();
+            let a_mul = ATyp::lub_mul(&a1, &a2, &Nothing).unwrap();
+
+            assert_eq!(
+                c_mul_lowered, a_mul,
+                "CTyp and ATyp lub_mul disagree on Poly({}, {}) * Poly({}, {}): \
+                 lowered CTyp says {}, direct ATyp says {}",
+                m1, n1, m2, n2, c_mul_lowered, a_mul
+            );
+        }
+    }
     // ========================================================================
     // Property-based tests for algebraic laws
     // ========================================================================
