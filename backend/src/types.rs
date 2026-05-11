@@ -839,4 +839,320 @@ mod tests {
             Ok(())
         });
     }
+
+    // ========================================================================
+    // Pinning tests for polynomial-shape lub_mul / lub_add / lub_concat / lub_dot
+    //
+    // These tests fix the current ATyp lub semantics for polynomial shapes so
+    // that any accidental change to the degree/num_vars arithmetic gets caught
+    // by regressions.  They mirror the Phase-14 m+1 convention documented in
+    // `docs/poly-encoding.md` — `Uni(m)` holds a polynomial of max degree `m`
+    // (so `m+1` coefficients), `Mle(n)` is the multilinear extension over `n`
+    // variables (so `2^n` evaluations), and `VPoly(n, m)` is multivariate with
+    // `n` variables and max total degree `m`.
+    // ========================================================================
+
+    // ---------- lub_mul ----------
+
+    /// `Uni(m1) * Uni(m2) == Uni(m1 + m2)` — degrees add for univariate product.
+    #[test]
+    fn lub_mul_uni_uni_pins_degree_sum() {
+        for (m1, m2) in &[(0, 0), (0, 1), (1, 2), (2, 3), (3, 4)] {
+            let result = ATyp::lub_mul(&ATyp::uni(*m1), &ATyp::uni(*m2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::uni(m1 + m2),
+                "Uni({}) * Uni({}) should equal Uni({})",
+                m1,
+                m2,
+                m1 + m2,
+            );
+        }
+    }
+
+    /// `Mle(n) * Mle(n) == VPoly(n, 2)` — product of multilinears is degree 2.
+    #[test]
+    fn lub_mul_mle_same_vars_is_vpoly_deg_2() {
+        for n in 1..=4 {
+            let result = ATyp::lub_mul(&ATyp::mle(n), &ATyp::mle(n), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::vpoly(n, 2),
+                "Mle({n}) * Mle({n}) should equal VPoly({n}, 2)",
+            );
+        }
+    }
+
+    /// `Mle(n1) * Mle(n2)` with `n1 != n2` — current arm uses `max(n1,n2)` for
+    /// the num_vars and 2 for the degree.  Pins that behaviour.
+    #[test]
+    fn lub_mul_mle_distinct_vars_pins_max_and_deg_2() {
+        for (n1, n2) in &[(1usize, 2usize), (2, 1), (1, 4), (4, 2), (3, 5)] {
+            let result = ATyp::lub_mul(&ATyp::mle(*n1), &ATyp::mle(*n2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::vpoly(*n1.max(n2), 2),
+                "Mle({n1}) * Mle({n2}) should equal VPoly(max, 2)",
+            );
+        }
+    }
+
+    /// `VPoly(n1,m1) * VPoly(n2,m2) == VPoly(max(n1,n2), m1+m2)`.
+    #[test]
+    fn lub_mul_vpoly_vpoly_pins_max_vars_and_sum_degree() {
+        for (n1, m1, n2, m2) in &[(1, 1, 1, 1), (2, 1, 2, 2), (2, 2, 3, 1), (3, 2, 1, 1)] {
+            let result =
+                ATyp::lub_mul(&ATyp::vpoly(*n1, *m1), &ATyp::vpoly(*n2, *m2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::vpoly(*n1.max(n2), m1 + m2),
+                "VPoly({n1},{m1}) * VPoly({n2},{m2}) should equal VPoly(max,sum)",
+            );
+        }
+    }
+
+    /// `VPoly(n,m) * Uni(d) == VPoly(n, m+d)` (in both orders).
+    #[test]
+    fn lub_mul_vpoly_uni_pins_degree_sum() {
+        for (n, m, d) in &[(1usize, 1usize, 0usize), (2, 2, 1), (3, 0, 4), (4, 5, 2)] {
+            let left = ATyp::lub_mul(&ATyp::vpoly(*n, *m), &ATyp::uni(*d), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::uni(*d), &ATyp::vpoly(*n, *m), &Nothing).unwrap();
+            let expected = ATyp::vpoly(*n, m + d);
+            assert_eq!(
+                left,
+                expected,
+                "VPoly({n},{m}) * Uni({d}) should equal VPoly({n},{})",
+                m + d
+            );
+            assert_eq!(
+                right,
+                expected,
+                "Uni({d}) * VPoly({n},{m}) should equal VPoly({n},{})",
+                m + d
+            );
+        }
+    }
+
+    /// `VPoly(n,m) * Mle(n')` — the arm uses `max(n, n')` for num_vars and
+    /// `m + 1` for the degree (multilinear contributes +1 to degree).
+    #[test]
+    fn lub_mul_vpoly_mle_pins_degree_plus_one() {
+        for (n, m, n_mle) in &[(1usize, 1usize, 1usize), (2, 2, 3), (3, 0, 1), (4, 5, 4)] {
+            let left = ATyp::lub_mul(&ATyp::vpoly(*n, *m), &ATyp::mle(*n_mle), &Nothing).unwrap();
+            let right = ATyp::lub_mul(&ATyp::mle(*n_mle), &ATyp::vpoly(*n, *m), &Nothing).unwrap();
+            let expected = ATyp::vpoly(*n.max(n_mle), m + 1);
+            assert_eq!(
+                left, expected,
+                "VPoly({n},{m}) * Mle({n_mle}) should pin to VPoly(max, m+1)",
+            );
+            assert_eq!(
+                right, expected,
+                "Mle({n_mle}) * VPoly({n},{m}) should pin to VPoly(max, m+1)",
+            );
+        }
+    }
+
+    // ---------- lub_add ----------
+
+    /// `Uni(m1) + Uni(m2) == Uni(max(m1, m2))` — sum cannot exceed the larger degree.
+    #[test]
+    fn lub_add_uni_uni_pins_max_degree() {
+        for (m1, m2) in &[(0, 0), (0, 1), (1, 2), (2, 3), (3, 4)] {
+            let result = ATyp::lub_add(&ATyp::uni(*m1), &ATyp::uni(*m2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::uni(*m1.max(m2)),
+                "Uni({m1}) + Uni({m2}) should equal Uni(max)",
+            );
+        }
+    }
+
+    /// `Mle(n) + Mle(n) == Mle(n)` — sum of multilinears with same num_vars
+    /// stays multilinear.
+    #[test]
+    fn lub_add_mle_same_vars_is_mle() {
+        for n in 1..=4 {
+            let result = ATyp::lub_add(&ATyp::mle(n), &ATyp::mle(n), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::mle(n),
+                "Mle({n}) + Mle({n}) should equal Mle({n})"
+            );
+        }
+    }
+
+    /// `Mle(n1) + Mle(n2)` with `n1 != n2` — current arm pins to
+    /// `VPoly(max(n1, n2), 1)` (degree-1 multivariate).
+    #[test]
+    fn lub_add_mle_distinct_vars_pins_vpoly_deg_1() {
+        for (n1, n2) in &[(1usize, 2usize), (3, 1), (2, 4), (4, 3)] {
+            let result = ATyp::lub_add(&ATyp::mle(*n1), &ATyp::mle(*n2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::vpoly(*n1.max(n2), 1),
+                "Mle({n1}) + Mle({n2}) should pin to VPoly(max, 1)",
+            );
+        }
+    }
+
+    /// `VPoly(n1,m1) + VPoly(n2,m2) == VPoly(max(n1,n2), max(m1,m2))`.
+    #[test]
+    fn lub_add_vpoly_vpoly_pins_max_max() {
+        for (n1, m1, n2, m2) in &[(1, 1, 1, 1), (2, 1, 2, 2), (2, 2, 3, 1), (3, 2, 1, 1)] {
+            let result =
+                ATyp::lub_add(&ATyp::vpoly(*n1, *m1), &ATyp::vpoly(*n2, *m2), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::vpoly(*n1.max(n2), *m1.max(m2)),
+                "VPoly({n1},{m1}) + VPoly({n2},{m2}) should equal VPoly(max,max)",
+            );
+        }
+    }
+
+    // ---------- lub_concat ----------
+
+    /// `concat(Vec<Scalar, k>, Uni(m)) == Uni(k + m)` (and reverse).
+    /// A vector of k scalar coefficients concatenated with a poly of degree m
+    /// yields a poly of degree k+m.
+    #[test]
+    fn lub_concat_vec_scalar_uni_pins_degree_sum() {
+        for (k, m) in &[(1usize, 0usize), (1, 1), (2, 3), (4, 2), (5, 5)] {
+            let left = ATyp::lub_concat(&ATyp::vec_scalar(*k), &ATyp::uni(*m), &Nothing).unwrap();
+            let right = ATyp::lub_concat(&ATyp::uni(*m), &ATyp::vec_scalar(*k), &Nothing).unwrap();
+            let expected = ATyp::uni(k + m);
+            assert_eq!(
+                left,
+                expected,
+                "concat(Vec<Scalar,{k}>, Uni({m})) should equal Uni({})",
+                k + m,
+            );
+            assert_eq!(
+                right,
+                expected,
+                "concat(Uni({m}), Vec<Scalar,{k}>) should equal Uni({})",
+                k + m,
+            );
+        }
+    }
+
+    /// `concat(Vec<Scalar, k>, Mle(n))` — no arm covers this combination, so
+    /// the call returns an error.  Pin the error so anybody adding a future
+    /// arm has to update this test consciously.
+    #[test]
+    fn lub_concat_vec_scalar_mle_pins_error() {
+        let result = ATyp::lub_concat(&ATyp::vec_scalar(4), &ATyp::mle(2), &Nothing);
+        assert!(
+            result.is_err(),
+            "concat(Vec<Scalar,4>, Mle(2)) currently has no arm and should error, got {result:?}",
+        );
+        let result = ATyp::lub_concat(&ATyp::mle(2), &ATyp::vec_scalar(4), &Nothing);
+        assert!(
+            result.is_err(),
+            "concat(Mle(2), Vec<Scalar,4>) currently has no arm and should error, got {result:?}",
+        );
+    }
+
+    /// `concat(Vec<T,n1>, Vec<T,n2>) == Vec<T,n1+n2>` — sanity pin for the
+    /// vector–vector arm used as the comparison baseline for the spec above.
+    #[test]
+    fn lub_concat_vec_vec_pins_length_sum() {
+        let result =
+            ATyp::lub_concat(&ATyp::vec_scalar(3), &ATyp::vec_scalar(5), &Nothing).unwrap();
+        assert_eq!(result, ATyp::vec_scalar(8));
+    }
+
+    // ---------- lub_dot ----------
+
+    /// `dot(Vec<G1, n>, Vec<Scalar, n>) == G1` — MSM type rule (group of the
+    /// non-scalar side).
+    #[test]
+    fn lub_dot_vec_g1_vec_scalar_is_g1() {
+        for n in 1..=4 {
+            let left = ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_scalar(n), &Nothing).unwrap();
+            let right = ATyp::lub_dot(&ATyp::vec_scalar(n), &ATyp::vec_g1(n), &Nothing).unwrap();
+            assert_eq!(
+                left,
+                ATyp::g1(),
+                "dot(Vec<G1,{n}>, Vec<Scalar,{n}>) should be G1"
+            );
+            assert_eq!(
+                right,
+                ATyp::g1(),
+                "dot(Vec<Scalar,{n}>, Vec<G1,{n}>) should be G1"
+            );
+        }
+    }
+
+    /// `dot(Vec<G2, n>, Vec<Scalar, n>) == G2` — same rule for G2.
+    #[test]
+    fn lub_dot_vec_g2_vec_scalar_is_g2() {
+        for n in 1..=4 {
+            let result = ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_scalar(n), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::g2(),
+                "dot(Vec<G2,{n}>, Vec<Scalar,{n}>) should be G2"
+            );
+        }
+    }
+
+    /// `dot(Vec<Scalar, n>, Vec<Scalar, n>) == Scalar`.
+    #[test]
+    fn lub_dot_vec_scalar_vec_scalar_is_scalar() {
+        for n in 1..=4 {
+            let result =
+                ATyp::lub_dot(&ATyp::vec_scalar(n), &ATyp::vec_scalar(n), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::scalar(),
+                "dot(Vec<Scalar,{n}>, Vec<Scalar,{n}>) should be Scalar"
+            );
+        }
+    }
+
+    /// `dot(Vec<G1, n>, Vec<G2, n>)` — the pairing-style inner product
+    /// (Tate/Weil pairing on each component, summed in GT) is **not** wired
+    /// up.  The `ATyp::lub_dot` Vec arm delegates to `ATyp::lub_mul` on the
+    /// inner types, and `ABase::lub_mul` rejects `G1 * G2`.  Pin the error
+    /// so any future implementation of a `dot` -> `pair` rule has to update
+    /// this test deliberately.
+    #[test]
+    fn lub_dot_vec_g1_vec_g2_pins_error() {
+        for n in 1..=4 {
+            let left = ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing);
+            let right = ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing);
+            assert!(
+                left.is_err(),
+                "dot(Vec<G1,{n}>, Vec<G2,{n}>) currently has no pairing arm and should error, got {left:?}",
+            );
+            assert!(
+                right.is_err(),
+                "dot(Vec<G2,{n}>, Vec<G1,{n}>) currently has no pairing arm and should error, got {right:?}",
+            );
+        }
+    }
+
+    /// `dot(Uni(n), Uni(n)) == Scalar` — explicit Uni–Uni arm.
+    #[test]
+    fn lub_dot_uni_uni_is_scalar() {
+        for n in 0..=4 {
+            let result = ATyp::lub_dot(&ATyp::uni(n), &ATyp::uni(n), &Nothing).unwrap();
+            assert_eq!(
+                result,
+                ATyp::scalar(),
+                "dot(Uni({n}), Uni({n})) should be Scalar"
+            );
+        }
+    }
+
+    /// `dot(Vec<T, n>, Vec<T, m>)` with `n != m` has no covering arm, so it
+    /// must error.
+    #[test]
+    fn lub_dot_mismatched_vec_lengths_errors() {
+        let result = ATyp::lub_dot(&ATyp::vec_scalar(3), &ATyp::vec_scalar(4), &Nothing);
+        assert!(
+            result.is_err(),
+            "dot of mismatched Vec lengths should error, got {result:?}",
+        );
+    }
 }
