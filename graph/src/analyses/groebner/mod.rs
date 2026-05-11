@@ -1751,45 +1751,16 @@ mod tests {
                 vec![2, 0], // deg 2 (lex)
             ]
         );
-        assert_eq!(got.len(), 6); // C(2+2, 2) = 6
     }
 
     #[test]
     fn test_hypercube_enumeration() {
         let got = hypercube(3);
-        assert_eq!(got.len(), 8);
         // lex: bit 0 is inner-most, so b = [b0, b1, b2] read little-endian.
         assert_eq!(got[0], vec![0, 0, 0]);
         assert_eq!(got[1], vec![1, 0, 0]);
         assert_eq!(got[2], vec![0, 1, 0]);
         assert_eq!(got[7], vec![1, 1, 1]);
-    }
-
-    #[test]
-    fn test_num_coeffs() {
-        assert_eq!(num_coeffs(&ATyp::VPoly(2, 2)), 6);
-        assert_eq!(num_coeffs(&ATyp::VPoly(3, 1)), 4); // scalar + 3 linear
-        assert_eq!(num_coeffs(&ATyp::Mle(3)), 8);
-        // Per docs/poly-encoding.md: Uni(m) has m+1 coefficient slots.
-        assert_eq!(num_coeffs(&ATyp::Uni(5)), 6);
-        assert_eq!(num_coeffs(&ATyp::Uni(0)), 1);
-        assert_eq!(num_coeffs(&ATyp::scalar()), 1);
-    }
-
-    #[test]
-    fn test_index_of_vpoly_roundtrip() {
-        let typ = ATyp::VPoly(2, 2);
-        for (i, k) in multi_indices(2, 2).into_iter().enumerate() {
-            assert_eq!(index_of(&typ, &k), i);
-        }
-    }
-
-    #[test]
-    fn test_index_of_mle_roundtrip() {
-        let typ = ATyp::Mle(3);
-        for (i, b) in hypercube(3).into_iter().enumerate() {
-            assert_eq!(index_of(&typ, &b), i);
-        }
     }
 
     // -----------------------------------------------------------------
@@ -3083,6 +3054,7 @@ mod tests {
             (1, 5),
             (2, 1),
             (2, 2),
+            (3, 1),
             (3, 2),
             (4, 2),
             (3, 3),
@@ -3095,8 +3067,6 @@ mod tests {
                 "num_coeffs(VPoly({n}, {m})) should be C({sum}, {n}) = {expected}",
             );
         }
-        // Spot-check the worker's headline case: VPoly(3, 2) = C(5, 3) = 10.
-        assert_eq!(num_coeffs(&ATyp::VPoly(3, 2)), 10);
     }
 
     #[test]
@@ -3171,6 +3141,7 @@ mod tests {
             (1, 5),
             (2, 1),
             (2, 2),
+            (3, 1),
             (3, 2),
             (4, 2),
             (3, 3),
@@ -3195,32 +3166,17 @@ mod tests {
     }
 
     #[test]
-    fn test_index_of_vpoly_roundtrip_grid() {
-        // For each (n, m), every multi-index k in multi_indices(n, m)
-        // must satisfy multi_indices(n, m)[index_of(VPoly(n, m), k)] == k.
-        for &(n, m) in &[(2usize, 2usize), (3, 3), (2, 4)] {
-            let typ = ATyp::VPoly(n, m);
-            let mis = multi_indices(n, m);
-            for k in &mis {
-                let i = index_of(&typ, k);
-                assert_eq!(
-                    &mis[i], k,
-                    "VPoly({n}, {m}): index_of/multi_indices roundtrip failed for k = {k:?}",
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_index_of_mle_roundtrip_grid() {
+        // For each position i in 0..2^n the hypercube entry at i must map
+        // back to i via index_of (exact position check, not just injectivity).
         for n in [2usize, 3, 4] {
             let typ = ATyp::Mle(n);
             let cube = hypercube(n);
-            for b in &cube {
-                let i = index_of(&typ, b);
+            for (i, b) in cube.iter().enumerate() {
                 assert_eq!(
-                    &cube[i], b,
-                    "Mle({n}): index_of/hypercube roundtrip failed for b = {b:?}",
+                    index_of(&typ, b),
+                    i,
+                    "Mle({n}): position {i} -> {b:?} did not round-trip",
                 );
             }
         }
@@ -3230,7 +3186,7 @@ mod tests {
     fn test_index_of_vpoly_position_roundtrip() {
         // For each position i in 0..num_coeffs, the multi-index at that
         // position must map back to i via index_of.
-        for &(n, m) in &[(2usize, 2usize), (3, 2)] {
+        for &(n, m) in &[(2usize, 2usize), (3, 2), (3, 3), (2, 4)] {
             let typ = ATyp::VPoly(n, m);
             let mis = multi_indices(n, m);
             for (i, k) in mis.iter().enumerate() {
