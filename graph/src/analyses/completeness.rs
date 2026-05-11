@@ -702,15 +702,9 @@ mod tests {
     /// is the identity matrix. With N=2 we have ω = -1, 4 equations
     /// across 6 variables.
     ///
-    /// NOTE (issue #116 follow-up): disabled while the symmetric off-by-one
-    /// in `CExp::Interpolate(None, _)`'s return type is unresolved. The
-    /// roundtrip needs `interpolate(v: [F; n])` to return a polynomial whose
-    /// coefficient count matches what `eval()` then accepts (a power of two
-    /// per #116). Currently `interpolate` returns `Poly<F, 1, n>` (`n+1`
-    /// coefficients), so no pow2 `n` satisfies both checks at once. Re-enable
-    /// after the `interpolate` off-by-one is fixed.
+    /// With v: [F; 2]: interpolate(v) → Poly<F, 1, 1> (2 coefs, pow2),
+    /// then eval(p) → Vec<F, 2>, matching v's shape exactly.
     #[test]
-    #[ignore = "blocked on symmetric off-by-one in CExp::Interpolate(None, _) return type — see #116 follow-up"]
     fn ifft_roundtrip_completeness() {
         let ex = r#"
             proto ifft_roundtrip<F: Field>(public v: [F; 2]) where v == v {

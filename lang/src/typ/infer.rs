@@ -381,7 +381,11 @@ impl Typeable for CExp {
                                     kctx, vctx, self, n,
                                 ));
                             }
-                            Ok(CTyp::Poly(i, 1, n))
+                            // n evaluations on the n-th roots of unity uniquely
+                            // determine a polynomial of max degree n-1
+                            // (n coefficients under the m+1 convention).
+                            // Pow2 check above rules out n == 0, so n >= 1.
+                            Ok(CTyp::Poly(i, 1, n - 1))
                         }
                         _ => Err(TypeError::interpolate_unary(kctx, &vctx, self)),
                     },
@@ -401,7 +405,12 @@ impl Typeable for CExp {
                                 if ip != ie {
                                     return Err(TypeError::interpolate(kctx, &vctx, self));
                                 }
-                                Ok(CTyp::Poly(ie, 1, ne))
+                                // Lagrange interpolation at ne distinct points
+                                // yields a polynomial of max degree ne-1
+                                // (ne coefficients under the m+1 convention).
+                                // np == ne and ne >= 1 since vector typing
+                                // rejects empty literals upstream.
+                                Ok(CTyp::Poly(ie, 1, ne - 1))
                             }
                             _ => Err(TypeError::interpolate(kctx, &vctx, self)),
                         }
@@ -1631,7 +1640,9 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // interpolate_grid([f1, 2, 3, 4]) : Poly<F, 1, 4> (4 evaluations).
+        // interpolate_grid([f1, 2, 3, 4]) : Poly<F, 1, 3> — 4 evaluations
+        // uniquely determine a polynomial of max degree 3 (4 coefficients
+        // under the m+1 convention).
         let interp1 = CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
@@ -1641,7 +1652,7 @@ mod tests {
 
         assert_eq!(
             interp1.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 4))
+            Ok(CTyp::Poly(Tid::from("F"), 1, 3))
         );
 
         let interp_bad =
@@ -1705,8 +1716,9 @@ mod tests {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
 
-        // interpolate_grid([f1, 2, 3, 4]) yields Poly<F, 1, 4> (n=4 evals -> max_degree=4).
-        // coef(Poly<F, 1, 4>) yields [F; 5] under the m+1 coefficient convention.
+        // interpolate_grid([f1, 2, 3, 4]) yields Poly<F, 1, 3>: n=4 evaluations
+        // uniquely determine a polynomial of max degree 3 (4 coefficients
+        // under the m+1 convention). coef(Poly<F, 1, 3>) then yields [F; 4].
         let eval1 = CExp::coef(CExp::interpolate_grid(CExp::vec(vec![
             CExp::varstr("f1"),
             CExp::lit(2),
@@ -1716,7 +1728,7 @@ mod tests {
 
         assert_eq!(
             eval1.infer(&KIND_CTX, &fctx, &mut vctx),
-            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 5))
+            Ok(CTyp::vec(&CTyp::Base(Tid::from("F")), 4))
         );
 
         let eval_bad = CExp::evaluate_grid(CExp::vec(vec![CExp::varstr("f1")]));
