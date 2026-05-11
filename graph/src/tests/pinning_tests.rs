@@ -5,7 +5,7 @@
 //! via the `PartialEq` (graph isomorphism) implementation.
 
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
@@ -657,8 +657,8 @@ fn pin_coef() {
 #[test]
 fn pin_interpolate() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
-            ifft(a)
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+            interpolate([0,1,2,3], a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -689,8 +689,8 @@ fn pin_interpolate() {
 #[test]
 fn pin_fft() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
-            fft(a)
+        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+            eval(a)
         }
     "#;
     let gs = parse_and_build(src);
@@ -1355,33 +1355,40 @@ fn pin_app_univariate_poly() {
     type F = <B as backend::ArkConfig>::F;
 
     let src = r#"
-        fn f<F: Field>(public p: Uni<F, 1>, public x: F) -> F { p(x) }
+        fn f<F: Field>(public p: Uni<F, 2>, public x: F) -> F { p(x) }
     "#;
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let inp = expected.add_node(Node::inp(Vid::new("f"), vec![
-        PRef::from_var(Vid::new("p"), NodeIndex::new(0), ATyp::vpoly(1, 1), 0, Qualifier::Public, Distribution::Nonuniform),
-        PRef::from_var(Vid::new("x"), NodeIndex::new(0), s.clone(), 0, Qualifier::Public, Distribution::Nonuniform),
-    ]));
+    let (_inp, _inp_args) = expected_inp(
+        &mut expected,
+        "f",
+        &[pub_t("p", ATyp::vpoly(1, 2)), pub_t("x", s.clone())],
+    );
+    let arg_p = _inp_args[0];
+    let arg_x = _inp_args[1];
 
-    let var_p = GOp::<B>::var(&Vid::new("p"), inp, ATyp::vpoly(1, 1));
-    let var_x = GOp::<B>::var(&Vid::new("x"), inp, s.clone());
+    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
+    let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
-    // x^0 simplifies to Value(Scalar(one)), x^1 simplifies to var_x
+    // Phase-14 m+1 convention: Uni<F, 2> has 3 coefficients, so p(x) lowers
+    // to dot(p, [x^0, x^1, x^2]) — x^0 simplifies to Value(Scalar(one)),
+    // x^1 simplifies to var_x, x^2 stays as a Pow node.
     let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
-    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone()]);
+    let two_idx = GOp::<B>::Value(Value::Index(2));
+    let x_sq_idx = expected.add_node(Node::bin(BinOp::Pow, &var_x, &two_idx, &s));
+    let x_sq_ref = GOp::<B>::Ref(Ref(x_sq_idx), s.clone());
+    // Edge for the Pow node consuming var_x.
+    expected.add_edges(DepType::Data, x_sq_idx, var_x.clone());
+    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone(), x_sq_ref]);
 
-    // dot(p, [1, x]) → Bin(Dot) node
+    // dot(p, [1, x, x^2]) → Bin(Dot) node
     let dot = expected.add_node(Node::bin(BinOp::Dot, &var_p, &x_powers, &s));
-    // Edge from inp for var_p
     expected.add_edges(DepType::Data, dot, var_p);
-    // Edge from inp for var_x (inside the Vec)
     expected.add_edges(DepType::Data, dot, x_powers);
 
-    // Result is Ref(Node(dot), scalar) → no ret node
     assert!(gs[0] == expected);
 }
 

@@ -137,7 +137,7 @@ fn poly_typ_from_vec(t: ATyp) -> ATyp {
     match t {
         ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
         ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
-        other => other,                // defensive: preserve shape
+        other => other,               // defensive: preserve shape
     }
 }
 
@@ -152,7 +152,7 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
         ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
         v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.size()),
         ATyp::Vec(box elem, n) => ATyp::vec(&elem, n), // already a vec; identity
-        other => other,                                 // defensive
+        other => other,                                // defensive
     }
 }
 
@@ -215,12 +215,16 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Vec(vs) => {
                 let mut typ = vs[0].typ();
                 for (i, v) in vs.iter().enumerate().skip(1) {
-                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing)
-                        .unwrap_or_else(|_| panic!(
+                    typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).unwrap_or_else(|_| {
+                        panic!(
                             "UncaughtError: Vector operands must be of the same type: \
                              child[0] has type {}, child[{}] has type {} (total {} children)",
-                            typ, i, v.typ(), vs.len()
-                        ));
+                            typ,
+                            i,
+                            v.typ(),
+                            vs.len()
+                        )
+                    });
                 }
                 ATyp::vec(&typ, vs.len())
             }
@@ -243,7 +247,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
             // convention (see docs/poly-encoding.md).
             Op::Poly(op) => poly_typ_from_vec(op.typ()),
-            Op::Eval(p, x) => {
+            Op::Evaluate(p, x) => {
                 // Compute the result type of evaluating polynomial `p` at
                 // the k-length vector of points `x`.
                 //
@@ -268,7 +272,7 @@ impl<C: ArkConfig, R> Op<C, R> {
                     ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
                     _ => x_typ,
                 }
-            },
+            }
             // Op::Coef(p) flattens a polynomial to its coefficient vector.
             // The resulting Vec length equals the polynomial's coefficient
             // count (see ATyp::size).
@@ -276,8 +280,9 @@ impl<C: ArkConfig, R> Op<C, R> {
             // Op::Mle(v): v : Vec<F, 2^n> → Mle(n). The child is an
             // evaluation vector on the boolean hypercube of dimension n.
             Op::Mle(op) => match op.typ() {
-                ATyp::Vec(_, k) if k.is_power_of_two() && k >= 1 =>
-                    ATyp::mle(k.trailing_zeros() as usize),
+                ATyp::Vec(_, k) if k.is_power_of_two() && k >= 1 => {
+                    ATyp::mle(k.trailing_zeros() as usize)
+                }
                 t @ ATyp::Mle(_) => t,
                 other => other,
             },
@@ -285,6 +290,74 @@ impl<C: ArkConfig, R> Op<C, R> {
                 let (elem, _) = v.typ().into_vec();
                 ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
             }
+            Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
+                (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                )
+                | (
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), m),
+                    ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n),
+                ) => {
+                    if m != n {
+                        panic!(
+                            "Op::Interpolate: points and evals must have the same length; got {} vs {}",
+                            m, n
+                        );
+                    }
+                    ATyp::uni(n)
+                }
+                (tp, te) => panic!(
+                    "Op::Interpolate: both arguments must be Vec(Scalar | Fin, n); got points: {}, evals: {}",
+                    tp, te
+                ),
+            },
+            Op::Marginalize(op) => {
+                let cfg_typ = op.typ();
+                let ATyp::Record(fields) = cfg_typ else {
+                    panic!("Op::Marginalize: input must be a record config");
+                };
+                let poly_typ = fields
+                    .get(&"poly".to_string())
+                    .unwrap_or_else(|| panic!("Op::Marginalize: missing 'poly' field"));
+                let (n, d) = match poly_typ {
+                    ATyp::Uni(deg) => (1usize, *deg),
+                    ATyp::Mle(vars) => (*vars, 1usize),
+                    ATyp::VPoly(vars, deg) => (*vars, *deg),
+                    t => panic!(
+                        "Op::Marginalize: 'poly' must be a polynomial type, got {}",
+                        t,
+                    ),
+                };
+                let out_degree = fields
+                    .get(&"max_degree".to_string())
+                    .and_then(|t| match t {
+                        ATyp::Base(ABase::Fin(r))
+                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                        {
+                            Some(r.start)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(d);
+                let next_n = n.saturating_sub(1);
+                let mut out_fields = Ctx::new();
+                out_fields.insert(
+                    &"evaluations".to_string(),
+                    &ATyp::vec_scalar(out_degree + 1),
+                );
+                out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
+                ATyp::Record(out_fields)
+            }
+            Op::Proj(_, _, typ) => typ.clone(),
         }
     }
 

@@ -93,9 +93,11 @@ fn coef_eval_test() {
     let c = a.value_interpolate(None).value_fft();
     assert_deq!(&c, &a);
 
-    // Poly(F, 1, 8) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 8) round-trips.
-    // Compare via coefficient vectors to avoid wrapper-shape sensitivity.
-    let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(8));
+    // Poly(F, 1, 7) -[fft]-> Vec(F, 8) -[ifft]-> Poly(F, 1, 7) round-trips.
+    // Use max_degree 7 so the coefficient count (m+1 = 8) is already a power
+    // of two — FFT then produces 8 evaluations and IFFT recovers exactly 8
+    // coefficients without padding.
+    let p = Value::<TestConfig>::random(&mut rng, &ATyp::uni(7));
     let p2 = p.value_fft().value_interpolate(None);
     assert_deq!(&p2.value_coef(), &p.value_coef());
 }
@@ -314,7 +316,7 @@ fn inverse_test() {
     assert_deq!(&c, &Value::<TestConfig>::scalar_from_usize(10));
 
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::Uni(1));
-    let b= a.clone() * a.clone();
+    let b = a.clone() * a.clone();
     let c = b.clone() / a.clone();
     assert_deq!(&a, &c);
 }

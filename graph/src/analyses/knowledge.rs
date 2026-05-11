@@ -555,11 +555,12 @@ fn knowledge_named_let_eval_product() {
     let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
     let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
     let g = QualifierPropagation::from_dag(&gs[0]);
-    let mut up = UniformityPropagation::new();
-    let g = up.from_dag(&g);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     // All inputs are public so nothing could leak; trivially ZK.
-    assert!(kz.run().is_ok(),
-        "public-only eval protocol should be ZK (no private secrets to leak)");
+    assert!(
+        kz.run().is_ok(),
+        "public-only eval protocol should be ZK (no private secrets to leak)"
+    );
 }
