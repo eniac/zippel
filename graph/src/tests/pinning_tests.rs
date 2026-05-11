@@ -656,8 +656,11 @@ fn pin_coef() {
 /// Tests: CExp::Interpolate, Node::interpolate.
 #[test]
 fn pin_interpolate() {
+    // 4 (point, eval) pairs uniquely determine a polynomial of max degree 3
+    // (4 coefficients under the m+1 convention), so the result type is
+    // Uni<F, 3>.
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             interpolate([0,1,2,3], a)
         }
     "#;
