@@ -113,7 +113,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Reduce(op, v) => Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
-            Op::Eval(p, xs) => Op::Eval(
+            Op::Evaluate(p, xs) => Op::Evaluate(
                 mk::<C>(self.trans_clos_op(dag, p.get().clone())),
                 mk::<C>(self.trans_clos_op(dag, xs.get().clone())),
             ),
@@ -121,7 +121,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Record(fields) => Op::Record(
-                fields.into_iter()
+                fields
+                    .into_iter()
                     .map(|(k, v)| (k.clone(), mk::<C>(self.trans_clos_op(dag, v.get().clone()))))
                     .collect(),
             ),
@@ -129,8 +130,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 let oa = self.trans_clos_op(dag, a.get().clone());
                 let ob = self.trans_clos_op(dag, b.get().clone());
                 Op::Pair(mk::<C>(oa), mk::<C>(ob), t)
-            },
-            op => op
+            }
+            op => op,
         }
     }
 

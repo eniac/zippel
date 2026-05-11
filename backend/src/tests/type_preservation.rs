@@ -509,20 +509,22 @@ mod poly_ops {
         });
     }
 
-    /// Spec: `Fft : Poly(F, 1, n) -> Vec(F, n)` (`infer.rs:692-706`).
-    /// The runtime now takes `Value::Poly` only.
+    /// Spec: `Fft : Poly(F, 1, m) -> Vec(F, m+1)` (`coef_typ_from_poly`).
+    /// Under the Phase-14 m+1 convention, `Uni(m)` has `m+1` coefficients;
+    /// FFT requires `m+1` to be a power of two so the evaluation domain
+    /// matches the coefficient count exactly (no padding).
     #[test]
     fn pbt_fft_poly_to_vec_per_spec() {
         arbtest::arbtest(|u| {
-            // Pow2 sizes only — `infer.rs` rejects non-pow2 Fft.
-            let n: usize = *u.choose(&[1usize, 2, 4, 8])?;
+            // Choose max_degree m so that m+1 is a power of two.
+            let m: usize = *u.choose(&[0usize, 1, 3, 7])?;
             let mut rng = test_rng();
-            let v: V = Value::random(&mut rng, &ATyp::uni(n));
+            let v: V = Value::random(&mut rng, &ATyp::uni(m));
             let r = v.value_fft();
-            let expected = ATyp::vec_scalar(n);
+            let expected = ATyp::vec_scalar(m + 1);
             assert!(
                 has_atyp(&r, &expected),
-                "fft(uni({n})) -> {} (expected {expected})",
+                "fft(uni({m})) -> {} (expected {expected})",
                 vty(&r)
             );
             Ok(())

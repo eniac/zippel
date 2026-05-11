@@ -446,12 +446,13 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "Mle × Mle equality under relation a==b should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "Mle × Mle equality under relation a==b should be complete"
+        );
     }
 
     /// Part B.5 regression #1: named-let binding scalar product of challenges.
@@ -473,14 +474,19 @@ mod tests {
                 x <- c1 * c2;
                 verify(x == rr)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(), "named-let scalar product should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "named-let scalar product should be complete"
+        );
     }
 
     /// Part B.5 regression #2: named-let binding a single full-multivariate
@@ -508,8 +514,7 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(ca.run().is_ok(), "named-let single-eval should be complete");
@@ -538,11 +543,13 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(), "named-let partial-eval should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "named-let partial-eval should be complete"
+        );
     }
 
     /// Part B.5 regression #4: named-let binding a univariate eval.
@@ -566,11 +573,13 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(), "named-let univariate-eval should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "named-let univariate-eval should be complete"
+        );
     }
 
     /// Phase 7 attempted regression: `eval(a*b, xs) == eval(a, xs) * eval(b, xs)`
@@ -610,12 +619,13 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "eval-based Mle product identity should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "eval-based Mle product identity should be complete"
+        );
     }
 
     /// Phase 6 regression: correct `Op::Eval::typ()` dispatch.
@@ -628,21 +638,24 @@ mod tests {
     /// node for each shape and asserts the returned `ATyp`.
     #[test]
     fn op_eval_typ_dispatch() {
-        use crate::{Ref, Op as BOp, GOp, mk};
+        use crate::{GOp, Op as BOp, Ref, mk};
         use backend::{ATyp, ArkBls12_381};
         use petgraph::graph::NodeIndex;
 
-        // Build an Op::Eval(p, x) where p has type `p_typ` and x has type `x_typ`.
+        // Build an Op::Evaluate(p, x) where p has type `p_typ` and x has type `x_typ`.
         let mk_eval = |p_typ: ATyp, x_typ: ATyp| -> GOp<ArkBls12_381> {
-            let p: GOp<ArkBls12_381> = BOp::Ref(Ref::Node(NodeIndex::new(0)), p_typ);
-            let x: GOp<ArkBls12_381> = BOp::Ref(Ref::Node(NodeIndex::new(1)), x_typ);
-            BOp::Eval(mk(p), mk(x))
+            let p: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(0)), p_typ);
+            let x: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(1)), x_typ);
+            BOp::Evaluate(mk(p), mk(x))
         };
 
         // Univariate batched: Uni(m) at Vec(scalar, k) → Vec(scalar, k).
         let op = mk_eval(ATyp::Uni(3), ATyp::Vec(Box::new(ATyp::scalar()), 4));
-        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 4),
-            "univariate batched eval should keep Vec(scalar, k)");
+        assert_eq!(
+            op.typ(),
+            ATyp::Vec(Box::new(ATyp::scalar()), 4),
+            "univariate batched eval should keep Vec(scalar, k)"
+        );
 
         // Univariate batched with Uni(k) on the right (equivalent shape).
         let op = mk_eval(ATyp::Uni(3), ATyp::Uni(4));
@@ -654,23 +667,31 @@ mod tests {
 
         // Full multivariate VPoly: VPoly(n, m) at Vec(scalar, n) → scalar.
         let op = mk_eval(ATyp::VPoly(2, 2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
-        assert_eq!(op.typ(), ATyp::scalar(),
-            "full multivariate VPoly eval should be scalar");
+        assert_eq!(
+            op.typ(),
+            ATyp::scalar(),
+            "full multivariate VPoly eval should be scalar"
+        );
 
         // Partial VPoly: VPoly(n, m) at Vec(scalar, k) with k<n → VPoly(n-k, m).
         let op = mk_eval(ATyp::VPoly(3, 2), ATyp::Vec(Box::new(ATyp::scalar()), 1));
-        assert_eq!(op.typ(), ATyp::VPoly(2, 2),
-            "partial multivariate VPoly eval should drop k variables");
+        assert_eq!(
+            op.typ(),
+            ATyp::VPoly(2, 2),
+            "partial multivariate VPoly eval should drop k variables"
+        );
 
         // Full Mle: Mle(n) at Vec(scalar, n) → scalar.
         let op = mk_eval(ATyp::Mle(2), ATyp::Vec(Box::new(ATyp::scalar()), 2));
-        assert_eq!(op.typ(), ATyp::scalar(),
-            "full Mle eval should be scalar");
+        assert_eq!(op.typ(), ATyp::scalar(), "full Mle eval should be scalar");
 
         // Partial Mle: Mle(n) at Vec(scalar, k) with k<n → Mle(n-k).
         let op = mk_eval(ATyp::Mle(3), ATyp::Vec(Box::new(ATyp::scalar()), 2));
-        assert_eq!(op.typ(), ATyp::Mle(1),
-            "partial Mle eval should drop k variables");
+        assert_eq!(
+            op.typ(),
+            ATyp::Mle(1),
+            "partial Mle eval should drop k variables"
+        );
     }
 
     /// Phase 9 regression: `ifft(v)` roundtrips through `fft` to `v`.
@@ -684,19 +705,23 @@ mod tests {
     fn ifft_roundtrip_completeness() {
         let ex = r#"
             proto ifft_roundtrip<F: Field>(public v: [F; 2]) where v == v {
-                let p = ifft(v);
-                let u = fft(p);
+                let p = interpolate(v);
+                let u = eval(p);
                 verify(u == v)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "fft(ifft(v)) == v should be complete via DFT basis equations");
+        assert!(
+            ca.run().is_ok(),
+            "fft(ifft(v)) == v should be complete via DFT basis equations"
+        );
     }
 
     /// Phase 9 regression: `fft` respects addition (linearity).
@@ -713,20 +738,24 @@ mod tests {
                 public b: Poly<F, 1, 2>
             ) where a == a {
                 let c = a + b;
-                let va = fft(a);
-                let vb = fft(b);
-                let vc = fft(c);
+                let va = eval(a);
+                let vb = eval(b);
+                let vc = eval(c);
                 verify(vc == va + vb)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "fft(a + b) == fft(a) + fft(b) should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "fft(a + b) == fft(a) + fft(b) should be complete"
+        );
     }
 
     /// Phase 9 regression: `ifft` respects addition (symmetric of above).
@@ -740,20 +769,24 @@ mod tests {
                 public v: [F; 2]
             ) where u == u {
                 let w = u + v;
-                let pu = ifft(u);
-                let pv = ifft(v);
-                let pw = ifft(w);
+                let pu = interpolate(u);
+                let pv = interpolate(v);
+                let pw = interpolate(w);
                 verify(pw == pu + pv)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "ifft(u + v) == ifft(u) + ifft(v) should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "ifft(u + v) == ifft(u) + ifft(v) should be complete"
+        );
     }
 
     /// Phase 10 regression: `reduce(+, v) == Σ v[i]`.
@@ -765,14 +798,18 @@ mod tests {
                 let s = reduce(+, v);
                 verify(s == a + b + c)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "reduce(+, [a,b,c]) == a+b+c should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "reduce(+, [a,b,c]) == a+b+c should be complete"
+        );
     }
 
     /// Phase 10 regression: `reduce(*, v) == Π v[i]`.
@@ -784,14 +821,18 @@ mod tests {
                 let p = reduce(*, v);
                 verify(p == a * b * c)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "reduce(*, [a,b,c]) == a*b*c should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "reduce(*, [a,b,c]) == a*b*c should be complete"
+        );
     }
 
     /// Phase 10 regression: `reduce(-, [a,b,c]) == a - b - c` (left-fold).
@@ -803,14 +844,18 @@ mod tests {
                 let s = reduce(-, v);
                 verify(s == a - b - c)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "reduce(-, [a,b,c]) == a-b-c should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "reduce(-, [a,b,c]) == a-b-c should be complete"
+        );
     }
 
     /// Phase 10 regression: a scalar literal binds as a polynomial constant
@@ -822,14 +867,18 @@ mod tests {
                 let c = 7;
                 verify(c == 7)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "literal scalar binding should fold through Gröbner basis");
+        assert!(
+            ca.run().is_ok(),
+            "literal scalar binding should fold through Gröbner basis"
+        );
     }
 
     /// Phase 11 regression: bilinearity shift — `pair(a·P, Q) == pair(P, a·Q)`.
@@ -845,14 +894,18 @@ mod tests {
                 let rhs = pair(p, a * q);
                 verify(lhs == rhs)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity");
+        assert!(
+            ca.run().is_ok(),
+            "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity"
+        );
     }
 
     /// Phase 11 regression, un-ignored in phase 12: bilinearity over sums —
@@ -871,14 +924,18 @@ mod tests {
                 let rhs = pair(p1, q) + pair(p2, q);
                 verify(lhs == rhs)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q) should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q) should be complete"
+        );
     }
 
     /// Phase 11 pinning test: a reflexive Pair verify completes, confirming
@@ -892,14 +949,18 @@ mod tests {
                 let u = pair(p, q);
                 verify(u == u)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "pair(P, Q) == pair(P, Q) (reflexive) should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "pair(P, Q) == pair(P, Q) (reflexive) should be complete"
+        );
     }
 
     /// Phase 12 regression: bilinear product —
@@ -916,14 +977,18 @@ mod tests {
                 let rhs = pair(a * p, b * q);
                 verify(lhs == rhs)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity");
+        assert!(
+            ca.run().is_ok(),
+            "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -953,14 +1018,18 @@ mod tests {
                 let q = prod / d;
                 verify(q == p)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "(p*d)/d == p should be complete via D·Q + R = P");
+        assert!(
+            ca.run().is_ok(),
+            "(p*d)/d == p should be complete via D·Q + R = P"
+        );
     }
 
     /// Phase 13 regression: the canonical divmod identity —
@@ -983,14 +1052,18 @@ mod tests {
                 let r = p % d;
                 verify(p == d * q + r)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "verify(p == d*q + r) should collapse directly to the shared identity row");
+        assert!(
+            ca.run().is_ok(),
+            "verify(p == d*q + r) should collapse directly to the shared identity row"
+        );
     }
 
     /// Phase 13 regression: pairing-free KZG opening shape.
@@ -1013,14 +1086,18 @@ mod tests {
                 let q_val = diff / d_val;
                 verify(q_val * d_val == diff)
             }"#;
-        let m = UModule::from_str(ex).unwrap().concretize(&Ctx::new()).unwrap();
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "KZG opening shape q * (x - z) == p - y should be complete");
+        assert!(
+            ca.run().is_ok(),
+            "KZG opening shape q * (x - z) == p - y should be complete"
+        );
     }
 
     /// Phase 13 regression: full KZG (un-deferred from phase 12).
@@ -1068,11 +1145,11 @@ mod tests {
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
-        let mut up = UniformityPropagation::new();
-        let g = up.from_dag(&g);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run().is_ok(),
-            "full KZG should be complete via phase-12 pairing + phase-13 poly-div");
+        assert!(
+            ca.run().is_ok(),
+            "full KZG should be complete via phase-12 pairing + phase-13 poly-div"
+        );
     }
-
 }
