@@ -68,8 +68,6 @@ struct BenchData {
     full_assignment: Vec<F>,
     h_coeffs: Vec<F>,
     matrices: Vec<ark_relations::gr1cs::Matrix<F>>,
-    r: F,
-    s: F,
     num_inputs: usize,
     num_constraints: usize,
     n: usize,
@@ -119,8 +117,6 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let pk =
         Groth16::<E>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng).unwrap();
     let vk = pk.vk.clone();
-    let r = F::rand(&mut rng);
-    let s = F::rand(&mut rng);
 
     let cs = ConstraintSystem::<F>::new_ref();
     cs.set_mode(SynthesisMode::Prove {
@@ -168,8 +164,6 @@ fn setup_bench(num_constraints: usize) -> BenchData {
         full_assignment,
         h_coeffs,
         matrices,
-        r,
-        s,
         num_inputs,
         num_constraints: num_cons,
         n,
@@ -278,8 +272,6 @@ fn groth16_bench(c: &mut Criterion) {
                     Vid("instance_assignment".to_string()),
                     Value::VecScalar(data.instance_assignment.clone()),
                 ),
-                (Vid("r".to_string()), Value::Scalar(data.r)),
-                (Vid("s".to_string()), Value::Scalar(data.s)),
                 (
                     Vid("witness_assignment".to_string()),
                     Value::VecScalar(data.witness_assignment.clone()),
@@ -414,8 +406,6 @@ fn groth16_bench(c: &mut Criterion) {
                     Vid("instance_assignment".to_string()),
                     Value::VecScalar(data.instance_assignment.clone()),
                 ),
-                (Vid("r".to_string()), Value::Scalar(data.r)),
-                (Vid("s".to_string()), Value::Scalar(data.s)),
                 (
                     Vid("witness_assignment".to_string()),
                     Value::VecScalar(data.witness_assignment.clone()),
@@ -474,6 +464,10 @@ fn groth16_bench(c: &mut Criterion) {
                     "h_query",
                     "l_query",
                     "instance_assignment",
+                    "mat_a",
+                    "mat_b",
+                    "mat_c",
+                    "omega",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
                     .clone()

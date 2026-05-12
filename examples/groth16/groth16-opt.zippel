@@ -4,6 +4,7 @@
 // This variant accepts h_coeffs as a private input, computed externally
 // by the Rust R1CS-to-QAP conversion. Compare with groth16.zippel which
 // computes h_coeffs inside zippel via FFT-based evaluation-domain arithmetic.
+// Random blinding factors r and s are sampled internally via random<F>.
 //
 // Size parameters (following Groth16 paper):
 //   M: number of public inputs (including the constant 1)
@@ -25,12 +26,12 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public h_query: [G1; H],
     public l_query: [G1; L],
     public instance_assignment: [F; M],
-    private r: F,
-    private s: F,
     private witness_assignment: [F; L],
     private h_coeffs: [F; H]
 ) where alpha_g1 == alpha_g1
 {
+    let r = random<F>;
+    let s = random<F>;
     let full_assignment = instance_assignment ++ witness_assignment;
 
     a_proof <- alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;

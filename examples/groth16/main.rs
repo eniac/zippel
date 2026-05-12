@@ -285,10 +285,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
     witness_assignment: &[F],
     _circuit: C,
 ) {
-    let mut rng = rand::rngs::OsRng;
-    let r = F::rand(&mut rng);
-    let s = F::rand(&mut rng);
-
     let m = vk.gamma_abc_g1.len();
     let l = pk.l_query.len();
     let h_size = pk.h_query.len();
@@ -334,8 +330,6 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
             Vid("instance_assignment".to_string()),
             Value::VecScalar(instance_assignment.to_vec()),
         ),
-        (Vid("r".to_string()), Value::Scalar(r)),
-        (Vid("s".to_string()), Value::Scalar(s)),
         (
             Vid("witness_assignment".to_string()),
             Value::VecScalar(witness_assignment.to_vec()),
@@ -470,10 +464,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
 ) {
     use ark_poly::GeneralEvaluationDomain;
 
-    let mut rng = rand::rngs::OsRng;
-    let r = F::rand(&mut rng);
-    let s = F::rand(&mut rng);
-
     let n = pk.a_query.len();
     let m = vk.gamma_abc_g1.len();
     let l = pk.l_query.len();
@@ -567,8 +557,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
             Vid("instance_assignment".to_string()),
             Value::VecScalar(instance_assignment.to_vec()),
         ),
-        (Vid("r".to_string()), Value::Scalar(r)),
-        (Vid("s".to_string()), Value::Scalar(s)),
         (
             Vid("witness_assignment".to_string()),
             Value::VecScalar(witness_assignment.to_vec()),
@@ -593,6 +581,10 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         "h_query",
         "l_query",
         "instance_assignment",
+        "mat_a",
+        "mat_b",
+        "mat_c",
+        "omega",
     ];
 
     let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = inputs

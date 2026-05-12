@@ -13,10 +13,9 @@
 // encode: constraint rows (0..C), identity rows for inputs (C..C+M), zero-padded (C+M..D)
 // where C=num_constraints, M=num_inputs, D=domain_size.
 //
-// Division by Z_H in the coset domain is scalar: Z_H(h·ω^i) = h^D - 1 = const.
-// The coset shift omega = F::GENERATOR; shift vectors [omega^i] and [omega^{-i}]
-// are computed inside zippel via comprehension using the ^ (pow) operator.
-// This is O(D log D) — a tradeoff vs O(D) with a scan/accumulate primitive.
+// mat_a, mat_b, mat_c, and omega are public since they encode the circuit structure
+// (not the witness) and omega is a random element only used for FFT. Random blinding
+// factors r and s are sampled internally via random<F>.
 //
 // Size parameters (following Groth16 paper):
 //   M: number of public inputs (including the constant 1)
@@ -40,13 +39,11 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public h_query: [G1; H],
     public l_query: [G1; L],
     public instance_assignment: [F; M],
-    private r: F,
-    private s: F,
-    private witness_assignment: [F; L],
-    private mat_a: [F; D*(M+L)],
-    private mat_b: [F; D*(M+L)],
-    private mat_c: [F; D*(M+L)],
-    private omega: F
+    public mat_a: [F; D*(M+L)],
+    public mat_b: [F; D*(M+L)],
+    public mat_c: [F; D*(M+L)],
+    public omega: F,
+    private witness_assignment: [F; L]
 ) where
     let full_assignment = instance_assignment ++ witness_assignment;
     let a_evals = [reduce(+, [mat_a[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
@@ -54,6 +51,8 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     let c_evals = [reduce(+, [mat_c[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
     a_evals * b_evals == c_evals
 {
+    let r = random<F>;
+    let s = random<F>;
     let full_assignment = instance_assignment ++ witness_assignment;
 
     // Full D-length evaluation vectors (all matrix rows)
