@@ -25,19 +25,15 @@
 //! `Poly(F, 1, n)`) is exactly this kind of variant mismatch.
 
 use crate::config::ArkBls12_381;
-use crate::poly_variant::PolyVariant;
-use crate::virtual_polynomial::VirtualPolynomial;
-use crate::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
+use crate::op::{GOp, mk};
+use crate::{ABase, ATyp, ArkConfig, Op, Value};
 use arbitrary::{Arbitrary, Unstructured};
-use ark_poly::DenseUVPolynomial;
-use ark_poly::univariate::DensePolynomial;
 use ark_std::test_rng;
 use lang::ast::BinOp;
 use lang::typ::CRange;
 
 type TestConfig = ArkBls12_381;
 type V = Value<TestConfig>;
-type F = <TestConfig as ArkConfig>::F;
 
 // =============================================================================
 // has_atyp predicate
@@ -168,6 +164,79 @@ impl<'a> Arbitrary<'a> for AnyVecATyp {
         let elem: AnyBaseATyp = u.arbitrary()?;
         let n: usize = u.int_in_range(1..=6)?;
         Ok(AnyVecATyp(ATyp::vec(&elem.0, n)))
+    }
+}
+
+/// Univariate polynomial `Uni(m)` for `m ∈ 0..=7`.
+#[derive(Debug, Clone)]
+struct AnyUniATyp {
+    m: usize,
+}
+
+impl<'a> Arbitrary<'a> for AnyUniATyp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(AnyUniATyp {
+            m: u.int_in_range(0..=7)?,
+        })
+    }
+}
+
+/// Univariate `Uni(m)` where `m+1` is a power of two (FFT-compatible).
+/// Picks from the set {0, 1, 3, 7} so that `m+1 ∈ {1, 2, 4, 8}`.
+#[derive(Debug, Clone)]
+struct AnyPow2UniATyp {
+    m: usize,
+}
+
+impl<'a> Arbitrary<'a> for AnyPow2UniATyp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        // m+1 ∈ {1, 2, 4, 8} ↔ m ∈ {0, 1, 3, 7}
+        let candidates = [0usize, 1, 3, 7];
+        let idx: usize = u.int_in_range(0..=3)?;
+        Ok(AnyPow2UniATyp { m: candidates[idx] })
+    }
+}
+
+/// Univariate `Uni(m)` where `m+1` is NOT a power of two (FFT-padding gap).
+/// Picks from the set {2, 4, 5, 6} so that `m+1 ∈ {3, 5, 6, 7}`.
+#[derive(Debug, Clone)]
+struct AnyNonPow2UniATyp {
+    m: usize,
+}
+
+impl<'a> Arbitrary<'a> for AnyNonPow2UniATyp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        // m+1 ∈ {3, 5, 6, 7} ↔ m ∈ {2, 4, 5, 6}
+        let candidates = [2usize, 4, 5, 6];
+        let idx: usize = u.int_in_range(0..=3)?;
+        Ok(AnyNonPow2UniATyp { m: candidates[idx] })
+    }
+}
+
+/// Vec(Scalar, k) where `k` is a power of two in 1..=8.
+#[derive(Debug, Clone)]
+struct AnyPow2VecScalarATyp {
+    k: usize,
+}
+
+impl<'a> Arbitrary<'a> for AnyPow2VecScalarATyp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let log2: usize = u.int_in_range(0..=3)?; // k ∈ {1, 2, 4, 8}
+        Ok(AnyPow2VecScalarATyp { k: 1 << log2 })
+    }
+}
+
+/// Multilinear extension `Mle(n)` for `n ∈ 1..=4`.
+#[derive(Debug, Clone)]
+struct AnyMleATyp {
+    n: usize,
+}
+
+impl<'a> Arbitrary<'a> for AnyMleATyp {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(AnyMleATyp {
+            n: u.int_in_range(1..=4)?,
+        })
     }
 }
 
@@ -480,136 +549,477 @@ mod vec_ops {
 }
 
 // =============================================================================
-// Polynomial ops (unary interpolate / Fft / Poly / Coef / Mle / Eval)
+// Cross-layer `Value::typ() == Op::typ()` PBT — Unit 5
 //
-// `infer.rs` is authoritative:
-//   - `interpolate(evs) : Vec(F, n) -> Poly(F, 1, n)` when `n` is a power of two (FFT grid)
-//   - `fft : Poly(F, 1, n) -> Vec(F, n)` (univariate arm; `n` power of two)
+// For each `Op::*` polynomial op, build a single-argument `Op::Value(v)` (or
+// two such, for binary ops) where `v = Value::random(&input_typ)`. Then run
+// the corresponding `value_*` method on `v` and assert that
+// `has_atyp(&result_value, &op.typ())` holds.
+//
+// Tests that document known gaps between `Op::typ()` and the runtime are
+// annotated `#[should_panic(expected = "...")]`: they PASS when the gap is
+// present and FAIL when the gap is fixed, acting as regression pins.
+// Current known gaps:
+//   - FFT padding: `Op::Fft::typ()` declares `Vec(F, m+1)` but the runtime
+//     pads to `next_pow2(m+1)` evaluations when `m+1` is not a power of two.
+//   - `Op::Coef::typ()` accepts `Mle(n)` inputs (returns `Vec(F, 2^n)`) but
+//     `value_coef` panics on multilinear polynomials.
+//   - `Op::Evaluate::typ()` semantic gaps: partial-MLE / partial-VPoly evals
+//     return flat `VecScalar` in the runtime instead of a `Value::Poly(Mle)`,
+//     and single-point full-MLE eval returns `VecScalar([s])` instead of
+//     `Scalar`; batched-uni eval pads to the next power-of-two.
 // =============================================================================
 
-mod poly_ops {
+mod cross_layer {
     use super::*;
 
-    /// Spec: unary `interpolate` / `value_ifft`: `Vec(F, n) -> Uni(n)` (see `infer.rs`).
-    #[test]
-    fn pbt_ifft_returns_poly_per_spec() {
-        arbtest::arbtest(|u| {
-            // Pow2 sizes only — unary interpolate rejects non-pow2 length in `infer.rs`.
-            let n: usize = *u.choose(&[1usize, 2, 4, 8])?;
-            let mut rng = test_rng();
-            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
-            let r = v.value_interpolate(None);
-            let expected = ATyp::uni(n);
-            assert!(
-                has_atyp(&r, &expected),
-                "ifft(vec_scalar({n})) -> {} (expected {expected})",
-                vty(&r)
-            );
-            Ok(())
-        });
+    /// Concrete `Op` type used throughout this module.
+    type TOp = GOp<TestConfig>;
+
+    /// Wrap `v` as `Op::Value(v)`. The declared type is `v.typ()`.
+    fn val_op(v: V) -> TOp {
+        Op::Value(v)
     }
 
-    /// Spec: `Fft : Poly(F, 1, m) -> Vec(F, m+1)` (`coef_typ_from_poly`).
-    /// Under the Phase-14 m+1 convention, `Uni(m)` has `m+1` coefficients;
-    /// FFT requires `m+1` to be a power of two so the evaluation domain
-    /// matches the coefficient count exactly (no padding).
+    fn fft_op(v: &V) -> TOp {
+        Op::Fft(mk::<TestConfig>(val_op(v.clone())))
+    }
+    fn ifft_op(v: &V) -> TOp {
+        Op::Ifft(mk::<TestConfig>(val_op(v.clone())))
+    }
+    fn interp_op(points: &V, evals: &V) -> TOp {
+        Op::Interpolate(
+            mk::<TestConfig>(val_op(points.clone())),
+            mk::<TestConfig>(val_op(evals.clone())),
+        )
+    }
+    fn coef_op(v: &V) -> TOp {
+        Op::Coef(mk::<TestConfig>(val_op(v.clone())))
+    }
+    fn poly_op(v: &V) -> TOp {
+        Op::Poly(mk::<TestConfig>(val_op(v.clone())))
+    }
+    fn eval_op(p: &V, x: &V) -> TOp {
+        Op::Evaluate(
+            mk::<TestConfig>(val_op(p.clone())),
+            mk::<TestConfig>(val_op(x.clone())),
+        )
+    }
+    fn mle_op(v: &V) -> TOp {
+        Op::Mle(mk::<TestConfig>(val_op(v.clone())))
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_fft`
+    //
+    // `Op::Fft::typ()` returns `Vec(F, m+1)` for `Uni(m)` (coefficient count).
+    // The runtime pads to `next_pow2(m+1)`. When `m+1` is already a power of
+    // two the declared size and the runtime size agree; otherwise they disagree.
+    // -------------------------------------------------------------------------
+
+    /// FFT on `Uni(m)` where `m+1` is a power of two — passes cleanly.
     #[test]
-    fn pbt_fft_poly_to_vec_per_spec() {
+    fn pbt_fft_pow2_coef_count() {
         arbtest::arbtest(|u| {
-            // Choose max_degree m so that m+1 is a power of two.
-            let m: usize = *u.choose(&[0usize, 1, 3, 7])?;
+            let t: AnyPow2UniATyp = u.arbitrary()?;
+            let m = t.m;
             let mut rng = test_rng();
             let v: V = Value::random(&mut rng, &ATyp::uni(m));
-            let r = v.value_fft();
-            let expected = ATyp::vec_scalar(m + 1);
+            let op = fft_op(&v);
+            let expected = op.typ();
+            let actual = v.value_fft();
             assert!(
-                has_atyp(&r, &expected),
-                "fft(uni({m})) -> {} (expected {expected})",
-                vty(&r)
+                has_atyp(&actual, &expected),
+                "value_fft(Uni({m})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
             );
             Ok(())
         });
     }
 
-    /// Spec: `Poly : Vec(F, n) -> Poly(F, 1, n-1)` (`infer.rs:358`).
-    /// Lowering: `VPoly(1, n-1)`.
-    /// Runtime: `value_poly` returns `Value::Poly(uni)`. Should PASS — degree
-    /// of a poly built from n coeffs is ≤ n-1, which is what `has_atyp`
-    /// against `VPoly(1, n-1)` requires.
+    /// FFT on `Uni(m)` where `m+1` is NOT a power of two — runtime pads,
+    /// declared type disagrees. Gap pinned with `#[should_panic]`.
     #[test]
-    fn pbt_poly_returns_uni_per_spec() {
+    #[should_panic(expected = "value_fft(Uni(")]
+    fn pbt_fft_non_pow2_coef_count() {
         arbtest::arbtest(|u| {
-            let n: usize = u.int_in_range(1..=6)?;
+            let t: AnyNonPow2UniATyp = u.arbitrary()?;
+            let m = t.m;
             let mut rng = test_rng();
-            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
-            let r = v.value_poly();
-            let expected = ATyp::vpoly(1, n.saturating_sub(1));
+            let v: V = Value::random(&mut rng, &ATyp::uni(m));
+            let op = fft_op(&v);
+            let expected = op.typ();
+            let actual = v.value_fft();
             assert!(
-                has_atyp(&r, &expected),
-                "poly(vec_scalar({n})) -> {} (expected {expected})",
-                vty(&r)
+                has_atyp(&actual, &expected),
+                "value_fft(Uni({m})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
             );
             Ok(())
         });
     }
 
-    /// Spec (best reading): `Coef : Poly(F, 1, n) -> Vec(F, n+1)`.
-    /// Runtime: `value_coef` on `Poly` returns `VecScalar` of length =
-    /// number of coefficients. Length agreement depends on degree of the
-    /// generated poly; we assert the variant-family shape only.
+    // -------------------------------------------------------------------------
+    // `value_interpolate(None, _)` — unary IFFT / FFT-grid interpolation.
+    // Input: `Vec(F, k)`. `Op::Ifft::typ()` returns `Uni(k-1)`.
+    // Same FFT-padding gap: when `k` is not a power of two the runtime pads
+    // to `next_pow2(k)` evaluations, producing a higher-degree poly than declared.
+    // -------------------------------------------------------------------------
+
+    /// IFFT on `Vec(F, k)` where `k` is a power of two — passes cleanly.
     #[test]
-    fn pbt_coef_returns_vec_scalar() {
-        let mut rng = test_rng();
-        // Use a known-degree univariate poly so we can check the length.
-        let coeffs: Vec<F> = (0..4)
-            .map(|_| <TestConfig as ArkConfig>::FOps::rand(&mut rng))
-            .collect();
-        let p = DensePolynomial::from_coefficients_vec(coeffs);
-        let val: V = Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(p)));
-        let r = val.value_coef();
-        // Spec lower bound: at least Vec(Scalar, _). We don't pin the exact
-        // length because `value_coef` may strip leading zeros; the variant
-        // family is the bug-finding check.
-        assert!(
-            matches!(&r, Value::VecScalar(_)),
-            "coef(Poly) -> {} (expected VecScalar variant)",
-            vty(&r)
-        );
-        let len = match &r {
-            Value::VecScalar(v) => v.len(),
-            _ => unreachable!(),
-        };
-        let expected = ATyp::vec_scalar(len);
-        assert!(has_atyp(&r, &expected), "coef shape mismatch: {}", vty(&r));
+    fn pbt_ifft_pow2() {
+        arbtest::arbtest(|u| {
+            let t: AnyPow2VecScalarATyp = u.arbitrary()?;
+            let k = t.k;
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = ifft_op(&v);
+            let expected = op.typ();
+            let actual = v.value_interpolate(None);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_interpolate(Vec(F,{k}), None) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
     }
-}
 
-// =============================================================================
-// Pinned regression: unary interpolate (`value_ifft`) returning the correct polynomial shape
-// =============================================================================
-
-mod regression {
-    use super::*;
-
-    /// Per unary `interpolate` in `lang/src/typ/infer.rs`, the rule is
-    /// `Vec(F, n) -> Poly(F, 1, n)` (with `n` a power of two). Per `backend/src/types.rs`,
-    /// `Poly(F, 1, n)` lowers to `ATyp::VPoly(1, n)`. The runtime
-    /// (`backend/src/values.rs::value_ifft`) must produce `Value::Poly`
-    /// (DenseUni) so that `has_atyp(_, VPoly(1, n))` holds.
-    ///
-    /// Originally pinned as a known disagreement; now a forward-looking
-    /// regression pin against re-introducing the variant mismatch.
+    /// IFFT on `Vec(F, k)` where `k` is NOT a power of two — runtime pads,
+    /// declaring type disagrees. Gap pinned with `#[should_panic]`.
     #[test]
-    fn ifft_returns_poly_per_spec_fixed_size_4() {
+    #[should_panic(expected = "value_interpolate(Vec(F,")]
+    fn pbt_ifft_non_pow2() {
+        arbtest::arbtest(|u| {
+            // k ∈ {3, 5, 6, 7} — not powers of two
+            let candidates = [3usize, 5, 6, 7];
+            let idx: usize = u.int_in_range(0..=3)?;
+            let k = candidates[idx];
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = ifft_op(&v);
+            let expected = op.typ();
+            let actual = v.value_interpolate(None);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_interpolate(Vec(F,{k}), None) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_interpolate(Some(points), evals)` — binary Lagrange interpolation.
+    // Input: two `Vec(F, k)`. `Op::Interpolate::typ()` returns `Uni(k-1)`.
+    // -------------------------------------------------------------------------
+
+    /// Binary interpolation at arbitrary `k ∈ 1..=8` distinct points.
+    #[test]
+    fn pbt_interpolate_binary() {
+        arbtest::arbtest(|u| {
+            let t: AnyVecScalarATyp = u.arbitrary()?;
+            let k = t.n;
+            let mut rng = test_rng();
+            let points: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let evals: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = interp_op(&points, &evals);
+            let expected = op.typ();
+            let actual = evals.value_interpolate(Some(&points));
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_interpolate(Vec(F,{k}), Some(Vec(F,{k}))) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_coef`
+    // -------------------------------------------------------------------------
+
+    /// `value_coef` on `Uni(m)` for arbitrary `m ∈ 0..=7`.
+    #[test]
+    fn pbt_coef_uni() {
+        arbtest::arbtest(|u| {
+            let t: AnyUniATyp = u.arbitrary()?;
+            let m = t.m;
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::uni(m));
+            let op = coef_op(&v);
+            let expected = op.typ();
+            let actual = v.value_coef();
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_coef(Uni({m})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// `value_coef` on `Mle(n)` for `n ∈ 1..=4`.
+    /// `Op::Coef::typ()` accepts MLE inputs (returns `Vec(F, 2^n)`) but the
+    /// runtime panics. This gap is pinned with `#[should_panic]`.
+    #[test]
+    #[should_panic(expected = "Op::Coef::typ() accepted Mle(")]
+    fn pbt_coef_mle() {
+        arbtest::arbtest(|u| {
+            let t: AnyMleATyp = u.arbitrary()?;
+            let n = t.n;
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::Mle(n));
+
+            let v_for_op = v.clone();
+            let op_typ_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let op = coef_op(&v_for_op);
+                op.typ()
+            }));
+
+            let v_for_val = v.clone();
+            let actual_result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| v_for_val.value_coef()));
+
+            match (op_typ_result, actual_result) {
+                (Ok(expected), Ok(actual)) => {
+                    assert!(
+                        has_atyp(&actual, &expected),
+                        "value_coef(Mle({n})) -> {} fails has_atyp(_, {expected})",
+                        vty(&actual)
+                    );
+                }
+                (Err(_), Err(_)) => {}
+                (Ok(expected), Err(_)) => {
+                    panic!(
+                        "value_coef panicked: Op::Coef::typ() accepted Mle({n}) \
+                         with declared ATyp {expected}, but value_coef panicked"
+                    );
+                }
+                (Err(_), Ok(actual)) => {
+                    panic!(
+                        "Op::Coef::typ() rejected Mle({n}) (panicked), \
+                         but value_coef produced {actual:?} (typ {})",
+                        vty(&actual)
+                    );
+                }
+            }
+            Ok(())
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_poly`
+    // -------------------------------------------------------------------------
+
+    /// `value_poly` on `Vec(F, k)` for arbitrary `k ∈ 1..=8`.
+    #[test]
+    fn pbt_poly() {
+        arbtest::arbtest(|u| {
+            let t: AnyVecScalarATyp = u.arbitrary()?;
+            let k = t.n;
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = poly_op(&v);
+            let expected = op.typ();
+            let actual = v.value_poly();
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_poly(Vec(F,{k})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_eval`
+    //
+    // `Op::Evaluate(p, x)::typ()` handles four cases:
+    //   Uni(_)/VPoly(1,_) × Vec → Vec  (batched)
+    //   VPoly(n,_)/Mle(n) × Vec(n)  → Scalar  (full)
+    //   VPoly(n,m) × Vec(k<n) → VPoly(n-k, m)  (partial)
+    //   Mle(n) × Vec(k<n) → Mle(n-k)  (partial)
+    //
+    // Gaps: FFT-padding on batched uni eval; runtime returns VecScalar for
+    // partial/full Mle where the spec says Mle/Scalar; n=1 Mle full eval
+    // returns VecScalar([s]) instead of Scalar.
+    // -------------------------------------------------------------------------
+
+    /// Batched univariate eval at a single point `k=1`: both layers agree.
+    #[test]
+    fn pbt_eval_uni_batched_single_point() {
+        arbtest::arbtest(|u| {
+            let t: AnyUniATyp = u.arbitrary()?;
+            let m = t.m;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::uni(m));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(1));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(Uni({m}), Vec(F,1)) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// Batched univariate eval at `k > 1` points: runtime pads via FFT.
+    /// Gap pinned with `#[should_panic]`.
+    #[test]
+    #[should_panic(expected = "value_eval(Uni(")]
+    fn pbt_eval_uni_batched_multi_point() {
+        arbtest::arbtest(|u| {
+            let tm: AnyUniATyp = u.arbitrary()?;
+            let m = tm.m;
+            // k ∈ 2..=5 — never a pow2-aligned single eval
+            let k: usize = u.int_in_range(2..=5)?;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::uni(m));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(Uni({m}), Vec(F,{k})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// Full VPoly eval for `n ∈ 1..=4` vars: `Value::random` produces a
+    /// univariate (n=1) or DenseMle (n>=2), both collapse correctly to Scalar.
+    #[test]
+    fn pbt_eval_vpoly_full() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=4)?;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::vpoly(n, 2));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(VPoly({n}, 2), Vec(F,{n})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// Partial VPoly eval `k < n`: runtime returns VecScalar, spec says
+    /// VPoly(n-k, m). Gap pinned with `#[should_panic]`.
+    #[test]
+    #[should_panic(expected = "value_eval(VPoly(")]
+    fn pbt_eval_vpoly_partial() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(2..=4)?;
+            let k: usize = u.int_in_range(1..=(n - 1))?;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::vpoly(n, 2));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(VPoly({n}, 2), Vec(F,{k})) [partial] -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// Full MLE eval for `n >= 2` vars: runtime returns `Scalar` as expected.
+    #[test]
+    fn pbt_eval_mle_full_multi_var() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(2..=4)?;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(Mle({n}), Vec(F,{n})) [full] -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    /// Full MLE eval for `n=1` (single point): runtime returns `VecScalar([s])`
+    /// instead of `Scalar`. Gap pinned with `#[should_panic]`.
+    #[test]
+    #[should_panic(expected = "value_eval(Mle(1), Vec(F,1))")]
+    fn pbt_eval_mle_full_single_var() {
+        let n = 1usize;
         let mut rng = test_rng();
-        let v: V = Value::random(&mut rng, &ATyp::vec_scalar(4));
-        let r = v.value_interpolate(None);
-        let expected = ATyp::vpoly(1, 4);
-        let actual = vty(&r);
+        let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+        let x: V = Value::random(&mut rng, &ATyp::vec_scalar(n));
+        let op = eval_op(&p, &x);
+        let expected = op.typ();
+        let actual = p.value_eval(x);
         assert!(
-            has_atyp(&r, &expected),
-            "ifft(Vec(F, 4)) should produce a value of type {expected} \
-             per the unary interpolate typing rule, but got value of type {actual}."
+            has_atyp(&actual, &expected),
+            "value_eval(Mle(1), Vec(F,1)) [full] -> {} fails has_atyp(_, {expected})",
+            vty(&actual)
         );
+    }
+
+    /// Partial MLE eval: runtime returns VecScalar, spec says `Mle(n-k)`.
+    /// Gap pinned with `#[should_panic]`.
+    #[test]
+    #[should_panic(expected = "value_eval(Mle(")]
+    fn pbt_eval_mle_partial() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(2..=4)?;
+            let k: usize = u.int_in_range(1..=(n - 1))?;
+            let mut rng = test_rng();
+            let p: V = Value::random(&mut rng, &ATyp::Mle(n));
+            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
+            let op = eval_op(&p, &x);
+            let expected = op.typ();
+            let actual = p.value_eval(x);
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_eval(Mle({n}), Vec(F,{k})) [partial] -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // `value_mle`: `Vec(F, 2^n)` -> `Mle(n)`. Both layers agree on lengths.
+    // -------------------------------------------------------------------------
+
+    /// MLE construction from `Vec(F, 2^n)` for `n ∈ 0..=4`.
+    #[test]
+    fn pbt_mle() {
+        arbtest::arbtest(|u| {
+            let log2: usize = u.int_in_range(0..=4)?;
+            let len = 1usize << log2;
+            let mut rng = test_rng();
+            let v: V = Value::random(&mut rng, &ATyp::vec_scalar(len));
+            let op = mle_op(&v);
+            let expected = op.typ();
+            let actual = v.value_mle();
+            assert!(
+                has_atyp(&actual, &expected),
+                "value_mle(Vec(F,{len})) -> {} fails has_atyp(_, {expected})",
+                vty(&actual)
+            );
+            Ok(())
+        });
     }
 }
