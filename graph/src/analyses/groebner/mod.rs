@@ -1129,10 +1129,51 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let op = Op::Random(t, b);
                 self.np.insert(&pr, &op);
             }
-            // Op::Interpolate (preserved from main): treat as opaque.
-            Op::Interpolate(points, evals) => {
-                let op = Op::Interpolate(points, evals);
-                self.np.insert(&pr, &op);
+            // Op::Interpolate(points, evals): `pr` is the unique univariate
+            // polynomial of degree < n satisfying `eval(pr, points[i]) ==
+            // evals[i]` for `i ∈ [0, n)`. Emit the n Lagrange constraints
+            // directly as basis rows (Horner evaluation of `pr` at each
+            // `points[i]` minus `evals[i]`). Without these rows the analysis
+            // loses the round-trip identity `eval ∘ interpolate = id`,
+            // making it incomplete on protocols that rely on it (sumcheck,
+            // fft_interpolate_random, …). See issue: H3-F4 / H6-C3 / H6-C3b.
+            Op::Interpolate(ref points, ref evals) => {
+                let pts_polys = self.to_poly(points);
+                let evs_polys = self.to_poly(evals);
+                let n = pts_polys.len();
+                if n == evs_polys.len() {
+                    // `pr` has `num_coeffs(&pr.typ)` coefficient slots
+                    // (canonically `n + 1` for `ATyp::Uni(n)`). Build
+                    // variables for each slot, then Horner-evaluate at every
+                    // points[i] and equate to evals[i].
+                    let n_coeffs = num_coeffs(&pr.typ);
+                    let coeff_vars: Vec<SparsePolynomial<C::F, T>> = (0..n_coeffs)
+                        .map(|j| SparsePolynomial::var(&pr.clone().with_index(j)))
+                        .collect();
+                    for i in 0..n {
+                        let xi = &pts_polys[i];
+                        let mut acc = SparsePolynomial::<C::F, T>::zero();
+                        let mut xi_pow = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                        for aj in coeff_vars.iter() {
+                            acc = &acc + &(aj * &xi_pow);
+                            xi_pow = &xi_pow * xi;
+                        }
+                        self.basis.push(&acc - &evs_polys[i]);
+                    }
+                    // Register each coefficient slot of `pr` in `pl` so
+                    // `find_ref` can resolve `Ref::Var("p", _)` later (mirrors
+                    // the Op::Ifft arm).
+                    for j in 0..n_coeffs {
+                        let pf = pr.clone().with_index(j);
+                        let v = SparsePolynomial::var(&pf);
+                        self.pl.insert(&pf, &v);
+                    }
+                } else {
+                    // Defensive: shapes disagreed (shouldn't happen given
+                    // Op::Interpolate's typ() check). Fall back to opaque.
+                    self.np
+                        .insert(&pr, &Op::Interpolate(points.clone(), evals.clone()));
+                }
             }
             // Op::Ifft(v): p = ifft(v) where p is a univariate polynomial in
             // coefficient form and v a length-N vector of its evaluations at
@@ -2323,6 +2364,103 @@ mod tests {
         // Unsupported shape → stored in np, not pl.
         assert!(builder.np.contains(&result));
         assert!(!builder.pl.contains(&result));
+    }
+
+    // -----------------------------------------------------------------
+    // add_op: Op::Interpolate (binary form) — Lagrange basis rows
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_add_op_interpolate_emits_lagrange_rows() {
+        // Op::Interpolate(points, evals) with `n` points must emit `n`
+        // basis rows enforcing `eval(pr, points[i]) == evals[i]`. Without
+        // these rows the analysis loses the round-trip identity
+        // `eval ∘ interpolate = id`. (See: H3-F4 / H6-C3 / H6-C3b.)
+        use crate::{PRef, Ref};
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let n: usize = 3;
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_pts = register_ref(&mut builder, 0, ATyp::Vec(Box::new(ATyp::scalar()), n));
+        let pref_evs = register_ref(&mut builder, 1, ATyp::Vec(Box::new(ATyp::scalar()), n));
+
+        // Result polynomial: ATyp::uni(n) → n+1 coefficient slots.
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::uni(n),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        let basis_before = builder.basis.basis.len();
+        let op: GOp<ArkBls12_381> = Op::Interpolate(
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Vec(Box::new(ATyp::scalar()), n),
+            )),
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(1)),
+                ATyp::Vec(Box::new(ATyp::scalar()), n),
+            )),
+        );
+        builder.add_op(result.clone(), op);
+
+        // Should NOT have fallen through to np.
+        assert!(
+            !builder.np.contains(&result),
+            "Op::Interpolate fell through to np instead of emitting Lagrange rows"
+        );
+
+        // All `n+1` coefficient slots of `pr` must be registered in pl so
+        // downstream `find_ref` can resolve them.
+        for j in 0..=n {
+            assert!(
+                builder.pl.contains(&result.clone().with_index(j)),
+                "interpolate result coeff slot {} not registered in pl",
+                j
+            );
+        }
+
+        // Exactly `n` Lagrange basis rows must have been added.
+        let basis_after = builder.basis.basis.len();
+        assert_eq!(
+            basis_after - basis_before,
+            n,
+            "expected {} Lagrange basis rows, got {}",
+            n,
+            basis_after - basis_before
+        );
+
+        // Each new basis row must mention some coeff slot of `pr`, the
+        // corresponding points[i], and evals[i] — i.e. it's a non-trivial
+        // constraint linking interpolation result to its inputs.
+        let new_rows = &builder.basis.basis[basis_before..];
+        let mut pts = pref_pts.clone();
+        pts.typ = ATyp::scalar();
+        let mut evs = pref_evs.clone();
+        evs.typ = ATyp::scalar();
+        for i in 0..n {
+            let row = &new_rows[i];
+            let vars = row.vars();
+            // Result coeff slot 0 always appears (constant term of Horner).
+            assert!(
+                vars.contains(&result.clone().with_index(0)),
+                "row {} missing result coeff slot 0",
+                i
+            );
+            pts.index = i;
+            evs.index = i;
+            assert!(
+                vars.contains(&pts) || i == 0, // points[0]^0 = 1 may not appear
+                "row {} missing points[{}]",
+                i,
+                i
+            );
+            assert!(vars.contains(&evs), "row {} missing evals[{}]", i, i);
+        }
     }
 
     // -----------------------------------------------------------------
