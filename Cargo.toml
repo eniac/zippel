@@ -180,3 +180,10 @@ path = "examples/type_alias/main.rs"
 [[example]]
 name = "r1cs_sigma"
 path = "examples/r1cs_sigma/main.rs"
+
+[[example]]
+name = "cds"
+path = "examples/cds/main.rs"
+
+
+
