@@ -557,30 +557,11 @@ impl Lub for CTyp {
                     Err(LubError::add(&x, &y))
                 }
             }
-            // Uni<F, n> + Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
-            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if *n + 1 == *m {
-                    let tb = b
-                        .to_scalar(ctx)
-                        .ok_or(LubError::add(&x, &y))
-                        .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                    Ok(CTyp::uni(&tb, *n))
-                } else {
-                    Err(LubError::add(&x, &y))
-                }
-            }
-            // Vec<F, k> + Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
-            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if *n == *m + 1 {
-                    let ta = a
-                        .to_scalar(ctx)
-                        .ok_or(LubError::add(&x, &y))
-                        .map_err(|e| LubError::next(LubError::add(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *m))
-                } else {
-                    Err(LubError::add(&x, &y))
-                }
-            }
+            // Phase B: polynomial ↔ Vec is now a type error. Vec must be
+            // explicitly converted via `poly([...])` / `coef(...)` at the
+            // source level before mixing with a polynomial. The (Poly, Vec)
+            // and (Vec, Poly) arms previously here implicitly reinterpreted
+            // a Vec as a coefficient list — semantically opaque, removed.
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a).ok_or(LubError::next(
@@ -654,30 +635,7 @@ impl Lub for CTyp {
                     Err(LubError::sub(&x, &y))
                 }
             }
-            // Uni<F, n> - Vec<F, k> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
-            (CTyp::Poly(_a, 1, n), CTyp::Vec(box b, m)) => {
-                if *n + 1 == *m {
-                    let tb = b
-                        .to_scalar(ctx)
-                        .ok_or(LubError::sub(&x, &y))
-                        .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                    Ok(CTyp::uni(&tb, *n))
-                } else {
-                    Err(LubError::sub(&x, &y))
-                }
-            }
-            // Vec<F, k> - Uni<F, n> = Uni<F, n> if k == n + 1 (coeff count = degree + 1)
-            (CTyp::Vec(box a, n), CTyp::Poly(_b, 1, m)) => {
-                if *n == *m + 1 {
-                    let ta = a
-                        .to_scalar(ctx)
-                        .ok_or(LubError::sub(&x, &y))
-                        .map_err(|e| LubError::next(LubError::sub(&x, &y), e))?;
-                    Ok(CTyp::uni(&ta, *m))
-                } else {
-                    Err(LubError::sub(&x, &y))
-                }
-            }
+            // Phase B: polynomial ↔ Vec is now a type error (see lub_add).
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
                 let ka = ctx.get(&a).ok_or(LubError::next(
@@ -964,17 +922,9 @@ impl Lub for CTyp {
                     Err(LubError::dot(&x, &y))
                 }
             }
-            // Vec<F, k> . Uni<F, m> = F if k == m + 1 (coeff count = degree + 1)
-            (CTyp::Vec(box a, n), CTyp::Poly(b, 1, m))
-            | (CTyp::Poly(b, 1, m), CTyp::Vec(box a, n)) => {
-                if *n == *m + 1 {
-                    // Type [a] and [b] should be multiplied
-                    Ok(CTyp::lub_mul(&a, &CTyp::base(b), ctx)
-                        .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
-                } else {
-                    Err(LubError::dot(&x, &y))
-                }
-            }
+            // Phase B: Vec . Uni is now a type error (Vec is no longer
+            // implicitly reinterpreted as a coefficient list). Use
+            // `coef(poly)` to extract coefficients before dot-product.
             (_, _) => Err(LubError::dot(&x, &y)),
         }
     }
@@ -990,25 +940,9 @@ impl Lub for CTyp {
                 // Add the sizes of the vectors
                 Ok(CTyp::vec(&t, x + y))
             }
-            // Uni<A, n> ++ Vec<B, m> = Uni<C, n + m> if A = B = C
-            (CTyp::Poly(a, 1, n), CTyp::Vec(box b, m))
-            | (CTyp::Vec(box b, m), CTyp::Poly(a, 1, n)) => {
-                // Type [a] and [b] should be the same ([t])
-                CTyp::lub_equ(&CTyp::base(&a), &b, kctx)
-                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
-                // Add elements to the polynomial
-                Ok(CTyp::uni(&a, n + m))
-            }
-            // MLE<A, n> ++ Vec<B, m> = MLE<C, n> if n = m and A = B = C
-            (CTyp::Poly(a, n, 1), CTyp::Vec(box b, m))
-            | (CTyp::Vec(box b, m), CTyp::Poly(a, n, 1))
-                if n == m =>
-            {
-                // Type [a] and [b] should be the same ([t])
-                CTyp::lub_equ(&CTyp::base(a), &b, kctx)
-                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
-                Ok(CTyp::mle(a, n + 1))
-            }
+            // Phase B: polynomial ++ Vec is now a type error. Use
+            // `coef(poly)` to extract a coefficient vector first, then
+            // concatenate as Vec ++ Vec.
             // Vec<A, n> ++ B = Vec<C, n+1> if A = B = C
             (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
                 // Type [a] and [b] should be the same ([t])
@@ -1344,17 +1278,12 @@ fn lub_typ() {
         Ok(CTyp::Poly(f.clone(), 3, 1))
     );
 
-    // lub_add Uni↔Vec consistency: k == m + 1 (coeff count = degree + 1).
-    // Poly<F,1,3> + Vec<F,4> = Poly<F,1,3> (4 coeffs ↔ degree 3).
-    assert_eq!(
-        CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
-        Ok(CTyp::uni(&f, 3))
-    );
-    assert_eq!(
-        CTyp::lub_add(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
-        Ok(CTyp::uni(&f, 3))
-    );
-    // Length mismatch rejected.
+    // Phase B: lub_add(Poly, Vec) / lub_sub(Poly, Vec) is now a type error.
+    // Vec is no longer implicitly reinterpreted as a coefficient list.
+    // Use `poly([...])` to construct a polynomial from a coefficient
+    // vector before mixing with another polynomial.
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
+    assert!(CTyp::lub_add(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx).is_err());
     assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
     assert!(CTyp::lub_sub(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
 
@@ -1383,22 +1312,16 @@ fn test_ctyp_poly_degree_offbyone() {
     let tf = CTyp::base(&f);
     let tg1 = CTyp::base(&g1);
 
-    // ---- lub_add / lub_sub: Poly<F,1,n> ± Vec<F,k> requires k == n + 1 ----
-    // Positive boundary: k = n + 1 succeeds.
-    assert_eq!(
-        CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
-        Ok(CTyp::uni(&f, 3))
-    );
-    assert_eq!(
-        CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
-        Ok(CTyp::uni(&f, 3))
-    );
-    // Off-by-one low: k = n rejected (Vec has too few coeffs for degree n).
+    // ---- lub_add / lub_sub: Poly ↔ Vec is a type error (Phase B) ----
+    // No matter what k/n combination, the implicit Vec-as-coefficient-list
+    // coercion has been removed. Use `poly([...])` at the source level to
+    // construct a polynomial before mixing with another polynomial.
+    assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
+    assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
     assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
     assert!(CTyp::lub_add(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
     assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 3), &ctx).is_err());
     assert!(CTyp::lub_sub(&CTyp::vec(&tf, 3), &CTyp::uni(&f, 3), &ctx).is_err());
-    // Off-by-one high: k = n + 2 rejected (Vec has too many coeffs).
     assert!(CTyp::lub_add(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
     assert!(CTyp::lub_add(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
     assert!(CTyp::lub_sub(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
@@ -1444,20 +1367,13 @@ fn test_ctyp_poly_degree_offbyone() {
         Ok(CTyp::Poly(f.clone(), 1, 0))
     );
 
-    // ---- lub_dot: Vec<F,k> · Poly<F,1,m> requires k == m + 1 ----
-    // Positive boundary: k = m + 1.
-    assert_eq!(
-        CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx),
-        Ok(tf.clone())
-    );
-    assert_eq!(
-        CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx),
-        Ok(tf.clone())
-    );
-    // Off-by-one low: k = m rejected.
+    // ---- lub_dot: Vec · Poly is a type error (Phase B) ----
+    // Vec is no longer implicitly reinterpreted as a coefficient list.
+    // Use `coef(poly)` to extract a coefficient vector for dot-product.
+    assert!(CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 3), &ctx).is_err());
+    assert!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 4), &ctx).is_err());
     assert!(CTyp::lub_dot(&CTyp::vec(&tf, 4), &CTyp::uni(&f, 4), &ctx).is_err());
     assert!(CTyp::lub_dot(&CTyp::uni(&f, 4), &CTyp::vec(&tf, 4), &ctx).is_err());
-    // Off-by-one high: k = m + 2 rejected.
     assert!(CTyp::lub_dot(&CTyp::vec(&tf, 5), &CTyp::uni(&f, 3), &ctx).is_err());
     assert!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
 }
@@ -2085,19 +2001,19 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Vec(F, k) ++ Uni(F, n) = Uni(F, k + n)` — vec on the left.
+    /// Phase B: `lub_concat(Vec, Uni)` is a type error. Vec is no longer
+    /// implicitly reinterpreted as a coefficient list. Use `poly([...])` /
+    /// `coef(...)` at the source level to bridge between the two shapes.
     #[test]
-    fn lub_concat_vec_uni_grid() {
+    fn lub_concat_vec_uni_errors() {
         arbtest::arbtest(|u| {
             let k = arb_k(u)?;
-            let n = arb_m(u)?; // Uni degree
+            let n = arb_m(u)?;
             let vec_t = CTyp::vec(&tf(), k);
             let uni_t = CTyp::uni(&f(), n);
-            let expected = CTyp::uni(&f(), k + n);
-            assert_eq!(
-                CTyp::lub_concat(&vec_t, &uni_t, &kind_ctx()),
-                Ok(expected),
-                "lub_concat(Vec(F,{}), Uni(F,{}))",
+            assert!(
+                CTyp::lub_concat(&vec_t, &uni_t, &kind_ctx()).is_err(),
+                "lub_concat(Vec(F,{}), Uni(F,{})) should error",
                 k,
                 n
             );
@@ -2105,20 +2021,18 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Uni(F, n) ++ Vec(F, k) = Uni(F, n + k)` — commute the operand order,
-    /// pin the result (symmetric rule).
+    /// Phase B: `lub_concat(Uni, Vec)` is a type error (commuted form of
+    /// `lub_concat_vec_uni_errors`).
     #[test]
-    fn lub_concat_uni_vec_grid() {
+    fn lub_concat_uni_vec_errors() {
         arbtest::arbtest(|u| {
             let n = arb_m(u)?;
             let k = arb_k(u)?;
             let uni_t = CTyp::uni(&f(), n);
             let vec_t = CTyp::vec(&tf(), k);
-            let expected = CTyp::uni(&f(), n + k);
-            assert_eq!(
-                CTyp::lub_concat(&uni_t, &vec_t, &kind_ctx()),
-                Ok(expected),
-                "lub_concat(Uni(F,{}), Vec(F,{}))",
+            assert!(
+                CTyp::lub_concat(&uni_t, &vec_t, &kind_ctx()).is_err(),
+                "lub_concat(Uni(F,{}), Vec(F,{})) should error",
                 n,
                 k
             );
@@ -2126,23 +2040,18 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Mle(F, n) ++ Vec(F, n) = Mle(F, n + 1)` — MLE dimension promotion when
-    /// the Vec length equals the MLE's variable count (per the arm's `n == m`
-    /// guard). NOTE: we use `n >= 2` because `Mle(F, 1) == Uni(F, 1)` at the
-    /// `Poly` level (both are `Poly(F, 1, 1)`), so the Uni-Vec arm wins
-    /// textually for `n == 1` and the result becomes `Uni(F, 1 + n) = Poly(F, 1, 2)`
-    /// instead of `Poly(F, 2, 1)`. See `lub_concat_mle1_vec_routes_via_uni`.
+    /// Phase B: `lub_concat(Mle, Vec)` is a type error. The previous
+    /// `Mle(F, n) ++ Vec(F, n) = Mle(F, n + 1)` MLE dimension-promotion arm
+    /// has been removed.
     #[test]
-    fn lub_concat_mle_vec_promote() {
+    fn lub_concat_mle_vec_errors() {
         arbtest::arbtest(|u| {
             let n = u.int_in_range(2..=4usize)?;
             let mle_t = CTyp::mle(&f(), n);
             let vec_t = CTyp::vec(&tf(), n);
-            let expected = CTyp::mle(&f(), n + 1);
-            assert_eq!(
-                CTyp::lub_concat(&mle_t, &vec_t, &kind_ctx()),
-                Ok(expected),
-                "lub_concat(Mle(F,{}), Vec(F,{}))",
+            assert!(
+                CTyp::lub_concat(&mle_t, &vec_t, &kind_ctx()).is_err(),
+                "lub_concat(Mle(F,{}), Vec(F,{})) should error",
                 n,
                 n
             );
@@ -2150,25 +2059,19 @@ mod ctyp_lub_poly_tests {
         });
     }
 
-    /// `Mle(F, 1)` and `Uni(F, 1)` collide at the `Poly(F, 1, 1)` level; the
-    /// Uni-Vec arm appears first textually in `lub_concat`, so it wins and
-    /// the result is `Uni(F, 1 + m) = Poly(F, 1, 1 + m)` rather than the
-    /// MLE-promotion path. Pin that here so any future re-ordering of the
-    /// arms is caught.
+    /// Phase B: `Mle(F, 1) == Uni(F, 1) == Poly(F, 1, 1)` concat'd with a
+    /// Vec is a type error now that all polynomial ↔ Vec arms are gone.
+    /// The pre-Phase-B routing (Uni-Vec arm wins textually for n == 1)
+    /// is no longer observable.
     #[test]
-    fn lub_concat_mle1_vec_routes_via_uni() {
+    fn lub_concat_mle1_vec_errors() {
         let ctx = kind_ctx();
         for m in [1usize, 2, 3] {
-            // Construct Mle(F, 1) explicitly even though it's identical to
-            // Uni(F, 1) — this is the point: the type system can't tell them
-            // apart, and the Uni-Vec arm matches first.
             let mle1 = CTyp::Poly(f(), 1, 1);
             let vec_t = CTyp::vec(&tf(), m);
-            let expected = CTyp::Poly(f(), 1, 1 + m);
-            assert_eq!(
-                CTyp::lub_concat(&mle1, &vec_t, &ctx),
-                Ok(expected),
-                "lub_concat(Mle(F,1)==Uni(F,1), Vec(F,{}))",
+            assert!(
+                CTyp::lub_concat(&mle1, &vec_t, &ctx).is_err(),
+                "lub_concat(Mle(F,1)==Uni(F,1), Vec(F,{})) should error",
                 m
             );
         }

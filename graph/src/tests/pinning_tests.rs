@@ -1352,14 +1352,12 @@ fn pin_proj_var_record() {
 }
 
 /// Univariate polynomial application: `p(x)` where `p: Uni<F, 2>`.
-/// Desugars to `dot(p, [x^0, x^1])` where x^0→Value(Scalar(one)), x^1→var_x.
-/// Tests: CExp::App univariate path (L1250-1266).
+/// Phase B: desugars to `evaluate(p, x)` using `Op::Evaluate`. The
+/// pre-Phase-B desugaring (`dot(p, [x^0, x^1, x^2])`) was removed because
+/// it relied on the now-removed `lub_dot(Poly, Vec)` arm.
+/// Tests: CExp::App univariate path (graph/src/lib.rs ~L1620).
 #[test]
 fn pin_app_univariate_poly() {
-    use ark_ff::One;
-    use backend::Value;
-    type F = <B as backend::ArkConfig>::F;
-
     let src = r#"
         fn f<F: Field>(public p: Uni<F, 2>, public x: F) -> F { p(x) }
     "#;
@@ -1379,21 +1377,10 @@ fn pin_app_univariate_poly() {
     let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
-    // Phase-14 m+1 convention: Uni<F, 2> has 3 coefficients, so p(x) lowers
-    // to dot(p, [x^0, x^1, x^2]) — x^0 simplifies to Value(Scalar(one)),
-    // x^1 simplifies to var_x, x^2 stays as a Pow node.
-    let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
-    let two_idx = GOp::<B>::Value(Value::Index(2));
-    let x_sq_idx = expected.add_node(Node::bin(BinOp::Pow, &var_x, &two_idx, &s));
-    let x_sq_ref = GOp::<B>::Ref(Ref(x_sq_idx), s.clone());
-    // Edge for the Pow node consuming var_x.
-    expected.add_edges(DepType::Data, x_sq_idx, var_x.clone());
-    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone(), x_sq_ref]);
-
-    // dot(p, [1, x, x^2]) → Bin(Dot) node
-    let dot = expected.add_node(Node::bin(BinOp::Dot, &var_p, &x_powers, &s));
-    expected.add_edges(DepType::Data, dot, var_p);
-    expected.add_edges(DepType::Data, dot, x_powers);
+    // p(x) lowers directly to evaluate(p, x).
+    let eval = expected.add_node(Node::evaluate(&var_p, &var_x));
+    expected.add_edges(DepType::Data, eval, var_p);
+    expected.add_edges(DepType::Data, eval, var_x);
 
     assert!(gs[0] == expected);
 }

@@ -577,11 +577,10 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1 + *n2))
             }
-            (ATyp::Vec(box t, n), ATyp::Uni(n2)) | (ATyp::Uni(n2), ATyp::Vec(box t, n)) => {
-                ATyp::lub_equ(t, &ATyp::scalar(), &Nothing)
-                    .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
-                Ok(ATyp::uni(*n + *n2))
-            }
+            // Phase B: polynomial ↔ Vec is now a type error (matches the
+            // CTyp-level removal in `lang/src/typ/lub.rs`). Use
+            // `coef(poly)` to extract a coefficient vector before
+            // concatenating with another Vec.
             (a, b) => Err(LubError::concat(&a, &b)),
         }
     }
