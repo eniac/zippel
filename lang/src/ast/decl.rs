@@ -9,6 +9,7 @@ use crate::ast::{CSig, Exp, FreeVars, GArgs, Sig};
 use crate::id::{Tid, TidSubst, Vid};
 use crate::parser::*;
 use crate::typ::infer::{TypeError, Typeable};
+use crate::typ::lub::Lub;
 use crate::typ::subst::SubstError;
 use crate::typ::{
     CKind, CTyp, EvalError, GTyp, Range, RangeError, RangeTraversal, Size, SizeSubsts, TypeInline,
@@ -289,13 +290,19 @@ impl CBody {
             }
             Body::Func { body } => {
                 let br = body.infer(&kctx, &fctx, &vctx)?;
-                if br == sig.ret {
-                    Ok(())
-                } else {
-                    Err(TypeError::decl(
+                // Use lub_equ rather than strict structural equality so that
+                // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
+                // coerces to a `Base(F)` return type via the scalar
+                // fallback in `CTyp::lub_equ` (`lang/src/typ/lub.rs:510`).
+                // Same lift the binary operator arms apply via `lub_add`
+                // (`lang/src/typ/lub.rs:597-613`), now extended to the
+                // return-type check.
+                match CTyp::lub_equ(&br, &sig.ret, &kctx) {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(TypeError::decl(
                         &sig.name,
                         TypeError::func_ret(&kctx, &vctx, body, &sig.name, &sig.ret, &br),
-                    ))
+                    )),
                 }
             }
             Body::TypeAlias => Ok(()),
