@@ -1028,22 +1028,23 @@ mod tests {
 
     // ---------- lub_concat ----------
 
-    /// `concat(Vec<Scalar, k>, Uni(m)) == Uni(k + m)` (and reverse).
+    /// Phase B: `concat(Vec<Scalar, k>, Uni(m))` is now a type error in
+    /// both directions. The pre-Phase-B arm returned `Uni(k + m)` by
+    /// reinterpreting the Vec as a coefficient list; that implicit
+    /// coercion was removed in PR #135 to match the CTyp-level rule. Use
+    /// `poly([...])` / `coef(...)` to bridge between Vec and polynomial.
     #[test]
-    fn pbt_lub_concat_vec_scalar_uni_pins_degree_sum() {
+    fn pbt_lub_concat_vec_scalar_uni_pins_error() {
         arbtest::arbtest(|u| {
             let k: usize = u.int_in_range(1..=8)?;
             let m: usize = u.int_in_range(0..=8)?;
-            let left = ATyp::lub_concat(&ATyp::vec_scalar(k), &ATyp::uni(m), &Nothing).unwrap();
-            let right = ATyp::lub_concat(&ATyp::uni(m), &ATyp::vec_scalar(k), &Nothing).unwrap();
-            let expected = ATyp::uni(k + m);
-            assert_eq!(
-                left, expected,
-                "concat(Vec<Scalar,{k}>, Uni({m})) should equal {expected}"
+            assert!(
+                ATyp::lub_concat(&ATyp::vec_scalar(k), &ATyp::uni(m), &Nothing).is_err(),
+                "concat(Vec<Scalar,{k}>, Uni({m})) is a type error after Phase B",
             );
-            assert_eq!(
-                right, expected,
-                "concat(Uni({m}), Vec<Scalar,{k}>) should equal {expected}"
+            assert!(
+                ATyp::lub_concat(&ATyp::uni(m), &ATyp::vec_scalar(k), &Nothing).is_err(),
+                "concat(Uni({m}), Vec<Scalar,{k}>) is a type error after Phase B",
             );
             Ok(())
         });
