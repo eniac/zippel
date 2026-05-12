@@ -476,6 +476,21 @@ impl Typeable for CExp {
                             .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                         match (p_typ, x_typ) {
+                            // Univariate polynomial evaluated at a single scalar point.
+                            // Result is a scalar of the same base type. (The
+                            // pre-Phase-B path desugared `p(x)` into
+                            // `dot(p, [x^0, ..., x^n])`, which routed through
+                            // `lub_dot(Poly, Vec)` — that arm has been
+                            // removed, and the App desugaring now produces
+                            // `evaluate(p, x)` directly.)
+                            (CTyp::Poly(i, 1, _n), CTyp::Base(b)) if i == b => {
+                                let k =
+                                    kctx.get(&i).ok_or(TypeError::evaluate(kctx, &vctx, p, x))?;
+                                if !k.is_scalar() {
+                                    return Err(TypeError::evaluate(kctx, &vctx, p, x));
+                                }
+                                Ok(CTyp::Base(i))
+                            }
                             // Univariate polynomial evaluated at a vector of points:
                             (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
                                 let _i = b

@@ -1617,7 +1617,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                     // Is it a polynomial, MLE, or a function?
                     match &vctx.get(&fid) {
-                        Some(CTyp::Poly(tbase, 1, n)) => {
+                        Some(CTyp::Poly(tbase, 1, _n)) => {
                             // It is a univariate polynomial
                             let k = kctx.get(&tbase).unwrap();
 
@@ -1625,20 +1625,16 @@ impl<C: HasOpFactory> UDag<C> {
                             assert!(k.is_scalar());
                             assert_eq!(param_types.len(), 1);
 
-                            // Add the argument to the graph.
-                            // Under the phase-14 "m = max degree" convention
-                            // a Poly<F,1,n> has n+1 coefficients, so we need
-                            // [x^0, x^1, ..., x^n] — inclusive of x^n.
-                            let x_pow = CExp::vec(
-                                (0..=*n)
-                                    .map(|i| CExp::pow(params[0].clone(), i.into()))
-                                    .collect(),
-                            );
-
-                            // Polynomial evaluation by dot-product of interpolate with [x_pow]
-                            let dot_exp = CExp::bin(BinOp::Dot, CExp::var(&fid), x_pow);
+                            // Phase B: desugar `p(x)` directly to
+                            // `evaluate(p, x)` using `Op::Evaluate`. The
+                            // pre-Phase-B route went through
+                            // `dot(p, [x^0, x^1, ..., x^n])` which required
+                            // implicitly reinterpreting the polynomial as a
+                            // coefficient list — that lub_dot(Poly, Vec) arm
+                            // has been removed.
+                            let eval_exp = CExp::evaluate_at(CExp::var(&fid), params[0].clone());
                             // Trampoline
-                            exp = dot_exp;
+                            exp = eval_exp;
                             continue;
                         }
                         Some(CTyp::Poly(tbase, n, 1)) => {
