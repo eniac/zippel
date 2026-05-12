@@ -278,12 +278,21 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             }
 
             // Buchberger's second criterion: skip pairs (l, k) if there exists an [i] such that LCM(LT(l), LT(k)) is a multiple of LT(i)
-            // and (l, i) and (i, k) have been seen before
+            // and (l, i) and (i, k) have been seen before.
+            // Pairs are stored in `seen` with the smaller index first (see the
+            // pair-construction sites above), so we must canonicalise the
+            // lookup keys here; otherwise witnesses with `i < l` or `k < i`
+            // would be missed and the optimisation would under-fire.
             return (0..g.len()).into_par_iter().any(|i| {
+                if i == l || i == k {
+                    return false;
+                }
+                let key_li = if l < i { (l, i) } else { (i, l) };
+                let key_ik = if i < k { (i, k) } else { (k, i) };
                 if let Some(lt_i) = g[i].leading_term().map(|(_, m)| m)
                     && ml.lcm(&mk).is_divided(&lt_i)
-                    && seen.contains(&(l, i))
-                    && seen.contains(&(i, k))
+                    && seen.contains(&key_li)
+                    && seen.contains(&key_ik)
                 {
                     return true;
                 }
