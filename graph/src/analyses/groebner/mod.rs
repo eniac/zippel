@@ -1240,6 +1240,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let result = self.eval_to_poly(p, xs);
                 match result {
                     Some(polys) => {
+                        debug_assert_eq!(
+                            polys.len(),
+                            num_coeffs(&pr.typ),
+                            "Op::Evaluate slot count mismatch: {} polys vs num_coeffs({}) = {}",
+                            polys.len(),
+                            pr.typ,
+                            num_coeffs(&pr.typ)
+                        );
                         for (i, poly) in polys.into_iter().enumerate() {
                             let pf = pr.clone().with_index(i);
                             self.pl.insert(&pf, &poly);
