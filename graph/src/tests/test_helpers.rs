@@ -1,4 +1,5 @@
 use crate::dep::Dep;
+use crate::eval::eval_op;
 use crate::node::ArgKind;
 /// Test helpers for graph operations testing
 ///
@@ -6,14 +7,13 @@ use crate::node::ArgKind;
 /// to test algebraic properties and semantic correctness.
 use crate::{GOp, Node, Op, Ref, UDag, mk};
 use backend::op::HasOpFactory;
-use backend::values::marginalize as backend_marginalize;
 use backend::{ATyp, ArkBls12_381, ArkConfig, ArkScalarOps, Value};
 use lang::id::Vid;
 use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
+use rand::rngs::ThreadRng;
 use share::Ctx;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
@@ -62,237 +62,73 @@ impl<C: HasOpFactory> GraphBuilder<C> {
     }
 }
 
-/// Execute a graph with given inputs and return the result
-/// This is a simplified executor for testing purposes
-pub fn execute_graph<C: HasOpFactory>(
+/// Execute a graph with given inputs and return the value computed by the
+/// last visited Op/Transcr node in topological order.
+///
+/// Walks the DAG topologically and routes each Op/Transcr node through
+/// the canonical `graph::eval::eval_op` — the same dispatcher the runtime
+/// uses for per-node value computation.
+pub fn execute_graph<C: ArkConfig>(dag: &UDag<C>, inputs: Ctx<Vid, Value<C>>) -> Option<Value<C>> {
+    let (_computed, last) = execute_graph_inner(dag, inputs);
+    last
+}
+
+/// Execute a graph with given inputs and return all computed node values.
+/// Useful for inspecting individual node results (e.g. multiple Check nodes).
+pub fn execute_graph_all<C: ArkConfig>(
     dag: &UDag<C>,
     inputs: Ctx<Vid, Value<C>>,
-) -> Option<Value<C>> {
+) -> HashMap<NodeIndex, Value<C>> {
+    let (computed, _last) = execute_graph_inner(dag, inputs);
+    computed
+}
+
+/// Shared implementation for `execute_graph` / `execute_graph_all`.
+///
+/// Pre-populates the `Ref` → `Value<C>` env with input bindings for each
+/// `Node::Arg`, then walks the DAG in topological order and calls
+/// `eval_op` on every Op/Transcr node, inserting each result into the env
+/// keyed by `Ref(node_idx)`. Returns both the populated NodeIndex→Value
+/// map (used by `execute_graph_all`) and the last computed value (used by
+/// `execute_graph`).
+fn execute_graph_inner<C: ArkConfig>(
+    dag: &UDag<C>,
+    inputs: Ctx<Vid, Value<C>>,
+) -> (HashMap<NodeIndex, Value<C>>, Option<Value<C>>) {
     use petgraph::visit::Topo;
 
-    let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
-    let inputs_arc = Arc::new(inputs);
-
-    // Get topological order using petgraph's Topo iterator
     let graph = dag.inner_graph();
+    let mut env: HashMap<Ref, Value<C>> = HashMap::new();
+    let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
+
+    // Pre-populate env with input bindings: every Arg node referenced from
+    // an Op gets resolved through `inputs[vid]`.
+    for node_idx in graph.node_indices() {
+        if let Node::Arg(vid, _, _, _, _) = &dag[node_idx]
+            && let Some(val) = inputs.get(vid)
+        {
+            env.insert(Ref(node_idx), val.clone());
+        }
+    }
+
+    let mut rng = ThreadRng::default();
     let mut topo = Topo::new(graph);
     let mut last_op_value = None;
 
     while let Some(node_idx) = topo.next(graph) {
         match &dag[node_idx] {
-            Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {
-                // Skip marker and arg nodes
-            }
+            Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {}
             Node::Op(op, _) | Node::Transcr(op, _) => {
-                let value = evaluate_op(dag, &**op, &computed, &inputs_arc);
+                let value = eval_op(op, &env, &mut rng)
+                    .expect("execute_graph: eval_op should not fail on a well-formed DAG");
+                env.insert(Ref(node_idx), value.clone());
                 computed.insert(node_idx, value.clone());
                 last_op_value = Some(value);
             }
         }
     }
 
-    last_op_value
-}
-
-/// Execute a graph with given inputs and return all computed node values.
-/// This is useful for inspecting individual node results (e.g. multiple Check nodes).
-pub fn execute_graph_all<C: HasOpFactory>(
-    dag: &UDag<C>,
-    inputs: Ctx<Vid, Value<C>>,
-) -> HashMap<NodeIndex, Value<C>> {
-    use petgraph::visit::Topo;
-
-    let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
-    let inputs_arc = Arc::new(inputs);
-
-    let graph = dag.inner_graph();
-    let mut topo = Topo::new(graph);
-
-    while let Some(node_idx) = topo.next(graph) {
-        match &dag[node_idx] {
-            Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {}
-            Node::Op(op, _) | Node::Transcr(op, _) => {
-                let value = evaluate_op(dag, &**op, &computed, &inputs_arc);
-                computed.insert(node_idx, value);
-            }
-        }
-    }
-
-    computed
-}
-
-/// Evaluate an operation recursively
-fn evaluate_op<C: HasOpFactory>(
-    dag: &UDag<C>,
-    op: &GOp<C>,
-    computed: &HashMap<NodeIndex, Value<C>>,
-    inputs: &Arc<Ctx<Vid, Value<C>>>,
-) -> Value<C> {
-    match op {
-        Op::Value(v) => v.clone(),
-        Op::Ref(r, _) => {
-            let n = r.node();
-            if let Some(v) = computed.get(&n) {
-                v.clone()
-            } else if let Node::Arg(vid, _, _, _, _) = &dag[n] {
-                inputs
-                    .get(vid)
-                    .expect("Variable should be provided as input")
-                    .clone()
-            } else {
-                panic!("Reference target not computed and not an Arg")
-            }
-        }
-        Op::Bin(binop, a, b, _typ) => {
-            let a_val = evaluate_op(dag, a, computed, inputs);
-            let b_val = evaluate_op(dag, b, computed, inputs);
-            use lang::ast::BinOp;
-            match binop {
-                BinOp::Add => a_val + b_val,
-                BinOp::Sub => a_val - b_val,
-                BinOp::Mul => a_val * b_val,
-                BinOp::Div => a_val / b_val,
-                BinOp::Rem => a_val % b_val,
-                BinOp::Pow => a_val ^ b_val,
-                BinOp::And => a_val & b_val,
-                BinOp::Dot => a_val.dot(b_val),
-                BinOp::Concat => a_val.value_concat(b_val),
-                BinOp::Equ => a_val.value_equ(&b_val),
-            }
-        }
-        Op::Vec(ops) => {
-            let values: Vec<Value<C>> = ops
-                .iter()
-                .map(|o| evaluate_op(dag, o, computed, inputs))
-                .collect();
-            Value::value_vec(values)
-        }
-        Op::Ram(v, idx) => {
-            let v_val = evaluate_op(dag, v, computed, inputs);
-            let idx_val = evaluate_op(dag, idx, computed, inputs);
-            v_val.ram(idx_val)
-        }
-        Op::Pair(a, b, _) => {
-            let a_val = evaluate_op(dag, a, computed, inputs);
-            let mut b_val = evaluate_op(dag, b, computed, inputs);
-            a_val.value_pair(&mut b_val);
-            b_val
-        }
-        Op::Check(a) => evaluate_op(dag, a, computed, inputs),
-        Op::Random(typ, _) => {
-            use rand::rngs::ThreadRng;
-            let mut rng = ThreadRng::default();
-            Value::random(&mut rng, typ)
-        }
-        Op::Challenge(typ, _) => {
-            use rand::rngs::ThreadRng;
-            let mut rng = ThreadRng::default();
-            Value::random(&mut rng, typ)
-        }
-        Op::Record(fields) => {
-            let evaluated_fields: Ctx<String, Value<C>> = fields
-                .iter()
-                .map(|(k, v)| (k.clone(), evaluate_op(dag, v, computed, inputs)))
-                .collect();
-            Value::Record(evaluated_fields)
-        }
-        Op::Poly(a) => {
-            let a_val = evaluate_op(dag, a, computed, inputs);
-            a_val.value_poly()
-        }
-        Op::Marginalize(a) => {
-            let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a
-            {
-                Op::Record(fields) => {
-                    let poly_op = fields
-                        .get(&"poly".to_string())
-                        .expect("marginalize: missing field 'poly'");
-                    let challenge_op = fields
-                        .get(&"challenge".to_string())
-                        .expect("marginalize: missing field 'challenge'");
-                    let round_op = fields.get(&"round".to_string());
-                    let num_variables_op = fields.get(&"num_variables".to_string());
-                    let max_degree_op = fields.get(&"max_degree".to_string());
-
-                    let poly_val = evaluate_op(dag, poly_op, computed, inputs);
-                    let challenge_val = evaluate_op(dag, challenge_op, computed, inputs);
-                    let round_val = round_op.map(|op| evaluate_op(dag, op, computed, inputs));
-                    let num_variables_val =
-                        num_variables_op.map(|op| evaluate_op(dag, op, computed, inputs));
-                    let max_degree_val =
-                        max_degree_op.map(|op| evaluate_op(dag, op, computed, inputs));
-                    (
-                        poly_val,
-                        challenge_val,
-                        round_val,
-                        num_variables_val,
-                        max_degree_val,
-                    )
-                }
-                _ => {
-                    let cfg_val = evaluate_op(dag, a, computed, inputs);
-                    let Value::Record(record) = cfg_val else {
-                        unreachable!()
-                    };
-                    let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
-                    let challenge_val = record.get(&"challenge".to_string()).cloned().unwrap();
-                    let round_val = record.get(&"round".to_string()).cloned();
-                    let num_variables_val = record.get(&"num_variables".to_string()).cloned();
-                    let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-                    (
-                        poly_val,
-                        challenge_val,
-                        round_val,
-                        num_variables_val,
-                        max_degree_val,
-                    )
-                }
-            };
-
-            let poly = poly_val.into_poly().clone();
-            let challenge = Some(challenge_val.into_scalar());
-            let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
-            let num_variables = if let Some(v) = num_variables_val {
-                v.into_index()
-            } else {
-                let current_poly_vars = poly.num_vars().unwrap_or(1);
-                if round == 0 {
-                    current_poly_vars
-                } else {
-                    current_poly_vars + (round - 1)
-                }
-            };
-            let max_degree = max_degree_val
-                .map(|v| v.into_index())
-                .unwrap_or_else(|| poly.degree());
-
-            let (evals, next_poly) =
-                backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
-            let mut out_fields = Ctx::new();
-            out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
-            out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
-            Value::Record(out_fields)
-        }
-        Op::Proj(record_op, field_name, _) => {
-            let rec_val = evaluate_op(dag, record_op, computed, inputs);
-            let Value::Record(record) = rec_val else {
-                unreachable!()
-            };
-            record.get(field_name).cloned().unwrap()
-        }
-        Op::Interpolate(_, _)
-        | Op::Ifft(_)
-        | Op::Fft(_)
-        | Op::Mle(_)
-        | Op::Coef(_)
-        | Op::Evaluate(_, _) => {
-            unimplemented!("FFT/polynomial operations not yet supported in test executor")
-        }
-        Op::Reduce(binop, v) => {
-            let v_val = evaluate_op(dag, v, computed, inputs);
-            v_val.value_reduce(*binop)
-        }
-    }
+    (computed, last_op_value)
 }
 
 /// Create a scalar field value for testing
