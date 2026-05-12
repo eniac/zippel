@@ -1751,45 +1751,16 @@ mod tests {
                 vec![2, 0], // deg 2 (lex)
             ]
         );
-        assert_eq!(got.len(), 6); // C(2+2, 2) = 6
     }
 
     #[test]
     fn test_hypercube_enumeration() {
         let got = hypercube(3);
-        assert_eq!(got.len(), 8);
         // lex: bit 0 is inner-most, so b = [b0, b1, b2] read little-endian.
         assert_eq!(got[0], vec![0, 0, 0]);
         assert_eq!(got[1], vec![1, 0, 0]);
         assert_eq!(got[2], vec![0, 1, 0]);
         assert_eq!(got[7], vec![1, 1, 1]);
-    }
-
-    #[test]
-    fn test_num_coeffs() {
-        assert_eq!(num_coeffs(&ATyp::VPoly(2, 2)), 6);
-        assert_eq!(num_coeffs(&ATyp::VPoly(3, 1)), 4); // scalar + 3 linear
-        assert_eq!(num_coeffs(&ATyp::Mle(3)), 8);
-        // Per docs/poly-encoding.md: Uni(m) has m+1 coefficient slots.
-        assert_eq!(num_coeffs(&ATyp::Uni(5)), 6);
-        assert_eq!(num_coeffs(&ATyp::Uni(0)), 1);
-        assert_eq!(num_coeffs(&ATyp::scalar()), 1);
-    }
-
-    #[test]
-    fn test_index_of_vpoly_roundtrip() {
-        let typ = ATyp::VPoly(2, 2);
-        for (i, k) in multi_indices(2, 2).into_iter().enumerate() {
-            assert_eq!(index_of(&typ, &k), i);
-        }
-    }
-
-    #[test]
-    fn test_index_of_mle_roundtrip() {
-        let typ = ATyp::Mle(3);
-        for (i, b) in hypercube(3).into_iter().enumerate() {
-            assert_eq!(index_of(&typ, &b), i);
-        }
     }
 
     // -----------------------------------------------------------------
@@ -3045,5 +3016,207 @@ mod tests {
             builder.basis.iter().any(|row| row == &expected),
             "scalar fallback row should be `a - b · var(result)`"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Slot-count arithmetic: num_coeffs / multi_indices / hypercube /
+    // index_of. Property-based tests (via arbtest) pin the m+1 / 2^n /
+    // C(n+m, n) conventions from docs/poly-encoding.md so a refactor of
+    // `num_coeffs` cannot silently drift back to the old `m == length`
+    // convention.
+    // -----------------------------------------------------------------
+
+    /// Test-local binomial coefficient C(n, k). Assumes `k <= n`.
+    fn binomial(n: usize, k: usize) -> usize {
+        let k = k.min(n - k);
+        (0..k).fold(1, |acc, i| acc * (n - i) / (i + 1))
+    }
+
+    #[test]
+    fn test_binomial_helper_sanity() {
+        // Pin well-known values so a bug in the helper doesn't mask bugs
+        // in num_coeffs.
+        assert_eq!(binomial(0, 0), 1);
+        assert_eq!(binomial(5, 0), 1);
+        assert_eq!(binomial(5, 5), 1);
+        assert_eq!(binomial(5, 2), 10);
+        assert_eq!(binomial(6, 3), 20);
+        assert_eq!(binomial(10, 4), 210);
+    }
+
+    #[test]
+    fn test_num_coeffs_vpoly_matches_binomial() {
+        // VPoly(n, m) has C(n + m, n) coefficient slots.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=5)?;
+            let m: usize = u.int_in_range(0..=5)?;
+            let sum = n + m;
+            let expected = binomial(sum, n);
+            assert_eq!(
+                num_coeffs(&ATyp::VPoly(n, m)),
+                expected,
+                "num_coeffs(VPoly({n}, {m})) should be C({sum}, {n}) = {expected}",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_num_coeffs_mle_is_power_of_two() {
+        // Mle(n) is the multilinear extension over {0,1}^n, so 2^n slots.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(0..=5)?;
+            assert_eq!(
+                num_coeffs(&ATyp::Mle(n)),
+                1usize << n,
+                "num_coeffs(Mle({n})) should be 2^{n}",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_num_coeffs_uni_is_m_plus_one() {
+        // Phase-14 convention: Uni(m) has m+1 coefficient slots.
+        arbtest::arbtest(|u| {
+            let m: usize = u.int_in_range(0..=15)?;
+            assert_eq!(
+                num_coeffs(&ATyp::Uni(m)),
+                m + 1,
+                "num_coeffs(Uni({m})) should be {} (m + 1)",
+                m + 1,
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_num_coeffs_vec_is_length() {
+        // Vec(t, n) is a base case: exactly n slots regardless of inner type.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(0..=16)?;
+            let disc: u8 = u.int_in_range(0..=3)?;
+            let inner = match disc {
+                0 => ATyp::scalar(),
+                1 => ATyp::bool(),
+                2 => ATyp::g1(),
+                _ => ATyp::g2(),
+            };
+            let typ = ATyp::vec(&inner, n);
+            assert_eq!(num_coeffs(&typ), n, "num_coeffs(Vec(_, {n})) should be {n}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_num_coeffs_base_is_one() {
+        // Every scalar-shaped base type occupies exactly one PRef slot.
+        // Enumerated explicitly — the set of ABase variants is finite and fixed.
+        for typ in [
+            ATyp::scalar(),
+            ATyp::bool(),
+            ATyp::g1(),
+            ATyp::g2(),
+            ATyp::gt(),
+            ATyp::fin(lang::typ::range::CRange::default()),
+        ] {
+            assert_eq!(num_coeffs(&typ), 1, "num_coeffs({typ:?}) should be 1");
+        }
+    }
+
+    #[test]
+    fn test_multi_indices_len_matches_num_coeffs() {
+        // multi_indices(n, m).len() == num_coeffs(VPoly(n, m)) is definitional.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=4)?;
+            let m: usize = u.int_in_range(0..=4)?;
+            assert_eq!(
+                multi_indices(n, m).len(),
+                num_coeffs(&ATyp::VPoly(n, m)),
+                "multi_indices({n}, {m}).len() should equal num_coeffs(VPoly({n}, {m}))",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_hypercube_len_is_power_of_two() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(0..=5)?;
+            assert_eq!(
+                hypercube(n).len(),
+                1usize << n,
+                "hypercube({n}).len() should be 2^{n}",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_index_of_mle_roundtrip_grid() {
+        // For an arbitrary position i in 0..2^n the hypercube entry at i
+        // must map back to i via index_of.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=4)?;
+            let cube = hypercube(n);
+            if cube.is_empty() {
+                return Ok(());
+            }
+            let i: usize = u.int_in_range(0..=(cube.len() - 1))?;
+            let b = &cube[i];
+            assert_eq!(
+                index_of(&ATyp::Mle(n), b),
+                i,
+                "Mle({n}): position {i} -> {b:?} did not round-trip",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_index_of_vpoly_position_roundtrip() {
+        // For an arbitrary position i in 0..num_coeffs the multi-index at
+        // that position must map back to i via index_of.
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=4)?;
+            let m: usize = u.int_in_range(0..=4)?;
+            let mis = multi_indices(n, m);
+            if mis.is_empty() {
+                return Ok(());
+            }
+            let i: usize = u.int_in_range(0..=(mis.len() - 1))?;
+            let k = &mis[i];
+            assert_eq!(
+                index_of(&ATyp::VPoly(n, m), k),
+                i,
+                "VPoly({n}, {m}): position {i} -> {k:?} did not round-trip",
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_multi_indices_graded_lex_ordering() {
+        // multi_indices is graded-lex: ascending by total degree, ties
+        // broken by lex on the index vector. Check all consecutive pairs
+        // for arbitrary (n, m).
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=4)?;
+            let m: usize = u.int_in_range(0..=4)?;
+            let mis = multi_indices(n, m);
+            for w in mis.windows(2) {
+                let a = &w[0];
+                let b = &w[1];
+                let da: usize = a.iter().sum();
+                let db: usize = b.iter().sum();
+                let ok = da < db || (da == db && a < b);
+                assert!(
+                    ok,
+                    "multi_indices({n}, {m}) violates graded-lex at pair {a:?} -> {b:?} \
+                     (sums {da} vs {db})",
+                );
+            }
+            Ok(())
+        });
     }
 }
