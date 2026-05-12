@@ -1,0 +1,104 @@
+// Multivariate ZeroCheck PIOP (HyperPlonk §3.2 / Setty's Spartan §4).
+//
+// Statement: prove that a multivariate polynomial f over s variables is zero
+// on the boolean hypercube Bs = {0,1}^s.
+//
+// Reduction: V samples tau in F^s; both parties form
+//
+//     h(x) = f(x) * eq(tau, x)
+//
+// and run SumCheck on h with claimed sum 0. Soundness comes from the fact
+// that if f does not vanish on the hypercube, then Q(t) = Σ_x f(x) eq(t, x)
+// is a non-zero polynomial of total degree s, and so a random tau makes
+// Q(tau) = 0 with probability at most s/|F| (Schwartz–Zippel).
+//
+// Test instance: f(x) = a(x) * b(x) - c(x) where a, b, c are 2-variable MLEs
+// satisfying a o b = c entrywise on the hypercube. This is the same shape as
+// HyperPlonk's gate identity at multiplication gates, and as Spartan-core's
+// first sum-check polynomial.
+//
+// MLE convention: ark_poly LSB-first. For a length-2^k evaluation vector v,
+// `mle(v)` is the MLE whose hypercube value at (var_0, ..., var_{k-1}) equals
+// v[idx] with idx = sum_j var_j * 2^j (var_j is the j-th bit of idx).
+
+proto hyperplonk_zerocheck<F: Field>(
+    public a_evs: [F; 4],
+    public b_evs: [F; 4],
+    public c_evs: [F; 4]
+) where
+    // Witness: a(x) o b(x) = c(x) at every hypercube point (Hadamard equality).
+    a_evs * b_evs == c_evs
+{
+    let one  = a_evs[0] - a_evs[0] + 1;
+    let zero = a_evs[0] - a_evs[0];
+
+    let a = mle(a_evs);
+    let b = mle(b_evs);
+    let c = mle(c_evs);
+
+    // -------- V draws tau in F^s --------
+    tau0 <- challenge<F>;
+    tau1 <- challenge<F>;
+
+    // ẽq(tau, x) evaluations, indexed LSB-first by (var_0, var_1).
+    let eq_tau_evs = [
+        (one - tau0) * (one - tau1),   // idx 0:  (var_0=0, var_1=0)
+        tau0 * (one - tau1),           // idx 1:  (var_0=1, var_1=0)
+        (one - tau0) * tau1,           // idx 2:  (var_0=0, var_1=1)
+        tau0 * tau1                    // idx 3:  (var_0=1, var_1=1)
+    ];
+    let eq_tau = mle(eq_tau_evs);
+
+    // h(x) = (a(x) * b(x) - c(x)) * ẽq(tau, x), constructed as a virtual poly.
+    // We avoid a direct Poly-Mle subtraction by scaling c by (-1) and adding.
+    let neg_one = zero - one;
+    let ab      = a * b;            // Poly<F, 2, 2>
+    let neg_c   = c * neg_one;      // Mle<F, 2>
+    let f_poly  = ab + neg_c;       // Poly<F, 2, 2>: this is a*b - c
+    let h_poly  = f_poly * eq_tau;  // Poly<F, 2, 3>
+
+    // ======== SumCheck on h with claimed sum 0 ========
+
+    let cfg0 = {| poly: h_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let pts3 = [i * one for i in 0..4];
+    let g0 = interpolate(pts3, evs0);
+    rx0 <- challenge<F>;
+    let prev0_vec = eval(g0, [rx0]);
+    let prev0 = prev0_vec[0];
+
+    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
+    let out1 = marginalize(cfg1);
+    evs1 <- out1.evaluations;
+    verify(prev0 == evs1[0] + evs1[1]);
+
+    let g1 = interpolate(pts3, evs1);
+    rx1 <- challenge<F>;
+    let final_vec = eval(g1, [rx1]);
+    let final_eval = final_vec[0];
+
+    // ======== Verifier closing check ========
+    // Evaluate a, b, c, eq_tau at (rx0, rx1) via the LSB-first Lagrange formula
+    // (matches the Zippel multilinear-evaluation convention used by the
+    // sumcheck reduction; computing the value in closed form keeps it as a
+    // plain scalar so the rest of the verifier check is just field arithmetic).
+    let omr0 = one - rx0;
+    let omr1 = one - rx1;
+    let l00 = omr0 * omr1;
+    let l10 = rx0  * omr1;
+    let l01 = omr0 * rx1;
+    let l11 = rx0  * rx1;
+
+    let a_at_r = l00 * a_evs[0] + l10 * a_evs[1] + l01 * a_evs[2] + l11 * a_evs[3];
+    let b_at_r = l00 * b_evs[0] + l10 * b_evs[1] + l01 * b_evs[2] + l11 * b_evs[3];
+    let c_at_r = l00 * c_evs[0] + l10 * c_evs[1] + l01 * c_evs[2] + l11 * c_evs[3];
+
+    let eq_at_r =
+        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
+      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
+
+    verify(final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r)
+}

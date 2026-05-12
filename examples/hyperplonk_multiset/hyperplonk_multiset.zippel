@@ -1,0 +1,177 @@
+// MultiSet Check PIOP (HyperPlonk §3.4 / Gabizon).
+//
+// Statement: prove that two 2-variable MLEs f and g, viewed as length-4
+// multisets of their hypercube evaluations, are equal as multisets.
+//
+// Reduction. V samples r in F. By the universal-hash / polynomial argument
+// (Gabizon, §3.4), the multisets are equal with high probability iff
+//
+//     prod_{x in B_s} (r + f(x))   ==   prod_{x in B_s} (r + g(x))
+//
+// equivalently
+//
+//     prod_{x in B_s}  (r + f(x)) / (r + g(x))   =   1.
+//
+// We prove this with a rational ProductCheck (Setty's Spartan §6 variant of
+// HyperPlonk §3.3): the prover commits to an auxiliary MLE ṽ over s+1 vars
+// such that
+//
+//     ṽ(0, x) = (r + f(x)) / (r + g(x)),    ṽ(1, x) = ṽ(x, 0) * ṽ(x, 1),
+//
+// and the verifier checks
+//
+//   (i)  f̂(X) := ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1)            is zero on B_s;
+//   (ii) ĝ(X) := (r + g(X)) * ṽ(0, X) - (r + f(X))      is zero on B_s;
+//   (iii) ṽ at (1, ..., 1, 0) equals 1.
+//
+// Both zero-on-hypercube statements are batched into one ZeroCheck via a
+// random scalar alpha. Sizes: s = 2, ṽ has 8 hypercube evaluations.
+//
+// As with the other building blocks, MLE indexing is LSB-first: v[idx] sits
+// at variable assignment (var_j = (idx >> j) & 1).
+
+proto hyperplonk_multiset<F: Field>(
+    public f_evs: [F; 4],
+    public g_evs: [F; 4]
+) where
+    // The protocol is sound for any inputs; correctness requires the
+    // multiset equality {f_evs} = {g_evs}. We do not encode the multiset
+    // equality as a polynomial constraint here — the example driver picks
+    // f_evs and g_evs that satisfy it.
+    f_evs[0] == f_evs[0]
+{
+    let one  = f_evs[0] - f_evs[0] + 1;
+    let zero = f_evs[0] - f_evs[0];
+
+    // V samples r in F.
+    r <- challenge<F>;
+
+    // Form (r + f) and (r + g) as 2-variable MLEs via their hypercube evals.
+    let f_shift_evs = [r + f_evs[0], r + f_evs[1], r + f_evs[2], r + f_evs[3]];
+    let g_shift_evs = [r + g_evs[0], r + g_evs[1], r + g_evs[2], r + g_evs[3]];
+    let f1_mle = mle(f_shift_evs);
+    let f2_mle = mle(g_shift_evs);
+
+    // Prover computes the leaves of ṽ: per-point ratios (r + f(x)) / (r + g(x)).
+    let leaf_00 = f_shift_evs[0] / g_shift_evs[0];
+    let leaf_10 = f_shift_evs[1] / g_shift_evs[1];
+    let leaf_01 = f_shift_evs[2] / g_shift_evs[2];
+    let leaf_11 = f_shift_evs[3] / g_shift_evs[3];
+
+    // Internal product-tree nodes, exactly as in HyperPlonk's ProductCheck:
+    //   ṽ(1, x_1, x_2) = ṽ(x_1, x_2, 0) * ṽ(x_1, x_2, 1)
+    //   ṽ(1, 1, 1)     := 0       (free choice, kills the self-recursion)
+    //
+    // The dense v_evs entries follow the LSB-first index layout (see header).
+    let v_node_00 = leaf_00 * leaf_01;        // ṽ(1, 0, 0)  = ṽ(0,0,0) * ṽ(0,0,1)
+    let v_node_01 = leaf_10 * leaf_11;        // ṽ(1, 0, 1)  = ṽ(0,1,0) * ṽ(0,1,1)
+    let v_root    = v_node_00 * v_node_01;    // ṽ(1, 1, 0)  = full product, = 1
+    let v_top     = zero;                     // ṽ(1, 1, 1)  free choice
+
+    let v_evs = [
+        leaf_00,    // (0,0,0)
+        v_node_00,  // (1,0,0)
+        leaf_10,    // (0,1,0)
+        v_root,     // (1,1,0)  -- the claimed root, must equal 1
+        leaf_01,    // (0,0,1)
+        v_node_01,  // (1,0,1)
+        leaf_11,    // (0,1,1)
+        v_top       // (1,1,1)
+    ];
+    sent_v <- v_evs;
+
+    // Sub-MLE views of ṽ used to express f̂ and ĝ over the s = 2 hypercube.
+    let v_lead_0 = mle([sent_v[0], sent_v[2], sent_v[4], sent_v[6]]);  // ṽ(0, X)
+    let v_lead_1 = mle([sent_v[1], sent_v[3], sent_v[5], sent_v[7]]);  // ṽ(1, X)
+    let v_tail_0 = mle([sent_v[0], sent_v[1], sent_v[2], sent_v[3]]);  // ṽ(X, 0)
+    let v_tail_1 = mle([sent_v[4], sent_v[5], sent_v[6], sent_v[7]]);  // ṽ(X, 1)
+
+    // V's batching scalar and ZeroCheck randomness.
+    alpha <- challenge<F>;
+    tau0  <- challenge<F>;
+    tau1  <- challenge<F>;
+
+    let neg_one = zero - one;
+
+    // f̂(X) = ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1),  degree 2.
+    let neg_v_prod = (v_tail_0 * v_tail_1) * neg_one;
+    let f_hat      = v_lead_1 + neg_v_prod;
+
+    // ĝ(X) = (r + g(X)) * ṽ(0, X) - (r + f(X)),  degree 2.
+    let neg_f1_mle = f1_mle * neg_one;
+    let g_hat      = f2_mle * v_lead_0 + neg_f1_mle;
+
+    let alpha_g_hat = g_hat * alpha;
+    let h_check     = f_hat + alpha_g_hat;
+
+    let eq_tau_evs = [
+        (one - tau0) * (one - tau1),
+        tau0 * (one - tau1),
+        (one - tau0) * tau1,
+        tau0 * tau1
+    ];
+    let eq_tau = mle(eq_tau_evs);
+
+    let p_poly = h_check * eq_tau;     // Poly<F, 2, 3>
+
+    // ======== SumCheck on p_poly with claimed sum 0 ========
+
+    let cfg0 = {| poly: p_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let pts3 = [i * one for i in 0..4];
+    let g0_round = interpolate(pts3, evs0);
+    rx0 <- challenge<F>;
+    let prev0_vec = eval(g0_round, [rx0]);
+    let prev0 = prev0_vec[0];
+
+    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
+    let out1 = marginalize(cfg1);
+    evs1 <- out1.evaluations;
+    verify(prev0 == evs1[0] + evs1[1]);
+
+    let g1_round = interpolate(pts3, evs1);
+    rx1 <- challenge<F>;
+    let final_vec = eval(g1_round, [rx1]);
+    let final_eval = final_vec[0];
+
+    // ======== Verifier closing check ========
+
+    // LSB-first Lagrange basis at (rx0, rx1).
+    let omr0 = one - rx0;
+    let omr1 = one - rx1;
+    let l00 = omr0 * omr1;
+    let l10 = rx0  * omr1;
+    let l01 = omr0 * rx1;
+    let l11 = rx0  * rx1;
+
+    let v00_at_r =
+        l00 * sent_v[0] + l10 * sent_v[2] + l01 * sent_v[4] + l11 * sent_v[6];
+    let v10_at_r =
+        l00 * sent_v[1] + l10 * sent_v[3] + l01 * sent_v[5] + l11 * sent_v[7];
+    let vt0_at_r =
+        l00 * sent_v[0] + l10 * sent_v[1] + l01 * sent_v[2] + l11 * sent_v[3];
+    let vt1_at_r =
+        l00 * sent_v[4] + l10 * sent_v[5] + l01 * sent_v[6] + l11 * sent_v[7];
+
+    let f1_at_r =
+        l00 * f_shift_evs[0] + l10 * f_shift_evs[1]
+      + l01 * f_shift_evs[2] + l11 * f_shift_evs[3];
+    let f2_at_r =
+        l00 * g_shift_evs[0] + l10 * g_shift_evs[1]
+      + l01 * g_shift_evs[2] + l11 * g_shift_evs[3];
+
+    let eq_at_r =
+        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
+      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
+
+    let f_hat_at_r = v10_at_r - vt0_at_r * vt1_at_r;
+    let g_hat_at_r = f2_at_r * v00_at_r - f1_at_r;
+
+    verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r);
+
+    // The product-tree root is 1 iff the multisets coincide.
+    verify(sent_v[3] == one)
+}

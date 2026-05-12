@@ -1,0 +1,152 @@
+// ProductCheck PIOP (HyperPlonk §3.3 / Quark §5).
+//
+// Statement: prove that prod_{x in Bs} f(x) = s, where f is a multilinear
+// polynomial over s variables and s in F is the claimed product.
+//
+// Construction. The prover sends an auxiliary MLE ṽ in s+1 variables that
+// encodes the product tree, satisfying for all x in Bs:
+//
+//     ṽ(0, x) = f(x),         ṽ(1, x) = ṽ(x, 0) * ṽ(x, 1).
+//
+// Setting ṽ(1, 1, ..., 1) := 0 (the prover's choice on the "self-referential"
+// hypercube point) keeps the recursion well-defined. The verifier checks
+//
+//   (i)  the polynomial f̂(X) := ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1) is zero on Bs,
+//   (ii) the polynomial ĝ(X) := ṽ(0, X) - f(X)               is zero on Bs,
+//   (iii) ṽ at (1, ..., 1, 0) equals the claimed product s.
+//
+// (i) and (ii) are batched into a single ZeroCheck via a random linear
+// combination (§3.2 last paragraph): for a random alpha drawn after the
+// prover commits to ṽ, run a ZeroCheck on f̂(X) + alpha * ĝ(X).
+//
+// Demo instance: s = 2, so f is a 2-variable MLE, ṽ a 3-variable MLE.
+// The hypercube point (1, 1, 0) corresponds to LSB-first index 3 (=
+// 1 + 1*2 + 0*4) in the dense evaluation vector, which is therefore the
+// total product over the f leaves.
+
+proto hyperplonk_productcheck<F: Field>(
+    public f_evs:   [F; 4],    // ṽ leaves: hypercube evaluations of f
+    public v_evs:   [F; 8],    // prover-claimed evaluations of ṽ on B_3
+    public claimed: F          // claimed product s = prod_x f(x)
+) where
+    // Witness: ṽ is well-formed.  We give the prover-side constraints in
+    // closed form so the where-clause is genuinely a witness predicate.
+    let z = f_evs[0] - f_evs[0];
+    // Leaves (ṽ(0, X)) match f exactly.
+    v_evs[0] == f_evs[0] && v_evs[2] == f_evs[1]
+       && v_evs[4] == f_evs[2] && v_evs[6] == f_evs[3]
+    // Internal nodes (the product-tree recursion).
+       && v_evs[1] == f_evs[0] * f_evs[2]
+       && v_evs[5] == f_evs[1] * f_evs[3]
+       && v_evs[3] == v_evs[1] * v_evs[5]
+       && v_evs[7] == z
+    // Claimed product is the root.
+       && v_evs[3] == claimed
+{
+    let one  = f_evs[0] - f_evs[0] + 1;
+    let zero = f_evs[0] - f_evs[0];
+
+    // Prover sends ṽ to the verifier (modelling the oracle [[ṽ]]).
+    sent_v <- v_evs;
+
+    // Polynomial views needed by the ZeroCheck. Under the LSB-first MLE
+    // convention with ṽ = ṽ(X_0, X_1, X_2):
+    //   ṽ(0, X_1, X_2):  hypercube indices with X_0 = 0  -> {0, 2, 4, 6}
+    //   ṽ(1, X_1, X_2):  hypercube indices with X_0 = 1  -> {1, 3, 5, 7}
+    //   ṽ(X_0, X_1, 0):  hypercube indices with X_2 = 0  -> {0, 1, 2, 3}
+    //   ṽ(X_0, X_1, 1):  hypercube indices with X_2 = 1  -> {4, 5, 6, 7}
+    let v_lead_0 = mle([sent_v[0], sent_v[2], sent_v[4], sent_v[6]]);  // ṽ(0, X)
+    let v_lead_1 = mle([sent_v[1], sent_v[3], sent_v[5], sent_v[7]]);  // ṽ(1, X)
+    let v_tail_0 = mle([sent_v[0], sent_v[1], sent_v[2], sent_v[3]]);  // ṽ(X, 0)
+    let v_tail_1 = mle([sent_v[4], sent_v[5], sent_v[6], sent_v[7]]);  // ṽ(X, 1)
+
+    let f_mle = mle(f_evs);
+
+    // V draws the batching scalar alpha for (i) and (ii), then the ZeroCheck
+    // randomness tau.
+    alpha <- challenge<F>;
+    tau0  <- challenge<F>;
+    tau1  <- challenge<F>;
+
+    // f̂(X) + alpha * ĝ(X), built additively to side-step Poly-Mle subtraction.
+    //   f̂(X) = ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1)   (individual degree 2)
+    //   ĝ(X) = ṽ(0, X) - f(X)                 (individual degree 1)
+    let neg_one     = zero - one;
+    let neg_v_prod  = (v_tail_0 * v_tail_1) * neg_one;       // -(ṽ(X,0)*ṽ(X,1)), deg 2
+    let neg_f_mle   = f_mle * neg_one;                       // -f(X)
+    let f_hat       = v_lead_1 + neg_v_prod;                 // Poly<F, 2, 2>
+    let g_hat       = v_lead_0 + neg_f_mle;                  // Mle<F, 2>
+    let alpha_g_hat = g_hat * alpha;                         // Mle<F, 2>
+    let h_check     = f_hat + alpha_g_hat;                   // Poly<F, 2, 2>
+
+    // ẽq(tau, x) as an MLE (LSB-first).
+    let eq_tau_evs = [
+        (one - tau0) * (one - tau1),
+        tau0 * (one - tau1),
+        (one - tau0) * tau1,
+        tau0 * tau1
+    ];
+    let eq_tau = mle(eq_tau_evs);
+
+    // ZeroCheck reduces "h_check is zero on B_2" to a SumCheck on
+    //   p(X) = h_check(X) * ẽq(tau, X)            (Poly<F, 2, 3>)
+    // with claimed sum 0.
+    let p_poly = h_check * eq_tau;
+
+    let cfg0 = {| poly: p_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let pts3 = [i * one for i in 0..4];
+    let g0_round = interpolate(pts3, evs0);
+    rx0 <- challenge<F>;
+    let prev0_vec = eval(g0_round, [rx0]);
+    let prev0 = prev0_vec[0];
+
+    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
+    let out1 = marginalize(cfg1);
+    evs1 <- out1.evaluations;
+    verify(prev0 == evs1[0] + evs1[1]);
+
+    let g1_round = interpolate(pts3, evs1);
+    rx1 <- challenge<F>;
+    let final_vec = eval(g1_round, [rx1]);
+    let final_eval = final_vec[0];
+
+    // ======== Verifier closing checks ========
+
+    // LSB-first Lagrange basis at the sum-check point (rx0, rx1).
+    let omr0 = one - rx0;
+    let omr1 = one - rx1;
+    let l00 = omr0 * omr1;
+    let l10 = rx0  * omr1;
+    let l01 = omr0 * rx1;
+    let l11 = rx0  * rx1;
+
+    // Inline the LSB-first dot-with-Lagrange to keep the verifier as plain
+    // field arithmetic.
+    let v00_at_r =
+        l00 * sent_v[0] + l10 * sent_v[2] + l01 * sent_v[4] + l11 * sent_v[6];
+    let v10_at_r =
+        l00 * sent_v[1] + l10 * sent_v[3] + l01 * sent_v[5] + l11 * sent_v[7];
+    let vt0_at_r =
+        l00 * sent_v[0] + l10 * sent_v[1] + l01 * sent_v[2] + l11 * sent_v[3];
+    let vt1_at_r =
+        l00 * sent_v[4] + l10 * sent_v[5] + l01 * sent_v[6] + l11 * sent_v[7];
+
+    let f_at_r =
+        l00 * f_evs[0]     + l10 * f_evs[1]     + l01 * f_evs[2]     + l11 * f_evs[3];
+    let eq_at_r =
+        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
+      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
+
+    let f_hat_at_r = v10_at_r - vt0_at_r * vt1_at_r;
+    let g_hat_at_r = v00_at_r - f_at_r;
+
+    verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r);
+
+    // Final ProductCheck check: the prover-claimed product (the root of the
+    // product tree) equals the public claim.
+    verify(sent_v[3] == claimed)
+}
