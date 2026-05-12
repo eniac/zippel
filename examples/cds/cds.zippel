@@ -1,0 +1,68 @@
+// The Cramer-Damgård-Schoenmakers (CDS) protocol for proofs of partial knowledge.
+// Proves knowledge of (N-K) out of N discrete logs (Schnorr witnesses).
+proto cds<G: Group, F: Scalar<G>, N: 10, K: 5>(
+    // Public inputs
+    public g: G,
+    public public_keys: [G; N],
+    public eval_points: [F; N],
+
+    // Private inputs for the real instances
+    private w: [F; N],          
+    private r: [F; N],          
+    
+    // Private indicator: 1 if real, 0 if simulated
+    private b: [F; N],          
+    
+    // Private inputs for the simulated instances
+    private c_sim: [F; N],
+    private m2_sim: [F; N],
+    
+    // The subset of K indices (1-based) where the witness is unknown
+    private u_points: [F; K],
+    private u_evals: [F; K]
+) where let validity = [ b[i] * (1 - b[i]) == 0 for i in 0..N ];
+        reduce(&&, validity) {
+
+    // Step 1: Initial Commitments
+    // For i in A: m1 = g * r[i]
+    // For i in U: m1 = g * m2_sim[i] - pk[i] * c_sim[i]
+    let m1 = [ b[i] * (g * r[i]) + (1 - b[i]) * (g * m2_sim[i] + public_keys[i] * (-c_sim[i])) for i in 0..N ];
+    m1_transcript <- m1;
+    
+    // Step 2: Verifier Challenge
+    s <- challenge<F>;
+    let zero_f = s - s;
+    
+    // Step 3: Prover Share Completion
+    // Interpolate polynomial p using (0, s) and the K points given by u_points
+    let pts = [zero_f] ++ u_points;
+    let evals = [s] ++ u_evals;
+    let p = interpolate(pts, evals);
+    
+    // Evaluate p to find the true challenges for all instances (indices 1..N)
+    let c_prover = eval(p, eval_points);
+    c_transcript <- c_prover;
+    
+    // Step 4: Prover Responses
+    // For i in A: m2 = r[i] + w[i] * c_prover[i]
+    // For i in U: m2 = m2_sim[i]
+    let m2 = [ b[i] * (r[i] + w[i] * c_prover[i]) + (1 - b[i]) * m2_sim[i] for i in 0..N ];
+    m2_transcript <- m2;
+    
+    // Step 5: Verification
+    // 5.a: Verify underlying Schnorr proofs: g * m2 == m1 + pk * c
+    let validity_checks = [ g * m2_transcript[i] == m1_transcript[i] + public_keys[i] * c_transcript[i] for i in 0..N ];
+    verify(reduce(&&, validity_checks));
+    
+    // 5.b: Verify c_transcript is a valid degree K threshold sharing of s
+    // We interpolate the first K+1 points and evaluate at the remaining N-K points
+    let verifier_pts = [s - s] ++ [eval_points[i] for i in 0..K];
+    let verifier_evals = [s] ++ [c_transcript[i] for i in 0..K];
+    let p_verif = interpolate(verifier_pts, verifier_evals);
+    
+    let verifier_check_pts = [eval_points[i + K] for i in 0..N-K];
+    let verifier_check_evals = eval(p_verif, verifier_check_pts);
+    
+    let polynomial_checks = [ c_transcript[i + K] == verifier_check_evals[i] for i in 0..N-K ];
+    verify(reduce(&&, polynomial_checks))
+}
