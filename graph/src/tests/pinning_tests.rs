@@ -5,7 +5,7 @@
 //! via the `PartialEq` (graph isomorphism) implementation.
 
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
@@ -94,12 +94,31 @@ fn pub_t(name: &str, typ: ATyp) -> ArgSpec {
 // Group 1: Declaration Types
 // ============================================================================
 
+/// Func declaration returning a bare literal — `1` infers to `Fin<1>` but
+/// the function-body return check now goes through `CTyp::lub_equ`
+/// (`lang/src/ast/decl.rs:292`), so the scalar-fallback arm in `lub_equ`
+/// (`lang/src/typ/lub.rs:510-517`) lifts `Fin<1>` to `Base(F)` to match
+/// the declared return type. Regression test for the strict-`==` →
+/// `lub_equ` switch.
+#[test]
+fn pin_func_lit_return() {
+    let gs = parse_and_build("fn f<F: Field>() -> F { 1 }");
+
+    let mut expected = UDag::<B>::new();
+    let _ = expected_inp(&mut expected, "f", &[]);
+    let lit_1 = GOp::<B>::Value(backend::Value::Index(1));
+    let _ret = expected.add_node(Node::Op(crate::mk::<B>(lit_1), lang::typ::Nothing));
+
+    assert!(gs[0] == expected);
+}
+
 /// Func declaration returning sum with a literal — exercises Lit coercion.
 /// Tests: CBody::Func, CExp::Bin with literal operand.
 #[test]
 fn pin_func_lit_in_binop() {
     // `a + 1` exercises CExp::Lit(1) as an operand in a Bin expression.
-    // `1` alone can't be returned from `-> F` because it types as Fin, not Field.
+    // `1` alone can also be returned from `-> F` now that the body return
+    // check uses `lub_equ` instead of strict `==`; see `pin_func_lit_return`.
     let gs = parse_and_build("fn f<F: Field>(public a: F) -> F { a + 1 }");
 
     let mut expected = UDag::<B>::new();
@@ -609,7 +628,7 @@ fn pin_log_new_transcr() {
 #[test]
 fn pin_poly() {
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             poly(a)
         }
     "#;
@@ -633,7 +652,7 @@ fn pin_poly() {
 #[test]
 fn pin_coef() {
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 5] {
             coef(a)
         }
     "#;
@@ -656,8 +675,11 @@ fn pin_coef() {
 /// Tests: CExp::Interpolate, Node::interpolate.
 #[test]
 fn pin_interpolate() {
+    // 4 (point, eval) pairs uniquely determine a polynomial of max degree 3
+    // (4 coefficients under the m+1 convention), so the result type is
+    // Uni<F, 3>.
     let src = r#"
-        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 4> {
+        fn f<F: Field>(public a: [F; 4]) -> Uni<F, 3> {
             interpolate([0,1,2,3], a)
         }
     "#;
@@ -688,8 +710,11 @@ fn pin_interpolate() {
 /// Tests: CExp::Evaluate(_, None), Node::fft.
 #[test]
 fn pin_fft() {
+    // Phase 14 m+1 convention + issue #116: Uni<F, 3> has 4 coefficients
+    // (pow2 — required for FFT-grid eval to typecheck). eval() returns a
+    // length-4 vector matching the coefficient count.
     let src = r#"
-        fn f<F: Field>(public a: Uni<F, 4>) -> [F; 4] {
+        fn f<F: Field>(public a: Uni<F, 3>) -> [F; 4] {
             eval(a)
         }
     "#;
@@ -697,7 +722,7 @@ fn pin_fft() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::vpoly(1, 4);
+    let poly_typ = ATyp::vpoly(1, 3);
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -1346,14 +1371,12 @@ fn pin_proj_var_record() {
 }
 
 /// Univariate polynomial application: `p(x)` where `p: Uni<F, 2>`.
-/// Desugars to `dot(p, [x^0, x^1])` where x^0→Value(Scalar(one)), x^1→var_x.
-/// Tests: CExp::App univariate path (L1250-1266).
+/// Phase B: desugars to `evaluate(p, x)` using `Op::Evaluate`. The
+/// pre-Phase-B desugaring (`dot(p, [x^0, x^1, x^2])`) was removed because
+/// it relied on the now-removed `lub_dot(Poly, Vec)` arm.
+/// Tests: CExp::App univariate path (graph/src/lib.rs ~L1620).
 #[test]
 fn pin_app_univariate_poly() {
-    use ark_ff::One;
-    use backend::Value;
-    type F = <B as backend::ArkConfig>::F;
-
     let src = r#"
         fn f<F: Field>(public p: Uni<F, 2>, public x: F) -> F { p(x) }
     "#;
@@ -1373,18 +1396,11 @@ fn pin_app_univariate_poly() {
     let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
-    // x^0 simplifies to Value(Scalar(one)), x^1 simplifies to var_x
-    let one_scalar = GOp::<B>::Value(Value::Scalar(F::one()));
-    let x_powers = GOp::<B>::vec(vec![one_scalar, var_x.clone()]);
+    // p(x) lowers directly to evaluate(p, x).
+    let eval = expected.add_node(Node::evaluate(&var_p, &var_x));
+    expected.add_edges(DepType::Data, eval, var_p);
+    expected.add_edges(DepType::Data, eval, var_x);
 
-    // dot(p, [1, x]) → Bin(Dot) node
-    let dot = expected.add_node(Node::bin(BinOp::Dot, &var_p, &x_powers, &s));
-    // Edge from inp for var_p
-    expected.add_edges(DepType::Data, dot, var_p);
-    // Edge from inp for var_x (inside the Vec)
-    expected.add_edges(DepType::Data, dot, x_powers);
-
-    // Result is Ref(Node(dot), scalar) → no ret node
     assert!(gs[0] == expected);
 }
 

@@ -128,6 +128,34 @@ impl From<Ref> for NodeIndex {
     }
 }
 
+/// Shape helper: a polynomial-producing op that consumes a
+/// coefficient vector returns the corresponding polynomial type
+/// under the phase-14 degree convention (`Vec<F, k>` ↔ `Uni(k-1)`).
+///
+/// Used by `Op::Poly::typ()` and `Op::Ifft::typ()`.
+fn poly_typ_from_vec(t: ATyp) -> ATyp {
+    match t {
+        ATyp::Vec(_, k) if k >= 1 => ATyp::uni(k - 1),
+        ATyp::Uni(m) => ATyp::uni(m), // already a poly; identity
+        other => other,               // defensive: preserve shape
+    }
+}
+
+/// Shape helper: an op that consumes a polynomial and produces its
+/// coefficient vector. Length = `t.size()` — the canonical slot count
+/// (m+1 for Uni, 2^n for Mle, C(n+m, n) for VPoly).
+///
+/// Used by `Op::Coef::typ()` and `Op::Fft::typ()`.
+fn coef_typ_from_poly(t: ATyp) -> ATyp {
+    match t {
+        ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
+        ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
+        v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.size()),
+        ATyp::Vec(box elem, n) => ATyp::vec(&elem, n), // already a vec; identity
+        other => other,                                // defensive
+    }
+}
+
 impl<C: ArkConfig, R> Op<C, R> {
     /// Assign a unique tag to each operation
     pub fn discriminant_order(&self) -> usize {
@@ -186,12 +214,15 @@ impl<C: ArkConfig, R> Op<C, R> {
             },
             Op::Vec(vs) => {
                 let mut typ = vs[0].typ();
-                for v in vs.iter().skip(1) {
+                for (i, v) in vs.iter().enumerate().skip(1) {
                     typ = ATyp::lub_equ(&typ, &v.typ(), &Nothing).unwrap_or_else(|_| {
                         panic!(
-                            "UncaughtError: Vector operands must be of the same type: {} != {}",
+                            "UncaughtError: Vector operands must be of the same type: \
+                             child[0] has type {}, child[{}] has type {} (total {} children)",
                             typ,
-                            v.typ()
+                            i,
+                            v.typ(),
+                            vs.len()
                         )
                     });
                 }
@@ -207,19 +238,58 @@ impl<C: ArkConfig, R> Op<C, R> {
             }
             Op::Random(t, _) => t.clone(),
             Op::Challenge(t, _) => t.clone(),
-            Op::Ifft(op) => match op.typ() {
-                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
-                    if !n.is_power_of_two() {
-                        panic!(
-                            "Op::Ifft: input vector length must be a power of two; got {}",
-                            n
-                        );
-                    }
-                    ATyp::uni(n)
+            // Op::Ifft(v): v : Vec<F, k> / Uni(k-1) → Uni(k - 1).
+            // Under the degree convention, k coefficients = max degree k-1.
+            Op::Ifft(op) => poly_typ_from_vec(op.typ()),
+            // Op::Fft(p): p : Uni(m) → Vec<F, m + 1>.
+            Op::Fft(op) => coef_typ_from_poly(op.typ()),
+            Op::Check(op) => op.typ(),
+            // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
+            // convention (see docs/poly-encoding.md).
+            Op::Poly(op) => poly_typ_from_vec(op.typ()),
+            Op::Evaluate(p, x) => {
+                // Compute the result type of evaluating polynomial `p` at
+                // the k-length vector of points `x`.
+                //
+                // Shapes (k = |x|):
+                //   Uni(_) / VPoly(1, _)        at Vec(b, k) / Uni(k) -> Vec(b, k)  (batched)
+                //   VPoly(n, _)   with k == n   at Vec(b, n)          -> b           (full)
+                //   VPoly(n, m)   with k <  n   at Vec(b, k)          -> VPoly(n-k, m) (partial)
+                //   Mle(n)        with k == n   at Vec(b, n)          -> b           (full)
+                //   Mle(n)        with k <  n   at Vec(b, k)          -> Mle(n - k)  (partial)
+                let x_typ = x.typ();
+                let (elem_typ, k) = match x_typ.clone() {
+                    ATyp::Vec(box t, n) => (t, n),
+                    ATyp::Uni(n) => (ATyp::scalar(), n),
+                    _ => return x_typ,
+                };
+                match p.typ() {
+                    ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
+                    ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
+                    ATyp::VPoly(n, _) if k == n => elem_typ,
+                    ATyp::Mle(n) if k == n => elem_typ,
+                    ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
+                    ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
+                    _ => x_typ,
                 }
-                t => panic!("Op::Ifft: input must be Vec(Scalar | Fin, n); got {}", t),
+            }
+            // Op::Coef(p) flattens a polynomial to its coefficient vector.
+            // The resulting Vec length equals the polynomial's coefficient
+            // count (see ATyp::size).
+            Op::Coef(op) => coef_typ_from_poly(op.typ()),
+            // Op::Mle(v): v : Vec<F, 2^n> → Mle(n). The child is an
+            // evaluation vector on the boolean hypercube of dimension n.
+            Op::Mle(op) => match op.typ() {
+                ATyp::Vec(_, k) if k.is_power_of_two() && k >= 1 => {
+                    ATyp::mle(k.trailing_zeros() as usize)
+                }
+                t @ ATyp::Mle(_) => t,
+                other => other,
             },
+            Op::Reduce(op, v) => {
+                let (elem, _) = v.typ().into_vec();
+                ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
+            }
             Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
                 (
                     ATyp::Vec(box ATyp::Base(ABase::Scalar), m),
@@ -250,43 +320,11 @@ impl<C: ArkConfig, R> Op<C, R> {
                     tp, te
                 ),
             },
-            Op::Fft(op) => match op.typ() {
-                ATyp::VPoly(1, n) | ATyp::Uni(n) => ATyp::vec_scalar(n),
-                t => panic!("Op::Fft: input must be a univariate polynomial; got {}", t),
-            },
-            Op::Check(op) => op.typ(),
-            Op::Poly(op) => match op.typ() {
-                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => ATyp::uni(n),
-                t => panic!("Op::Poly: input must be Vec(Scalar | Fin, n); got {}", t),
-            },
-            Op::Evaluate(_p, x) => x.typ(),
-            Op::Coef(op) => match op.typ() {
-                ATyp::Uni(n) | ATyp::VPoly(1, n) => ATyp::vec_scalar(n),
-                t => panic!(
-                    "Op::Coef: input must be a univariate polynomial type; got {}",
-                    t
-                ),
-            },
-            Op::Mle(op) => match op.typ() {
-                ATyp::Vec(box ATyp::Base(ABase::Scalar), n)
-                | ATyp::Vec(box ATyp::Base(ABase::Fin(_)), n) => {
-                    if !n.is_power_of_two() {
-                        panic!(
-                            "Op::Mle: input vector length must be a power of two; got {}",
-                            n
-                        );
-                    }
-                    ATyp::mle(n.ilog2() as usize)
-                }
-                t => panic!("Op::Mle: input must be Vec(Scalar | Fin, n); got {}", t),
-            },
             Op::Marginalize(op) => {
                 let cfg_typ = op.typ();
                 let ATyp::Record(fields) = cfg_typ else {
                     panic!("Op::Marginalize: input must be a record config");
                 };
-
                 let poly_typ = fields
                     .get(&"poly".to_string())
                     .unwrap_or_else(|| panic!("Op::Marginalize: missing 'poly' field"));
@@ -299,7 +337,6 @@ impl<C: ArkConfig, R> Op<C, R> {
                         t,
                     ),
                 };
-
                 let out_degree = fields
                     .get(&"max_degree".to_string())
                     .and_then(|t| match t {
@@ -312,7 +349,6 @@ impl<C: ArkConfig, R> Op<C, R> {
                     })
                     .unwrap_or(d);
                 let next_n = n.saturating_sub(1);
-
                 let mut out_fields = Ctx::new();
                 out_fields.insert(
                     &"evaluations".to_string(),
@@ -322,10 +358,6 @@ impl<C: ArkConfig, R> Op<C, R> {
                 ATyp::Record(out_fields)
             }
             Op::Proj(_, _, typ) => typ.clone(),
-            Op::Reduce(op, v) => {
-                let (elem, _) = v.typ().into_vec();
-                ATyp::lub_op(*op, &elem, &elem, &Nothing).expect("Reduce: type error in binary op")
-            }
         }
     }
 

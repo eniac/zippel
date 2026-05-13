@@ -46,6 +46,11 @@ impl<C: ArkConfig> AsymptoticCost<C> {
                 (*n as f64) * Self::cost_add(lt, rt, nthreads) / (nthreads as f64)
             }
             (ATyp::Uni(lt), ATyp::Uni(rt)) => {
+                ((*lt.max(rt) + 1) as f64) * Self::SCALAR_ADD / (nthreads as f64)
+            }
+            (ATyp::Uni(_lt), _) => 1.0,
+            (_, _) => 1.0,
+            (ATyp::Uni(lt), ATyp::Uni(rt)) => {
                 (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64)
             }
             (ATyp::Uni(_lt), _) => 1.0,
@@ -76,7 +81,7 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             }
             (ATyp::Uni(n), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n)) => {
-                (*n as f64) * Self::SCALAR_MUL / (nthreads as f64)
+                ((*n + 1) as f64) * Self::SCALAR_MUL / (nthreads as f64)
             }
             (a, b) => {
                 debug!("{} {}", a, b);

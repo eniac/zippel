@@ -100,6 +100,8 @@ All implement `StaticAnalysis<C, A>` trait in `graph/src/analyses/`:
 - **Qualifier semantics**: `Private ≤ Public` — qualifier propagation computes the join (least upper bound).
 - **Identifier conventions in `.zippel` source**: identifiers starting with an **uppercase** letter are size-type variables (`Tid`); those starting **lowercase** are value variables (`Vid`). This is enforced in `lang/src/ast/exp.rs` `FromPest` parsing, not just stylistic.
 - **Polynomial encoding**: `Uni(m)` stores `m+1` coefficients, `VPoly(n,m)` stores `C(m+n,n)` slots, `Mle(n)` stores `2^n` slots. See `backend/src/types.rs` and `backend/src/poly_variant.rs`.
+- **Polynomial and Vec are distinct types**: `lub(Poly, Vec)` is a type error. A `Vec(F, k)` is **not** implicitly reinterpreted as a polynomial's coefficient list (or MLE evaluation table) under `+ / - / · / ++`. Use explicit `poly([...])` / `mle([...])` to lift a `Vec` into a polynomial, or `coef(p)` to extract a coefficient `Vec` from a polynomial. Polynomial ↔ polynomial coercion across `Uni` / `Mle` / `VPoly` still works via the general `(Poly, Poly)` lub arms and produces a `VPoly`. See `lang/src/typ/lub.rs`.
+- **Univariate evaluation**: `p(x)` for `p: Uni<F, n>` and `x: F` desugars to `Op::Evaluate(p, x)` (single-scalar variant), not `dot(p, [x^0, x^1, ..., x^n])`. The dot-based form would require an implicit `Poly ↔ Vec` coercion that no longer exists. See `graph/src/lib.rs` `CExp::App` handling.
 - **Arkworks deps** are pulled from git (`arkworks-rs/algebra`, `arkworks-rs/spongefish`), not crates.io — expect occasional API drift when bumping.
 
 ## Type System & `Op<C, R>` Type Preservation

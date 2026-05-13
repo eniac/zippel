@@ -1,8 +1,6 @@
-use backend::values::marginalize as backend_marginalize;
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::scheduler::{TDag, ThreadAlloc};
 use graph::{Dag, GOp, Node, Op};
-use lang::ast::BinOp;
 use lang::id::Vid;
 use log::debug;
 use petgraph::Direction;
@@ -233,204 +231,22 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
+    /// Compute a node's value by snapshotting the values of every `Op::Ref`
+    /// reachable from `operation` (via [`MutexGraph::get_value`]) and routing
+    /// the actual dispatch through the canonical [`graph::eval::eval_op`].
+    ///
+    /// This keeps the runtime's per-node semantics in lockstep with the test
+    /// executors and the unit-level `eval_op` callers — there is no separate
+    /// runtime-only dispatch table.
     pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
-        match operation {
-            Op::Value(val) => val.clone(),
-            Op::Ref(r, _atyp) => self.get_value(r.clone(), inputs),
-            Op::Vec(vec) => {
-                let value_vector: Vec<Value<C>> = vec
-                    .iter()
-                    .map(|op| self.handle_op(&*op, Arc::clone(&inputs)))
-                    .collect::<Vec<Value<C>>>();
-                Value::value_vec(value_vector)
-            }
-            Op::Record(fields) => {
-                let mut record_values = share::Ctx::new();
-                for (name, op) in fields.iter() {
-                    let field_value = self.handle_op(&*op, Arc::clone(&inputs));
-                    record_values.insert(name, &field_value);
-                }
-                Value::Record(record_values)
-            }
-            Op::Ram(v, index_val) => {
-                let inputs_v_clone = Arc::clone(&inputs);
-                let inputs_index_val_clone = Arc::clone(&inputs);
-                let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
-                let index_val_value: Value<C> = self.handle_op(&*index_val, inputs_index_val_clone);
-                v_val.ram(index_val_value)
-            }
-            Op::Check(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val
-            }
-            Op::Bin(op, a, b, _typ) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let inputs_b_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
-                match op {
-                    BinOp::Add => a_val + b_val,
-                    BinOp::Mul => a_val * b_val,
-                    BinOp::Equ => a_val.value_equ(&b_val),
-                    BinOp::Sub => a_val - b_val,
-                    BinOp::Div => a_val / b_val,
-                    BinOp::Pow => a_val ^ b_val,
-                    BinOp::Dot => a_val.dot(b_val),
-                    BinOp::Concat => a_val.value_concat(b_val),
-                    BinOp::Rem => a_val % b_val,
-                    BinOp::And => a_val & b_val,
-                }
-            }
-            Op::Random(typ, _) => {
-                let mut rng = ThreadRng::default();
-                Value::random(&mut rng, typ)
-            }
-            Op::Challenge(typ, _) => {
-                let mut rng = ThreadRng::default();
-                // TODO: Implement challenge
-                Value::random(&mut rng, typ)
-            }
-            Op::Evaluate(p, x) => {
-                let inputs_p_clone = Arc::clone(&inputs);
-                let inputs_x_clone = Arc::clone(&inputs);
-                let p_val: Value<C> = self.handle_op(&*p, inputs_p_clone);
-                let x_val: Value<C> = self.handle_op(&*x, inputs_x_clone);
-                p_val.value_eval(x_val)
-            }
-            Op::Coef(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val.value_coef()
-            }
-            Op::Pair(a, b, _) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let inputs_b_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                let b_val: Value<C> = self.handle_op(&*b, inputs_b_clone);
-                a_val.pair(b_val)
-            }
-            Op::Poly(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val.value_poly()
-            }
-            Op::Interpolate(points, evals) => {
-                let inputs_points_clone = Arc::clone(&inputs);
-                let inputs_evals_clone = Arc::clone(&inputs);
-                let points_val: Value<C> = self.handle_op(&*points, inputs_points_clone);
-                let evals_val: Value<C> = self.handle_op(&*evals, inputs_evals_clone);
-                evals_val.value_interpolate(Some(&points_val))
-            }
-            Op::Ifft(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val.value_interpolate(None)
-            }
-            Op::Fft(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val.value_fft()
-            }
-            Op::Mle(a) => {
-                let inputs_a_clone = Arc::clone(&inputs);
-                let a_val: Value<C> = self.handle_op(&*a, inputs_a_clone);
-                a_val.value_mle()
-            }
-            Op::Reduce(op, v) => {
-                let inputs_v_clone = Arc::clone(&inputs);
-                let v_val: Value<C> = self.handle_op(&*v, inputs_v_clone);
-                v_val.value_reduce(*op)
-            }
-            Op::Marginalize(a) => {
-                let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) =
-                    match &**a {
-                        Op::Record(fields) => {
-                            let poly_op = fields
-                                .get(&"poly".to_string())
-                                .expect("marginalize: missing field 'poly'");
-                            let challenge_op = fields
-                                .get(&"challenge".to_string())
-                                .expect("marginalize: missing field 'challenge'");
-                            let round_op = fields.get(&"round".to_string());
-                            let num_variables_op = fields.get(&"num_variables".to_string());
-                            let max_degree_op = fields.get(&"max_degree".to_string());
-
-                            let poly_val = self.handle_op(poly_op, Arc::clone(&inputs));
-                            let challenge_val = self.handle_op(challenge_op, Arc::clone(&inputs));
-                            let round_val =
-                                round_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                            let num_variables_val =
-                                num_variables_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                            let max_degree_val =
-                                max_degree_op.map(|op| self.handle_op(op, Arc::clone(&inputs)));
-                            (
-                                poly_val,
-                                challenge_val,
-                                round_val,
-                                num_variables_val,
-                                max_degree_val,
-                            )
-                        }
-                        _ => {
-                            let cfg_val: Value<C> = self.handle_op(a, Arc::clone(&inputs));
-                            let Value::Record(record) = cfg_val else {
-                                unreachable!()
-                            };
-                            let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
-                            let challenge_val =
-                                record.get(&"challenge".to_string()).cloned().unwrap();
-                            let round_val = record.get(&"round".to_string()).cloned();
-                            let num_variables_val =
-                                record.get(&"num_variables".to_string()).cloned();
-                            let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-                            (
-                                poly_val,
-                                challenge_val,
-                                round_val,
-                                num_variables_val,
-                                max_degree_val,
-                            )
-                        }
-                    };
-
-                let poly = poly_val.into_poly().clone();
-                let challenge = Some(challenge_val.into_scalar());
-                let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
-
-                let num_variables = if let Some(v) = num_variables_val {
-                    v.into_index()
-                } else {
-                    let current_poly_vars = poly.num_vars().unwrap_or(1);
-                    if round == 0 {
-                        current_poly_vars
-                    } else {
-                        current_poly_vars + (round - 1)
-                    }
-                };
-
-                let max_degree = max_degree_val
-                    .map(|v| v.into_index())
-                    .unwrap_or_else(|| poly.degree());
-                let (evals, next_poly) =
-                    backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
-
-                let mut out_fields = Ctx::new();
-                out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
-                out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
-
-                Value::Record(out_fields)
-            }
-
-            Op::Proj(record_op, field_name, _) => {
-                let inputs_rec = Arc::clone(&inputs);
-                let rec_val: Value<C> = self.handle_op(record_op, inputs_rec);
-                let Value::Record(r) = rec_val else {
-                    unreachable!()
-                };
-                r.get(&field_name).cloned().unwrap()
-            }
+        let mut env: HashMap<graph::Ref, Value<C>> = HashMap::new();
+        for r in graph::eval::collect_refs(operation) {
+            env.entry(r)
+                .or_insert_with(|| self.get_value(r, Arc::clone(&inputs)));
         }
+        let mut rng = ThreadRng::default();
+        graph::eval::eval_op(operation, &env, &mut rng)
+            .expect("runtime invariant violation: eval_op failed on a scheduled node")
     }
 
     pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {

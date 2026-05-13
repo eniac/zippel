@@ -39,8 +39,9 @@ fn test_addition_commutative() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(result1, result2, "Addition should be commutative");
 }
@@ -80,8 +81,9 @@ fn test_addition_associative() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(result1, result2, "Addition should be associative");
 }
@@ -99,7 +101,8 @@ fn test_addition_identity() {
     );
 
     let env = HashMap::new();
-    let result = eval_op(&mk::<ArkBn254>(op), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng).unwrap();
 
     assert_eq!(result, p, "Adding zero should be identity");
 }
@@ -124,8 +127,9 @@ fn test_multiplication_commutative() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(result1, result2, "Multiplication should be commutative");
 }
@@ -165,8 +169,9 @@ fn test_multiplication_associative() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(result1, result2, "Multiplication should be associative");
 }
@@ -184,7 +189,8 @@ fn test_multiplication_identity() {
     );
 
     let env = HashMap::new();
-    let result = eval_op(&mk::<ArkBn254>(op), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng).unwrap();
 
     assert_eq!(result, p, "Multiplying by one should be identity");
 }
@@ -230,8 +236,9 @@ fn test_distributivity() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(
         result1, result2,
@@ -274,8 +281,9 @@ fn test_scalar_multiplication_compatibility() {
     );
 
     let env = HashMap::new();
-    let result1 = eval_op(&mk::<ArkBn254>(op1), &env).unwrap();
-    let result2 = eval_op(&mk::<ArkBn254>(op2), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result1 = eval_op(&mk::<ArkBn254>(op1), &env, &mut rng).unwrap();
+    let result2 = eval_op(&mk::<ArkBn254>(op2), &env, &mut rng).unwrap();
 
     assert_eq!(
         result1, result2,
@@ -312,8 +320,9 @@ fn test_subtraction_as_addition_of_negation() {
     );
 
     let env = HashMap::new();
-    let result_sub = eval_op(&mk::<ArkBn254>(sub_op), &env).unwrap();
-    let result_add = eval_op(&mk::<ArkBn254>(add_op), &env).unwrap();
+    let mut rng = rand::rngs::ThreadRng::default();
+    let result_sub = eval_op(&mk::<ArkBn254>(sub_op), &env, &mut rng).unwrap();
+    let result_add = eval_op(&mk::<ArkBn254>(add_op), &env, &mut rng).unwrap();
 
     assert_eq!(
         result_sub, result_add,
