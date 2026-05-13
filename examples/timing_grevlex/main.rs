@@ -18,13 +18,8 @@ fn main() {
     let sizes: Vec<usize> = args
         .map(|s| s.parse().expect("size must be a positive integer"))
         .collect();
-    let reduce: bool = env::var("ZIPPEL_TIMING_REDUCE")
-        .map(|s| s == "1" || s.to_ascii_lowercase() == "true")
-        .unwrap_or(true);
 
-    println!(
-        "# zippel buchberger wall-clock timings (BLS12-381 Fr, degrevlex, reduce={reduce})"
-    );
+    println!("# zippel buchberger wall-clock timings (BLS12-381 Fr, degrevlex)");
 
     for n in sizes {
         let label = format!("{system}_{n}");
@@ -33,10 +28,6 @@ fn main() {
             "cyclic" => cyclic_basis::<GrevLexTerm>(n),
             other => panic!("unknown system {other:?}"),
         };
-        // ark-gb always returns a reduced basis, so `reduce` is no longer
-        // a separate path — both branches call `buchberger` (kept under
-        // the flag for the timing label, not because the work differs).
-        let _ = reduce;
         let t0 = Instant::now();
         let gb = sys.buchberger();
         let dt = t0.elapsed().as_secs_f64() * 1000.0;

@@ -289,8 +289,16 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         }
     }
 
-    /// Compute the "syzygy" polynomial of two sparse polynomials
-    /// for Buchberger's algorithm.
+    /// Compute the S-polynomial (syzygy) of two sparse polynomials.
+    ///
+    /// **Validation helper, not part of the GB pipeline.** Gröbner-basis
+    /// computation is fully delegated to ark-gb via `Monomial::compute_gb`
+    /// (see `engine/`). This method exists only for post-hoc property tests
+    /// — `tests/groebner_correctness.rs::assert_s_pair_closure` and
+    /// `graph::analyses::completeness::s_pair_reduces_to_zero` — that verify
+    /// the output of ark-gb satisfies the GB definition (every S-pair
+    /// reduces to zero mod the basis). The legacy in-tree F4 Buchberger
+    /// loop that consumed this helper has been removed.
     pub fn s_poly(&self, other: &SparsePolynomial<F, T>) -> SparsePolynomial<F, T> {
         if self.is_zero() || other.is_zero() {
             return SparsePolynomial::zero();
@@ -329,93 +337,6 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         // S = poly_self_scaled - poly_other_scaled
         poly_self_scaled -= poly_other_scaled;
         poly_self_scaled
-    }
-
-    /// Splits the polynomial `P` (implicitly `P=0`) into `lhs` and `rhs` such that
-    /// `M_gcd * lhs = -rhs`, where `lhs` contains terms derived from the original
-    /// terms having only `factor(v) = true` variables, factored by the monomial GCD (`M_gcd`).
-    /// `rhs` contains the negation of the terms having at least one `eliminate=false` variable.
-    ///
-    /// Assumes the `Monomial` trait provides a `gcd` method.
-    ///
-    /// # Returns
-    ///
-    /// A tuple `(lhs, rhs, divided_vars)` where:
-    /// - `lhs`: The factored polynomial part with `eliminate=true` variables.
-    /// - `rhs`: The negated polynomial part with `eliminate=false` variables.
-    /// - `divided_vars`: A `HashSet` of variables present in the `M_gcd` that was factored out.
-    pub fn isolate_elimination_vars<FF: Fn(&PRef) -> bool>(
-        &self,
-        factor: &FF,
-    ) -> (Self, Self, Set<PRef>) {
-        let mut tmp_lhs_terms: Ctx<T, F> = Ctx::new();
-        let mut tmp_rhs_terms: Ctx<T, F> = Ctx::new();
-
-        // 1. Initial Split
-        for (monomial, coefficient) in self.terms.iter() {
-            let vars = monomial.vars();
-            // Constants assigned to LHS, check if this is desired.
-            let is_lhs_term = vars.is_empty() || vars.iter().any(factor);
-
-            if is_lhs_term {
-                tmp_lhs_terms.insert(monomial, coefficient);
-            } else {
-                tmp_rhs_terms.insert(monomial, coefficient);
-            }
-        }
-
-        // 2. Find LHS Monomial GCD using Monomial::gcd
-        let mut m_gcd = tmp_lhs_terms
-            .keys()
-            .iter()
-            .cloned()
-            .reduce(|acc, item| acc.gcd(&item)) // Use the gcd method
-            .unwrap_or_default(); // Default to constant if tmp_lhs_terms is empty
-
-        // 2.5: Remove factored variables from gcd by dividing
-        for pv in tmp_lhs_terms.keys().iter().flat_map(|pv| pv.vars()) {
-            let m_pv = T::from(vec![(pv.clone(), 1)]);
-            if let Some(new_gcd) = m_gcd.clone() / m_pv {
-                m_gcd = new_gcd;
-            }
-        }
-
-        let mut final_lhs_terms: Ctx<T, F>;
-        let divided_vars: Set<PRef>;
-
-        // 3. Factor LHS & Track Variables (if GCD is not constant)
-        if !m_gcd.is_constant() {
-            final_lhs_terms = Ctx::new();
-            for (monomial, coefficient) in tmp_lhs_terms.into_iter() {
-                // Perform division: monomial / m_gcd
-                match monomial.div(m_gcd.clone()) {
-                    Some(factored_monomial) => {
-                        final_lhs_terms.insert(&factored_monomial, &coefficient)
-                    }
-                    None => panic!("Failed to divide monomial by GCD"),
-                };
-            }
-            divided_vars = m_gcd.vars().into_iter().collect();
-        } else {
-            // No factoring needed if GCD is constant
-            final_lhs_terms = tmp_lhs_terms;
-            divided_vars = Set::new();
-        }
-
-        // 4. Construct final polynomials
-        let final_lhs = SparsePolynomial {
-            terms: final_lhs_terms,
-        };
-
-        let initial_rhs = SparsePolynomial {
-            terms: tmp_rhs_terms,
-        };
-
-        // 5. Negate RHS
-        let final_rhs = -initial_rhs;
-
-        // 6. Return
-        (final_lhs, final_rhs, divided_vars)
     }
 }
 
