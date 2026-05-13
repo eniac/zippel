@@ -39,7 +39,7 @@ proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         pi <- dot(q_coefs, ss_q);
 
         // Verification: same pairing check as standard KZG
-        let lhs = pair(pi, (h_val) - (h * z));
-        let rhs = pair(c - y * g, h);
+        lhs <- pair(pi, (h_val) - (h * z));
+        rhs <- pair(c - y * g, h);
         verify(lhs == rhs)
 }

@@ -1,8 +1,13 @@
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         (private p: [F; N], public z: F, public y: F, public ss: [G1; N],
-        public g: G1, public h: G2, h_val: G2)
-        where dot(p, [z ^ i for i in 0..N]) == y {
-        
+        public g: G1, public h: G2, public h_val: G2)
+        // CRS structure: ss[i] = tau^i * g and h_val = tau * h.
+        // The polynomial evaluation constraint captures p(z) == y.
+        // The pairing constraints capture the CRS bilinear structure.
+        where dot(p, [z ^ i for i in 0..N]) == y &&
+              ss[0] == g &&
+              pair(ss[1], h) == pair(g, h_val) {
+
         let p_val = poly(p);
         c <- dot(p, ss);
 
@@ -12,8 +17,7 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         let test = ss[0..N-1];
         pi <- dot(pi_val, test);
 
-
-        let lhs = pair(pi, (h_val) - (h * z));
-        let rhs = pair(c - y * g, h);
+        lhs <- pair(pi, (h_val) - (h * z));
+        rhs <- pair(c - y * g, h);
         verify(lhs == rhs)
 }
