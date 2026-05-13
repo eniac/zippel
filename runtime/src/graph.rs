@@ -241,7 +241,8 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
         let mut env: HashMap<graph::Ref, Value<C>> = HashMap::new();
         for r in graph::eval::collect_refs(operation) {
-            env.insert(r, self.get_value(r, Arc::clone(&inputs)));
+            env.entry(r)
+                .or_insert_with(|| self.get_value(r, Arc::clone(&inputs)));
         }
         let mut rng = ThreadRng::default();
         graph::eval::eval_op(operation, &env, &mut rng)
