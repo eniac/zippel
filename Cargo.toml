@@ -185,5 +185,9 @@ path = "examples/r1cs_sigma/main.rs"
 name = "cds"
 path = "examples/cds/main.rs"
 
+[[example]]
+name = "zk-kzg"
+path = "examples/zk-kzg/main.rs"
+
 
 

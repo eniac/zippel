@@ -1,0 +1,45 @@
+// Zero-Knowledge KZG polynomial commitment scheme.
+//
+// Standard KZG leaks information about p(x) through the commitment and proof.
+// To achieve ZK, the prover blinds p(x) with random polynomial delta(x)*(x - z)
+// where delta(x) = b0 + b1*x. Since the blinding vanishes at x = z,
+// we still have p_tilde(z) = p(z) = y, so the evaluation is preserved.
+//
+// The quotient q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
+// is now randomized, and the pairing check remains identical.
+//
+// SRS needs N+1 elements (one extra) to commit to the degree-N blinded polynomial.
+
+proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
+        (private p: [F; N], public z: F, public y: F, public ss: [G1; N+1],
+        public g: G1, public h: G2, h_val: G2)
+        where p == p {
+
+        // Sample blinding factors
+        let b0 = random<F>;
+        let b1 = random<F>;
+
+        // Blinding polynomial: (b0 + b1*x)*(x - z) = -b0*z + (b0 - b1*z)*x + b1*x^2
+        let blind_coefs = [-b0 * z, b0 - b1 * z, b1];
+        let blind_val = poly(blind_coefs);
+
+        // Blinded polynomial: p_tilde(x) = p(x) + blind(x)
+        // Note: p_tilde(z) = p(z) + 0 = y (blinding vanishes at z)
+        let p_val = poly(p);
+        let p_tilde = p_val + blind_val;
+        let p_tilde_coefs = coef(p_tilde);
+
+        // Commit to the blinded polynomial (needs N+1 SRS elements)
+        c <- dot(p_tilde_coefs, ss);
+
+        // Quotient: q_tilde(x) = (p_tilde(x) - y) / (x - z) = q(x) + b0 + b1*x
+        let q_tilde = (p_tilde - y) / poly([-z, 1]);
+        let q_coefs = coef(q_tilde);
+        let ss_q = ss[0..N];
+        pi <- dot(q_coefs, ss_q);
+
+        // Verification: same pairing check as standard KZG
+        let lhs = pair(pi, (h_val) - (h * z));
+        let rhs = pair(c - y * g, h);
+        verify(lhs == rhs)
+}
