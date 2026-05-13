@@ -8,9 +8,7 @@
 //! PRefs are sorted ascending so PRef-greater ⇔ ark-rightmost-within-block,
 //! preserving the grevlex tiebreak after the elim-block-sum prefix.
 
-use super::{
-    EngineError, RingSnapshot, W, collect_prefs, make_ring, unit_basis_if_constant,
-};
+use super::{EngineError, RingSnapshot, W, collect_prefs, make_ring, unit_basis_if_constant};
 use crate::PRef;
 use crate::analyses::groebner::{ElimTerm, SparsePolynomial};
 use ark_ff::Field;
@@ -90,7 +88,8 @@ fn poly_to_ark<F: Field + Copy + Send + Sync>(
             }
             let idx = *fwd
                 .get(var)
-                .expect("engine: PRef in poly term not present in snapshot") as usize;
+                .expect("engine: PRef in poly term not present in snapshot")
+                as usize;
             exps[idx] = *power as u32;
         }
         let mt = ArkMonoTerm::<W>::from_exponents(&snap.ring, &exps).expect(
@@ -264,7 +263,11 @@ mod tests {
         for (i, slot) in snap.slots.iter().enumerate() {
             let pref = slot.as_ref().expect("no ghost expected with 2+2");
             if i % 2 == 0 {
-                assert!(!ElimTerm::eliminate_var(pref), "even idx {} must be keep", i);
+                assert!(
+                    !ElimTerm::eliminate_var(pref),
+                    "even idx {} must be keep",
+                    i
+                );
             } else {
                 assert!(ElimTerm::eliminate_var(pref), "odd idx {} must be elim", i);
             }

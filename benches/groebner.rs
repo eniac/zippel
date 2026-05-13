@@ -78,7 +78,7 @@ where
     group.finish();
 }
 
-/// Time `buchberger_and_reduce()` — the *reduced* Gröbner basis, which is
+/// Time `buchberger()` — the *reduced* Gröbner basis, which is
 /// what Singular/Maple/Magma benchmarks report. Always ≥ the corresponding
 /// raw `bench_buchberger` time (interreduction is non-negative work).
 fn bench_buchberger_reduced<T: Monomial, F>(
@@ -95,11 +95,7 @@ fn bench_buchberger_reduced<T: Monomial, F>(
     for &n in sizes {
         let sys = build(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter_batched(
-                || sys.clone(),
-                |s| s.buchberger_and_reduce(),
-                BatchSize::SmallInput,
-            )
+            b.iter_batched(|| sys.clone(), |s| s.buchberger(), BatchSize::SmallInput)
         });
     }
     group.finish();

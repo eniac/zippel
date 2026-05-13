@@ -1,8 +1,6 @@
 //! Monomorphic grevlex engine: zippel `GrevLexTerm` ↔ ark-gb `GrevLexTerm<W>`.
 
-use super::{
-    EngineError, RingSnapshot, W, collect_prefs, make_ring, unit_basis_if_constant,
-};
+use super::{EngineError, RingSnapshot, W, collect_prefs, make_ring, unit_basis_if_constant};
 use crate::PRef;
 use crate::analyses::groebner::{GrevLexTerm, SparsePolynomial};
 use ark_ff::Field;
@@ -64,7 +62,8 @@ fn poly_to_ark<F: Field + Copy + Send + Sync>(
             }
             let idx = *fwd
                 .get(var)
-                .expect("engine: PRef in poly term not present in snapshot") as usize;
+                .expect("engine: PRef in poly term not present in snapshot")
+                as usize;
             exps[idx] = *power as u32;
         }
         let mt = ArkMonoTerm::<W>::from_exponents(&snap.ring, &exps).expect(

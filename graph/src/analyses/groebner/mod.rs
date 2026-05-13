@@ -1,5 +1,5 @@
-pub mod buchberger;
-pub use buchberger::GroebnerBasis;
+pub mod basis;
+pub use basis::GroebnerBasis;
 
 pub mod monomial;
 pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
@@ -244,7 +244,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// Compute Groebner basis using Buchberger algorithm,
     pub fn run(&mut self) {
         // Compute the Groebner basis using Buchberger algorithm
-        self.basis = self.basis.clone().buchberger_and_reduce();
+        self.basis = self.basis.clone().buchberger();
     }
 
     /// Remap all PRef variables in the basis, pl, np, and args using a mapping function.

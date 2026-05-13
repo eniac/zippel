@@ -34,9 +34,6 @@ pub trait Monomial:
 
     fn is_divided(&self, other: &Self) -> bool;
 
-    fn is_coprime(&self, other: &Self) -> bool {
-        self.gcd(other).is_constant()
-    }
     fn lcm(&self, other: &Self) -> Self;
     fn gcd(&self, other: &Self) -> Self;
 
@@ -404,7 +401,8 @@ impl<'a> Div for &'a GrevLexTerm {
     }
 }
 
-/// Convenienec constructors from vectors of variables and exponents
+/// Convenience constructors from vectors of variables and exponents
+/// (used by test helpers; not required by the `Monomial` trait).
 impl From<Vec<(PRef, usize)>> for ElimTerm {
     fn from(vars: Vec<(PRef, usize)>) -> Self {
         ElimTerm::new(vars.into_iter().collect())

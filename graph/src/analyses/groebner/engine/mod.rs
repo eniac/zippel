@@ -116,8 +116,7 @@ pub(super) fn make_ring<F: Field + Copy + Send + Sync>(
     // ark-gb's `Ring::new(0)` returns `None`; the constant-ideal case is
     // handled by `unit_basis_if_constant` *before* this is called, so any
     // failure here would be a programming error.
-    let ring =
-        Ring::<F, W>::new(nvars as u32).expect("ark-gb Ring::new failed for non-zero nvars");
+    let ring = Ring::<F, W>::new(nvars as u32).expect("ark-gb Ring::new failed for non-zero nvars");
     Ok(Arc::new(ring))
 }
 

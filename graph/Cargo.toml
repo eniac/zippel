@@ -28,9 +28,6 @@ itertools = "0.14.0"
 hashconsing = "1.6"
 ark-gb = { git = "https://github.com/elefthei/ark-gb", rev = "75eec201ec2c654374e9858df3a429535ab6ebe6" }
 
-[features]
-default = []
-
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"

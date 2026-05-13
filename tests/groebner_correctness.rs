@@ -92,7 +92,7 @@ fn buchberger_after_shuffle<T: Monomial>(
     seed: u64,
 ) -> GroebnerBasis<Fr, T> {
     let shuffled = deterministic_shuffle(&inputs.basis, seed);
-    GroebnerBasis::new(inputs.num_vars, shuffled).buchberger_and_reduce()
+    GroebnerBasis::new(inputs.num_vars, shuffled).buchberger()
 }
 
 /// Count standard monomials of `g` (= dim_F(R/I) when `I` is 0-dim).
@@ -196,7 +196,7 @@ fn run_self_checks_grevlex<F>(
     F: Fn(usize) -> GroebnerBasis<Fr, GrevLexTerm>,
 {
     let inputs = build(n);
-    let g = inputs.clone().buchberger_and_reduce();
+    let g = inputs.clone().buchberger();
     assert_proper(&g, label);
 
     // Layer 1a — ideal inclusion.
@@ -238,7 +238,7 @@ fn run_self_checks_elim<F>(
     F: Fn(usize) -> GroebnerBasis<Fr, ElimTerm>,
 {
     let inputs = build(n);
-    let g = inputs.clone().buchberger_and_reduce();
+    let g = inputs.clone().buchberger();
     assert_proper(&g, label);
 
     assert!(
@@ -301,8 +301,8 @@ fn katsura_3_elim_self_checks() {
 #[test]
 fn katsura_3_dim_order_invariant() {
     let vars = katsura_vars(3);
-    let g_grev = katsura_basis::<GrevLexTerm>(3).buchberger_and_reduce();
-    let g_elim = katsura_basis::<ElimTerm>(3).buchberger_and_reduce();
+    let g_grev = katsura_basis::<GrevLexTerm>(3).buchberger();
+    let g_elim = katsura_basis::<ElimTerm>(3).buchberger();
     let d_grev = standard_monomial_count(&g_grev, &vars);
     let d_elim = standard_monomial_count(&g_elim, &vars);
     assert_dim_order_invariant("katsura/3", d_grev, d_elim);
@@ -340,8 +340,8 @@ fn cyclic_3_elim_self_checks() {
 #[test]
 fn cyclic_3_dim_order_invariant() {
     let vars = cyclic_vars(3);
-    let g_grev = cyclic_basis::<GrevLexTerm>(3).buchberger_and_reduce();
-    let g_elim = cyclic_basis::<ElimTerm>(3).buchberger_and_reduce();
+    let g_grev = cyclic_basis::<GrevLexTerm>(3).buchberger();
+    let g_elim = cyclic_basis::<ElimTerm>(3).buchberger();
     let d_grev = standard_monomial_count(&g_grev, &vars);
     let d_elim = standard_monomial_count(&g_elim, &vars);
     assert_dim_order_invariant("cyclic/3", d_grev, d_elim);
@@ -361,8 +361,8 @@ fn cyclic_3_dim_order_invariant() {
 // ---------------------------------------------------------------------------
 
 fn cross_order_consistency_via_inclusion(label: &str, n: usize) {
-    let g_grev = katsura_basis::<GrevLexTerm>(n).buchberger_and_reduce();
-    let g_elim = katsura_basis::<ElimTerm>(n).buchberger_and_reduce();
+    let g_grev = katsura_basis::<GrevLexTerm>(n).buchberger();
+    let g_elim = katsura_basis::<ElimTerm>(n).buchberger();
     // Both bases generate the same ideal, so each input set should reduce
     // to 0 mod the other side's GB. Use Katsura inputs as witnesses.
     let inputs_grev = katsura_basis::<GrevLexTerm>(n);
@@ -390,7 +390,7 @@ fn katsura_3_cross_order_consistency() {
 fn helpers_zero_polynomial_filtered() {
     // assert_s_pair_closure should accept a basis with a zero poly without
     // panicking on its leading-term lookup.
-    let mut g = katsura_basis::<GrevLexTerm>(3).buchberger_and_reduce();
+    let mut g = katsura_basis::<GrevLexTerm>(3).buchberger();
     g.basis.push(SparsePolynomial::<Fr, GrevLexTerm>::zero());
     // Manually invoke S-pair closure: should still pass — every S-pair with
     // the zero poly is zero.
@@ -411,7 +411,7 @@ fn helpers_zero_polynomial_filtered() {
 //
 // The literal coefficients are NOT monic (sympy clears denominators);
 // our `reduce_groebner_basis` monicizes, so we recompute the GB on the
-// pinned polys via `buchberger_and_reduce()` (idempotent on a true GB)
+// pinned polys via `buchberger()` (idempotent on a true GB)
 // and then byte-compare against our own GB.
 //
 // All-private vars ⇒ ElimTerm == GrevLexTerm semantically, so the same
@@ -458,9 +458,9 @@ fn assert_matches_pin<T: Monomial + std::fmt::Debug>(
     pinned: GroebnerBasis<Fr, T>,
 ) {
     // `pinned` is sympy's reduced GB (so already a GB, but not monic).
-    // Run `.buchberger_and_reduce()` to get the canonical monic form.
+    // Run `.buchberger()` to get the canonical monic form.
     // On a true GB this is fast: all S-pairs reduce to 0 immediately.
-    let pinned_canon = pinned.buchberger_and_reduce();
+    let pinned_canon = pinned.buchberger();
     assert_eq!(
         our_g.basis.len(),
         pinned_canon.basis.len(),
@@ -518,7 +518,7 @@ const CYCLIC_3_GB: BasisLit<'static> = &[
 #[test]
 fn katsura_3_grevlex_pinned() {
     let vars = katsura_vars(3);
-    let our_g = katsura_basis::<GrevLexTerm>(3).buchberger_and_reduce();
+    let our_g = katsura_basis::<GrevLexTerm>(3).buchberger();
     let pinned = pinned_basis::<GrevLexTerm>(3, &vars, KATSURA_3_GB);
     assert_matches_pin("katsura/3/grevlex/pinned", &our_g, pinned);
 }
@@ -526,7 +526,7 @@ fn katsura_3_grevlex_pinned() {
 #[test]
 fn katsura_3_elim_pinned() {
     let vars = katsura_vars(3);
-    let our_g = katsura_basis::<ElimTerm>(3).buchberger_and_reduce();
+    let our_g = katsura_basis::<ElimTerm>(3).buchberger();
     let pinned = pinned_basis::<ElimTerm>(3, &vars, KATSURA_3_GB);
     assert_matches_pin("katsura/3/elim/pinned", &our_g, pinned);
 }
@@ -534,7 +534,7 @@ fn katsura_3_elim_pinned() {
 #[test]
 fn cyclic_3_grevlex_pinned() {
     let vars = cyclic_vars(3);
-    let our_g = cyclic_basis::<GrevLexTerm>(3).buchberger_and_reduce();
+    let our_g = cyclic_basis::<GrevLexTerm>(3).buchberger();
     let pinned = pinned_basis::<GrevLexTerm>(3, &vars, CYCLIC_3_GB);
     assert_matches_pin("cyclic/3/grevlex/pinned", &our_g, pinned);
 }
@@ -542,7 +542,7 @@ fn cyclic_3_grevlex_pinned() {
 #[test]
 fn cyclic_3_elim_pinned() {
     let vars = cyclic_vars(3);
-    let our_g = cyclic_basis::<ElimTerm>(3).buchberger_and_reduce();
+    let our_g = cyclic_basis::<ElimTerm>(3).buchberger();
     let pinned = pinned_basis::<ElimTerm>(3, &vars, CYCLIC_3_GB);
     assert_matches_pin("cyclic/3/elim/pinned", &our_g, pinned);
 }

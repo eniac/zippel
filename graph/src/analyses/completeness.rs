@@ -352,7 +352,7 @@ mod tests {
         assert!(spoly == expected_positive || spoly == expected_negative);
 
         let basis = GroebnerBasis::new(5, vec![p1, p2]);
-        let gb = basis.buchberger_and_reduce();
+        let gb = basis.buchberger();
 
         let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
         let rem = gb.reduce(target);
