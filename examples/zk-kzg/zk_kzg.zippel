@@ -13,7 +13,7 @@
 proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         (private p: [F; N], public z: F, public y: F, public ss: [G1; N+1],
         public g: G1, public h: G2, h_val: G2)
-        where p == p {
+        where dot(p, [z ^ i for i in 0..N]) == y {
 
         // Sample blinding factors
         let b0 = random<F>;

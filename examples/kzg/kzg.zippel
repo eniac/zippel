@@ -1,7 +1,7 @@
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         (private p: [F; N], public z: F, public y: F, public ss: [G1; N],
         public g: G1, public h: G2, h_val: G2)
-        where p == p {
+        where dot(p, [z ^ i for i in 0..N]) == y {
         
         let p_val = poly(p);
         c <- dot(p, ss);
