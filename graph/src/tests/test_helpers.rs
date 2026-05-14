@@ -583,4 +583,91 @@ mod tests {
             None => panic!("Second check node was not computed"),
         }
     }
+
+    /// Constants can be declared directly in a protocol body with a type
+    /// ascription on the `let` binding, e.g. `let zero: F = 0;` and
+    /// `let one: F = 1;`. The numeric literal (a `Fin<n>`) coerces to the
+    /// scalar field `F` via `CTyp::lub_equ`'s scalar-fallback arm, and the
+    /// graph evaluates the comparison against the public input correctly.
+    ///
+    /// This is the feature requested in the "Allow easy definition of
+    /// constants" issue — the workaround `let x = a - a` is no longer
+    /// required to obtain a zero / one of type `F`.
+    #[test]
+    fn test_constants_in_protocol() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        // Constant `zero: F = 0` declared on the protocol body, compared
+        // against a public input. Passes when the input is 0, fails otherwise.
+        let src = r#"
+            proto consts_zero<F: Field>(public x: F) where true {
+                let zero: F = 0;
+                verify(x == zero)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 0);
+        let result = execute_graph(dag, inputs).expect("graph produced no result");
+        match result {
+            Value::Bool(true) => {}
+            other => panic!("verify(x == 0) with x = 0 should pass, got {:?}", other),
+        }
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 7);
+        let result = execute_graph(dag, inputs).expect("graph produced no result");
+        match result {
+            Value::Bool(false) => {}
+            other => panic!("verify(x == 0) with x = 7 should fail, got {:?}", other),
+        }
+    }
+
+    /// Arithmetic on constants declared in the protocol body works:
+    /// `let one: F = 1; let three: F = 3 * one;` computes the field
+    /// element 3, and the protocol verifies the public input matches.
+    #[test]
+    fn test_constant_arithmetic_in_protocol() {
+        use crate::UDags;
+        use lang::ast::UModule;
+        use share::Ctx;
+
+        let src = r#"
+            proto consts_arith<F: Field>(public x: F) where true {
+                let one: F = 1;
+                let three: F = 3 * one;
+                verify(x == three)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<TestConfig>::from_module(m).unwrap();
+        let dag = &gs[0];
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 3);
+        let result = execute_graph(dag, inputs).expect("graph produced no result");
+        match result {
+            Value::Bool(true) => {}
+            other => panic!("verify(x == 3 * 1) with x = 3 should pass, got {:?}", other),
+        }
+
+        let mut inputs = test_inputs();
+        add_scalar_input(&mut inputs, "x", 2);
+        let result = execute_graph(dag, inputs).expect("graph produced no result");
+        match result {
+            Value::Bool(false) => {}
+            other => panic!("verify(x == 3 * 1) with x = 2 should fail, got {:?}", other),
+        }
+    }
 }
