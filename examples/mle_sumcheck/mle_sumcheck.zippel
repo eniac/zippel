@@ -1,0 +1,92 @@
+// Multilinear Sumcheck
+// A simplified sumcheck protocol specifically for multilinear polynomials.
+
+// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse
+fn sumcheck_round<F: Field, NUM_VARS: 10, V: 2..10>(
+    public orig_poly: Poly<F, NUM_VARS, 1>,
+    public curr_poly: Poly<F, V, 1>,
+    public challenges: [F; NUM_VARS - V],
+    public prev_eval: F,
+    public challenge: F,
+    public curr_round: Fin<NUM_VARS>
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
+    let out = marginalize(cfg);
+    
+    // Prover sends evaluations over the boolean hypercube (g(0), g(1))
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    // Verifier interpolates the evaluations to form the round polynomial g(X)
+    let points = [i for i in 0..2];
+    let g = interpolate(points, evs);
+    
+    // Verifier draws a random challenge and evaluates g(r_next)
+    r_next <- challenge<F>;
+    let next_prev_vec = eval(g, [r_next]);
+    let next_prev = next_prev_vec[0];
+
+    // Recurse to the next round
+    let next_challenges = challenges ++ [r_next];
+    sumcheck_round(orig_poly, out.next_poly, next_challenges, next_prev, r_next, curr_round + 1)
+}
+
+// Final round: check g(0)+g(1) = previous g(r), then evaluate original polynomial
+fn sumcheck_round<F: Field, NUM_VARS: 10>(
+    public orig_poly: Poly<F, NUM_VARS, 1>,
+    public curr_poly: Poly<F, 1, 1>,
+    public challenges: [F; NUM_VARS - 1],
+    public prev_eval: F,
+    public challenge: F,
+    public curr_round: Fin<NUM_VARS>
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
+    let out = marginalize(cfg);
+    
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let points = [i for i in 0..2];
+    let g = interpolate(points, evs);
+    
+    r_final <- challenge<F>;
+    let from_round_vec = eval(g, [r_final]);
+    let from_round = from_round_vec[0];
+    
+    // Evaluate the original polynomial at the chosen random challenge point
+    let full_challenges = challenges ++ [r_final];
+    let from_orig = eval(orig_poly, full_challenges);
+
+    // Final check: the evaluation from the round polynomial must match the original
+    from_round == from_orig
+}
+
+// Initial round: fold round-1 message
+proto sumcheck<F: Field, NUM_VARS: 10>(
+    public claimed_sum: F,
+    public poly: Poly<F, NUM_VARS, 1>
+) where let zero = claimed_sum - claimed_sum;
+        let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
+        let out0 = marginalize(cfg0);
+        let evs0 = out0.evaluations;
+        claimed_sum == evs0[0] + evs0[1] {
+        
+    let zero = claimed_sum - claimed_sum;
+    let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    
+    // Prover sends the first evaluations
+    evs0 <- out0.evaluations;
+    
+    // Verifier checks that g(0) + g(1) = claimed sum
+    verify(claimed_sum == evs0[0] + evs0[1]);
+
+    // Verifier interpolates and draws the first challenge
+    let points = [i for i in 0..2];
+    let g = interpolate(points, evs0);
+    r1 <- challenge<F>;
+    let prev_vec = eval(g, [r1]);
+    let prev = prev_vec[0];
+    
+    verify(sumcheck_round(poly, out0.next_poly, [r1], prev, r1, 1))
+}

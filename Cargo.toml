@@ -189,5 +189,6 @@ path = "examples/cds/main.rs"
 name = "zk-kzg"
 path = "examples/zk-kzg/main.rs"
 
-
-
+[[example]]
+name = "mle_sumcheck"
+path = "examples/mle_sumcheck/main.rs"
