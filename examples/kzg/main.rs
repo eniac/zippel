@@ -18,7 +18,7 @@ fn main() {
     let public_inputs = inputs
         .clone()
         .into_iter()
-        .filter(|(vid, _)| vid.0 != "p")
+        .filter(|(vid, _)| vid.0 != "poly_coeffs")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
@@ -110,12 +110,12 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p".to_string()), p),
-        (Vid("g".to_string()), g),
-        (Vid("h".to_string()), h),
-        (Vid("z".to_string()), z),
-        (Vid("y".to_string()), y),
-        (Vid("ss".to_string()), ss),
-        (Vid("h_val".to_string()), h_val),
+        (Vid("poly_coeffs".to_string()), p),
+        (Vid("gen_g1".to_string()), g),
+        (Vid("gen_g2".to_string()), h),
+        (Vid("eval_point".to_string()), z),
+        (Vid("eval_result".to_string()), y),
+        (Vid("srs_g1".to_string()), ss),
+        (Vid("srs_g2_s".to_string()), h_val),
     ])
 }

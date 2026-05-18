@@ -65,13 +65,13 @@ fn sumcheck_round<F: Field, NUM_VARS: 10>(
 proto sumcheck<F: Field, NUM_VARS: 10>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS, 1>
-) where let zero = claimed_sum - claimed_sum;
+) where let zero: F = 0;
         let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
         let out0 = marginalize(cfg0);
         let evs0 = out0.evaluations;
         claimed_sum == evs0[0] + evs0[1] {
         
-    let zero = claimed_sum - claimed_sum;
+    let zero: F = 0;
     let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
     let out0 = marginalize(cfg0);
     
