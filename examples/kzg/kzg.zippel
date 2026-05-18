@@ -1,6 +1,6 @@
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, public srs_g1: [G1; N],
-        public gen_g1: G1, public gen_g2: G2, srs_g2_s: G2)
+        public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
         where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
         
         let poly_x = poly(poly_coeffs);
