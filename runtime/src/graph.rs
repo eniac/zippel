@@ -226,7 +226,18 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
             Node::Arg(vid, _, _, _, _) => inputs
                 .get(vid)
-                .unwrap_or_else(|| panic!("Value for {} should exist", vid))
+                .unwrap_or_else(|| {
+                    let provided: Vec<String> =
+                        inputs.keys().into_iter().map(|v| v.to_string()).collect();
+                    panic!(
+                        "get_value: missing input value for protocol argument `{}`. \
+                         The `inputs` map provided to the prover/verifier contains: [{}]. \
+                         The keys must match the parameter names in the .zippel signature \
+                         exactly.",
+                        vid,
+                        provided.join(", "),
+                    )
+                })
                 .clone(),
         }
     }
@@ -439,11 +450,19 @@ impl<C: ArkConfig> MutexGraph<C> {
                             && !pref.from_transcript
                         {
                             let vid = pref.name().expect("Arg node must carry a name").clone();
-                            prover_state.public_message(
-                                value_to_bytes(inputs.get(&vid).unwrap())
-                                    .unwrap()
-                                    .as_slice(),
-                            );
+                            let value = inputs.get(&vid).unwrap_or_else(|| {
+                                let provided: Vec<String> =
+                                    inputs.keys().into_iter().map(|v| v.to_string()).collect();
+                                panic!(
+                                    "run_graph: missing input value for public protocol \
+                                     argument `{}`. The `inputs` map provided to the prover \
+                                     contains: [{}]. The keys must match the parameter names \
+                                     in the .zippel `proto` signature exactly.",
+                                    vid,
+                                    provided.join(", "),
+                                )
+                            });
+                            prover_state.public_message(value_to_bytes(value).unwrap().as_slice());
                         }
                     }
                 }

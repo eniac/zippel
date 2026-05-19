@@ -213,6 +213,43 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
         // save public inputs as public_inputs
         let prover_args = prover.args();
+
+        // Validate that every prover argument expected from the caller is
+        // present in `inputs`. Transcript-sourced args are produced internally
+        // and are not expected to be supplied. Without this check, a typo or
+        // mismatch between the protocol declaration and the call-site
+        // `inputs` map surfaces deep inside the runtime as an opaque
+        // `Option::unwrap() on a None value` panic — see
+        // https://github.com/elefthei/zippel issue for the KZG example.
+        let expected_args: Vec<Vid> = prover_args
+            .iter()
+            .filter(|arg| !arg.from_transcript)
+            .filter_map(|arg| arg.name().cloned())
+            .collect();
+        let missing: Vec<&Vid> = expected_args
+            .iter()
+            .filter(|v| inputs.get(v).is_none())
+            .collect();
+        if !missing.is_empty() {
+            let provided: Vec<String> = inputs
+                .clone()
+                .into_iter()
+                .map(|(v, _)| v.to_string())
+                .collect();
+            let missing_str: Vec<String> = missing.iter().map(|v| v.to_string()).collect();
+            let expected_str: Vec<String> = expected_args.iter().map(|v| v.to_string()).collect();
+            panic!(
+                "run_prover: missing input value(s) for protocol argument(s): [{}].\n  \
+                 expected (from the protocol declaration): [{}]\n  \
+                 provided (in the `inputs` map):          [{}]\n  \
+                 hint: the keys in the `inputs` Ctx must match the parameter \
+                 names in the .zippel `proto`/`fn` signature exactly.",
+                missing_str.join(", "),
+                expected_str.join(", "),
+                provided.join(", "),
+            );
+        }
+
         let public_args: Vec<Vid> = prover_args
             .clone()
             .iter()
