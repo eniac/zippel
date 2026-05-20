@@ -1,0 +1,144 @@
+// Multivariate ZeroCheck PIOP (HyperPlonk §3.2 / Setty's Spartan §4).
+// Sizes: parametric over S (and N = 2^S, the hypercube size).
+//
+// How to run:
+//   cargo run --example hyperplonk_zerocheck --release
+//
+// To change the dimensions: edit NUM_POINTS (= 2^S) in main.rs. The proto
+// below picks up the new size via its <S: Size, N: 2^S> parameters; no
+// edits needed in this file.
+
+// Build the Lagrange (eq) basis at x in F^K: returns the 2^K evaluations
+// of eq(x, ·) on the hypercube, LSB-first.
+fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+    [(1 - x[0]), x[0]]
+}
+fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+    let x_lo = x[0..(K-1)];
+    let a    = x[K-1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// Recursive sumcheck rounds for the ZeroCheck on h = f * eq_tau.
+// Base case (V = 1, i.e. last variable): draw the final challenge and
+// invoke the verifier closing check.
+fn zc_round<F: Field, S: Size, N: 2^S>(
+    public curr_poly:        Poly<F, 1, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - 1],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public a_evs:            [F; N],
+    public b_evs:            [F; N],
+    public c_evs:            [F; N],
+    public eq_tau_evs:       [F; N]
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let final_vec  = eval(g, [r_final]);
+    let final_eval = final_vec[0];
+
+    let full_challenges = prev_challenges ++ [r_final];
+
+    // Verifier closing check: evaluate each MLE at the sumcheck point via
+    // the LSB-first eq basis (parametric over S).
+    let lambdas    = eq_weights(full_challenges);
+    let a_at_r     = dot(lambdas, a_evs);
+    let b_at_r     = dot(lambdas, b_evs);
+    let c_at_r     = dot(lambdas, c_evs);
+    let eq_at_r    = dot(lambdas, eq_tau_evs);
+
+    final_eval == (a_at_r * b_at_r - c_at_r) * eq_at_r
+}
+fn zc_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+    public curr_poly:        Poly<F, V, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - V],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public a_evs:            [F; N],
+    public b_evs:            [F; N],
+    public c_evs:            [F; N],
+    public eq_tau_evs:       [F; N]
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    let pi  = out.next_poly;
+
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_vec  = eval(g, [r_next]);
+    let next_prev = next_vec[0];
+
+    let new_challenges = prev_challenges ++ [r_next];
+
+    zc_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+             a_evs, b_evs, c_evs, eq_tau_evs)
+}
+
+// Draw S taus via a recursive helper. Each call draws one challenge and
+// appends it to the accumulator; recursion is dispatched on the shrinking
+// "remaining" array's size.
+fn draw_taus<F: Field>(public remaining: [F; 1]) -> [F; 1] {
+    t <- challenge<F>;
+    [t]
+}
+fn draw_taus<F: Field, K: 2..16>(public remaining: [F; K]) -> [F; K] {
+    let prev = draw_taus(remaining[0..(K-1)]);
+    t <- challenge<F>;
+    prev ++ [t]
+}
+
+proto hyperplonk_zerocheck<F: Field, S: Size, N: 2^S>(
+    public a_evs: [F; N],
+    public b_evs: [F; N],
+    public c_evs: [F; N]
+) where
+    a_evs * b_evs == c_evs
+{
+    let one  = a_evs[0] - a_evs[0] + 1;
+    let zero = a_evs[0] - a_evs[0];
+
+    // V draws S taus in F^S, then builds eq_tau on B_S parametrically.
+    let placeholder = [zero for i in 0..S];
+    let tau         = draw_taus(placeholder);
+    let eq_tau_evs  = eq_weights(tau);
+    let eq_tau      = mle(eq_tau_evs);
+
+    // h(x) = (a(x)·b(x) - c(x)) · eq(tau, x). Built additively to side-step
+    // a direct Poly-Mle subtraction.
+    let a       = mle(a_evs);
+    let b       = mle(b_evs);
+    let c       = mle(c_evs);
+    let neg_one = zero - one;
+    let ab      = a * b;
+    let neg_c   = c * neg_one;
+    let f_poly  = ab + neg_c;
+    let h_poly  = f_poly * eq_tau;
+
+    // -------- Round 0 of sumcheck, then recurse into zc_round --------
+    let cfg0 = {| poly: h_poly, num_variables: S, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let points = [i * one for i in 0..4];
+    let g0     = interpolate(points, evs0);
+    r0 <- challenge<F>;
+    let prev_vec = eval(g0, [r0]);
+    let prev     = prev_vec[0];
+
+    verify(zc_round(out0.next_poly, points, [r0], prev, r0, 1,
+                    a_evs, b_evs, c_evs, eq_tau_evs))
+}

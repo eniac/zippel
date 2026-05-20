@@ -196,3 +196,23 @@ path = "examples/zk-kzg/main.rs"
 [[example]]
 name = "mle_sumcheck"
 path = "examples/mle_sumcheck/main.rs"
+
+[[example]]
+name = "hyperplonk_zerocheck"
+path = "examples/hyperplonk_zerocheck/main.rs"
+
+[[example]]
+name = "hyperplonk_productcheck"
+path = "examples/hyperplonk_productcheck/main.rs"
+
+[[example]]
+name = "hyperplonk_multiset"
+path = "examples/hyperplonk_multiset/main.rs"
+
+[[example]]
+name = "hyperplonk_permutation"
+path = "examples/hyperplonk_permutation/main.rs"
+
+[[example]]
+name = "hyperplonk"
+path = "examples/hyperplonk/main.rs"
