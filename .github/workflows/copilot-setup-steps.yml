@@ -1,0 +1,26 @@
+# Customizes the environment used by the GitHub Copilot coding agent.
+#
+# The default `ubuntu-latest` runner has ~14 GB of free disk space, which is
+# not enough for a full Zippel build (large arkworks dep graph + nightly
+# toolchain + `target/` for the whole workspace). The agent has been failing
+# with "Copilot had to stop work due to insufficient disk space".
+#
+# Switching `runs-on` to a larger GitHub-hosted runner gives the agent more
+# disk (and CPU/RAM). The label below must match a larger runner configured
+# for this account/org — see:
+# https://docs.github.com/en/actions/using-github-hosted-runners/about-larger-runners
+#
+# If a different label is provisioned (e.g. `ubuntu-latest-8-cores`), update
+# the `runs-on:` value to match.
+
+name: Copilot Setup Steps
+
+on:
+  workflow_dispatch:
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
