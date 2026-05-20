@@ -22,8 +22,8 @@ use zippel::*;
 // Square matrices (rows == columns == |z|), so we require
 //   NUM_CONSTRAINTS == WITNESS_LEN + IO_LEN + 1.
 const NUM_CONSTRAINTS: usize = 4; // m: number of R1CS rows (= |z|)
-const IO_LEN:          usize = 1; // |io|: public-input length
-const WITNESS_LEN:     usize = 2; // |w|: private-witness length
+const IO_LEN: usize = 1; // |io|: public-input length
+const WITNESS_LEN: usize = 2; // |w|: private-witness length
 
 // Spartan's two stacked sum-checks blow up the recursive AST traversal during
 // Zippel compilation; the OS default 8 MB main-thread stack overflows on macOS.
@@ -58,7 +58,9 @@ fn run() {
 
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_scheduled, inputs);
+    let proof = handler
+        .run_prover(prover_scheduled, inputs)
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -69,7 +71,9 @@ fn run() {
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(verifier_scheduled, proof);
+    let verifier_result = handler
+        .run_verifier(verifier_scheduled, proof)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
@@ -81,7 +85,7 @@ fn run() {
     }
 
     // NOTE. The minimal_analysis() static analysis pass (completeness / ZK) is
-    // skipped here 
+    // skipped here
     let _ = zippel_file;
 }
 
@@ -92,8 +96,8 @@ struct R1csInstance<F> {
     mat_a: Vec<F>,
     mat_b: Vec<F>,
     mat_c: Vec<F>,
-    io:    Vec<F>,
-    w:     Vec<F>,
+    io: Vec<F>,
+    w: Vec<F>,
 }
 
 /// Build a random satisfying R1CS instance for the given witness and
@@ -158,7 +162,7 @@ where
         mat_b,
         mat_c,
         io: instance.to_vec(),
-        w:  witness.to_vec(),
+        w: witness.to_vec(),
     }
 }
 
@@ -175,7 +179,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     // By default both are uniformly random; replace either line with
     // concrete F constants to pin a specific assignment.
     // -------------------------------------------------------------------
-    let witness:  Vec<F> = (0..WITNESS_LEN).map(|_| F::rand(&mut rng)).collect();
+    let witness: Vec<F> = (0..WITNESS_LEN).map(|_| F::rand(&mut rng)).collect();
     let instance: Vec<F> = (0..IO_LEN).map(|_| F::rand(&mut rng)).collect();
 
     // z = witness ++ instance ++ [1]   (matches the layout in spartan.zippel)
@@ -210,7 +214,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("mat_a".to_string()), Value::VecScalar(r1cs.mat_a)),
         (Vid("mat_b".to_string()), Value::VecScalar(r1cs.mat_b)),
         (Vid("mat_c".to_string()), Value::VecScalar(r1cs.mat_c)),
-        (Vid("io".to_string()),    Value::VecScalar(r1cs.io)),
-        (Vid("w".to_string()),     Value::VecScalar(r1cs.w)),
+        (Vid("io".to_string()), Value::VecScalar(r1cs.io)),
+        (Vid("w".to_string()), Value::VecScalar(r1cs.w)),
     ])
 }
