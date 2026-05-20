@@ -1,20 +1,29 @@
 // Spartan-core example driver.
 //
-// Builds a small satisfying R1CS instance with m = 4, |io| = 1, |w| = 2,
-// then runs the Spartan-core protocol from spartan.zippel.
+// Builds a random satisfying R1CS instance with NUM_CONSTRAINTS rows and runs
+// the Spartan-core protocol from spartan.zippel on it.
+//
+// spartan.zippel is currently hard-coded for square matrices with
+// num_constraints = 4 (s = log num_constraints = 2) and z-length 4. Within
+// those dimensions the witness `w`, the public instance `io`, and the
+// constraint matrices A, B, C can be any satisfying values — see
+// `random_r1cs` below for the construction.
 
-use ark_ff::Zero;
+use ark_ff::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
+use rand::Rng;
 use share::Ctx;
 use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
 
 // R1CS dimensions baked into spartan.zippel.
-const M: usize = 4; // matrix dimension (s = log m = 2)
-const IO_LEN: usize = 1;
-const W_LEN: usize = 2;
+// Square matrices (rows == columns == |z|), so we require
+//   NUM_CONSTRAINTS == WITNESS_LEN + IO_LEN + 1.
+const NUM_CONSTRAINTS: usize = 4; // m: number of R1CS rows (= |z|)
+const IO_LEN:          usize = 1; // |io|: public-input length
+const WITNESS_LEN:     usize = 2; // |w|: private-witness length
 
 // Spartan's two stacked sum-checks blow up the recursive AST traversal during
 // Zippel compilation; the OS default 8 MB main-thread stack overflows on macOS.
@@ -37,7 +46,9 @@ fn run() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/spartan/spartan.zippel");
 
     println!("=== Spartan-core (ArkBls12_381) ===");
-    println!("m = {M}, s = log m = 2, |io| = {IO_LEN}, |w| = {W_LEN}");
+    println!(
+        "num_constraints = {NUM_CONSTRAINTS}, s = log num_constraints = 2, |io| = {IO_LEN}, |w| = {WITNESS_LEN}"
+    );
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -70,76 +81,136 @@ fn run() {
     }
 
     // NOTE. The minimal_analysis() static analysis pass (completeness / ZK) is
-    // skipped here because Spartan's two stacked sum-checks produce a much
-    // larger symbolic graph than the other examples and the analysis does not
-    // terminate in any reasonable time on this protocol. Re-enable manually
-    // once the analysis is fast enough for the Spartan-sized polynomial graph.
+    // skipped here 
     let _ = zippel_file;
 }
 
-/// Build a 4x4 R1CS instance that encodes a tiny circuit and is satisfiable.
-///
-/// We use a single non-trivial constraint
-///
-///     (io_0 + w_0) * w_0 = w_1
-///
-/// expressed as row 0 of a (formally) 4x4 R1CS system. The remaining three
-/// rows are all-zero (trivial `0 * 0 = 0` constraints) so that the R1CS
-/// check `(A z) o (B z) = C z` is satisfied across every row.
-///
-/// The z vector is laid out as in spartan.zippel:
-///
-///     z = w ++ io ++ [1] = (w_0, w_1, io_0, 1)
-///
-/// Under the LSB-first dense-MLE convention this places
-///
-///     z~(var_0=0, var_1=0) = w_0       z~(var_0=0, var_1=1) = io_0
-///     z~(var_0=1, var_1=0) = w_1       z~(var_0=1, var_1=1) = 1
-///
-/// so var_1 is the (w / io+pad) selector that gates the v_Z formula.
+/// A satisfying R1CS instance: three matrices A, B, C (length-`m·n`,
+/// row-major), the public-input vector `io`, and the private witness `w`.
+/// Per spartan.zippel the variable vector is `z = w ++ io ++ [1]`.
+struct R1csInstance<F> {
+    mat_a: Vec<F>,
+    mat_b: Vec<F>,
+    mat_c: Vec<F>,
+    io:    Vec<F>,
+    w:     Vec<F>,
+}
+
+/// Build a random satisfying R1CS instance for the given witness and
+/// instance, using square matrices of size `num_constraints × num_vars`
+/// where `num_vars = witness.len() + instance.len() + 1`.
+fn random_r1cs<F, R>(
+    rng: &mut R,
+    num_constraints: usize,
+    witness: &[F],
+    instance: &[F],
+) -> R1csInstance<F>
+where
+    F: Field,
+    R: Rng + ?Sized,
+{
+    let num_vars = witness.len() + instance.len() + 1;
+    assert_eq!(
+        num_vars, num_constraints,
+        "spartan.zippel uses square matrices: witness.len() + instance.len() + 1 must equal num_constraints",
+    );
+
+    // z = w ++ io ++ [1]   (matches the layout in spartan.zippel)
+    let mut z = Vec::with_capacity(num_vars);
+    z.extend_from_slice(witness);
+    z.extend_from_slice(instance);
+    z.push(F::from(1u64));
+
+    let constant_col = num_vars - 1;
+    let mut mat_a = vec![F::from(0u64); num_constraints * num_vars];
+    let mut mat_b = vec![F::from(0u64); num_constraints * num_vars];
+    let mut mat_c = vec![F::from(0u64); num_constraints * num_vars];
+
+    for i in 0..num_constraints {
+        let a_row: Vec<F> = (0..num_vars).map(|_| F::rand(rng)).collect();
+        let b_row: Vec<F> = (0..num_vars).map(|_| F::rand(rng)).collect();
+        let mut c_row: Vec<F> = (0..num_vars).map(|_| F::rand(rng)).collect();
+
+        let az_i: F = a_row.iter().zip(z.iter()).map(|(x, y)| *x * *y).sum();
+        let bz_i: F = b_row.iter().zip(z.iter()).map(|(x, y)| *x * *y).sum();
+        let target = az_i * bz_i;
+
+        // c_row · z = c_row[const] · 1 + Σ_{j ≠ const} c_row[j] · z[j]
+        // Solve c_row[const] so that c_row · z = target.
+        let other_terms: F = c_row
+            .iter()
+            .zip(z.iter())
+            .enumerate()
+            .filter(|(j, _)| *j != constant_col)
+            .map(|(_, (c, zj))| *c * *zj)
+            .sum();
+        c_row[constant_col] = target - other_terms;
+
+        for j in 0..num_vars {
+            mat_a[i * num_vars + j] = a_row[j];
+            mat_b[i * num_vars + j] = b_row[j];
+            mat_c[i * num_vars + j] = c_row[j];
+        }
+    }
+
+    R1csInstance {
+        mat_a,
+        mat_b,
+        mat_c,
+        io: instance.to_vec(),
+        w:  witness.to_vec(),
+    }
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let mut rng = rand::rngs::OsRng;
 
-    // Choose random io_0 and w_0; derive w_1 to satisfy the constraint.
-    let io_0 = F::rand(&mut rng);
-    let w_0 = F::rand(&mut rng);
-    let w_1 = (io_0 + w_0) * w_0;
+    // -------------------------------------------------------------------
+    // Fill in the witness and instance here.
+    //
+    //   witness  (length WITNESS_LEN)  — private inputs of the proof
+    //   instance (length IO_LEN)       — public  inputs of the proof
+    //
+    // By default both are uniformly random; replace either line with
+    // concrete F constants to pin a specific assignment.
+    // -------------------------------------------------------------------
+    let witness:  Vec<F> = (0..WITNESS_LEN).map(|_| F::rand(&mut rng)).collect();
+    let instance: Vec<F> = (0..IO_LEN).map(|_| F::rand(&mut rng)).collect();
 
+    // z = witness ++ instance ++ [1]   (matches the layout in spartan.zippel)
     let one = F::from(1u64);
-    let zero = F::zero();
-    let z = [w_0, w_1, io_0, one];
+    let mut z: Vec<F> = Vec::with_capacity(NUM_CONSTRAINTS);
+    z.extend_from_slice(&witness);
+    z.extend_from_slice(&instance);
+    z.push(one);
 
-    // Build a 4x4 row-major matrix whose row 0 carries the given selectors
-    // (length-16 flat vector with mat[i*4 + j] = M[i][j]).
-    let build_mat = |selectors: [F; 4]| -> Vec<F> {
-        let mut mat = vec![zero; M * M];
-        for j in 0..M {
-            mat[j] = selectors[j];
-        }
-        mat
-    };
+    // Generate random A, B, C that make this z satisfy R1CS row-by-row.
+    let r1cs = random_r1cs::<F, _>(&mut rng, NUM_CONSTRAINTS, &witness, &instance);
 
-    // (A z)_0 = w_0 + io_0:    selectors hit z[0]=w_0 and z[2]=io_0.
-    let mat_a = build_mat([one, zero, one, zero]);
-    // (B z)_0 = w_0:           selector hits z[0]=w_0.
-    let mat_b = build_mat([one, zero, zero, zero]);
-    // (C z)_0 = w_1:           selector hits z[1]=w_1.
-    let mat_c = build_mat([zero, one, zero, zero]);
-
-    // Sanity check: (A z)_i * (B z)_i = (C z)_i for every row.
-    for i in 0..M {
-        let az_i: F = (0..M).map(|j| mat_a[i * M + j] * z[j]).sum();
-        let bz_i: F = (0..M).map(|j| mat_b[i * M + j] * z[j]).sum();
-        let cz_i: F = (0..M).map(|j| mat_c[i * M + j] * z[j]).sum();
-        assert_eq!(az_i * bz_i, cz_i, "row {i} of the R1CS instance is unsatisfied");
+    // Sanity check: every row holds (A z)_i · (B z)_i = (C z)_i.
+    for i in 0..NUM_CONSTRAINTS {
+        let az_i: F = (0..NUM_CONSTRAINTS)
+            .map(|j| r1cs.mat_a[i * NUM_CONSTRAINTS + j] * z[j])
+            .sum();
+        let bz_i: F = (0..NUM_CONSTRAINTS)
+            .map(|j| r1cs.mat_b[i * NUM_CONSTRAINTS + j] * z[j])
+            .sum();
+        let cz_i: F = (0..NUM_CONSTRAINTS)
+            .map(|j| r1cs.mat_c[i * NUM_CONSTRAINTS + j] * z[j])
+            .sum();
+        assert_eq!(
+            az_i * bz_i,
+            cz_i,
+            "row {i} of the random R1CS instance is unsatisfied",
+        );
     }
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("mat_a".to_string()), Value::VecScalar(mat_a)),
-        (Vid("mat_b".to_string()), Value::VecScalar(mat_b)),
-        (Vid("mat_c".to_string()), Value::VecScalar(mat_c)),
-        (Vid("io".to_string()), Value::VecScalar(vec![io_0])),
-        (Vid("w".to_string()), Value::VecScalar(vec![w_0, w_1])),
+        (Vid("mat_a".to_string()), Value::VecScalar(r1cs.mat_a)),
+        (Vid("mat_b".to_string()), Value::VecScalar(r1cs.mat_b)),
+        (Vid("mat_c".to_string()), Value::VecScalar(r1cs.mat_c)),
+        (Vid("io".to_string()),    Value::VecScalar(r1cs.io)),
+        (Vid("w".to_string()),     Value::VecScalar(r1cs.w)),
     ])
 }

@@ -1,58 +1,35 @@
-// Spartan: a succinct interactive argument of knowledge for R1CS.
-//
-// Reference: Srinath Setty, "Spartan: Efficient and general-purpose zkSNARKs
-//            without trusted setup", CRYPTO 2020.
-//
 // This example implements the information-theoretic core of Spartan
-// (the "Spartan-core" IP from Appendix A / §5.1 of the paper) for a small,
-// hard-coded R1CS instance.
-//
 // Sizes:
 //
-//   m   = 4               (matrix dimension; s = log m = 2)
-//   |io| = 1, |w| = 2     (so |io| + 1 = |w| = m/2)
+//   num_constraints = 4   (m = matrix dimension; s = log num_constraints = 2)
+//   |io| = 1, |w| = 2     (so |w| + |io| + 1 = num_constraints; matrices are square)
 //   z   = (w_0, w_1, io_0, 1)
 //
-// Convention. We use the ark_poly LSB-first dense-MLE convention used
-// throughout the Zippel backend: for a length-2^k evaluation vector v,
-// `mle(v)` is the multilinear extension whose hypercube value at variable
-// assignment (var_0, ..., var_{k-1}) equals v[idx], where the index is
-// idx = sum_j var_j * 2^j (i.e. var_j is the j-th bit of idx).
+// How to run:
+//   cargo run --example spartan --release
 //
-// Under this convention the sum-check protocol's k-th challenge r_{k+1}
-// corresponds to variable var_k. In particular, for our z layout
+// analyze_completeness() and analyze_knowledge() — do NOT
+// terminate 
 //
-//   z[0] = w_0  (var_0=0, var_1=0)        z[2] = io_0 (var_0=0, var_1=1)
-//   z[1] = w_1  (var_0=1, var_1=0)        z[3] = 1    (var_0=1, var_1=1)
+// How to change the dimensions. The proto is hard-coded for s = 2
+// (num_constraints = 4) with square matrices, so changes touch both this
+// file and examples/spartan/main.rs:
 //
-// variable var_1 acts as the witness/(io,1) selector and so the second
-// sum-check #2 challenge r_y_1 is the selector in the final v_Z formula.
+//   - Re-split (|w|, |io|) at the same num_constraints. Edit IO_LEN and
+//     WITNESS_LEN in main.rs (they must sum to num_constraints - 1) and
+//     the matching [F; ...] sizes in the proto signature below. Update
+//     the v_w / v_io / v_z block near the bottom of this file: it encodes
+//     the LSB-first w / (io, 1) selector for the current |w| = 2,
+//     |io| = 1 split and must be rewritten for any other split.
 //
-// Spartan-core (this proto):
-//
-//   1. V samples tau in F^s.
-//   2. Sum-check #1 over the degree-3, s-variate polynomial
-//        G_{io,tau}(x) = ( f_A(x) * f_B(x) - f_C(x) ) * eq(tau, x)
-//      where f_M(x) := sum_{y in {0,1}^s} M~(x, y) * z~(y) = (M * z)~(x).
-//      Reduces "G sums to 0" to e_x = G_{io,tau}(r_x).
-//   3. P sends v_A, v_B, v_C; V checks e_x == (v_A v_B - v_C) eq(tau, r_x).
-//   4. V samples r_A, r_B, r_C in F.
-//   5. Sum-check #2 over the degree-2 polynomial
-//        M_{r_x}(y) = ( r_A A~(r_x, y) + r_B B~(r_x, y) + r_C C~(r_x, y) )
-//                    * z~(y)
-//      starting from T_2 = r_A v_A + r_B v_B + r_C v_C, reducing to
-//      e_y = M_{r_x}(r_y).
-//   6. P sends v_w = w~(r_y_0); V reconstructs v_Z and computes the matrix
-//      MLE evaluations directly to check
-//        e_y == ( r_A A~(r_x, r_y) + r_B B~(r_x, r_y) + r_C C~(r_x, r_y) )
-//                * v_Z.
-//
-// Matrix layout. mat_a, mat_b, mat_c are length-16, row-major flat vectors:
-// mat_a[i*4 + j] = A[i][j].  In the LSB-first MLE this places the two
-// "column" variables in positions 0,1 and the two "row" variables in
-// positions 2,3. We never need to invoke `mle()` on the matrices themselves;
-// every required matrix MLE evaluation is computed by closed-form bilinear
-// combinations of mat_a, mat_b, mat_c entries below.
+//   - Bump num_constraints to 2^s with s > 2. In this file: replace
+//     every `0..4` loop bound with `0..m`, every `[F; 16]` with
+//     `[F; m*m]`, set `num_variables: 2` → s in both marginalize configs,
+//     unroll one additional sum-check round in *each* of sum-check #1
+//     and sum-check #2 per extra s-step, and extend the Lagrange bases
+//     (lx_** and ly_** plus partial_a/b/c) from 4 to 2^s entries. Also
+//     bump NUM_CONSTRAINTS in main.rs and re-pick (WITNESS_LEN, IO_LEN)
+//     so they sum to num_constraints - 1.
 
 proto spartan<F: Field>(
     public mat_a: [F; 16],
