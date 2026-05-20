@@ -160,3 +160,10 @@ When **adding a new `Op` variant**:
 ## Custom Agents
 
 `.github/agents/testing-agent.md` defines a `tester` custom agent that focuses on coverage-driven test generation (algebraic property tests, error-path coverage, dense/sparse cross-variant equivalence). Invoke via the Copilot CLI when working on test coverage tasks.
+
+## Disk hygiene
+
+The Copilot coding-agent runs on the default `ubuntu-latest` runner. `.github/workflows/copilot-setup-steps.yml` reclaims ~31 GB upfront by deleting pre-installed OS tooling (Android SDK, .NET, Haskell, Docker images, …), so the agent starts with ~40+ GB free. A full Zippel `target/` can still grow large over a long session. If you hit `ENOSPC` or any "no space left on device" / "disk-full" error:
+
+1. Run `cargo clean -p <crate>` for any workspace crate you are not actively rebuilding (e.g. `cargo clean -p backend` while you iterate on `lang`). This is much cheaper than a full wipe — only the named crate's artifacts are dropped.
+2. If that's not enough, run `cargo clean` to drop `target/` entirely. The next build will be slow but the runner survives.
