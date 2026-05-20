@@ -1,15 +1,17 @@
 // MultiSet Check PIOP example driver.
-//
-// Builds two 2-variable MLE evaluation vectors f, g where g is a random
-// permutation of f, then runs the multiset-equality protocol.
 
-use ark_std::UniformRand;
+use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use rand::seq::SliceRandom;
+use rand::Rng;
 use share::Ctx;
 use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
+
+// Edit S to scale; num_points = 2^S follows.
+const S: usize = 2;
+const NUM_POINTS: usize = 1 << S;
 
 const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
@@ -27,11 +29,14 @@ fn run() {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
 
-    println!("=== HyperPlonk MultiSet Check PIOP (s = 2) ===");
+    println!("=== HyperPlonk MultiSet Check PIOP ===");
+    println!("num_points = {NUM_POINTS}, s = log num_points = {S}");
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &S);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
 
@@ -60,17 +65,79 @@ fn run() {
     }
 }
 
+struct MultiSetInstance<F> {
+    f: Vec<F>,
+    g: Vec<F>,
+    r: F,
+    v_evs: Vec<F>,
+}
+
+/// Build the rational product tree ṽ from per-point ratios `leaves`.
+/// Same dense LSB-first layout as in `examples/hyperplonk_productcheck`.
+fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
+    let n = leaves.len();
+    assert!(n.is_power_of_two());
+    let mut v = vec![F::zero(); 2 * n];
+    for k in 0..n {
+        v[2 * k] = leaves[k];
+    }
+    v[2 * n - 1] = F::zero();
+    let mut done = vec![false; n];
+    done[n - 1] = true;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for y in 0..n {
+            if done[y] {
+                continue;
+            }
+            let v_y_ready = y.is_multiple_of(2) || done[(y - 1) / 2];
+            let v_yn_ready = (y + n).is_multiple_of(2) || done[(y + n - 1) / 2];
+            if v_y_ready && v_yn_ready {
+                v[1 + 2 * y] = v[y] * v[y + n];
+                done[y] = true;
+                changed = true;
+            }
+        }
+    }
+    v
+}
+
+/// Build a random satisfying MultiSet instance.
+fn random_multiset<F, R>(rng: &mut R, num_points: usize) -> MultiSetInstance<F>
+where
+    F: Field + Zero,
+    R: Rng + ?Sized,
+{
+    let f: Vec<F> = (0..num_points).map(|_| F::rand(rng)).collect();
+    let mut g = f.clone();
+    g.shuffle(rng);
+
+    // Simulate the verifier-side Fiat-Shamir draw of r.
+    let r = F::rand(rng);
+
+    // Leaves of ṽ: (r + f[i]) / (r + g[i]). When `g` is a permutation of `f`
+    // (which we ensure by construction), r + g[i] is never zero w.h.p.
+    let leaves: Vec<F> = f
+        .iter()
+        .zip(g.iter())
+        .map(|(fi, gi)| (r + *fi) * (r + *gi).inverse().expect("r + g[i] nonzero"))
+        .collect();
+    let v_evs = build_v_tree(&leaves);
+
+    MultiSetInstance { f, g, r, v_evs }
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let mut rng = rand::rngs::OsRng;
 
-    // Random length-4 vector and a random permutation of it.
-    let f: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
-    let mut g = f.clone();
-    g.shuffle(&mut rng);
+    let inst = random_multiset::<F, _>(&mut rng, NUM_POINTS);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(f)),
-        (Vid("g_evs".to_string()), Value::VecScalar(g)),
+        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
+        (Vid("g_evs".to_string()), Value::VecScalar(inst.g)),
+        (Vid("r".to_string()), Value::Scalar(inst.r)),
+        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
     ])
 }

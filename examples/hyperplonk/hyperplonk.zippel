@@ -1,57 +1,223 @@
-// HyperPlonk protocol (Chen, Bünz, Boneh, Zhang 2022), s = 2.
+// HyperPlonk protocol (Chen, Bünz, Boneh, Zhang 2022).
+// Sizes: parametric over S (and N = 2^S, the number of gates).
 //
-// HyperPlonk replaces Plonk's univariate gate and wiring identities with
-// multivariate ones over the boolean hypercube B_s = {0,1}^s. The two core
-// statements are:
+// How to run:
+//   cargo run --example hyperplonk --release
 //
-//   (1) Gate identity. For each gate index x ∈ B_s,
-//         q_L(x)·a(x) + q_R(x)·b(x) + q_O(x)·c(x)
-//         + q_M(x)·a(x)·b(x) + q_C(x)  =  0,
-//       where a, b, c are the left/right/output wires and q_• are the
-//       selector polynomials. This is proved by ZeroCheck (HyperPlonk §3.2).
+// To change the dimensions: edit NUM_GATES (= 2^S) in main.rs. The proto
+// below picks up the new size via its <S: Size, N: 2^S> parameters; no
+// edits needed in this file.
 //
-//   (2) Wiring identity. The wire values are consistent with a fixed copy
-//       constraint encoded by a permutation σ. In the minimal version we use
-//       here, σ is a single permutation on {0..3} and the wiring states that
-//                  b(x)  =  a(σ(x))   for all x ∈ B_s.
-//       This is proved by the Permutation PIOP (HyperPlonk §3.5), which in
-//       turn reduces to a MultiSet check (§3.4) and a rational ProductCheck.
-//
-// The two phases run sequentially. Each samples its own ZeroCheck randomness
-// (tau for phase 1, sau for phase 2) and runs an independent SumCheck.
-//
-// Test instance (constructed by the driver): a master witness w ∈ F^4 and a
-// random permutation σ; we set a = w, b[i] = w[σ(i)], c = a ⊙ b (Hadamard).
-// Selectors are picked so the gate identity reduces to a·b - c = 0:
-//     q_L = q_R = q_C = 0, q_M = 1, q_O = -1.
-//
-// MLE convention: ark_poly LSB-first (matches the other examples).
+// Note: phase 2's k=2 fold randomness r2, the universal-hash r, the s_id
+// index encoding, and the rational product tree v_evs are computed by the
+// driver (simulating Fiat-Shamir) and passed in as public inputs. The
+// gate-identity ZeroCheck randomness tau is drawn inside the proto.
 
-proto hyperplonk<F: Field>(
-    public a_evs:        [F; 4],   // left wire values, one per gate
-    public b_evs:        [F; 4],   // right wire values
-    public c_evs:        [F; 4],   // output wire values
-    public q_l_evs:      [F; 4],   // selector: coefficient of a
-    public q_r_evs:      [F; 4],   // selector: coefficient of b
-    public q_o_evs:      [F; 4],   // selector: coefficient of c
-    public q_m_evs:      [F; 4],   // selector: coefficient of a·b
-    public q_c_evs:      [F; 4],   // selector: constant term
-    public s_sigma_evs:  [F; 4]    // s_σ(x) = [σ(x)] as field elements
-) where
-    // The protocol is sound for any inputs; correctness is the driver's
-    // responsibility (it picks (a, b, c, σ, selectors) so both identities
-    // hold). We do not encode that as a polynomial constraint here.
-    a_evs[0] == a_evs[0]
-{
-    let one     = a_evs[0] - a_evs[0] + 1;
-    let zero    = a_evs[0] - a_evs[0];
-    let neg_one = zero - one;
-    let two     = one + one;
-    let three   = two + one;
+// Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
+fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+    [(1 - x[0]), x[0]]
+}
+fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+    let x_lo = x[0..(K-1)];
+    let a    = x[K-1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
 
-    // ================================================================
-    // PHASE 1 — Gate identity ZeroCheck (HyperPlonk §3.2)
-    // ================================================================
+// Draw S taus, recursive dispatch on placeholder size.
+fn draw_taus<F: Field>(public placeholder: [F; 1]) -> [F; 1] {
+    t <- challenge<F>;
+    [t]
+}
+fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
+    let prev = draw_taus(placeholder[0..(K-1)]);
+    t <- challenge<F>;
+    prev ++ [t]
+}
+
+// ===== Phase 1 — Gate identity ZeroCheck (max_degree = 4) =====
+fn gate_round<F: Field, S: Size, N: 2^S>(
+    public curr_poly:        Poly<F, 1, 4>,
+    public points:           [F; 5],
+    public prev_challenges:  [F; S - 1],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public a_evs:            [F; N],
+    public b_evs:            [F; N],
+    public c_evs:            [F; N],
+    public q_l_evs:          [F; N],
+    public q_r_evs:          [F; N],
+    public q_o_evs:          [F; N],
+    public q_m_evs:          [F; N],
+    public q_c_evs:          [F; N],
+    public eq_tau_evs:       [F; N]
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 4, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let final_vec  = eval(g, [r_final]);
+    let final_eval = final_vec[0];
+
+    let full_challenges = prev_challenges ++ [r_final];
+    let lambdas         = eq_weights(full_challenges);
+
+    let a_at_r  = dot(lambdas, a_evs);
+    let b_at_r  = dot(lambdas, b_evs);
+    let c_at_r  = dot(lambdas, c_evs);
+    let ql_at_r = dot(lambdas, q_l_evs);
+    let qr_at_r = dot(lambdas, q_r_evs);
+    let qo_at_r = dot(lambdas, q_o_evs);
+    let qm_at_r = dot(lambdas, q_m_evs);
+    let qc_at_r = dot(lambdas, q_c_evs);
+    let eq_at_r = dot(lambdas, eq_tau_evs);
+
+    let gate_at_r =
+          ql_at_r * a_at_r
+        + qr_at_r * b_at_r
+        + qo_at_r * c_at_r
+        + qm_at_r * a_at_r * b_at_r
+        + qc_at_r;
+    final_eval == gate_at_r * eq_at_r
+}
+fn gate_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+    public curr_poly:        Poly<F, V, 4>,
+    public points:           [F; 5],
+    public prev_challenges:  [F; S - V],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public a_evs:            [F; N],
+    public b_evs:            [F; N],
+    public c_evs:            [F; N],
+    public q_l_evs:          [F; N],
+    public q_r_evs:          [F; N],
+    public q_o_evs:          [F; N],
+    public q_m_evs:          [F; N],
+    public q_c_evs:          [F; N],
+    public eq_tau_evs:       [F; N]
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 4, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    let pi  = out.next_poly;
+
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_vec  = eval(g, [r_next]);
+    let next_prev = next_vec[0];
+
+    let new_challenges = prev_challenges ++ [r_next];
+
+    gate_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+               a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs,
+               eq_tau_evs)
+}
+
+// ===== Phase 2 — Permutation PIOP (max_degree = 3) =====
+fn perm_round<F: Field, S: Size, N: 2^S>(
+    public curr_poly:        Poly<F, 1, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - 1],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_shift_evs:      [F; N],
+    public g_shift_evs:      [F; N],
+    public eq_sau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let final_vec  = eval(g, [r_final]);
+    let final_eval = final_vec[0];
+
+    let full_challenges = prev_challenges ++ [r_final];
+    let lambdas         = eq_weights(full_challenges);
+
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
+    let v_tail_0_evs = sent_v[0..N];
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];
+
+    let v00_at_r = dot(lambdas, v_lead_0_evs);
+    let v10_at_r = dot(lambdas, v_lead_1_evs);
+    let vt0_at_r = dot(lambdas, v_tail_0_evs);
+    let vt1_at_r = dot(lambdas, v_tail_1_evs);
+
+    let f1_at_r = dot(lambdas, f_shift_evs);
+    let f2_at_r = dot(lambdas, g_shift_evs);
+    let eq_at_r = dot(lambdas, eq_sau_evs);
+
+    let f_rel_at_r = v10_at_r - vt0_at_r * vt1_at_r;
+    let g_rel_at_r = f2_at_r * v00_at_r - f1_at_r;
+
+    final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r
+}
+fn perm_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+    public curr_poly:        Poly<F, V, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - V],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_shift_evs:      [F; N],
+    public g_shift_evs:      [F; N],
+    public eq_sau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    let pi  = out.next_poly;
+
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_vec  = eval(g, [r_next]);
+    let next_prev = next_vec[0];
+
+    let new_challenges = prev_challenges ++ [r_next];
+
+    perm_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+               sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha)
+}
+
+proto hyperplonk<F: Field, S: Size, N: 2^S>(
+    public a_evs:        [F; N],
+    public b_evs:        [F; N],
+    public c_evs:        [F; N],
+    public q_l_evs:      [F; N],
+    public q_r_evs:      [F; N],
+    public q_o_evs:      [F; N],
+    public q_m_evs:      [F; N],
+    public q_c_evs:      [F; N],
+    public s_sigma_evs:  [F; N],
+    public s_id_evs:     [F; N],
+    public r2:           F,
+    public r:            F,
+    public v_evs:        [F; 2^(S+1)]
+) where a_evs[0] == a_evs[0] {
+    let one  = a_evs[0] - a_evs[0] + 1;
+    let zero = a_evs[0] - a_evs[0];
+
+    // =============================================================
+    // PHASE 1 — Gate identity ZeroCheck
+    // =============================================================
     let a  = mle(a_evs);
     let b  = mle(b_evs);
     let c  = mle(c_evs);
@@ -61,221 +227,83 @@ proto hyperplonk<F: Field>(
     let qm = mle(q_m_evs);
     let qc = mle(q_c_evs);
 
-    // V samples ZeroCheck randomness tau = (tau0, tau1).
-    tau0 <- challenge<F>;
-    tau1 <- challenge<F>;
+    let placeholder_tau = [zero for i in 0..S];
+    let tau             = draw_taus(placeholder_tau);
+    let eq_tau_evs      = eq_weights(tau);
+    let eq_tau          = mle(eq_tau_evs);
 
-    let eq_tau_evs = [
-        (one - tau0) * (one - tau1),
-        tau0 * (one - tau1),
-        (one - tau0) * tau1,
-        tau0 * tau1
-    ];
-    let eq_tau = mle(eq_tau_evs);
-
-    // Gate polynomial f_gate(x) = q_L·a + q_R·b + q_O·c + q_M·(a·b) + q_C.
-    // Each MLE is multilinear (degree 1 per variable); q_M·a·b is therefore
-    // degree 3 per variable, and f_gate * eq_tau is degree 4 per variable.
-    let ql_a   = ql * a;
-    let qr_b   = qr * b;
-    let qo_c   = qo * c;
-    let ab     = a * b;
-    let qm_ab  = qm * ab;
-
-    let f_lin  = ql_a + qr_b + qo_c;     // degree 2
-    let f_quad = qm_ab + qc;             // degree 3
-    let f_gate = f_lin + f_quad;         // degree 3
-    let h_gate = f_gate * eq_tau;        // degree 4
-
-    // ---- SumCheck on h_gate, claimed sum 0 ----
-    let cfg0 = {| poly: h_gate, num_variables: 2, max_degree: 4, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
-    evs0 <- out0.evaluations;
-    verify(zero == evs0[0] + evs0[1]);
+    let f_lin  = ql * a + qr * b + qo * c;
+    let f_quad = qm * a * b + qc;
+    let f_gate = f_lin + f_quad;
+    let h_gate = f_gate * eq_tau;
 
     let pts4 = [i * one for i in 0..5];
-    let g0_round = interpolate(pts4, evs0);
+    let cfg0_p1 = {| poly: h_gate, num_variables: S, max_degree: 4, round: 0, challenge: zero |};
+    let out0_p1 = marginalize(cfg0_p1);
+    evs0_p1 <- out0_p1.evaluations;
+    verify(zero == evs0_p1[0] + evs0_p1[1]);
+
+    let g0_p1 = interpolate(pts4, evs0_p1);
     rx0 <- challenge<F>;
-    let prev0_vec = eval(g0_round, [rx0]);
-    let prev0 = prev0_vec[0];
+    let prev0_p1_vec = eval(g0_p1, [rx0]);
+    let prev0_p1     = prev0_p1_vec[0];
 
-    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 4, round: 1, challenge: rx0 |};
-    let out1 = marginalize(cfg1);
-    evs1 <- out1.evaluations;
-    verify(prev0 == evs1[0] + evs1[1]);
+    verify(gate_round(out0_p1.next_poly, pts4, [rx0], prev0_p1, rx0, 1,
+                      a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs,
+                      eq_tau_evs));
 
-    let g1_round = interpolate(pts4, evs1);
-    rx1 <- challenge<F>;
-    let final1_vec = eval(g1_round, [rx1]);
-    let final1 = final1_vec[0];
+    // =============================================================
+    // PHASE 2 — Wiring identity via Permutation PIOP
+    // =============================================================
+    let f_hat_evs = [s_id_evs[i]    + r2 * a_evs[i] for i in 0..N];
+    let g_hat_evs = [s_sigma_evs[i] + r2 * b_evs[i] for i in 0..N];
 
-    // ---- Verifier closing check (gate identity) ----
-    // LSB-first Lagrange basis at (rx0, rx1).
-    let omr0 = one - rx0;
-    let omr1 = one - rx1;
-    let l00 = omr0 * omr1;
-    let l10 = rx0  * omr1;
-    let l01 = omr0 * rx1;
-    let l11 = rx0  * rx1;
-
-    let a_at_r  = l00 * a_evs[0]   + l10 * a_evs[1]   + l01 * a_evs[2]   + l11 * a_evs[3];
-    let b_at_r  = l00 * b_evs[0]   + l10 * b_evs[1]   + l01 * b_evs[2]   + l11 * b_evs[3];
-    let c_at_r  = l00 * c_evs[0]   + l10 * c_evs[1]   + l01 * c_evs[2]   + l11 * c_evs[3];
-    let ql_at_r = l00 * q_l_evs[0] + l10 * q_l_evs[1] + l01 * q_l_evs[2] + l11 * q_l_evs[3];
-    let qr_at_r = l00 * q_r_evs[0] + l10 * q_r_evs[1] + l01 * q_r_evs[2] + l11 * q_r_evs[3];
-    let qo_at_r = l00 * q_o_evs[0] + l10 * q_o_evs[1] + l01 * q_o_evs[2] + l11 * q_o_evs[3];
-    let qm_at_r = l00 * q_m_evs[0] + l10 * q_m_evs[1] + l01 * q_m_evs[2] + l11 * q_m_evs[3];
-    let qc_at_r = l00 * q_c_evs[0] + l10 * q_c_evs[1] + l01 * q_c_evs[2] + l11 * q_c_evs[3];
-
-    let eq_at_r1 =
-        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
-      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
-
-    let gate_at_r =
-        ql_at_r * a_at_r
-      + qr_at_r * b_at_r
-      + qo_at_r * c_at_r
-      + qm_at_r * a_at_r * b_at_r
-      + qc_at_r;
-    verify(final1 == gate_at_r * eq_at_r1);
-
-    // ================================================================
-    // PHASE 2 — Wiring identity via Permutation PIOP (HyperPlonk §3.5)
-    //
-    // We prove b(x) = a(σ(x)) for the fixed permutation σ encoded by
-    // s_sigma_evs. The reduction is a MultiSet check on the pair
-    //
-    //     { ([x],     a(x)) }_{x ∈ B_s}   =   { ([σ(x)], b(x)) }_{x ∈ B_s}
-    //
-    // with s_id(x) := [x] (= integer index) preprocessed by both parties.
-    // ================================================================
-
-    // s_id(x) = LSB-first index encoding.
-    let s_id_evs = [zero, one, two, three];
-
-    // ---- k = 2 multiset-folding challenge r2: f̂ = s_id + r2·a, ĝ = s_σ + r2·b ----
-    r2 <- challenge<F>;
-    let f_hat_evs = [
-        s_id_evs[0]    + r2 * a_evs[0],
-        s_id_evs[1]    + r2 * a_evs[1],
-        s_id_evs[2]    + r2 * a_evs[2],
-        s_id_evs[3]    + r2 * a_evs[3]
-    ];
-    let g_hat_evs = [
-        s_sigma_evs[0] + r2 * b_evs[0],
-        s_sigma_evs[1] + r2 * b_evs[1],
-        s_sigma_evs[2] + r2 * b_evs[2],
-        s_sigma_evs[3] + r2 * b_evs[3]
-    ];
-
-    // ---- Rational ProductCheck on (r + f̂)/(r + ĝ) ----
-    r <- challenge<F>;
-
-    let f_shift_evs = [r + f_hat_evs[i] for i in 0..4];
-    let g_shift_evs = [r + g_hat_evs[i] for i in 0..4];
+    let f_shift_evs = [r + f_hat_evs[i] for i in 0..N];
+    let g_shift_evs = [r + g_hat_evs[i] for i in 0..N];
     let f1_mle = mle(f_shift_evs);
     let f2_mle = mle(g_shift_evs);
 
-    // Leaves of ṽ — per-point ratios.
-    let leaf_00 = f_shift_evs[0] / g_shift_evs[0];
-    let leaf_10 = f_shift_evs[1] / g_shift_evs[1];
-    let leaf_01 = f_shift_evs[2] / g_shift_evs[2];
-    let leaf_11 = f_shift_evs[3] / g_shift_evs[3];
-
-    let v_node_00 = leaf_00 * leaf_01;          // ṽ(1, 0, 0)
-    let v_node_01 = leaf_10 * leaf_11;          // ṽ(1, 0, 1)
-    let v_root    = v_node_00 * v_node_01;      // ṽ(1, 1, 0)  — must equal 1
-    let v_top     = zero;                       // ṽ(1, 1, 1)  — free choice
-
-    let v_evs = [
-        leaf_00, v_node_00, leaf_10, v_root,
-        leaf_01, v_node_01, leaf_11, v_top
-    ];
     sent_v <- v_evs;
 
-    let v_lead_0 = mle([sent_v[0], sent_v[2], sent_v[4], sent_v[6]]);  // ṽ(0, X)
-    let v_lead_1 = mle([sent_v[1], sent_v[3], sent_v[5], sent_v[7]]);  // ṽ(1, X)
-    let v_tail_0 = mle([sent_v[0], sent_v[1], sent_v[2], sent_v[3]]);  // ṽ(X, 0)
-    let v_tail_1 = mle([sent_v[4], sent_v[5], sent_v[6], sent_v[7]]);  // ṽ(X, 1)
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
+    let v_tail_0_evs = sent_v[0..N];
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];
+
+    let v_lead_0 = mle(v_lead_0_evs);
+    let v_lead_1 = mle(v_lead_1_evs);
+    let v_tail_0 = mle(v_tail_0_evs);
+    let v_tail_1 = mle(v_tail_1_evs);
 
     alpha <- challenge<F>;
-    sau0  <- challenge<F>;
-    sau1  <- challenge<F>;
+    let placeholder_sau = [zero for i in 0..S];
+    let sau             = draw_taus(placeholder_sau);
+    let eq_sau_evs      = eq_weights(sau);
+    let eq_sau          = mle(eq_sau_evs);
 
-    // f_relation(X) = ṽ(1, X) - ṽ(X, 0) · ṽ(X, 1)
-    let neg_v_prod  = (v_tail_0 * v_tail_1) * neg_one;
-    let f_relation  = v_lead_1 + neg_v_prod;
+    let neg_one    = zero - one;
+    let neg_v_prod = (v_tail_0 * v_tail_1) * neg_one;
+    let neg_f1_mle = f1_mle * neg_one;
+    let f_relation = v_lead_1 + neg_v_prod;
+    let g_relation = f2_mle * v_lead_0 + neg_f1_mle;
+    let alpha_g    = g_relation * alpha;
+    let h_check    = f_relation + alpha_g;
 
-    // g_relation(X) = (r + ĝ(X)) · ṽ(0, X) - (r + f̂(X))
-    let neg_f1_mle  = f1_mle * neg_one;
-    let g_relation  = f2_mle * v_lead_0 + neg_f1_mle;
-
-    let alpha_g     = g_relation * alpha;
-    let h_check     = f_relation + alpha_g;            // Poly<F, 2, 2>
-
-    let eq_sau_evs = [
-        (one - sau0) * (one - sau1),
-        sau0 * (one - sau1),
-        (one - sau0) * sau1,
-        sau0 * sau1
-    ];
-    let eq_sau = mle(eq_sau_evs);
-
-    let p_poly = h_check * eq_sau;                      // Poly<F, 2, 3>
-
-    // ---- SumCheck on p_poly, claimed sum 0 ----
-    let cfg2 = {| poly: p_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
-    let out2 = marginalize(cfg2);
-    evs2 <- out2.evaluations;
-    verify(zero == evs2[0] + evs2[1]);
+    let p_poly = h_check * eq_sau;
 
     let pts3 = [i * one for i in 0..4];
-    let g2_round = interpolate(pts3, evs2);
+    let cfg0_p2 = {| poly: p_poly, num_variables: S, max_degree: 3, round: 0, challenge: zero |};
+    let out0_p2 = marginalize(cfg0_p2);
+    evs0_p2 <- out0_p2.evaluations;
+    verify(zero == evs0_p2[0] + evs0_p2[1]);
+
+    let g0_p2 = interpolate(pts3, evs0_p2);
     sx0 <- challenge<F>;
-    let prev2_vec = eval(g2_round, [sx0]);
-    let prev2 = prev2_vec[0];
+    let prev0_p2_vec = eval(g0_p2, [sx0]);
+    let prev0_p2     = prev0_p2_vec[0];
 
-    let cfg3 = {| poly: out2.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: sx0 |};
-    let out3 = marginalize(cfg3);
-    evs3 <- out3.evaluations;
-    verify(prev2 == evs3[0] + evs3[1]);
+    verify(perm_round(out0_p2.next_poly, pts3, [sx0], prev0_p2, sx0, 1,
+                      sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha));
 
-    let g3_round = interpolate(pts3, evs3);
-    sx1 <- challenge<F>;
-    let final3_vec = eval(g3_round, [sx1]);
-    let final3 = final3_vec[0];
-
-    // ---- Verifier closing check (wiring identity) ----
-    let omsr0 = one - sx0;
-    let omsr1 = one - sx1;
-    let m00 = omsr0 * omsr1;
-    let m10 = sx0   * omsr1;
-    let m01 = omsr0 * sx1;
-    let m11 = sx0   * sx1;
-
-    let v00_at_r =
-        m00 * sent_v[0] + m10 * sent_v[2] + m01 * sent_v[4] + m11 * sent_v[6];
-    let v10_at_r =
-        m00 * sent_v[1] + m10 * sent_v[3] + m01 * sent_v[5] + m11 * sent_v[7];
-    let vt0_at_r =
-        m00 * sent_v[0] + m10 * sent_v[1] + m01 * sent_v[2] + m11 * sent_v[3];
-    let vt1_at_r =
-        m00 * sent_v[4] + m10 * sent_v[5] + m01 * sent_v[6] + m11 * sent_v[7];
-
-    let f1_at_r =
-        m00 * f_shift_evs[0] + m10 * f_shift_evs[1]
-      + m01 * f_shift_evs[2] + m11 * f_shift_evs[3];
-    let f2_at_r =
-        m00 * g_shift_evs[0] + m10 * g_shift_evs[1]
-      + m01 * g_shift_evs[2] + m11 * g_shift_evs[3];
-
-    let eq_at_r2 =
-        m00 * eq_sau_evs[0] + m10 * eq_sau_evs[1]
-      + m01 * eq_sau_evs[2] + m11 * eq_sau_evs[3];
-
-    let f_rel_at_r = v10_at_r - vt0_at_r * vt1_at_r;
-    let g_rel_at_r = f2_at_r * v00_at_r - f1_at_r;
-
-    verify(final3 == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r2);
-    verify(sent_v[3] == one)
+    verify(sent_v[N - 1] == one)
 }

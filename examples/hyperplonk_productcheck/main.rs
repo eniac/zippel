@@ -1,16 +1,20 @@
 // ProductCheck PIOP example driver.
 //
-// Picks a random 2-variable MLE f, computes the product s = prod_x f(x) over
-// the 4-point boolean hypercube, builds the auxiliary product-tree polynomial
-// ṽ as in HyperPlonk §3.3, and runs the protocol.
+// Builds a random satisfying instance with NUM_LEAVES = 2^S hypercube points
+// for f and runs the parametric ProductCheck protocol from
+// hyperplonk_productcheck.zippel on it.
 
-use ark_ff::Zero;
-use ark_std::UniformRand;
+use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
+use rand::Rng;
 use share::Ctx;
 use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
+
+// ProductCheck dimension. Edit S to scale; num_leaves = 2^S follows.
+const S: usize = 2;
+const NUM_LEAVES: usize = 1 << S; // = 2^S
 
 const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
@@ -28,11 +32,14 @@ fn run() {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel");
 
-    println!("=== HyperPlonk ProductCheck PIOP (s = 2) ===");
+    println!("=== HyperPlonk ProductCheck PIOP ===");
+    println!("num_leaves = {NUM_LEAVES}, s = log num_leaves = {S}");
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &S);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
 
@@ -61,37 +68,96 @@ fn run() {
     }
 }
 
+/// A satisfying ProductCheck instance: leaves `f` of length `num_leaves`,
+/// the product-tree MLE `v` of length `2·num_leaves` (s+1 variables), and
+/// the claimed product `claimed = prod_x f(x)`.
+struct ProductCheckInstance<F> {
+    f: Vec<F>,
+    v: Vec<F>,
+    claimed: F,
+}
+
+/// Build the product-tree MLE ṽ on B_{s+1} (LSB-first) for the given leaves f.
+///
+/// Structure:
+///   ṽ(0, x_1, ..., x_S) = f(x_1, ..., x_S)                    [leaves]
+///   ṽ(1, x_1, ..., x_S) = ṽ(x_1, ..., x_S, 0) · ṽ(x_1, ..., x_S, 1)
+/// with the self-referential top entry ṽ(1, ..., 1) := 0.
+///
+/// Layout in v[]: idx = X_0 + 2·X_1 + ... + 2^S·X_S. So leaves live at even
+/// indices (v[2k] = f[k]); internal nodes live at odd indices.
+fn build_product_tree<F: Field + Zero>(f: &[F]) -> Vec<F> {
+    let n = f.len();
+    assert!(n.is_power_of_two(), "num_leaves must be a power of 2");
+    let mut v = vec![F::zero(); 2 * n];
+
+    // Leaves (X_0 = 0 layer).
+    for k in 0..n {
+        v[2 * k] = f[k];
+    }
+
+    // Pin the self-referential top entry.
+    v[2 * n - 1] = F::zero();
+
+    // Fixed-point fill of remaining X_0 = 1 layer entries.
+    // For each y in [0, n - 1): v[1 + 2y] = v[y] · v[y + n], when both deps
+    // are already populated. Repeat passes until no changes.
+    let mut done = vec![false; n];
+    done[n - 1] = true;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for y in 0..n {
+            if done[y] {
+                continue;
+            }
+            // v[y] is ready iff y is even (leaf) or y odd with v[(y-1)/2 + 0]
+            // already done... but really we just check if our deps were set.
+            let v_y_ready = y.is_multiple_of(2) || done[(y - 1) / 2];
+            let v_yn_ready = (y + n).is_multiple_of(2) || done[(y + n - 1) / 2];
+            if v_y_ready && v_yn_ready {
+                v[1 + 2 * y] = v[y] * v[y + n];
+                done[y] = true;
+                changed = true;
+            }
+        }
+    }
+
+    v
+}
+
+/// Build a random satisfying ProductCheck instance.
+fn random_productcheck<F, R>(rng: &mut R, num_leaves: usize) -> ProductCheckInstance<F>
+where
+    F: Field + Zero,
+    R: Rng + ?Sized,
+{
+    let f: Vec<F> = (0..num_leaves).map(|_| F::rand(rng)).collect();
+    let v = build_product_tree(&f);
+    // Claimed product is ṽ(1, ..., 1, 0) = v[N - 1] where N = num_leaves.
+    let claimed = v[num_leaves - 1];
+    ProductCheckInstance { f, v, claimed }
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let mut rng = rand::rngs::OsRng;
 
-    // Random non-zero leaves f(x) on the hypercube.
-    let f: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
-
-    // Build the product-tree MLE ṽ on B_3 (8 evaluations, LSB-first):
-    //   v[idx] = ṽ(X_0 = idx_bit_0, X_1 = idx_bit_1, X_2 = idx_bit_2)
+    // -------------------------------------------------------------------
+    // Generate a random satisfying ProductCheck instance.
     //
-    //   X_0 = 0  (leaves):              v[idx] = f(X_1, X_2)
-    //   X_0 = 1  (internal nodes):      v[idx] = ṽ(X_1, X_2, 0) * ṽ(X_1, X_2, 1)
+    //   f       (length NUM_LEAVES)        — MLE leaves on B_s
+    //   v       (length 2·NUM_LEAVES)      — product-tree MLE on B_{s+1}
+    //   claimed (scalar)                   — the claimed product (= root)
     //
-    // and we pin ṽ(1, 1, 1) := 0 so that the recursion at the self-referential
-    // hypercube point trivially satisfies its constraint.
-    let v_0 = f[0]; // (X_0=0, X_1=0, X_2=0): f(0, 0)
-    let v_2 = f[1]; // (X_0=0, X_1=1, X_2=0): f(1, 0)
-    let v_4 = f[2]; // (X_0=0, X_1=0, X_2=1): f(0, 1)
-    let v_6 = f[3]; // (X_0=0, X_1=1, X_2=1): f(1, 1)
-
-    let v_1 = f[0] * f[2]; // ṽ(1, 0, 0) = ṽ(0, 0, 0) * ṽ(0, 0, 1) = f(0,0) * f(0,1)
-    let v_5 = f[1] * f[3]; // ṽ(1, 0, 1) = ṽ(0, 1, 0) * ṽ(0, 1, 1) = f(1,0) * f(1,1)
-    let v_3 = v_1 * v_5; // ṽ(1, 1, 0) = root = f(0,0) f(0,1) f(1,0) f(1,1) = product
-    let v_7 = F::zero(); // ṽ(1, 1, 1) — chosen 0 to satisfy the recursion.
-
-    let v_evs = vec![v_0, v_1, v_2, v_3, v_4, v_5, v_6, v_7];
-    let claimed = v_3;
+    // Replace `random_productcheck(...)` with explicit constants if you
+    // want to pin a specific instance.
+    // -------------------------------------------------------------------
+    let inst = random_productcheck::<F, _>(&mut rng, NUM_LEAVES);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(f)),
-        (Vid("v_evs".to_string()), Value::VecScalar(v_evs)),
-        (Vid("claimed".to_string()), Value::Scalar(claimed)),
+        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
+        (Vid("v_evs".to_string()), Value::VecScalar(inst.v)),
+        (Vid("claimed".to_string()), Value::Scalar(inst.claimed)),
     ])
 }

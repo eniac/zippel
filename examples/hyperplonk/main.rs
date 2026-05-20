@@ -1,26 +1,17 @@
-// HyperPlonk example driver (gate identity + wiring), s = 2.
-//
-// Builds a satisfying instance for the top-level HyperPlonk protocol:
-//   - Master witness w ∈ F^4 (random).
-//   - Random permutation σ on {0..3}.
-//   - Wires:  a = w,  b[i] = w[σ(i)],  c = a ⊙ b (Hadamard product).
-//   - Selectors:  q_L = q_R = q_C = 0,  q_M = 1,  q_O = -1.
-//     Then the gate identity
-//         q_L·a + q_R·b + q_O·c + q_M·a·b + q_C
-//       = a·b - c = 0
-//     holds on every hypercube point.
-//   - Wiring identity: b(x) = a(σ(x)) by construction.
-//
-// The protocol is then expected to verify on (a, b, c, q_L, q_R, q_O, q_M,
-// q_C, s_σ) where s_σ encodes σ as field elements (σ(i) → F::from(i)).
+// HyperPlonk example driver.
 
-use ark_std::UniformRand;
+use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use rand::seq::SliceRandom;
+use rand::Rng;
 use share::Ctx;
 use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
+
+// Edit S to scale; num_gates = 2^S follows.
+const S: usize = 2;
+const NUM_GATES: usize = 1 << S;
 
 const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
@@ -38,11 +29,14 @@ fn run() {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/hyperplonk/hyperplonk.zippel");
 
-    println!("=== HyperPlonk (gate identity + wiring) (s = 2) ===");
+    println!("=== HyperPlonk (gate identity + wiring) ===");
+    println!("num_gates = {NUM_GATES}, s = log num_gates = {S}");
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &S);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
 
@@ -71,41 +65,145 @@ fn run() {
     }
 }
 
+struct PlonkishInstance<F> {
+    a: Vec<F>,
+    b: Vec<F>,
+    c: Vec<F>,
+    q_l: Vec<F>,
+    q_r: Vec<F>,
+    q_o: Vec<F>,
+    q_m: Vec<F>,
+    q_c: Vec<F>,
+    s_sigma: Vec<F>,
+    s_id: Vec<F>,
+    r2: F,
+    r: F,
+    v_evs: Vec<F>,
+}
+
+fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
+    let n = leaves.len();
+    assert!(n.is_power_of_two());
+    let mut v = vec![F::zero(); 2 * n];
+    for k in 0..n {
+        v[2 * k] = leaves[k];
+    }
+    v[2 * n - 1] = F::zero();
+    let mut done = vec![false; n];
+    done[n - 1] = true;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for y in 0..n {
+            if done[y] {
+                continue;
+            }
+            let v_y_ready = y.is_multiple_of(2) || done[(y - 1) / 2];
+            let v_yn_ready = (y + n).is_multiple_of(2) || done[(y + n - 1) / 2];
+            if v_y_ready && v_yn_ready {
+                v[1 + 2 * y] = v[y] * v[y + n];
+                done[y] = true;
+                changed = true;
+            }
+        }
+    }
+    v
+}
+
+/// Build a random satisfying Plonkish instance.
+fn random_plonkish<F, R>(rng: &mut R, num_gates: usize) -> PlonkishInstance<F>
+where
+    F: Field + Zero,
+    R: Rng + ?Sized,
+{
+    let q_l: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
+    let q_r: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
+    let q_m: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
+    let q_c: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
+    let q_o: Vec<F> = (0..num_gates)
+        .map(|_| {
+            let mut v = F::rand(rng);
+            while v.is_zero() {
+                v = F::rand(rng);
+            }
+            v
+        })
+        .collect();
+
+    let a: Vec<F> = (0..num_gates).map(|_| F::rand(rng)).collect();
+    let mut sigma: Vec<usize> = (0..num_gates).collect();
+    sigma.shuffle(rng);
+    let b: Vec<F> = sigma.iter().map(|&j| a[j]).collect();
+    let c: Vec<F> = (0..num_gates)
+        .map(|i| {
+            let lhs = q_l[i] * a[i] + q_r[i] * b[i] + q_m[i] * a[i] * b[i] + q_c[i];
+            -lhs * q_o[i].inverse().expect("q_O[i] non-zero")
+        })
+        .collect();
+
+    let s_sigma: Vec<F> = sigma.iter().map(|&j| F::from(j as u64)).collect();
+    let s_id: Vec<F> = (0..num_gates).map(|i| F::from(i as u64)).collect();
+
+    // Simulate verifier-side FS draws of r2 and r for the permutation phase.
+    let r2 = F::rand(rng);
+    let r = F::rand(rng);
+
+    let f_hat: Vec<F> = (0..num_gates).map(|i| s_id[i] + r2 * a[i]).collect();
+    let g_hat: Vec<F> = (0..num_gates).map(|i| s_sigma[i] + r2 * b[i]).collect();
+    let leaves: Vec<F> = (0..num_gates)
+        .map(|i| (r + f_hat[i]) * (r + g_hat[i]).inverse().expect("r + g_hat[i] nonzero"))
+        .collect();
+    let v_evs = build_v_tree(&leaves);
+
+    PlonkishInstance {
+        a,
+        b,
+        c,
+        q_l,
+        q_r,
+        q_o,
+        q_m,
+        q_c,
+        s_sigma,
+        s_id,
+        r2,
+        r,
+        v_evs,
+    }
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let mut rng = rand::rngs::OsRng;
 
-    // Master witness w of length 4.
-    let w: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
+    let inst = random_plonkish::<F, _>(&mut rng, NUM_GATES);
 
-    // Random permutation σ on {0..3}.
-    let mut sigma: Vec<usize> = (0..4).collect();
-    sigma.shuffle(&mut rng);
-
-    // Wires.
-    let a: Vec<F> = w.clone();
-    let b: Vec<F> = sigma.iter().map(|&j| w[j]).collect();
-    let c: Vec<F> = a.iter().zip(b.iter()).map(|(x, y)| *x * *y).collect();
-
-    // Selectors: gate identity reduces to a·b - c = 0.
-    let q_l = vec![F::from(0u64); 4];
-    let q_r = vec![F::from(0u64); 4];
-    let q_o = vec![-F::from(1u64); 4];
-    let q_m = vec![F::from(1u64); 4];
-    let q_c = vec![F::from(0u64); 4];
-
-    // s_σ(x) = [σ(x)] as field elements.
-    let s_sigma: Vec<F> = sigma.iter().map(|&j| F::from(j as u64)).collect();
+    // Sanity check.
+    for i in 0..NUM_GATES {
+        let gate = inst.q_l[i] * inst.a[i]
+            + inst.q_r[i] * inst.b[i]
+            + inst.q_o[i] * inst.c[i]
+            + inst.q_m[i] * inst.a[i] * inst.b[i]
+            + inst.q_c[i];
+        assert!(gate.is_zero(), "gate {i} unsatisfied");
+    }
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("a_evs".to_string()), Value::VecScalar(a)),
-        (Vid("b_evs".to_string()), Value::VecScalar(b)),
-        (Vid("c_evs".to_string()), Value::VecScalar(c)),
-        (Vid("q_l_evs".to_string()), Value::VecScalar(q_l)),
-        (Vid("q_r_evs".to_string()), Value::VecScalar(q_r)),
-        (Vid("q_o_evs".to_string()), Value::VecScalar(q_o)),
-        (Vid("q_m_evs".to_string()), Value::VecScalar(q_m)),
-        (Vid("q_c_evs".to_string()), Value::VecScalar(q_c)),
-        (Vid("s_sigma_evs".to_string()), Value::VecScalar(s_sigma)),
+        (Vid("a_evs".to_string()), Value::VecScalar(inst.a)),
+        (Vid("b_evs".to_string()), Value::VecScalar(inst.b)),
+        (Vid("c_evs".to_string()), Value::VecScalar(inst.c)),
+        (Vid("q_l_evs".to_string()), Value::VecScalar(inst.q_l)),
+        (Vid("q_r_evs".to_string()), Value::VecScalar(inst.q_r)),
+        (Vid("q_o_evs".to_string()), Value::VecScalar(inst.q_o)),
+        (Vid("q_m_evs".to_string()), Value::VecScalar(inst.q_m)),
+        (Vid("q_c_evs".to_string()), Value::VecScalar(inst.q_c)),
+        (
+            Vid("s_sigma_evs".to_string()),
+            Value::VecScalar(inst.s_sigma),
+        ),
+        (Vid("s_id_evs".to_string()), Value::VecScalar(inst.s_id)),
+        (Vid("r2".to_string()), Value::Scalar(inst.r2)),
+        (Vid("r".to_string()), Value::Scalar(inst.r)),
+        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
     ])
 }

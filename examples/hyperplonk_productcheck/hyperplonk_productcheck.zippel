@@ -1,152 +1,168 @@
 // ProductCheck PIOP (HyperPlonk §3.3 / Quark §5).
+// Sizes: parametric over S (and N = 2^S, the leaf count).
 //
-// Statement: prove that prod_{x in Bs} f(x) = s, where f is a multilinear
-// polynomial over s variables and s in F is the claimed product.
+// How to run:
+//   cargo run --example hyperplonk_productcheck --release
 //
-// Construction. The prover sends an auxiliary MLE ṽ in s+1 variables that
-// encodes the product tree, satisfying for all x in Bs:
-//
-//     ṽ(0, x) = f(x),         ṽ(1, x) = ṽ(x, 0) * ṽ(x, 1).
-//
-// Setting ṽ(1, 1, ..., 1) := 0 (the prover's choice on the "self-referential"
-// hypercube point) keeps the recursion well-defined. The verifier checks
-//
-//   (i)  the polynomial f̂(X) := ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1) is zero on Bs,
-//   (ii) the polynomial ĝ(X) := ṽ(0, X) - f(X)               is zero on Bs,
-//   (iii) ṽ at (1, ..., 1, 0) equals the claimed product s.
-//
-// (i) and (ii) are batched into a single ZeroCheck via a random linear
-// combination (§3.2 last paragraph): for a random alpha drawn after the
-// prover commits to ṽ, run a ZeroCheck on f̂(X) + alpha * ĝ(X).
-//
-// Demo instance: s = 2, so f is a 2-variable MLE, ṽ a 3-variable MLE.
-// The hypercube point (1, 1, 0) corresponds to LSB-first index 3 (=
-// 1 + 1*2 + 0*4) in the dense evaluation vector, which is therefore the
-// total product over the f leaves.
+// To change the dimensions: edit NUM_LEAVES (= 2^S) in main.rs. The proto
+// below picks up the new size via its <S: Size, N: 2^S> parameters; no
+// edits needed in this file.
 
-proto hyperplonk_productcheck<F: Field>(
-    public f_evs:   [F; 4],    // ṽ leaves: hypercube evaluations of f
-    public v_evs:   [F; 8],    // prover-claimed evaluations of ṽ on B_3
-    public claimed: F          // claimed product s = prod_x f(x)
-) where
-    // Witness: ṽ is well-formed.  We give the prover-side constraints in
-    // closed form so the where-clause is genuinely a witness predicate.
-    let z = f_evs[0] - f_evs[0];
-    // Leaves (ṽ(0, X)) match f exactly.
-    v_evs[0] == f_evs[0] && v_evs[2] == f_evs[1]
-       && v_evs[4] == f_evs[2] && v_evs[6] == f_evs[3]
-    // Internal nodes (the product-tree recursion).
-       && v_evs[1] == f_evs[0] * f_evs[2]
-       && v_evs[5] == f_evs[1] * f_evs[3]
-       && v_evs[3] == v_evs[1] * v_evs[5]
-       && v_evs[7] == z
-    // Claimed product is the root.
-       && v_evs[3] == claimed
-{
-    let one  = f_evs[0] - f_evs[0] + 1;
-    let zero = f_evs[0] - f_evs[0];
+// Build the Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
+fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+    [(1 - x[0]), x[0]]
+}
+fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+    let x_lo = x[0..(K-1)];
+    let a    = x[K-1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
 
-    // Prover sends ṽ to the verifier (modelling the oracle [[ṽ]]).
-    sent_v <- v_evs;
+// Draw S taus: recursive, dispatched on shrinking placeholder size.
+fn draw_taus<F: Field>(public placeholder: [F; 1]) -> [F; 1] {
+    t <- challenge<F>;
+    [t]
+}
+fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
+    let prev = draw_taus(placeholder[0..(K-1)]);
+    t <- challenge<F>;
+    prev ++ [t]
+}
 
-    // Polynomial views needed by the ZeroCheck. Under the LSB-first MLE
-    // convention with ṽ = ṽ(X_0, X_1, X_2):
-    //   ṽ(0, X_1, X_2):  hypercube indices with X_0 = 0  -> {0, 2, 4, 6}
-    //   ṽ(1, X_1, X_2):  hypercube indices with X_0 = 1  -> {1, 3, 5, 7}
-    //   ṽ(X_0, X_1, 0):  hypercube indices with X_2 = 0  -> {0, 1, 2, 3}
-    //   ṽ(X_0, X_1, 1):  hypercube indices with X_2 = 1  -> {4, 5, 6, 7}
-    let v_lead_0 = mle([sent_v[0], sent_v[2], sent_v[4], sent_v[6]]);  // ṽ(0, X)
-    let v_lead_1 = mle([sent_v[1], sent_v[3], sent_v[5], sent_v[7]]);  // ṽ(1, X)
-    let v_tail_0 = mle([sent_v[0], sent_v[1], sent_v[2], sent_v[3]]);  // ṽ(X, 0)
-    let v_tail_1 = mle([sent_v[4], sent_v[5], sent_v[6], sent_v[7]]);  // ṽ(X, 1)
+// Recursive sumcheck rounds for ProductCheck. Base case (V = 1) runs the
+// last round and the verifier closing check.
+fn pc_round<F: Field, S: Size, N: 2^S>(
+    public curr_poly:        Poly<F, 1, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - 1],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_evs:            [F; N],
+    public eq_tau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
 
-    let f_mle = mle(f_evs);
-
-    // V draws the batching scalar alpha for (i) and (ii), then the ZeroCheck
-    // randomness tau.
-    alpha <- challenge<F>;
-    tau0  <- challenge<F>;
-    tau1  <- challenge<F>;
-
-    // f̂(X) + alpha * ĝ(X), built additively to side-step Poly-Mle subtraction.
-    //   f̂(X) = ṽ(1, X) - ṽ(X, 0) * ṽ(X, 1)   (individual degree 2)
-    //   ĝ(X) = ṽ(0, X) - f(X)                 (individual degree 1)
-    let neg_one     = zero - one;
-    let neg_v_prod  = (v_tail_0 * v_tail_1) * neg_one;       // -(ṽ(X,0)*ṽ(X,1)), deg 2
-    let neg_f_mle   = f_mle * neg_one;                       // -f(X)
-    let f_hat       = v_lead_1 + neg_v_prod;                 // Poly<F, 2, 2>
-    let g_hat       = v_lead_0 + neg_f_mle;                  // Mle<F, 2>
-    let alpha_g_hat = g_hat * alpha;                         // Mle<F, 2>
-    let h_check     = f_hat + alpha_g_hat;                   // Poly<F, 2, 2>
-
-    // ẽq(tau, x) as an MLE (LSB-first).
-    let eq_tau_evs = [
-        (one - tau0) * (one - tau1),
-        tau0 * (one - tau1),
-        (one - tau0) * tau1,
-        tau0 * tau1
-    ];
-    let eq_tau = mle(eq_tau_evs);
-
-    // ZeroCheck reduces "h_check is zero on B_2" to a SumCheck on
-    //   p(X) = h_check(X) * ẽq(tau, X)            (Poly<F, 2, 3>)
-    // with claimed sum 0.
-    let p_poly = h_check * eq_tau;
-
-    let cfg0 = {| poly: p_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
-    evs0 <- out0.evaluations;
-    verify(zero == evs0[0] + evs0[1]);
-
-    let pts3 = [i * one for i in 0..4];
-    let g0_round = interpolate(pts3, evs0);
-    rx0 <- challenge<F>;
-    let prev0_vec = eval(g0_round, [rx0]);
-    let prev0 = prev0_vec[0];
-
-    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
-    let out1 = marginalize(cfg1);
-    evs1 <- out1.evaluations;
-    verify(prev0 == evs1[0] + evs1[1]);
-
-    let g1_round = interpolate(pts3, evs1);
-    rx1 <- challenge<F>;
-    let final_vec = eval(g1_round, [rx1]);
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let final_vec  = eval(g, [r_final]);
     let final_eval = final_vec[0];
 
-    // ======== Verifier closing checks ========
+    let full_challenges = prev_challenges ++ [r_final];
+    let lambdas         = eq_weights(full_challenges);
 
-    // LSB-first Lagrange basis at the sum-check point (rx0, rx1).
-    let omr0 = one - rx0;
-    let omr1 = one - rx1;
-    let l00 = omr0 * omr1;
-    let l10 = rx0  * omr1;
-    let l01 = omr0 * rx1;
-    let l11 = rx0  * rx1;
+    // ṽ sub-MLE evaluations at (rx_0, ..., rx_{S-1}).
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];   // ṽ(0, X)
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];   // ṽ(1, X)
+    let v_tail_0_evs = sent_v[0..N];                        // ṽ(X, 0)
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];                // ṽ(X, 1)
 
-    // Inline the LSB-first dot-with-Lagrange to keep the verifier as plain
-    // field arithmetic.
-    let v00_at_r =
-        l00 * sent_v[0] + l10 * sent_v[2] + l01 * sent_v[4] + l11 * sent_v[6];
-    let v10_at_r =
-        l00 * sent_v[1] + l10 * sent_v[3] + l01 * sent_v[5] + l11 * sent_v[7];
-    let vt0_at_r =
-        l00 * sent_v[0] + l10 * sent_v[1] + l01 * sent_v[2] + l11 * sent_v[3];
-    let vt1_at_r =
-        l00 * sent_v[4] + l10 * sent_v[5] + l01 * sent_v[6] + l11 * sent_v[7];
+    let v00_at_r = dot(lambdas, v_lead_0_evs);
+    let v10_at_r = dot(lambdas, v_lead_1_evs);
+    let vt0_at_r = dot(lambdas, v_tail_0_evs);
+    let vt1_at_r = dot(lambdas, v_tail_1_evs);
 
-    let f_at_r =
-        l00 * f_evs[0]     + l10 * f_evs[1]     + l01 * f_evs[2]     + l11 * f_evs[3];
-    let eq_at_r =
-        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
-      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
+    let f_at_r  = dot(lambdas, f_evs);
+    let eq_at_r = dot(lambdas, eq_tau_evs);
 
     let f_hat_at_r = v10_at_r - vt0_at_r * vt1_at_r;
     let g_hat_at_r = v00_at_r - f_at_r;
 
-    verify(final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r);
+    final_eval == (f_hat_at_r + alpha * g_hat_at_r) * eq_at_r
+}
+fn pc_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+    public curr_poly:        Poly<F, V, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - V],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_evs:            [F; N],
+    public eq_tau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    let pi  = out.next_poly;
 
-    // Final ProductCheck check: the prover-claimed product (the root of the
-    // product tree) equals the public claim.
-    verify(sent_v[3] == claimed)
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_vec  = eval(g, [r_next]);
+    let next_prev = next_vec[0];
+
+    let new_challenges = prev_challenges ++ [r_next];
+
+    pc_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+             sent_v, f_evs, eq_tau_evs, alpha)
+}
+
+proto hyperplonk_productcheck<F: Field, S: Size, N: 2^S>(
+    public f_evs:   [F; N],
+    public v_evs:   [F; 2^(S+1)],
+    public claimed: F
+) where f_evs[0] == f_evs[0] {
+    let one  = f_evs[0] - f_evs[0] + 1;
+    let zero = f_evs[0] - f_evs[0];
+
+    sent_v <- v_evs;
+
+    // ṽ sub-MLE views.
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];   // ṽ(0, X)
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];   // ṽ(1, X)
+    let v_tail_0_evs = sent_v[0..N];                        // ṽ(X, 0)
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];                // ṽ(X, 1)
+
+    let v_lead_0 = mle(v_lead_0_evs);
+    let v_lead_1 = mle(v_lead_1_evs);
+    let v_tail_0 = mle(v_tail_0_evs);
+    let v_tail_1 = mle(v_tail_1_evs);
+    let f_mle    = mle(f_evs);
+
+    alpha <- challenge<F>;
+    let placeholder = [zero for i in 0..S];
+    let tau         = draw_taus(placeholder);
+    let eq_tau_evs  = eq_weights(tau);
+    let eq_tau      = mle(eq_tau_evs);
+
+    // f̂(X) + α·ĝ(X), additive form to side-step Poly-Mle subtraction.
+    //   f̂(X) = ṽ(1, X) - ṽ(X, 0)·ṽ(X, 1)
+    //   ĝ(X) = ṽ(0, X) - f(X)
+    let neg_one     = zero - one;
+    let neg_v_prod  = (v_tail_0 * v_tail_1) * neg_one;
+    let neg_f_mle   = f_mle * neg_one;
+    let f_hat       = v_lead_1 + neg_v_prod;        // Poly<F, S, 2>
+    let g_hat       = v_lead_0 + neg_f_mle;         // Mle<F, S>
+    let alpha_g_hat = g_hat * alpha;
+    let h_check     = f_hat + alpha_g_hat;          // Poly<F, S, 2>
+
+    let p_poly = h_check * eq_tau;                  // Poly<F, S, 3>
+
+    // -------- Round 0, then recurse via pc_round --------
+    let cfg0 = {| poly: p_poly, num_variables: S, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let points = [i * one for i in 0..4];
+    let g0     = interpolate(points, evs0);
+    r0 <- challenge<F>;
+    let prev_vec = eval(g0, [r0]);
+    let prev     = prev_vec[0];
+
+    verify(pc_round(out0.next_poly, points, [r0], prev, r0, 1,
+                    sent_v, f_evs, eq_tau_evs, alpha));
+
+    // Final ProductCheck check: claimed product equals ṽ's root, which lives
+    // at hypercube position (1, 1, ..., 1, 0) = LSB-first index N - 1.
+    verify(sent_v[N - 1] == claimed)
 }

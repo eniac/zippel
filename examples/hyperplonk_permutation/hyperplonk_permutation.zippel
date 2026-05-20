@@ -1,181 +1,180 @@
 // Permutation PIOP (HyperPlonk §3.5 / Gabizon et al.).
+// Sizes: parametric over S (and N = 2^S, the hypercube size).
 //
-// Statement: prove that g(x) = f(σ(x)) for all x ∈ Bs, where σ is a fixed
-// permutation of the s-bit boolean cube.
+// How to run:
+//   cargo run --example hyperplonk_permutation --release
 //
-// Reduction. The wiring identity is captured by the multiset equality
+// To change the dimensions: edit NUM_POINTS (= 2^S) in main.rs. The proto
+// below picks up the new size via its <S: Size, N: 2^S> parameters; no
+// edits needed in this file.
 //
-//     { ([x],     f(x)) }_{x ∈ Bs}    =    { ([σ(x)], g(x)) }_{x ∈ Bs}
-//
-// where [x] = sum_i x_i · 2^{i-1} ∈ F is the integer encoding of x. After
-// preprocessing s_id(x) := [x] and s_σ(x) := [σ(x)] as MLEs, the verifier
-// runs the k=2 MultiSet check on the four polynomials (s_id, f, s_σ, g).
-//
-// The k=2 MultiSet check uses a single fresh challenge r_2 to fold each pair
-// into one polynomial:
-//
-//     f̂ := s_id + r_2 · f,      ĝ := s_σ + r_2 · g.
-//
-// We then check the multiset equality {f̂(x)}_x = {ĝ(x)}_x with the rational
-// ProductCheck variant (§3.4 / Spartan §6): for a second fresh challenge r,
-// the prover commits to an auxiliary MLE ṽ in s+1 variables encoding
-//
-//     ṽ(0, x) = (r + f̂(x)) / (r + ĝ(x)),
-//     ṽ(1, x) = ṽ(x, 0) · ṽ(x, 1),
-//
-// and the verifier batch-ZeroChecks
-//
-//     (i)  f_relation(X) := ṽ(1, X) - ṽ(X, 0) · ṽ(X, 1)              = 0 on Bs
-//     (ii) g_relation(X) := (r + ĝ(X)) · ṽ(0, X) - (r + f̂(X))        = 0 on Bs
-//
-// then checks ṽ(1, ..., 1, 0) = 1. Sizes: s = 2.
+// Note: the k=2 fold randomness r2, the universal-hash r, the s_id index
+// encoding, and the rational product tree v_evs are all computed by the
+// driver (simulating Fiat-Shamir) and passed in as public inputs. This
+// keeps the proto fully parametric in S.
 
-proto hyperplonk_permutation<F: Field>(
-    public f_evs:      [F; 4],   // multilinear extension of f over B_2
-    public g_evs:      [F; 4],   // multilinear extension of g over B_2
-    public s_sigma_evs: [F; 4]    // s_σ(x) = [σ(x)] as MLE evaluations
-) where
-    // Soundness of the protocol does not depend on the witness check here;
-    // the driver supplies f, g, σ with g(x) = f(σ(x)) on every hypercube
-    // point.
-    f_evs[0] == f_evs[0]
-{
-    let one  = f_evs[0] - f_evs[0] + 1;
-    let zero = f_evs[0] - f_evs[0];
+// Build the Lagrange (eq) basis at x ∈ F^K: 2^K evaluations of eq(x, ·), LSB-first.
+fn eq_weights<F: Field>(public x: [F; 1]) -> [F; 2] {
+    [(1 - x[0]), x[0]]
+}
+fn eq_weights<F: Field, K: 2..16>(public x: [F; K]) -> [F; 2^K] {
+    let x_lo = x[0..(K-1)];
+    let a    = x[K-1];
+    let prev = eq_weights(x_lo);
+    (prev * (1 - a)) ++ (prev * a)
+}
 
-    // s_id(x) = [x]: hypercube evaluations are just the LSB-first indices.
-    let two   = one + one;
-    let three = two + one;
-    let s_id_evs = [zero, one, two, three];
+// Draw S taus.
+fn draw_taus<F: Field>(public placeholder: [F; 1]) -> [F; 1] {
+    t <- challenge<F>;
+    [t]
+}
+fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
+    let prev = draw_taus(placeholder[0..(K-1)]);
+    t <- challenge<F>;
+    prev ++ [t]
+}
 
-    // ======== k = 2 multiset-folding challenge r_2 ========
-    r2 <- challenge<F>;
+// Recursive sumcheck rounds for the Permutation PIOP (same shape as multiset).
+fn perm_round<F: Field, S: Size, N: 2^S>(
+    public curr_poly:        Poly<F, 1, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - 1],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_shift_evs:      [F; N],
+    public g_shift_evs:      [F; N],
+    public eq_tau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
 
-    // Folded polynomials: f̂ = s_id + r_2 f,  ĝ = s_σ + r_2 g (over B_2).
-    let f_hat_evs = [
-        s_id_evs[0]     + r2 * f_evs[0],
-        s_id_evs[1]     + r2 * f_evs[1],
-        s_id_evs[2]     + r2 * f_evs[2],
-        s_id_evs[3]     + r2 * f_evs[3]
-    ];
-    let g_hat_evs = [
-        s_sigma_evs[0]  + r2 * g_evs[0],
-        s_sigma_evs[1]  + r2 * g_evs[1],
-        s_sigma_evs[2]  + r2 * g_evs[2],
-        s_sigma_evs[3]  + r2 * g_evs[3]
-    ];
-
-    // ======== Rational ProductCheck on (r + f̂) / (r + ĝ) ========
-    r <- challenge<F>;
-
-    let f_shift_evs = [r + f_hat_evs[i] for i in 0..4];
-    let g_shift_evs = [r + g_hat_evs[i] for i in 0..4];
-    let f1_mle = mle(f_shift_evs);
-    let f2_mle = mle(g_shift_evs);
-
-    // Leaves of ṽ — per-point ratios.
-    let leaf_00 = f_shift_evs[0] / g_shift_evs[0];
-    let leaf_10 = f_shift_evs[1] / g_shift_evs[1];
-    let leaf_01 = f_shift_evs[2] / g_shift_evs[2];
-    let leaf_11 = f_shift_evs[3] / g_shift_evs[3];
-
-    let v_node_00 = leaf_00 * leaf_01;          // ṽ(1, 0, 0)
-    let v_node_01 = leaf_10 * leaf_11;          // ṽ(1, 0, 1)
-    let v_root    = v_node_00 * v_node_01;      // ṽ(1, 1, 0)  — must equal 1
-    let v_top     = zero;                       // ṽ(1, 1, 1)  — free choice
-
-    let v_evs = [
-        leaf_00, v_node_00, leaf_10, v_root,
-        leaf_01, v_node_01, leaf_11, v_top
-    ];
-    sent_v <- v_evs;
-
-    // Sub-MLE views of ṽ (each a 2-variable MLE).
-    let v_lead_0 = mle([sent_v[0], sent_v[2], sent_v[4], sent_v[6]]);  // ṽ(0, X)
-    let v_lead_1 = mle([sent_v[1], sent_v[3], sent_v[5], sent_v[7]]);  // ṽ(1, X)
-    let v_tail_0 = mle([sent_v[0], sent_v[1], sent_v[2], sent_v[3]]);  // ṽ(X, 0)
-    let v_tail_1 = mle([sent_v[4], sent_v[5], sent_v[6], sent_v[7]]);  // ṽ(X, 1)
-
-    alpha <- challenge<F>;
-    tau0  <- challenge<F>;
-    tau1  <- challenge<F>;
-
-    let neg_one = zero - one;
-
-    // f_relation(X) = ṽ(1, X) - ṽ(X, 0) · ṽ(X, 1)
-    let neg_v_prod   = (v_tail_0 * v_tail_1) * neg_one;
-    let f_relation   = v_lead_1 + neg_v_prod;
-
-    // g_relation(X) = (r + ĝ(X)) · ṽ(0, X) - (r + f̂(X))
-    let neg_f1_mle   = f1_mle * neg_one;
-    let g_relation   = f2_mle * v_lead_0 + neg_f1_mle;
-
-    let alpha_g      = g_relation * alpha;
-    let h_check      = f_relation + alpha_g;            // Poly<F, 2, 2>
-
-    let eq_tau_evs = [
-        (one - tau0) * (one - tau1),
-        tau0 * (one - tau1),
-        (one - tau0) * tau1,
-        tau0 * tau1
-    ];
-    let eq_tau = mle(eq_tau_evs);
-
-    let p_poly = h_check * eq_tau;                       // Poly<F, 2, 3>
-
-    // ======== SumCheck on p_poly, claimed sum 0 ========
-    let cfg0 = {| poly: p_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
-    evs0 <- out0.evaluations;
-    verify(zero == evs0[0] + evs0[1]);
-
-    let pts3 = [i * one for i in 0..4];
-    let g0_round = interpolate(pts3, evs0);
-    rx0 <- challenge<F>;
-    let prev0_vec = eval(g0_round, [rx0]);
-    let prev0 = prev0_vec[0];
-
-    let cfg1 = {| poly: out0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
-    let out1 = marginalize(cfg1);
-    evs1 <- out1.evaluations;
-    verify(prev0 == evs1[0] + evs1[1]);
-
-    let g1_round = interpolate(pts3, evs1);
-    rx1 <- challenge<F>;
-    let final_vec = eval(g1_round, [rx1]);
+    let g = interpolate(points, evs);
+    r_final <- challenge<F>;
+    let final_vec  = eval(g, [r_final]);
     let final_eval = final_vec[0];
 
-    // ======== Verifier closing check ========
-    let omr0 = one - rx0;
-    let omr1 = one - rx1;
-    let l00 = omr0 * omr1;
-    let l10 = rx0  * omr1;
-    let l01 = omr0 * rx1;
-    let l11 = rx0  * rx1;
+    let full_challenges = prev_challenges ++ [r_final];
+    let lambdas         = eq_weights(full_challenges);
 
-    let v00_at_r =
-        l00 * sent_v[0] + l10 * sent_v[2] + l01 * sent_v[4] + l11 * sent_v[6];
-    let v10_at_r =
-        l00 * sent_v[1] + l10 * sent_v[3] + l01 * sent_v[5] + l11 * sent_v[7];
-    let vt0_at_r =
-        l00 * sent_v[0] + l10 * sent_v[1] + l01 * sent_v[2] + l11 * sent_v[3];
-    let vt1_at_r =
-        l00 * sent_v[4] + l10 * sent_v[5] + l01 * sent_v[6] + l11 * sent_v[7];
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
+    let v_tail_0_evs = sent_v[0..N];
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];
 
-    let f1_at_r =
-        l00 * f_shift_evs[0] + l10 * f_shift_evs[1]
-      + l01 * f_shift_evs[2] + l11 * f_shift_evs[3];
-    let f2_at_r =
-        l00 * g_shift_evs[0] + l10 * g_shift_evs[1]
-      + l01 * g_shift_evs[2] + l11 * g_shift_evs[3];
+    let v00_at_r = dot(lambdas, v_lead_0_evs);
+    let v10_at_r = dot(lambdas, v_lead_1_evs);
+    let vt0_at_r = dot(lambdas, v_tail_0_evs);
+    let vt1_at_r = dot(lambdas, v_tail_1_evs);
 
-    let eq_at_r =
-        l00 * eq_tau_evs[0] + l10 * eq_tau_evs[1]
-      + l01 * eq_tau_evs[2] + l11 * eq_tau_evs[3];
+    let f1_at_r = dot(lambdas, f_shift_evs);
+    let f2_at_r = dot(lambdas, g_shift_evs);
+    let eq_at_r = dot(lambdas, eq_tau_evs);
 
     let f_rel_at_r = v10_at_r - vt0_at_r * vt1_at_r;
     let g_rel_at_r = f2_at_r * v00_at_r - f1_at_r;
 
-    verify(final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r);
-    verify(sent_v[3] == one)
+    final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r
+}
+fn perm_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+    public curr_poly:        Poly<F, V, 3>,
+    public points:           [F; 4],
+    public prev_challenges:  [F; S - V],
+    public prev_eval:        F,
+    public round_challenge:  F,
+    public curr_round:       Fin<S>,
+    public sent_v:           [F; 2^(S+1)],
+    public f_shift_evs:      [F; N],
+    public g_shift_evs:      [F; N],
+    public eq_tau_evs:       [F; N],
+    public alpha:            F
+) -> Bool {
+    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
+    let out = marginalize(cfg);
+    let pi  = out.next_poly;
+
+    evs <- out.evaluations;
+    verify(prev_eval == evs[0] + evs[1]);
+
+    let g = interpolate(points, evs);
+    r_next <- challenge<F>;
+    let next_vec  = eval(g, [r_next]);
+    let next_prev = next_vec[0];
+
+    let new_challenges = prev_challenges ++ [r_next];
+
+    perm_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+               sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha)
+}
+
+proto hyperplonk_permutation<F: Field, S: Size, N: 2^S>(
+    public f_evs:       [F; N],
+    public g_evs:       [F; N],
+    public s_sigma_evs: [F; N],
+    public s_id_evs:    [F; N],
+    public r2:          F,         // k=2 fold randomness (Fiat-Shamir on driver)
+    public r:           F,         // universal-hash randomness  (FS on driver)
+    public v_evs:       [F; 2^(S+1)]
+) where f_evs[0] == f_evs[0] {
+    let one  = f_evs[0] - f_evs[0] + 1;
+    let zero = f_evs[0] - f_evs[0];
+
+    // k = 2 multiset fold: f̂ = s_id + r2·f, ĝ = s_σ + r2·g.
+    let f_hat_evs = [s_id_evs[i]    + r2 * f_evs[i] for i in 0..N];
+    let g_hat_evs = [s_sigma_evs[i] + r2 * g_evs[i] for i in 0..N];
+
+    // Rational ProductCheck on (r + f̂)/(r + ĝ).
+    let f_shift_evs = [r + f_hat_evs[i] for i in 0..N];
+    let g_shift_evs = [r + g_hat_evs[i] for i in 0..N];
+    let f1_mle = mle(f_shift_evs);
+    let f2_mle = mle(g_shift_evs);
+
+    sent_v <- v_evs;
+
+    let v_lead_0_evs = [sent_v[2 * k]     for k in 0..N];
+    let v_lead_1_evs = [sent_v[2 * k + 1] for k in 0..N];
+    let v_tail_0_evs = sent_v[0..N];
+    let v_tail_1_evs = sent_v[N..(2^(S+1))];
+
+    let v_lead_0 = mle(v_lead_0_evs);
+    let v_lead_1 = mle(v_lead_1_evs);
+    let v_tail_0 = mle(v_tail_0_evs);
+    let v_tail_1 = mle(v_tail_1_evs);
+
+    alpha <- challenge<F>;
+    let placeholder = [zero for i in 0..S];
+    let tau         = draw_taus(placeholder);
+    let eq_tau_evs  = eq_weights(tau);
+    let eq_tau      = mle(eq_tau_evs);
+
+    let neg_one    = zero - one;
+    let neg_v_prod = (v_tail_0 * v_tail_1) * neg_one;
+    let neg_f1_mle = f1_mle * neg_one;
+    let f_relation = v_lead_1 + neg_v_prod;
+    let g_relation = f2_mle * v_lead_0 + neg_f1_mle;
+    let alpha_g    = g_relation * alpha;
+    let h_check    = f_relation + alpha_g;
+
+    let p_poly = h_check * eq_tau;
+
+    let cfg0 = {| poly: p_poly, num_variables: S, max_degree: 3, round: 0, challenge: zero |};
+    let out0 = marginalize(cfg0);
+    evs0 <- out0.evaluations;
+    verify(zero == evs0[0] + evs0[1]);
+
+    let points = [i * one for i in 0..4];
+    let g0     = interpolate(points, evs0);
+    r0 <- challenge<F>;
+    let prev_vec = eval(g0, [r0]);
+    let prev     = prev_vec[0];
+
+    verify(perm_round(out0.next_poly, points, [r0], prev, r0, 1,
+                      sent_v, f_shift_evs, g_shift_evs, eq_tau_evs, alpha));
+
+    verify(sent_v[N - 1] == one)
 }

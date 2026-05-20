@@ -1,16 +1,17 @@
 // Permutation PIOP example driver.
-//
-// Picks a random length-4 vector f, a random permutation σ on the 4 indices,
-// and sets g[i] = f[σ(i)] so that g(x) = f(σ(x)) on every hypercube point.
-// Runs the HyperPlonk §3.5 permutation protocol on (f, g, s_σ).
 
-use ark_std::UniformRand;
+use ark_ff::{Field, Zero};
 use backend::{ArkBls12_381, ArkConfig, Value};
-use lang::id::Vid;
+use lang::id::{Tid, Vid};
 use rand::seq::SliceRandom;
+use rand::Rng;
 use share::Ctx;
 use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
+
+// Edit S to scale; num_points = 2^S follows.
+const S: usize = 2;
+const NUM_POINTS: usize = 1 << S;
 
 const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
@@ -28,11 +29,14 @@ fn run() {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_permutation/hyperplonk_permutation.zippel");
 
-    println!("=== HyperPlonk Permutation PIOP (s = 2) ===");
+    println!("=== HyperPlonk Permutation PIOP ===");
+    println!("num_points = {NUM_POINTS}, s = log num_points = {S}");
 
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    handler.compile(&Ctx::new());
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::new("S"), &S);
+    handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
 
@@ -61,23 +65,95 @@ fn run() {
     }
 }
 
+struct PermutationInstance<F> {
+    f: Vec<F>,
+    g: Vec<F>,
+    s_sigma: Vec<F>,
+    s_id: Vec<F>,
+    r2: F,
+    r: F,
+    v_evs: Vec<F>,
+}
+
+fn build_v_tree<F: Field + Zero>(leaves: &[F]) -> Vec<F> {
+    let n = leaves.len();
+    assert!(n.is_power_of_two());
+    let mut v = vec![F::zero(); 2 * n];
+    for k in 0..n {
+        v[2 * k] = leaves[k];
+    }
+    v[2 * n - 1] = F::zero();
+    let mut done = vec![false; n];
+    done[n - 1] = true;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for y in 0..n {
+            if done[y] {
+                continue;
+            }
+            let v_y_ready = y.is_multiple_of(2) || done[(y - 1) / 2];
+            let v_yn_ready = (y + n).is_multiple_of(2) || done[(y + n - 1) / 2];
+            if v_y_ready && v_yn_ready {
+                v[1 + 2 * y] = v[y] * v[y + n];
+                done[y] = true;
+                changed = true;
+            }
+        }
+    }
+    v
+}
+
+fn random_permutation<F, R>(rng: &mut R, num_points: usize) -> PermutationInstance<F>
+where
+    F: Field + Zero,
+    R: Rng + ?Sized,
+{
+    let f: Vec<F> = (0..num_points).map(|_| F::rand(rng)).collect();
+    let mut sigma: Vec<usize> = (0..num_points).collect();
+    sigma.shuffle(rng);
+    let g: Vec<F> = sigma.iter().map(|&j| f[j]).collect();
+    let s_sigma: Vec<F> = sigma.iter().map(|&j| F::from(j as u64)).collect();
+    let s_id: Vec<F> = (0..num_points).map(|i| F::from(i as u64)).collect();
+
+    // Simulate the verifier-side Fiat-Shamir draws of r2 and r.
+    let r2 = F::rand(rng);
+    let r = F::rand(rng);
+
+    let f_hat: Vec<F> = (0..num_points).map(|i| s_id[i] + r2 * f[i]).collect();
+    let g_hat: Vec<F> = (0..num_points).map(|i| s_sigma[i] + r2 * g[i]).collect();
+    let leaves: Vec<F> = (0..num_points)
+        .map(|i| (r + f_hat[i]) * (r + g_hat[i]).inverse().expect("r + g_hat[i] nonzero"))
+        .collect();
+    let v_evs = build_v_tree(&leaves);
+
+    PermutationInstance {
+        f,
+        g,
+        s_sigma,
+        s_id,
+        r2,
+        r,
+        v_evs,
+    }
+}
+
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
     let mut rng = rand::rngs::OsRng;
 
-    // Random f, a random permutation sigma of {0..3}, and g[i] = f[sigma(i)].
-    let f: Vec<F> = (0..4).map(|_| F::rand(&mut rng)).collect();
-    let mut sigma: Vec<usize> = (0..4).collect();
-    sigma.shuffle(&mut rng);
-    let g: Vec<F> = sigma.iter().map(|&j| f[j]).collect();
-
-    // s_sigma(x) = [sigma(x)]: hypercube evaluations are sigma's indices,
-    // cast into the field.
-    let s_sigma: Vec<F> = sigma.iter().map(|&j| F::from(j as u64)).collect();
+    let inst = random_permutation::<F, _>(&mut rng, NUM_POINTS);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("f_evs".to_string()), Value::VecScalar(f)),
-        (Vid("g_evs".to_string()), Value::VecScalar(g)),
-        (Vid("s_sigma_evs".to_string()), Value::VecScalar(s_sigma)),
+        (Vid("f_evs".to_string()), Value::VecScalar(inst.f)),
+        (Vid("g_evs".to_string()), Value::VecScalar(inst.g)),
+        (
+            Vid("s_sigma_evs".to_string()),
+            Value::VecScalar(inst.s_sigma),
+        ),
+        (Vid("s_id_evs".to_string()), Value::VecScalar(inst.s_id)),
+        (Vid("r2".to_string()), Value::Scalar(inst.r2)),
+        (Vid("r".to_string()), Value::Scalar(inst.r)),
+        (Vid("v_evs".to_string()), Value::VecScalar(inst.v_evs)),
     ])
 }
