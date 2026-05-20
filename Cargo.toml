@@ -182,6 +182,10 @@ name = "r1cs_sigma"
 path = "examples/r1cs_sigma/main.rs"
 
 [[example]]
+name = "spartan"
+path = "examples/spartan/main.rs"
+
+[[example]]
 name = "cds"
 path = "examples/cds/main.rs"
 
