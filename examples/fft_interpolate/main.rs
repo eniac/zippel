@@ -41,12 +41,16 @@ fn main() {
 
     let prover_sched = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_sched, inputs);
+    let proof = handler
+        .run_prover(prover_sched, inputs)
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
 
     let verifier_sched = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(verifier_sched, proof);
+    let verifier_result = handler
+        .run_verifier(verifier_sched, proof)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
 
     let result = check_verification(verifier_result);

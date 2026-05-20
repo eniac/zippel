@@ -12,6 +12,7 @@ use lang::id::{Tid, Vid};
 use lang::typ::range::Range;
 use lang::typ::{Distribution, Kind, Qualifier, Size};
 use log::{debug, error, info};
+use runtime::RuntimeError;
 use runtime::graph::ResultKind;
 use share::{Ctx, unwrap};
 use std::fs;
@@ -208,7 +209,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         &mut self,
         prover_scheduled: TDag<C>,
         inputs: Ctx<Vid, Value<C>>,
-    ) -> Vec<Value<C>> {
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
         let prover = self.prover_graph.as_ref().unwrap();
 
         // save public inputs as public_inputs
@@ -219,8 +220,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // and are not expected to be supplied. Without this check, a typo or
         // mismatch between the protocol declaration and the call-site
         // `inputs` map surfaces deep inside the runtime as an opaque
-        // `Option::unwrap() on a None value` panic — see
-        // https://github.com/elefthei/zippel issue for the KZG example.
+        // `Option::unwrap() on a None value` panic.
         let expected_args: Vec<Vid> = prover_args
             .iter()
             .filter(|arg| !arg.from_transcript)
@@ -231,23 +231,11 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .filter(|v| inputs.get(v).is_none())
             .collect();
         if !missing.is_empty() {
-            let provided: Vec<String> = inputs
-                .clone()
-                .into_iter()
-                .map(|(v, _)| v.to_string())
-                .collect();
-            let missing_str: Vec<String> = missing.iter().map(|v| v.to_string()).collect();
-            let expected_str: Vec<String> = expected_args.iter().map(|v| v.to_string()).collect();
-            panic!(
-                "run_prover: missing input value(s) for protocol argument(s): [{}].\n  \
-                 expected (from the protocol declaration): [{}]\n  \
-                 provided (in the `inputs` map):          [{}]\n  \
-                 hint: the keys in the `inputs` Ctx must match the parameter \
-                 names in the .zippel `proto`/`fn` signature exactly.",
-                missing_str.join(", "),
-                expected_str.join(", "),
-                provided.join(", "),
-            );
+            return Err(RuntimeError::missing_inputs(
+                missing.iter().copied(),
+                expected_args.iter(),
+                inputs.iter().map(|(k, _)| k),
+            ));
         }
 
         let public_args: Vec<Vid> = prover_args
@@ -293,7 +281,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         &mut self,
         verifier_scheduled: TDag<C>,
         proof: Vec<Value<C>>,
-    ) -> Vec<Value<C>> {
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
         let prover_args = self.prover_args.as_ref().unwrap();
 
@@ -527,9 +515,13 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
         );
 
         let scheduled_prover = handler.default_schedule_prover();
-        let proof = handler.run_prover(scheduled_prover, inputs);
+        let proof = handler
+            .run_prover(scheduled_prover, inputs)
+            .expect("run_prover failed");
         let scheduled_verifier = handler.default_schedule_verifier();
-        let verifier_result = handler.run_verifier(scheduled_verifier, proof);
+        let verifier_result = handler
+            .run_verifier(scheduled_verifier, proof)
+            .expect("run_verifier failed");
         let result = check_verification(verifier_result);
         assert!(
             result.passed,
@@ -572,9 +564,13 @@ proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b 
         );
 
         let scheduled_prover = handler.default_schedule_prover();
-        let proof = handler.run_prover(scheduled_prover, inputs);
+        let proof = handler
+            .run_prover(scheduled_prover, inputs)
+            .expect("run_prover failed");
         let scheduled_verifier = handler.default_schedule_verifier();
-        let verifier_result = handler.run_verifier(scheduled_verifier, proof);
+        let verifier_result = handler
+            .run_verifier(scheduled_verifier, proof)
+            .expect("run_verifier failed");
         let result = check_verification(verifier_result);
         assert!(
             !result.passed,

@@ -12,7 +12,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::error::RuntimeError;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
+
+/// Shared first-error slot used to propagate failures out of rayon-spawned
+/// workers. The first task to fail records its error here; subsequent
+/// workers short-circuit, drop their `SyncSender` clones, and let the sync
+/// channel close so the main loop can exit and surface the stored error.
+type ErrorSlot = Arc<Mutex<Option<RuntimeError>>>;
+
+/// Record `err` into `slot` if no earlier worker has already done so.
+fn record_error(slot: &ErrorSlot, err: RuntimeError) {
+    let mut guard = slot.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(err);
+    }
+}
 
 /// Specifies what kind of result to collect from graph execution.
 ///
@@ -84,6 +99,7 @@ fn update_successors<C: ArkConfig>(
     inputs: &Arc<Ctx<Vid, Value<C>>>,
     tx: SyncSender,
     node_idx: NodeIndex,
+    error_slot: &ErrorSlot,
 ) {
     // Deduplicate successors: remaining_deps is initialized from unique
     // predecessors, so we must only decrement once per (predecessor, successor)
@@ -118,13 +134,24 @@ fn update_successors<C: ArkConfig>(
                     let inputs_clone = Arc::clone(inputs);
                     let dep_idx = dependent;
                     let tx = tx.clone();
+                    let error_slot = Arc::clone(error_slot);
                     debug!(
                         "[update_successors] node {:?} -> non-sync {:?} ready, spawning",
                         node_idx, dependent
                     );
                     rayon::spawn(move || {
-                        g_clone.handle_node(dep_idx, inputs_clone.clone());
-                        update_successors(&g_clone, &inputs_clone, tx, dep_idx);
+                        // Bail out early if another worker has already
+                        // recorded a failure; dropping `tx` here lets the
+                        // sync channel close so the main loop can exit.
+                        if error_slot.lock().unwrap().is_some() {
+                            return;
+                        }
+                        match g_clone.handle_node(dep_idx, inputs_clone.clone()) {
+                            Ok(()) => {
+                                update_successors(&g_clone, &inputs_clone, tx, dep_idx, &error_slot)
+                            }
+                            Err(e) => record_error(&error_slot, e),
+                        }
                     });
                 }
             }
@@ -137,7 +164,7 @@ fn update_successors<C: ArkConfig>(
                 unreachable!("Inp/Rel marker {:?} on sync channel", node_idx)
             }
             Node::Arg(_, _, _, _, _) => {
-                update_successors(g, inputs, tx.clone(), dependent);
+                update_successors(g, inputs, tx.clone(), dependent, error_slot);
             }
         }
     }
@@ -208,14 +235,18 @@ impl<C: ArkConfig> MutexGraph<C> {
         }
     }
 
-    pub fn get_value(&self, r: graph::Ref, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
+    pub fn get_value(
+        &self,
+        r: graph::Ref,
+        inputs: Arc<Ctx<Vid, Value<C>>>,
+    ) -> Result<Value<C>, RuntimeError> {
         let node = r.node();
 
         match &self.mutex_graph[node] {
             Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
                 let return_val = annotation.return_value.lock().unwrap();
                 match &*return_val {
-                    Some(val) => val.clone(),
+                    Some(val) => Ok(val.clone()),
                     None => panic!("Value should exist for node {:?}", node),
                 }
             }
@@ -224,21 +255,13 @@ impl<C: ArkConfig> MutexGraph<C> {
                 // come from Arg nodes.
                 panic!("get_value on Inp/Rel marker node {:?}", node)
             }
-            Node::Arg(vid, _, _, _, _) => inputs
-                .get(vid)
-                .unwrap_or_else(|| {
-                    let provided: Vec<String> =
-                        inputs.keys().into_iter().map(|v| v.to_string()).collect();
-                    panic!(
-                        "get_value: missing input value for protocol argument `{}`. \
-                         The `inputs` map provided to the prover/verifier contains: [{}]. \
-                         The keys must match the parameter names in the .zippel signature \
-                         exactly.",
-                        vid,
-                        provided.join(", "),
-                    )
-                })
-                .clone(),
+            Node::Arg(vid, _, _, _, _) => match inputs.get(vid) {
+                Some(v) => Ok(v.clone()),
+                None => Err(RuntimeError::missing_arg(
+                    vid,
+                    inputs.iter().map(|(k, _)| k),
+                )),
+            },
         }
     }
 
@@ -249,28 +272,37 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// This keeps the runtime's per-node semantics in lockstep with the test
     /// executors and the unit-level `eval_op` callers — there is no separate
     /// runtime-only dispatch table.
-    pub fn handle_op(&self, operation: &GOp<C>, inputs: Arc<Ctx<Vid, Value<C>>>) -> Value<C> {
+    pub fn handle_op(
+        &self,
+        operation: &GOp<C>,
+        inputs: Arc<Ctx<Vid, Value<C>>>,
+    ) -> Result<Value<C>, RuntimeError> {
         let mut env: HashMap<graph::Ref, Value<C>> = HashMap::new();
         for r in graph::eval::collect_refs(operation) {
-            env.entry(r)
-                .or_insert_with(|| self.get_value(r, Arc::clone(&inputs)));
+            if let std::collections::hash_map::Entry::Vacant(e) = env.entry(r) {
+                e.insert(self.get_value(r, Arc::clone(&inputs))?);
+            }
         }
         let mut rng = ThreadRng::default();
-        graph::eval::eval_op(operation, &env, &mut rng)
-            .expect("runtime invariant violation: eval_op failed on a scheduled node")
+        Ok(graph::eval::eval_op(operation, &env, &mut rng)
+            .expect("runtime invariant violation: eval_op failed on a scheduled node"))
     }
 
-    pub fn handle_node(&self, node_curr: NodeIndex, inputs: Arc<Ctx<Vid, Value<C>>>) {
+    pub fn handle_node(
+        &self,
+        node_curr: NodeIndex,
+        inputs: Arc<Ctx<Vid, Value<C>>>,
+    ) -> Result<(), RuntimeError> {
         let node = &self.mutex_graph[node_curr];
 
         match node {
             Node::Op(operation, annotation) => {
-                let return_val = self.handle_op(&**operation, inputs);
+                let return_val = self.handle_op(&**operation, inputs)?;
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             }
             Node::Transcr(operation, annotation) => {
-                let return_val = self.handle_op(&**operation, inputs);
+                let return_val = self.handle_op(&**operation, inputs)?;
                 let mut return_value_lock = annotation.return_value.lock().unwrap();
                 *return_value_lock = Some(return_val);
             }
@@ -278,6 +310,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             Node::Rel(_) => {}
             Node::Arg(_, _, _, _, _) => {}
         }
+        Ok(())
     }
 
     /// Execute all nodes in the DAG using counter-based readiness tracking
@@ -318,7 +351,10 @@ impl<C: ArkConfig> MutexGraph<C> {
         inputs: Arc<Ctx<Vid, Value<C>>>,
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
-    ) -> Vec<Value<C>> {
+    ) -> Result<Vec<Value<C>>, RuntimeError> {
+        // Shared first-error slot. Rayon workers and the main loop record
+        // failures here; the main loop bails after the sync channel closes.
+        let error_slot: ErrorSlot = Arc::new(Mutex::new(None));
         // Phase 1: Initialization.
         //
         // Set remaining_deps counters, collect result indices, and
@@ -395,13 +431,25 @@ impl<C: ArkConfig> MutexGraph<C> {
                             let g_clone = Arc::clone(&g);
                             let inputs_clone = Arc::clone(&inputs);
                             let tx = tx.clone();
+                            let error_slot = Arc::clone(&error_slot);
                             debug!(
                                 "[run_graph] init: spawning non-sync node {:?} with remaining_deps=0",
                                 ni
                             );
                             rayon::spawn(move || {
-                                g_clone.handle_node(ni, inputs_clone.clone());
-                                update_successors(&g_clone, &inputs_clone, tx, ni);
+                                if error_slot.lock().unwrap().is_some() {
+                                    return;
+                                }
+                                match g_clone.handle_node(ni, inputs_clone.clone()) {
+                                    Ok(()) => update_successors(
+                                        &g_clone,
+                                        &inputs_clone,
+                                        tx,
+                                        ni,
+                                        &error_slot,
+                                    ),
+                                    Err(e) => record_error(&error_slot, e),
+                                }
                             });
                         }
                     }
@@ -450,18 +498,19 @@ impl<C: ArkConfig> MutexGraph<C> {
                             && !pref.from_transcript
                         {
                             let vid = pref.name().expect("Arg node must carry a name").clone();
-                            let value = inputs.get(&vid).unwrap_or_else(|| {
-                                let provided: Vec<String> =
-                                    inputs.keys().into_iter().map(|v| v.to_string()).collect();
-                                panic!(
-                                    "run_graph: missing input value for public protocol \
-                                     argument `{}`. The `inputs` map provided to the prover \
-                                     contains: [{}]. The keys must match the parameter names \
-                                     in the .zippel `proto` signature exactly.",
-                                    vid,
-                                    provided.join(", "),
-                                )
-                            });
+                            let value = match inputs.get(&vid) {
+                                Some(v) => v,
+                                None => {
+                                    let err = RuntimeError::missing_arg(
+                                        &vid,
+                                        inputs.iter().map(|(k, _)| k),
+                                    );
+                                    record_error(&error_slot, err.clone());
+                                    // Drop tx and bail; in-flight workers
+                                    // will see the slot set and short-circuit.
+                                    return Err(err);
+                                }
+                            };
                             prover_state.public_message(value_to_bytes(value).unwrap().as_slice());
                         }
                     }
@@ -476,7 +525,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                         debug!("[run_graph] node {:?} is Transcript", node_idx);
                         // Proof transcript node: compute value and send
                         // through the sponge.
-                        g.handle_node(node_idx, Arc::clone(&inputs));
+                        if let Err(e) = g.handle_node(node_idx, Arc::clone(&inputs)) {
+                            record_error(&error_slot, e.clone());
+                            return Err(e);
+                        }
                         let return_val = annotation.return_value.lock().unwrap();
                         let serialized = value_to_bytes(return_val.as_ref().unwrap()).unwrap();
                         prover_state.public_message(serialized.as_slice());
@@ -495,7 +547,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 "[run_graph] calling update_successors for node {:?}",
                 node_idx
             );
-            update_successors(&g, &inputs, tx, node_idx);
+            update_successors(&g, &inputs, tx, node_idx, &error_slot);
         }
 
         debug!(
@@ -503,8 +555,13 @@ impl<C: ArkConfig> MutexGraph<C> {
             loop_count
         );
 
+        // A worker may have recorded an error; surface it before collecting.
+        if let Some(err) = error_slot.lock().unwrap().take() {
+            return Err(err);
+        }
+
         // Phase 3: Collect results from pre-collected result indices.
-        match result_kind {
+        Ok(match result_kind {
             ResultKind::Prover => result_indices
                 .into_iter()
                 .filter_map(|n| match &g.mutex_graph[n] {
@@ -523,6 +580,6 @@ impl<C: ArkConfig> MutexGraph<C> {
                     _ => None,
                 })
                 .collect(),
-        }
+        })
     }
 }

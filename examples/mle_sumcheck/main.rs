@@ -27,7 +27,9 @@ fn main() {
     let inputs = prover_create_inputs(num_vars);
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_scheduled, inputs);
+    let proof = handler
+        .run_prover(prover_scheduled, inputs)
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -38,7 +40,9 @@ fn main() {
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = handler.run_verifier(verifier_scheduled, proof);
+    let verifier_result = handler
+        .run_verifier(verifier_scheduled, proof)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result.clone());
     println!("Verifier time:  {verifier_elapsed:.2?}");

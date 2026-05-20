@@ -16,7 +16,9 @@ fn main() {
     let inputs = prover_create_inputs();
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_scheduled, inputs);
+    let proof = handler
+        .run_prover(prover_scheduled, inputs)
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");

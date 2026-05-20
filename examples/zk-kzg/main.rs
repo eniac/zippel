@@ -22,7 +22,9 @@ fn main() {
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler.run_prover(prover_scheduled, inputs);
+    let proof = handler
+        .run_prover(prover_scheduled, inputs)
+        .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -37,7 +39,9 @@ fn main() {
     verifier_handler.set_public_inputs(public_inputs);
     let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = verifier_handler.run_verifier(verifier_scheduled, proof);
+    let verifier_result = verifier_handler
+        .run_verifier(verifier_scheduled, proof)
+        .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
