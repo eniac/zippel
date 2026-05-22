@@ -587,20 +587,18 @@ mod tests {
     /// The Phase 8 Part B fixes (trans_clos_op recursion into Op::Eval/
     /// Coef/Mle/Poly, plus to_poly handling of Op::Eval via
     /// eval_to_poly) make this test semantically well-formed — the
-    /// `Reference rr not found in context` panic is gone. However
-    /// Buchberger on the resulting system (VPoly(2,2) expansion of
-    /// a*b with 6 slots × eq-interpolation at two challenges × two
-    /// eval products) fails to terminate within 10 minutes even in
-    /// release mode. The smaller `named_let_*` regressions above
-    /// exercise the same code paths and complete instantly; this test
-    /// is kept `#[ignore]` for performance, not correctness.
+    /// `Reference rr not found in context` panic is gone. The original
+    /// version (`N = 2`) was intractable for the in-tree Buchberger;
+    /// after the ark-gb swap (see `analyses::groebner::ark_gb_adapter`)
+    /// it's well within reach. Kept at `N = 1` for `cargo test` budget;
+    /// re-raising to `N = 2` is a candidate follow-up.
     #[test]
     fn mle_eval_product_completeness() {
         use lang::id::Tid;
 
-        // Reduced from N=2 to N=1 so Buchberger terminates in reasonable time.
-        // The phase-7 fix (trans_clos + to_poly Op::Eval handling) is the same
-        // correctness property; the smaller system size is tractable.
+        // `N = 1`: keeps the system small for `cargo test` runtime. The
+        // phase-7 fix (trans_clos + to_poly Op::Eval handling) is the
+        // same correctness property at every `N`.
         let ex = r#"
             proto mle_eval_product<F: Field, N: Size>(
                 public a: Mle<F, N>,

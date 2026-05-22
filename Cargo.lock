@@ -305,6 +305,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-gb"
+version = "0.0.1"
+dependencies = [
+ "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+]
+
+[[package]]
 name = "ark-mnt4-298"
 version = "0.5.0"
 source = "git+https://github.com/arkworks-rs/algebra.git#c1f4f5665504154a9de2345f464b0b3da72c28ec"
@@ -1024,6 +1031,7 @@ dependencies = [
  "ark-bls12-381",
  "ark-ec 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-ff 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-gb",
  "ark-poly 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-serialize 0.5.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-std",

@@ -6,6 +6,13 @@ pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
+pub(crate) mod ark_gb_adapter;
+
+#[cfg(test)]
+mod speedup_bench;
+#[cfg(test)]
+mod regression;
+
 use crate::DQDag;
 use crate::analyses::TransClos;
 use crate::pref::PRef;
