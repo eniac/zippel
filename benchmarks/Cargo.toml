@@ -35,6 +35,16 @@ np-ark-bls12-381 = { package = "ark-bls12-381", version = "0.5" }
 np-ark-ec = { package = "ark-ec", version = "0.5" }
 blake2 = "0.10"
 
+# Native IPA baseline: ark-poly-commit's IPA polynomial commitment, on
+# the same curve zippel uses (Secp256k1). Pulls a fourth arkworks set
+# (crates.io 0.5) — keeps coexisting with backend's git-main and
+# hyperplonk's v0.4 thanks to the np- rename pattern.
+np-ark-poly-commit = { package = "ark-poly-commit", version = "0.5" }
+np-ark-secp256k1 = { package = "ark-secp256k1", version = "0.5" }
+np-ark-poly = { package = "ark-poly", version = "0.5" }
+np-ark-ff = { package = "ark-ff", version = "0.5" }
+np-ark-serialize = { package = "ark-serialize", version = "0.5" }
+
 # Hyperplonk-side arkworks (v0.4 from crates.io, renamed so they don't
 # shadow the git-main versions above).
 hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4" }
@@ -57,10 +67,18 @@ path = "src/bin/sumcheck.rs"
 name = "schnorr"
 path = "src/bin/schnorr.rs"
 
+[[bin]]
+name = "ipa"
+path = "src/bin/ipa.rs"
+
 [[bench]]
 name = "sumcheck"
 harness = false
 
 [[bench]]
 name = "schnorr"
+harness = false
+
+[[bench]]
+name = "ipa"
 harness = false
