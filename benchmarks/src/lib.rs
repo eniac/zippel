@@ -13,4 +13,5 @@ pub struct Timing {
     pub verify: Duration,
 }
 
+pub mod schnorr;
 pub mod sumcheck;

@@ -25,6 +25,16 @@ ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5"
 
+# Native Schnorr baseline: ark-crypto-primitives + matching arkworks 0.5
+# from crates.io. Renamed with np- ("native protocol") prefix so they
+# don't shadow the git-main versions above. ark-crypto-primitives' git
+# main pins arkworks commits that don't unify with backend's pin, so we
+# stick to crates.io for the whole native-side set.
+np-ark-crypto-primitives = { package = "ark-crypto-primitives", version = "0.5", features = ["signature"] }
+np-ark-bls12-381 = { package = "ark-bls12-381", version = "0.5" }
+np-ark-ec = { package = "ark-ec", version = "0.5" }
+blake2 = "0.10"
+
 # Hyperplonk-side arkworks (v0.4 from crates.io, renamed so they don't
 # shadow the git-main versions above).
 hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4" }
@@ -43,6 +53,14 @@ criterion = "0.5"
 name = "sumcheck"
 path = "src/bin/sumcheck.rs"
 
+[[bin]]
+name = "schnorr"
+path = "src/bin/schnorr.rs"
+
 [[bench]]
 name = "sumcheck"
+harness = false
+
+[[bench]]
+name = "schnorr"
 harness = false
