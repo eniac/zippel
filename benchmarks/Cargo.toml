@@ -71,6 +71,10 @@ path = "src/bin/schnorr.rs"
 name = "ipa"
 path = "src/bin/ipa.rs"
 
+[[bin]]
+name = "kzg"
+path = "src/bin/kzg.rs"
+
 [[bench]]
 name = "sumcheck"
 harness = false
@@ -81,4 +85,8 @@ harness = false
 
 [[bench]]
 name = "ipa"
+harness = false
+
+[[bench]]
+name = "kzg"
 harness = false
