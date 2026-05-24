@@ -1,0 +1,48 @@
+[package]
+name = "benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Zippel side (uses arkworks from git main, via backend's transitive deps).
+zippel = { path = ".." }
+backend = { path = "../backend" }
+share = { path = "../share" }
+lang = { path = "../lang" }
+
+# Native sumcheck baseline: Espresso's hyperplonk. Pulls in arkworks 0.4
+# transitively; that coexists with zippel's arkworks-main thanks to Cargo
+# allowing multiple semver-incompatible versions in one build.
+arithmetic = { git = "https://github.com/EspressoSystems/hyperplonk" }
+subroutines = { git = "https://github.com/EspressoSystems/hyperplonk" }
+transcript = { git = "https://github.com/EspressoSystems/hyperplonk" }
+
+# Zippel-side arkworks (git main — must match backend's version exactly,
+# otherwise `DenseMultilinearExtension` from this crate is a different
+# type than the one backend's PolyVariant accepts).
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = "0.5"
+
+# Hyperplonk-side arkworks (v0.4 from crates.io, renamed so they don't
+# shadow the git-main versions above).
+hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4" }
+hp-ark-ff = { package = "ark-ff", version = "0.4" }
+hp-ark-poly = { package = "ark-poly", version = "0.4" }
+hp-ark-std = { package = "ark-std", version = "0.4" }
+
+rand = { version = "0.8", features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bin]]
+name = "sumcheck"
+path = "src/bin/sumcheck.rs"
+
+[[bench]]
+name = "sumcheck"
+harness = false
