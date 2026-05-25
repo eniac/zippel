@@ -48,8 +48,7 @@ fn fmt_dur(d: Duration) -> String {
 fn compare(label: &str, num_vars: usize, input: Vec<SparsePolynomial<Fr, GrevLexTerm>>) {
     let (legacy_result, t_legacy) =
         time_once(|| legacy_compute_reduced_gb(num_vars, input.clone()));
-    let (ark_result, t_ark) =
-        time_once(|| compute_reduced_gb_grevlex(num_vars, input.clone()));
+    let (ark_result, t_ark) = time_once(|| compute_reduced_gb_grevlex(num_vars, input.clone()));
 
     let ratio = t_legacy.as_secs_f64() / t_ark.as_secs_f64().max(1e-9);
     println!(
@@ -77,7 +76,7 @@ fn bench_grevlex_speedup_small() {
         let input: Vec<SparsePolynomial<Fr, GrevLexTerm>> = shared::katsura_polys(&vars);
         compare(&format!("katsura/{n}/grevlex"), n, input);
     }
-    for n in 4..=4 {
+    for n in 3..=4 {
         let vars = shared::mk_vars("c", n);
         let input: Vec<SparsePolynomial<Fr, GrevLexTerm>> = shared::cyclic_polys(&vars);
         compare(&format!("cyclic/{n}/grevlex"), n, input);

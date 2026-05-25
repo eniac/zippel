@@ -154,7 +154,7 @@ fn test_grevlex_ordering() {
         .cloned()
         .collect::<Vec<_>>();
 
-    terms.sort_unstable_by(|a, b| a.cmp(b));
+    terms.sort_unstable();
     assert_eq!(terms, vec![f1, f2, f4, f3, f5, f6, f7]);
 }
 

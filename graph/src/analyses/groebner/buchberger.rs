@@ -404,16 +404,17 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         *self = g_reduced;
     }
 
-    /// Compute the reduced Gröbner basis. Dispatches via
-    /// [`Monomial::compute_reduced_gb`] — the `GrevLexTerm` override
-    /// routes through the external `ark-gb` crate (Singular-class
-    /// performance); `ElimTerm` keeps the in-tree implementation.
+    /// Compute the reduced Gröbner basis.
+    ///
+    /// Dispatches via [`Monomial::compute_reduced_gb`]: `GrevLexTerm`
+    /// routes through the ark-gb grevlex adapter, and `ElimTerm` routes
+    /// through the ark-gb elim adapter.
     pub fn buchberger_and_reduce(self) -> Self {
         let reduced = T::compute_reduced_gb(self.num_vars, self.basis);
         Self::new(self.num_vars, reduced)
     }
 
-    /// Compute a Gröbner basis. Same dispatch as
+    /// Compute a Gröbner basis. Same backend dispatch as
     /// [`Self::buchberger_and_reduce`]; the result is fully reduced
     /// (`buchberger_and_reduce`'s output is also a Gröbner basis, so
     /// returning it from `buchberger` satisfies the weaker contract).
@@ -423,8 +424,8 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     }
 
     /// Reduce an existing Gröbner basis to its minimal, reduced form.
-    /// Dispatches via [`Monomial::compute_reduced_gb`]: idempotent on
-    /// an already-reduced basis.
+    /// Uses the same backend dispatch as [`Self::buchberger_and_reduce`]
+    /// and is idempotent on an already-reduced basis.
     pub fn reduce_groebner_basis(&mut self) {
         let basis = std::mem::take(&mut self.basis);
         self.basis = T::compute_reduced_gb(self.num_vars, basis);

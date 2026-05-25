@@ -47,10 +47,11 @@
 //!
 //! # Threading
 //!
-//! [`compute_reduced_gb_elim`] uses a thread-local mask. ark-gb's default
-//! is `ARK_GB_THREADS=1` (serial), which is consistent. Setting
-//! `ARK_GB_THREADS>1` while computing an `ElimTerm` GB would race: don't.
-//! The `GrevLexTerm` path has no such restriction.
+//! [`compute_reduced_gb_elim`] uses a thread-local mask and therefore calls
+//! ark-gb's serial driver directly. This keeps elim ordering independent of
+//! the process-wide `ARK_GB_THREADS` setting. The `GrevLexTerm` path has no
+//! thread-local ordering state and still uses ark-gb's env-dispatched
+//! `compute_gb`.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -137,7 +138,9 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field>(
 
     let polys: Vec<Poly<F, ArkGrev<W>, W>> = input
         .into_iter()
-        .map(|p| zippel_poly_to_ark_gb::<F, GrevLexTerm, ArkGrev<W>>(&ring, &var_index, actual_nvars, p))
+        .map(|p| {
+            zippel_poly_to_ark_gb::<F, GrevLexTerm, ArkGrev<W>>(&ring, &var_index, actual_nvars, p)
+        })
         .collect();
 
     let gb = ark_gb::compute_gb::<F, ArkGrev<W>, W>(Arc::clone(&ring), polys);
@@ -341,10 +344,12 @@ pub(crate) fn compute_reduced_gb_elim<F: Field>(
 
     let polys: Vec<Poly<F, ZippelElimMono, W>> = input
         .into_iter()
-        .map(|p| zippel_poly_to_ark_gb::<F, ElimTerm, ZippelElimMono>(&ring, &var_index, actual_nvars, p))
+        .map(|p| {
+            zippel_poly_to_ark_gb::<F, ElimTerm, ZippelElimMono>(&ring, &var_index, actual_nvars, p)
+        })
         .collect();
 
-    let gb = ark_gb::compute_gb::<F, ZippelElimMono, W>(Arc::clone(&ring), polys);
+    let gb = ark_gb::bba::compute_gb_serial::<F, ZippelElimMono, W>(Arc::clone(&ring), polys);
 
     let mut out: Vec<SparsePolynomial<F, ElimTerm>> = gb
         .into_iter()
@@ -354,9 +359,7 @@ pub(crate) fn compute_reduced_gb_elim<F: Field>(
     out
 }
 
-fn collect_vars_elim<F: Field>(
-    input: &[SparsePolynomial<F, ElimTerm>],
-) -> (Vec<PRef>, Vec<PRef>) {
+fn collect_vars_elim<F: Field>(input: &[SparsePolynomial<F, ElimTerm>]) -> (Vec<PRef>, Vec<PRef>) {
     let set = collect_pref_set(input);
     let mut keep: Vec<PRef> = Vec::new();
     let mut elim: Vec<PRef> = Vec::new();
@@ -405,9 +408,7 @@ fn collect_pref_set<F: Field, T: ZipMonomial>(input: &[SparsePolynomial<F, T>]) 
 }
 
 /// True iff every per-variable exponent fits ark-gb's 7-bit packing.
-fn exponents_fit<F: Field, T: ZipMonomial + HasMonoTerm>(
-    input: &[SparsePolynomial<F, T>],
-) -> bool {
+fn exponents_fit<F: Field, T: ZipMonomial + HasMonoTerm>(input: &[SparsePolynomial<F, T>]) -> bool {
     input.iter().all(|p| {
         p.terms.iter().all(|(term, _)| {
             term.as_mono_term()
