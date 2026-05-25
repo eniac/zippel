@@ -48,7 +48,7 @@ where
     Body<N>: PartialOrd + Clone,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 
@@ -92,6 +92,9 @@ impl<N: Ord> Module<N> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&Sig<N>, &Body<N>)> {
         self.0.iter()
     }
@@ -106,6 +109,7 @@ impl UModule {
     /// Parse a Zippel declarations list into a polymorphic,
     /// untyped module, with symbolic sizes.
     /// Type aliases (`type X = T;`) are expanded inline before returning.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         let decls = UDecls::from_pest(&mut pairs)?;

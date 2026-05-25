@@ -17,12 +17,12 @@ pub struct TransClos<C: ArkConfig> {
 impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let start = dag.input_node();
-        Self::new(&dag, start)
+        Self::new(dag, start)
     }
 
     pub fn from_relation(dag: &DQDag<C>) -> Self {
         let start = dag.relation_node().unwrap();
-        Self::new(&dag, start)
+        Self::new(dag, start)
     }
 
     pub fn new(dag: &DQDag<C>, start: NodeIndex) -> Self {
@@ -34,7 +34,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
         // Add the input node to the transitive closure
         let mut worklist = vec![start];
-        s.trans_clos_start(&dag, start);
+        s.trans_clos_start(dag, start);
 
         // Add all nodes reachable from the input node
         // (should be a DAG but adding this just in case to avoid spinning on bugs)
@@ -167,7 +167,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
             {
                 let inner = op.get();
-                let pref = PRef::from_ref(r.clone(), inner.typ(), *qualifier, *distribution);
+                let pref = PRef::from_ref(r, inner.typ(), *qualifier, *distribution);
                 self.insert(pref, inner.clone());
                 Op::Ref(r, inner.typ())
             }
@@ -189,9 +189,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
 impl<C: ArkConfig> fmt::Display for TransClos<C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
+        writeln!(
             f,
-            "Args: {}\n",
+            "Args: {}",
             self.args
                 .iter()
                 .map(|n| n.verbose())
@@ -201,8 +201,7 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
         write!(f, "\nTC: \n")?;
         self.clos
             .iter()
-            .map(|(n, op)| write!(f, "\t{}   |   {} \n", n.verbose(), op))
-            .collect::<fmt::Result>()
+            .try_for_each(|(n, op)| writeln!(f, "\t{}   |   {} ", n.verbose(), op))
     }
 }
 

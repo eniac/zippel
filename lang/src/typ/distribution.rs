@@ -117,9 +117,9 @@ where
     }
 }
 
-impl<'a> fmt::Display for Distribution {
+impl fmt::Display for Distribution {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Distribution as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Distribution as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(20, f)
     }

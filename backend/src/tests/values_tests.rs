@@ -300,12 +300,12 @@ fn inverse_test() {
     );
     assert_deq!((&a * &b.clone()) / b.clone(), a);
 
-    let a = Value::<TestConfig>::random(&mut rng, &&ATyp::vec_g1(10));
+    let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g1(10));
     let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(10));
     let c = &(&b.clone() / &b.clone()) * &a;
     assert_deq!(&a, &c);
 
-    let a = Value::<TestConfig>::random(&mut rng, &&ATyp::vec_g2(10));
+    let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_g2(10));
     let b = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(10));
     let c = &(&b.clone() / &b.clone()) * &a;
     assert_deq!(&a, &c);

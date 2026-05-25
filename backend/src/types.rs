@@ -199,9 +199,9 @@ impl ATyp {
                     CKind::Range(_) | CKind::SizeVar => unreachable!(),
                 }
             }
-            CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(&t, kctx)?), *n)),
+            CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), *n)),
             CTyp::Poly(_, m, n) => Some(ATyp::vpoly(*m, *n)),
-            CTyp::Fin(r) => Some(ATyp::fin(r.clone())),
+            CTyp::Fin(r) => Some(ATyp::fin(*r)),
             CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
@@ -337,7 +337,7 @@ impl Lub for ABase {
                 CRange::lub_rem(r1, r2, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&a, &b), e))?,
             )),
-            (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(r.clone())),
+            (ABase::Scalar, ABase::Fin(r)) => Ok(ABase::Fin(*r)),
             (a, b) => Err(LubError::rem(&a, &b)),
         }
     }

@@ -415,7 +415,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 impl<F: Field, T: Monomial> fmt::Display for GroebnerBasis<F, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for p in self.iter() {
-            write!(f, "\t{} == 0\n", p)?;
+            writeln!(f, "\t{} == 0", p)?;
         }
         Ok(())
     }
@@ -580,7 +580,7 @@ fn test_grevlex_ordering() {
         .cloned()
         .collect::<Vec<_>>();
 
-    terms.sort_unstable_by(|a, b| a.cmp(b));
+    terms.sort_unstable();
     assert_eq!(terms, vec![f1, f2, f4, f3, f5, f6, f7]);
 }
 

@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![allow(clippy::result_large_err)]
 pub mod analyses;
 mod dep;
 pub mod domain_seperator;
@@ -80,9 +81,15 @@ pub enum GraphError {
     #[error("{0}\n\n{1}")]
     Next(Box<GraphError>, Box<GraphError>),
     #[error(transparent)]
-    Type(#[from] TypeError),
+    Type(Box<TypeError>),
     #[error("Fun expression contains non-polynomial operations: {0}")]
     NonPolynomialFun(String),
+}
+
+impl From<TypeError> for GraphError {
+    fn from(e: TypeError) -> Self {
+        GraphError::Type(Box::new(e))
+    }
 }
 
 /// A trait for writing a graph to a PDF file
@@ -141,6 +148,12 @@ impl<C: HasOpFactory, A: PartialEq + Clone> PartialEq for Dag<C, A> {
             |a, b| a == b,
         ) && self.vctx == other.vctx
             && self.transcript_vars == other.transcript_vars
+    }
+}
+
+impl<C: ArkConfig, A> Default for Dag<C, A> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -296,7 +309,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
     }
 
     pub fn max_node(&self) -> NodeIndex {
-        self.graph.node_indices().last().unwrap()
+        self.graph.node_indices().next_back().unwrap()
     }
 
     pub fn name(&self) -> Vid {
@@ -315,7 +328,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                     Node::Rel(a) => Node::Rel(a.clone()),
                     Node::Arg(v, t, q, d, k) => Node::Arg(v.clone(), t.clone(), *q, *d, *k),
                 },
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
@@ -403,13 +416,11 @@ impl<C: ArkConfig, A> Dag<C, A> {
     /// Get all verifier assertions, check nodes with no outgoing edges
     pub fn find_check(&self) -> Vec<NodeIndex> {
         self.node_indices()
-            .filter_map(|n| match &self[n] {
-                Node::Op(op, _) | Node::Transcr(op, _)
-                    if matches!(&**op, Op::Check(_)) && self.nodes_from(n).count() == 0 =>
-                {
-                    Some(n)
+            .filter(|&n| match &self[n] {
+                Node::Op(op, _) | Node::Transcr(op, _) => {
+                    matches!(&**op, Op::Check(_)) && self.nodes_from(n).count() == 0
                 }
-                _ => None,
+                _ => false,
             })
             .collect()
     }
@@ -432,7 +443,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
                     Node::Op(op, _) => Node::Op(op.clone(), Nothing),
                     Node::Transcr(op, _) => Node::Transcr(op.clone(), Nothing),
                 },
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
@@ -475,7 +486,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
+            let weight = *edge_ref.weight();
 
             if let (Some(new_source_idx), Some(new_target_idx)) = (
                 node_map_self.get(&old_source_idx),
@@ -489,7 +500,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         for edge_ref in other.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
+            let weight = *edge_ref.weight();
 
             if let (Some(new_source_idx), Some(new_target_idx)) = (
                 node_map_other.get(&old_source_idx),
@@ -540,7 +551,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         Dag {
             graph: self
                 .graph
-                .map(|_, node| node.map_node_indices(f), |_, e| e.clone()),
+                .map(|_, node| node.map_node_indices(f), |_, e| *e),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
         }
@@ -598,7 +609,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
+            let weight = *edge_ref.weight();
 
             if let (Some(new_source_idx), Some(new_target_idx)) =
                 (node_map.get(&old_source_idx), node_map.get(&old_target_idx))
@@ -650,7 +661,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
+            let weight = *edge_ref.weight();
 
             if let (Some(new_source_idx), Some(new_target_idx)) = (
                 node_map_rel.get(&old_source_idx),
@@ -700,7 +711,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
                     Node::Transcr(op, ann) => Node::Transcr(mk::<C>(f(op)), ann.clone()),
                     _ => node.clone(),
                 },
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: self.vctx.clone(),
             transcript_vars: self.transcript_vars.clone(),
@@ -808,7 +819,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
-            let weight = edge_ref.weight().clone();
+            let weight = *edge_ref.weight();
 
             if let Some(new_node) = node_map_self.get(&old_target_idx) {
                 if verifier[*new_node].is_input() {
@@ -998,6 +1009,12 @@ impl<C: ArkConfig> WritePdf for DQDags<C> {
 }
 
 /// A collection of DAGs
+impl<C: ArkConfig, A> Default for Dags<C, A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C: ArkConfig, A> Dags<C, A> {
     pub fn new() -> Self {
         Dags(Vec::new())
@@ -1009,6 +1026,10 @@ impl<C: ArkConfig, A> Dags<C, A> {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn get_proto(&self, name: &String) -> Option<&Dag<C, A>> {
@@ -1077,7 +1098,7 @@ impl<C: HasOpFactory> UDag<C> {
         vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<(), GraphError> {
         debug!("Adding top-level expression: {:?}", exp);
-        let op = self.add_exp(exp, start, DepType::Data, &kctx, &fctx, &vctx, &vars)?;
+        let op = self.add_exp(exp, start, DepType::Data, kctx, fctx, vctx, vars)?;
         if !op.is_ref() {
             let nr = self.add_node(Node::ret(&op));
             self.add_edges(DepType::Data, nr, op);
@@ -1126,7 +1147,7 @@ impl<C: HasOpFactory> UDag<C> {
                 && r.step == 1
                 && r.end == r.start + 1
             {
-                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
+                vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(*r));
             }
         }
 
@@ -1165,7 +1186,7 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
-                self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
                 // Relation start: its own per-arg `Node::Arg` children so
                 // walking the relation does not pull in the protocol body
                 // through shared `Arg` nodes.
@@ -1196,7 +1217,7 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
-                self.add_top_exp(relation, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                self.add_top_exp(relation, &mut start, &kctx, fctx, &vctx, &vars)?;
             }
             CBody::Func { body } => {
                 let mut start = self.add_node(Node::inp(sig.name.clone()));
@@ -1226,7 +1247,7 @@ impl<C: HasOpFactory> UDag<C> {
                         vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                     }
                 }
-                self.add_top_exp(body, &mut start, &kctx, &fctx, &vctx, &vars)?;
+                self.add_top_exp(body, &mut start, &kctx, fctx, &vctx, &vars)?;
             }
             CBody::TypeAlias => {
                 // Type aliases are expanded inline during module parsing,
@@ -1239,9 +1260,9 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// Variables to operations by lookup in [vars]
     fn op_from_var(id: &Vid, vars: &Ctx<Vid, GOp<C>>) -> Result<GOp<C>, GraphError> {
-        vars.get(&id)
+        vars.get(id)
             .cloned()
-            .ok_or_else(|| GraphError::var_not_found(&id))
+            .ok_or_else(|| GraphError::var_not_found(id))
     }
 
     /// Convert a Fun expression body to a PolyVariant
@@ -1273,9 +1294,9 @@ impl<C: HasOpFactory> UDag<C> {
                         let num_vars = vars.len();
                         let mut evals = vec![C::F::zero(); 1 << num_vars];
                         // Set evaluation at the point corresponding to this variable
-                        for i in 0..(1 << num_vars) {
+                        for (i, e) in evals.iter_mut().enumerate().take(1 << num_vars) {
                             if (i >> var_idx) & 1 == 1 {
-                                evals[i] = C::F::one();
+                                *e = C::F::one();
                             }
                         }
                         let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, evals);
@@ -1314,6 +1335,7 @@ impl<C: HasOpFactory> UDag<C> {
     }
 
     /// Add an expression [exp] to the graph
+    #[allow(clippy::too_many_arguments)]
     fn add_exp(
         &mut self,
         initial_exp: CExp,
@@ -1619,7 +1641,7 @@ impl<C: HasOpFactory> UDag<C> {
                     match &vctx.get(&fid) {
                         Some(CTyp::Poly(tbase, 1, _n)) => {
                             // It is a univariate polynomial
-                            let k = kctx.get(&tbase).unwrap();
+                            let k = kctx.get(tbase).unwrap();
 
                             // Only field elements can be evaluated and only 1 argument can be given
                             assert!(k.is_scalar());
@@ -1639,7 +1661,7 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         Some(CTyp::Poly(tbase, n, 1)) => {
                             // It is a multilinear extension
-                            let k = kctx.get(&tbase).unwrap();
+                            let k = kctx.get(tbase).unwrap();
 
                             // Only field elements can be evaluated and only 1 argument can be given
                             assert!(k.is_scalar());
@@ -1669,8 +1691,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     if sig.name != fid {
                                         return None;
                                     }
-                                    let (sig, subs) =
-                                        sig.clone().unify(&param_types, &kctx).ok()?;
+                                    let (sig, subs) = sig.clone().unify(&param_types, kctx).ok()?;
                                     Some((sig, body, subs))
                                 })
                                 .collect();
@@ -1718,7 +1739,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     && r.end == r.start + 1
                                 {
                                     let vid = Vid::new(&tid.0);
-                                    vctx.insert(&vid, &CTyp::Fin(r.clone()));
+                                    vctx.insert(&vid, &CTyp::Fin(*r));
                                     vars.insert(&vid, &GOp::Value(Value::Index(r.start)));
                                 }
                             }
@@ -1877,7 +1898,7 @@ impl<C: HasOpFactory> UDag<C> {
                                         field_types.insert(name, &typ);
                                     }
                                 }
-                                GraphError::Type(TypeError::field_not_found(
+                                GraphError::from(TypeError::field_not_found(
                                     kctx,
                                     &vctx,
                                     &CExp::Record(fields.clone()),
@@ -1900,7 +1921,7 @@ impl<C: HasOpFactory> UDag<C> {
                         CExp::Var(id) => {
                             let id_clone = id.clone();
                             let record_op = vars.get(&id_clone).ok_or_else(|| {
-                                GraphError::Type(TypeError::exp(
+                                GraphError::from(TypeError::exp(
                                     kctx,
                                     &vctx,
                                     &CExp::Var(id_clone.clone()),
@@ -1916,7 +1937,7 @@ impl<C: HasOpFactory> UDag<C> {
                                     // Verify the field exists and get its type
                                     let field_typ_ctyp =
                                         fields.get(&field_name).ok_or_else(|| {
-                                            GraphError::Type(TypeError::field_not_found(
+                                            GraphError::from(TypeError::field_not_found(
                                                 kctx,
                                                 &vctx,
                                                 &CExp::Var(id_clone.clone()),
@@ -1932,7 +1953,7 @@ impl<C: HasOpFactory> UDag<C> {
                                             record_fields
                                                 .get(&field_name)
                                                 .ok_or_else(|| {
-                                                    GraphError::Type(TypeError::field_not_found(
+                                                    GraphError::from(TypeError::field_not_found(
                                                         kctx,
                                                         &vctx,
                                                         &CExp::Var(id_clone.clone()),
@@ -1947,7 +1968,7 @@ impl<C: HasOpFactory> UDag<C> {
                                             let field_typ_atyp =
                                                 ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
                                                     || {
-                                                        GraphError::Type(TypeError::ark(
+                                                        GraphError::from(TypeError::ark(
                                                             kctx,
                                                             &vctx,
                                                             &CExp::Var(id_clone.clone()),
@@ -1969,7 +1990,7 @@ impl<C: HasOpFactory> UDag<C> {
                                             self.add_edges(edge_type, proj_node, record_op.clone());
                                             Ok(Op::Ref(Ref(proj_node), field_typ_atyp))
                                         }
-                                        _ => Err(GraphError::Type(TypeError::not_a_record(
+                                        _ => Err(GraphError::from(TypeError::not_a_record(
                                             kctx,
                                             &vctx,
                                             &CExp::Var(id_clone.clone()),
@@ -1977,7 +1998,7 @@ impl<C: HasOpFactory> UDag<C> {
                                         ))),
                                     }
                                 }
-                                _ => Err(GraphError::Type(TypeError::not_a_record(
+                                _ => Err(GraphError::from(TypeError::not_a_record(
                                     kctx,
                                     &vctx,
                                     &CExp::Var(id_clone.clone()),
@@ -1993,7 +2014,7 @@ impl<C: HasOpFactory> UDag<C> {
                                 CTyp::Record(fields) => {
                                     // Get the field type
                                     let _field_typ = fields.get(&field_name).ok_or_else(|| {
-                                        GraphError::Type(TypeError::field_not_found(
+                                        GraphError::from(TypeError::field_not_found(
                                             kctx,
                                             &vctx,
                                             &record_exp,
@@ -2004,12 +2025,12 @@ impl<C: HasOpFactory> UDag<C> {
 
                                     // For complex expressions, we'd need to evaluate them first
                                     // For now, return an error indicating this isn't fully supported
-                                    Err(GraphError::Type(TypeError::next(
+                                    Err(GraphError::from(TypeError::next(
                                         TypeError::exp(kctx, &vctx, &exp),
                                         TypeError::ark(kctx, &vctx, &exp, &typ),
                                     )))
                                 }
-                                _ => Err(GraphError::Type(TypeError::not_a_record(
+                                _ => Err(GraphError::from(TypeError::not_a_record(
                                     kctx,
                                     &vctx,
                                     &record_exp,
@@ -2023,7 +2044,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Build new record as expression: all fields from record_exp, with field_name replaced by value_exp
                     let record_typ = record_exp.infer(kctx, &fctx.keys(), &vctx)?;
                     let CTyp::Record(typ_fields) = &record_typ else {
-                        return Err(GraphError::Type(TypeError::not_a_record(
+                        return Err(GraphError::from(TypeError::not_a_record(
                             kctx,
                             &vctx,
                             &record_exp,

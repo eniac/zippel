@@ -41,10 +41,7 @@ where
 {
     match op {
         Op::Value(v) => Ok(v.clone()),
-        Op::Ref(r, _) => env
-            .get(r)
-            .cloned()
-            .ok_or_else(|| EvalError::UndefinedRef(*r)),
+        Op::Ref(r, _) => env.get(r).cloned().ok_or(EvalError::UndefinedRef(*r)),
         Op::Bin(binop, a, b, _) => {
             let av = eval_op(a, env, rng)?;
             let bv = eval_op(b, env, rng)?;

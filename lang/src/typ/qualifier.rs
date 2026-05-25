@@ -74,9 +74,9 @@ where
     }
 }
 
-impl<'a> fmt::Display for Qualifier {
+impl fmt::Display for Qualifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Qualifier as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Qualifier as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(20, f)
     }

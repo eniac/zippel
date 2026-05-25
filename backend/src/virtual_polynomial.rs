@@ -240,7 +240,7 @@ impl<F: Field> VirtualPolynomial<F> {
         for (coeff, indices) in &self.products {
             let mut prod = *coeff;
             for &idx in indices {
-                prod = prod * self.flattened_polys[idx].evaluate_mv(point)?;
+                prod *= self.flattened_polys[idx].evaluate_mv(point)?;
             }
             result += prod;
         }
@@ -261,9 +261,7 @@ impl<F: Field> VirtualPolynomial<F> {
     pub fn to_scalar(&self) -> Option<F> {
         // Check if all referenced polynomials are constants
         for poly_arc in &self.flattened_polys {
-            if poly_arc.to_scalar().is_none() {
-                return None;
-            }
+            poly_arc.to_scalar()?;
         }
 
         // All polynomials are constants, so we can evaluate the sum of products
@@ -301,9 +299,7 @@ impl<F: Field> VirtualPolynomial<F> {
     pub fn into_scalar(self) -> Option<F> {
         // Check if all referenced polynomials are constants
         for poly_arc in &self.flattened_polys {
-            if poly_arc.as_ref().clone().into_scalar().is_none() {
-                return None;
-            }
+            poly_arc.as_ref().clone().into_scalar()?;
         }
 
         // All polynomials are constants, so we can evaluate the sum of products
@@ -594,7 +590,7 @@ impl<F: Field> Add for &VirtualPolynomial<F> {
 
     fn add(self, other: Self) -> Self::Output {
         let mut result = self.clone();
-        result.add_virtual(&other);
+        result.add_virtual(other);
         result
     }
 }
@@ -605,7 +601,7 @@ impl<F: Field> Sub for &VirtualPolynomial<F> {
     fn sub(self, other: Self) -> Self::Output {
         let mut other_neg = other.clone();
         other_neg.neg_virtual();
-        other_neg.add_virtual(&self);
+        other_neg.add_virtual(self);
         other_neg
     }
 }
@@ -625,7 +621,7 @@ impl<F: Field> Mul for &VirtualPolynomial<F> {
 
     fn mul(self, other: Self) -> Self::Output {
         let result = self.clone();
-        result.mul_virtual(&other)
+        result.mul_virtual(other)
     }
 }
 

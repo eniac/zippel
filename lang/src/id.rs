@@ -26,7 +26,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self.0))
+        allocator.text(self.0.to_string())
     }
 
     fn is_nil(&self) -> bool {
@@ -115,7 +115,7 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self.0))
+        allocator.text(self.0.to_string())
     }
     fn is_nil(&self) -> bool {
         self.0.is_empty()
@@ -272,14 +272,14 @@ fn test_special_characters_with_trailing_number() {
 #[test]
 fn tid_fresh() {
     let mut bound = Set::from(vec![Tid("T0".to_string()), Tid("T1".to_string())]);
-    let t = Tid::fresh(&"T", &mut bound);
+    let t = Tid::fresh("T", &mut bound);
     assert_eq!(t, Tid("T2".to_string()));
 }
 
 #[test]
 fn vid_fresh() {
     let mut bound = Set::from(vec![Tid("v".to_string()), Tid("v1".to_string())]);
-    let t = Tid::fresh(&"v", &mut bound);
+    let t = Tid::fresh("v", &mut bound);
     assert_eq!(t, Tid("v2".to_string()));
 }
 

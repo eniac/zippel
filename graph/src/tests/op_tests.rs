@@ -1,7 +1,7 @@
-/// Basic Operation Tests
-///
-/// This module tests individual graph operation constructors
-/// and basic functionality.
+//! Basic Operation Tests
+//!
+//! This module tests individual graph operation constructors
+//! and basic functionality.
 
 #[cfg(test)]
 mod op_construction {
@@ -384,22 +384,22 @@ mod op_integration {
         let d = builder.add_input("d", ATyp::scalar());
 
         let ab = Op::add(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(b, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder.add_op(ab);
 
         let abc = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
-            Op::Ref(c.clone(), ATyp::scalar()),
+            Op::Ref(c, ATyp::scalar()),
             ATyp::scalar(),
         );
         let abc_ref = builder.add_op(abc);
 
         let result = Op::sub(
             Op::Ref(abc_ref, ATyp::scalar()),
-            Op::Ref(d.clone(), ATyp::scalar()),
+            Op::Ref(d, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(result);
@@ -429,15 +429,15 @@ mod op_integration {
         let b = builder.add_input("b", ATyp::scalar());
 
         let add_result = Op::add(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(b, ATyp::scalar()),
             ATyp::scalar(),
         );
         let add_ref = builder.add_op(add_result);
 
         let mul_result = Op::mul(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(b, ATyp::scalar()),
             ATyp::scalar(),
         );
         let mul_ref = builder.add_op(mul_result);
@@ -476,23 +476,23 @@ mod op_integration {
 
         // Compute a*b once
         let ab = Op::mul(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(b, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder.add_op(ab);
 
         // Use it in two places
         let ab_plus_c = Op::add(
-            Op::Ref(ab_ref.clone(), ATyp::scalar()),
-            Op::Ref(c.clone(), ATyp::scalar()),
+            Op::Ref(ab_ref, ATyp::scalar()),
+            Op::Ref(c, ATyp::scalar()),
             ATyp::scalar(),
         );
         let left_ref = builder.add_op(ab_plus_c);
 
         let ab_times_d = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
-            Op::Ref(d.clone(), ATyp::scalar()),
+            Op::Ref(d, ATyp::scalar()),
             ATyp::scalar(),
         );
         let right_ref = builder.add_op(ab_times_d);
@@ -531,14 +531,11 @@ mod op_integration {
         let c = builder.add_input("c", ATyp::scalar());
 
         // Create vector [a, b]
-        let vec1 = Op::vec(vec![
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
-        ]);
+        let vec1 = Op::vec(vec![Op::Ref(a, ATyp::scalar()), Op::Ref(b, ATyp::scalar())]);
 
         // Multiply vector by scalar c
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let scaled = Op::mul(Op::Ref(c.clone(), ATyp::scalar()), vec1, vec_typ);
+        let scaled = Op::mul(Op::Ref(c, ATyp::scalar()), vec1, vec_typ);
         builder.add_op(scaled);
         let dag = builder.build();
 
@@ -565,7 +562,7 @@ mod op_integration {
         let b = builder.add_input("b", ATyp::scalar());
 
         let a_plus_0 = Op::add(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(zero_scalar()),
             ATyp::scalar(),
         );
@@ -573,7 +570,7 @@ mod op_integration {
         let a_ref = builder.add_op(a_plus_0);
 
         let b_plus_0 = Op::add(
-            Op::Ref(b.clone(), ATyp::scalar()),
+            Op::Ref(b, ATyp::scalar()),
             Op::Value(zero_scalar()),
             ATyp::scalar(),
         );

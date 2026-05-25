@@ -135,6 +135,10 @@ impl CRange {
         (self.end - self.start) / self.step
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+
     /// Simplifies the composition of two ranges
     ///
     /// Given two ranges:
