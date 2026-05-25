@@ -503,9 +503,9 @@ impl<'pest> FromPest<'pest> for UTyp {
                 Ok(Typ::vec(&id, size))
             }
             Rule::record_ty => {
-                let mut inner = pair.into_inner();
+                let inner = pair.into_inner();
                 let mut fields = Ctx::new();
-                while let Some(field_pair) = inner.next() {
+                for field_pair in inner {
                     if field_pair.as_rule() == Rule::record_field {
                         let mut field_inner = field_pair.into_inner();
                         let field_name = Vid::from_pest(&mut field_inner)?.0;

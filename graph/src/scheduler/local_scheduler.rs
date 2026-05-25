@@ -63,7 +63,7 @@ impl Scheduler for LocalScheduler {
         Dag {
             graph: dag.graph.map(
                 |a, n| n.with_annotation(ThreadAlloc(self.cost_map[&a])),
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: dag.vctx.clone(),
             transcript_vars: dag.transcript_vars.clone(),

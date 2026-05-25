@@ -20,7 +20,7 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
 fn make_remap_fn(node_map: &HashMap<NodeIndex, Ref>) -> impl Fn(&PRef) -> PRef + '_ {
     let inverse: HashMap<NodeIndex, (NodeIndex, Ref)> = node_map
         .iter()
-        .map(|(old_idx, new_ref)| (new_ref.node(), (*old_idx, new_ref.clone())))
+        .map(|(old_idx, new_ref)| (new_ref.node(), (*old_idx, *new_ref)))
         .collect();
 
     move |pref: &PRef| {
@@ -36,7 +36,6 @@ fn make_remap_fn(node_map: &HashMap<NodeIndex, Ref>) -> impl Fn(&PRef) -> PRef +
 }
 
 /// Build a remap closure from a NodeIndex→NodeIndex map with an override.
-
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let (prover, prover_node_map) = dag.get_prover();
@@ -60,7 +59,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         g_ps.merge(&g_rel);
 
         let mut g_impl = GroebnerBuilder::new();
-        g_impl.add_input(&dag);
+        g_impl.add_input(dag);
 
         Self {
             prover: g_ps,

@@ -406,7 +406,7 @@ impl<F: Field> PolyVariant<F> {
                     (0, mle.evaluations[0]),
                     (1, mle.evaluations[1] - mle.evaluations[0]),
                 ]);
-                Ok(PolyVariant::SparseUni(&mle_as_uni + &p))
+                Ok(PolyVariant::SparseUni(&mle_as_uni + p))
             }
 
             // Sparse multivariate + Sparse multivariate

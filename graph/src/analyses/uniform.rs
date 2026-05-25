@@ -212,7 +212,7 @@ impl UniformityPropagation {
         Dag {
             graph: dag.graph.map(
                 |i, node| node.add_annotation(self.find_distribution(i)),
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: dag.vctx.clone(),
             transcript_vars: dag.transcript_vars.clone(),
@@ -229,15 +229,15 @@ impl UniformityPropagation {
 
 impl fmt::Display for UniformityPropagation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UniformityPropagation\n")?;
+        writeln!(f, "UniformityPropagation")?;
         for (r, d) in self.distributions.iter() {
-            write!(f, "\t{}: {}\n", r, d)?;
+            writeln!(f, "\t{}: {}", r, d)?;
         }
-        write!(f, "Ancestors\n")?;
+        writeln!(f, "Ancestors")?;
         for (r, a) in self.ancestors.iter() {
-            write!(
+            writeln!(
                 f,
-                "\t{}: {}\n",
+                "\t{}: {}",
                 r.index(),
                 a.iter()
                     .map(|i| i.index().to_string())

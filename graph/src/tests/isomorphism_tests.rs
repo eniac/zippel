@@ -37,13 +37,13 @@ fn make_chain_graph() -> UDag<TestConfig> {
     let x = builder.add_input("x", ATyp::scalar());
     let sum = builder.add_op(GOp::bin(
         BinOp::Add,
-        GOp::Ref(x.clone(), ATyp::scalar()),
+        GOp::Ref(x, ATyp::scalar()),
         GOp::Ref(x, ATyp::scalar()),
         ATyp::scalar(),
     ));
     let _prod = builder.add_op(GOp::bin(
         BinOp::Mul,
-        GOp::Ref(sum.clone(), ATyp::scalar()),
+        GOp::Ref(sum, ATyp::scalar()),
         GOp::Ref(sum, ATyp::scalar()),
         ATyp::scalar(),
     ));

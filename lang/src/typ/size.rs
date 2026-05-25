@@ -53,6 +53,7 @@ impl Size {
         Size::Min(Box::new(a), Box::new(b))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Self {
         Size::Lit(0) - self
     }
@@ -107,11 +108,8 @@ impl Size {
             Size::Div(box a, box b) => {
                 let x = a.eval(ctx)?;
                 let y = b.eval(ctx)?;
-                if y != 0 {
-                    Ok(x / y)
-                } else {
-                    Err(EvalError::DivisionByZero(a.clone(), b.clone()))
-                }
+                x.checked_div(y)
+                    .ok_or_else(|| EvalError::DivisionByZero(a.clone(), b.clone()))
             }
             Size::Pow(box a, box b) => {
                 let x = a.eval(ctx)?;
@@ -389,7 +387,7 @@ where
 }
 
 /// Display instance calls the pretty printer
-impl<'a> fmt::Display for Size {
+impl fmt::Display for Size {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Size as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
             .1

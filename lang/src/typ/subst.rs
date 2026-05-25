@@ -23,6 +23,12 @@ pub type SizeSubsts = Substs<usize>;
 /// Aliasing for type variables
 pub type AliasSubsts = Substs<Set<Tid>>;
 
+impl<T> Default for Substs<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Substs<T> {
     pub fn new() -> Self {
         Substs(Ctx::new())

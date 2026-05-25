@@ -247,7 +247,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let public_inputs = inputs
             .clone()
             .into_iter()
-            .filter(|(vid, _)| public_args.contains(&vid))
+            .filter(|(vid, _)| public_args.contains(vid))
             .collect::<Ctx<Vid, Value<C>>>();
 
         let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
@@ -269,7 +269,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     //Schedule verifier with default scheduler
     pub fn default_schedule_verifier(&self) -> TDag<C> {
         let scheduler = LocalScheduler::new_with_system(
-            &self.verifier_graph.as_ref().unwrap(),
+            self.verifier_graph.as_ref().unwrap(),
             &AsymptoticCost::new(),
             30.0,
         );

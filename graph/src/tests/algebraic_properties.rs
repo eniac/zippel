@@ -1,12 +1,12 @@
-/// Algebraic Property Tests
-///
-/// This module tests that graph operations satisfy mathematical properties
-/// through execution. These tests validate semantic correctness of the language.
-///
-/// Week 1 Focus:
-/// - Scalar field properties (commutativity, associativity, distributivity, identity, inverse)
-/// - Basic arithmetic operations
-/// - Cross-type properties
+//! Algebraic Property Tests
+//!
+//! This module tests that graph operations satisfy mathematical properties
+//! through execution. These tests validate semantic correctness of the language.
+//!
+//! Week 1 Focus:
+//! - Scalar field properties (commutativity, associativity, distributivity, identity, inverse)
+//! - Basic arithmetic operations
+//! - Cross-type properties
 
 #[cfg(test)]
 mod scalar_field_properties {
@@ -28,8 +28,8 @@ mod scalar_field_properties {
         let b1 = builder1.add_input("b", ATyp::scalar());
 
         let add_ab = Op::add(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder1.add_op(add_ab);
@@ -40,8 +40,8 @@ mod scalar_field_properties {
         let b2 = builder2.add_input("b", ATyp::scalar());
 
         let add_ba = Op::add(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(a2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder2.add_op(add_ba);
@@ -76,15 +76,15 @@ mod scalar_field_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
 
         let ab = Op::add(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder1.add_op(ab);
 
         let abc_left = Op::add(
             Op::Ref(ab_ref, ATyp::scalar()),
-            Op::Ref(c1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder1.add_op(abc_left);
@@ -96,14 +96,14 @@ mod scalar_field_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
 
         let bc = Op::add(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bc_ref = builder2.add_op(bc);
 
         let abc_right = Op::add(
-            Op::Ref(a2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
             Op::Ref(bc_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
@@ -141,7 +141,7 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let add_zero = Op::add(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(zero_scalar()),
             ATyp::scalar(),
         );
@@ -173,7 +173,7 @@ mod scalar_field_properties {
 
         let zero_add = Op::add(
             Op::Value(zero_scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(zero_add);
@@ -208,8 +208,8 @@ mod scalar_field_properties {
         let b1 = builder1.add_input("b", ATyp::scalar());
 
         let mul_ab = Op::mul(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder1.add_op(mul_ab);
@@ -220,8 +220,8 @@ mod scalar_field_properties {
         let b2 = builder2.add_input("b", ATyp::scalar());
 
         let mul_ba = Op::mul(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(a2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder2.add_op(mul_ba);
@@ -255,15 +255,15 @@ mod scalar_field_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
 
         let ab = Op::mul(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder1.add_op(ab);
 
         let abc_left = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
-            Op::Ref(c1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder1.add_op(abc_left);
@@ -275,14 +275,14 @@ mod scalar_field_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
 
         let bc = Op::mul(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bc_ref = builder2.add_op(bc);
 
         let abc_right = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
             Op::Ref(bc_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
@@ -320,7 +320,7 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let mul_one = Op::mul(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(one_scalar()),
             ATyp::scalar(),
         );
@@ -352,7 +352,7 @@ mod scalar_field_properties {
 
         let one_mul = Op::mul(
             Op::Value(one_scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(one_mul);
@@ -382,7 +382,7 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let mul_zero = Op::mul(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(zero_scalar()),
             ATyp::scalar(),
         );
@@ -414,7 +414,7 @@ mod scalar_field_properties {
 
         let zero_mul = Op::mul(
             Op::Value(zero_scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(zero_mul);
@@ -450,14 +450,14 @@ mod scalar_field_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
 
         let bc = Op::add(
-            Op::Ref(b1.clone(), ATyp::scalar()),
-            Op::Ref(c1.clone(), ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bc_ref = builder1.add_op(bc);
 
         let left = Op::mul(
-            Op::Ref(a1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
             Op::Ref(bc_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
@@ -470,15 +470,15 @@ mod scalar_field_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
 
         let ab = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(b2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder2.add_op(ab);
 
         let ac = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ac_ref = builder2.add_op(ac);
@@ -525,15 +525,15 @@ mod scalar_field_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
 
         let ab = Op::add(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder1.add_op(ab);
 
         let left = Op::mul(
             Op::Ref(ab_ref, ATyp::scalar()),
-            Op::Ref(c1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder1.add_op(left);
@@ -545,15 +545,15 @@ mod scalar_field_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
 
         let ac = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ac_ref = builder2.add_op(ac);
 
         let bc = Op::mul(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bc_ref = builder2.add_op(bc);
@@ -602,7 +602,7 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let sub_zero = Op::sub(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(zero_scalar()),
             ATyp::scalar(),
         );
@@ -633,8 +633,8 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let sub_self = Op::sub(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(sub_self);
@@ -669,7 +669,7 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let div_one = Op::div(
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             Op::Value(one_scalar()),
             ATyp::scalar(),
         );
@@ -700,8 +700,8 @@ mod scalar_field_properties {
         let a = builder.add_input("a", ATyp::scalar());
 
         let div_self = Op::div(
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(div_self);
@@ -733,7 +733,7 @@ mod scalar_field_properties {
 
         let zero_div = Op::div(
             Op::Value(zero_scalar()),
-            Op::Ref(a.clone(), ATyp::scalar()),
+            Op::Ref(a, ATyp::scalar()),
             ATyp::scalar(),
         );
         builder.add_op(zero_div);
@@ -775,12 +775,12 @@ mod vector_properties {
         let d1 = builder1.add_input("d", ATyp::scalar());
 
         let vec1 = Op::vec(vec![
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
         ]);
         let vec2 = Op::vec(vec![
-            Op::Ref(c1.clone(), ATyp::scalar()),
-            Op::Ref(d1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
+            Op::Ref(d1, ATyp::scalar()),
         ]);
 
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
@@ -795,12 +795,12 @@ mod vector_properties {
         let d2 = builder2.add_input("d", ATyp::scalar());
 
         let vec1b = Op::vec(vec![
-            Op::Ref(c2.clone(), ATyp::scalar()),
-            Op::Ref(d2.clone(), ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
+            Op::Ref(d2, ATyp::scalar()),
         ]);
         let vec2b = Op::vec(vec![
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(b2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
         ]);
 
         let add2 = Op::add(vec1b, vec2b, vec_typ);
@@ -831,12 +831,12 @@ mod vector_properties {
         let c1 = builder1.add_input("c", ATyp::scalar());
 
         let vec = Op::vec(vec![
-            Op::Ref(b1.clone(), ATyp::scalar()),
-            Op::Ref(c1.clone(), ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
         ]);
 
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let mul = Op::mul(Op::Ref(a1.clone(), ATyp::scalar()), vec, vec_typ.clone());
+        let mul = Op::mul(Op::Ref(a1, ATyp::scalar()), vec, vec_typ.clone());
         builder1.add_op(mul);
         let dag1 = builder1.build();
 
@@ -846,13 +846,13 @@ mod vector_properties {
         let c2 = builder2.add_input("c", ATyp::scalar());
 
         let ab = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(b2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ac = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
 
@@ -886,16 +886,16 @@ mod vector_properties {
         let f1 = builder1.add_input("f", ATyp::scalar());
 
         let vec1 = Op::vec(vec![
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
         ]);
         let vec2 = Op::vec(vec![
-            Op::Ref(c1.clone(), ATyp::scalar()),
-            Op::Ref(d1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
+            Op::Ref(d1, ATyp::scalar()),
         ]);
         let vec3 = Op::vec(vec![
-            Op::Ref(e1.clone(), ATyp::scalar()),
-            Op::Ref(f1.clone(), ATyp::scalar()),
+            Op::Ref(e1, ATyp::scalar()),
+            Op::Ref(f1, ATyp::scalar()),
         ]);
 
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
@@ -914,16 +914,16 @@ mod vector_properties {
         let f2 = builder2.add_input("f", ATyp::scalar());
 
         let vec1b = Op::vec(vec![
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(b2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
         ]);
         let vec2b = Op::vec(vec![
-            Op::Ref(c2.clone(), ATyp::scalar()),
-            Op::Ref(d2.clone(), ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
+            Op::Ref(d2, ATyp::scalar()),
         ]);
         let vec3b = Op::vec(vec![
-            Op::Ref(e2.clone(), ATyp::scalar()),
-            Op::Ref(f2.clone(), ATyp::scalar()),
+            Op::Ref(e2, ATyp::scalar()),
+            Op::Ref(f2, ATyp::scalar()),
         ]);
 
         let add23 = Op::add(vec2b, vec3b, vec_typ.clone());
@@ -956,10 +956,7 @@ mod vector_properties {
         let a = builder.add_input("a", ATyp::scalar());
         let b = builder.add_input("b", ATyp::scalar());
 
-        let vec = Op::vec(vec![
-            Op::Ref(a.clone(), ATyp::scalar()),
-            Op::Ref(b.clone(), ATyp::scalar()),
-        ]);
+        let vec = Op::vec(vec![Op::Ref(a, ATyp::scalar()), Op::Ref(b, ATyp::scalar())]);
         let zero_vec = Op::vec(vec![Op::Value(zero_scalar()), Op::Value(zero_scalar())]);
 
         let vec_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
@@ -1005,21 +1002,21 @@ mod complex_properties {
         let d1 = builder1.add_input("d", ATyp::scalar());
 
         let cd = Op::add(
-            Op::Ref(c1.clone(), ATyp::scalar()),
-            Op::Ref(d1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
+            Op::Ref(d1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let cd_ref = builder1.add_op(cd);
 
         let bcd = Op::add(
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             Op::Ref(cd_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bcd_ref = builder1.add_op(bcd);
 
         let left = Op::mul(
-            Op::Ref(a1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
             Op::Ref(bcd_ref, ATyp::scalar()),
             ATyp::scalar(),
         );
@@ -1033,22 +1030,22 @@ mod complex_properties {
         let d2 = builder2.add_input("d", ATyp::scalar());
 
         let ab = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(b2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder2.add_op(ab);
 
         let ac = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ac_ref = builder2.add_op(ac);
 
         let ad = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(d2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(d2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ad_ref = builder2.add_op(ad);
@@ -1101,15 +1098,15 @@ mod complex_properties {
         let d1 = builder1.add_input("d", ATyp::scalar());
 
         let ab = Op::add(
-            Op::Ref(a1.clone(), ATyp::scalar()),
-            Op::Ref(b1.clone(), ATyp::scalar()),
+            Op::Ref(a1, ATyp::scalar()),
+            Op::Ref(b1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ab_ref = builder1.add_op(ab);
 
         let cd = Op::sub(
-            Op::Ref(c1.clone(), ATyp::scalar()),
-            Op::Ref(d1.clone(), ATyp::scalar()),
+            Op::Ref(c1, ATyp::scalar()),
+            Op::Ref(d1, ATyp::scalar()),
             ATyp::scalar(),
         );
         let cd_ref = builder1.add_op(cd);
@@ -1130,29 +1127,29 @@ mod complex_properties {
         let d2 = builder2.add_input("d", ATyp::scalar());
 
         let ac = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ac_ref = builder2.add_op(ac);
 
         let ad = Op::mul(
-            Op::Ref(a2.clone(), ATyp::scalar()),
-            Op::Ref(d2.clone(), ATyp::scalar()),
+            Op::Ref(a2, ATyp::scalar()),
+            Op::Ref(d2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let ad_ref = builder2.add_op(ad);
 
         let bc = Op::mul(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(c2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(c2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bc_ref = builder2.add_op(bc);
 
         let bd = Op::mul(
-            Op::Ref(b2.clone(), ATyp::scalar()),
-            Op::Ref(d2.clone(), ATyp::scalar()),
+            Op::Ref(b2, ATyp::scalar()),
+            Op::Ref(d2, ATyp::scalar()),
             ATyp::scalar(),
         );
         let bd_ref = builder2.add_op(bd);

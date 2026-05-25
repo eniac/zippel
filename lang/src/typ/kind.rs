@@ -110,7 +110,7 @@ where
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
         match self {
             Kind::Field => allocator.text("Field"),
-            Kind::Group => allocator.text(format!("Group")),
+            Kind::Group => allocator.text("Group".to_string()),
             Kind::Scalar(f) => allocator.concat([
                 allocator.text("Scalar<"),
                 allocator.intersperse(f.iter().map(|t| allocator.text(format!("{}", t))), ", "),

@@ -232,7 +232,7 @@ impl<K, V> Ctx<K, V> {
     {
         match self.0.get(&k) {
             Some(v1) => {
-                let k = f(&k, &v, &v1)?;
+                let k = f(&k, &v, v1)?;
                 self.insert_with(k, v, f)
             }
             None => {
@@ -495,9 +495,9 @@ impl<V: Ord> From<Vec<V>> for Set<V> {
     }
 }
 
-impl<V: Ord> Into<Vec<V>> for Set<V> {
-    fn into(self) -> Vec<V> {
-        self.0.into_iter().collect()
+impl<V: Ord> From<Set<V>> for Vec<V> {
+    fn from(val: Set<V>) -> Self {
+        val.0.into_iter().collect()
     }
 }
 

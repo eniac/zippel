@@ -172,6 +172,7 @@ pub type CDecls = Decls<usize>;
 
 impl UDecl {
     /// Parse a string into a Zippel declaration
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decl, input_str).unwrap();
         UDecl::from_pest(&mut pairs)
@@ -222,6 +223,7 @@ impl UDecl {
 /// .zippel files get parsed to [UDecls].
 impl UDecls {
     /// Parse a string into a Zippel declarations list
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
         let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
         Decls::from_pest(&mut pairs)
@@ -262,7 +264,7 @@ impl CBody {
         for (tid, kind) in kctx.iter() {
             if let CKind::Range(r) = kind {
                 if r.step == 1 && r.end == r.start + 1 {
-                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(r.clone()));
+                    vctx.insert(&Vid::new(&tid.0), &CTyp::Fin(*r));
                 }
             }
         }
@@ -277,19 +279,19 @@ impl CBody {
                 }
 
                 // Type infer relation and body
-                let tr = relation.infer(&kctx, &fctx, &vctx)?;
-                let br = body.infer(&kctx, &fctx, &vctx)?;
+                let tr = relation.infer(&kctx, fctx, &vctx)?;
+                let br = body.infer(&kctx, fctx, &vctx)?;
                 if tr == CTyp::Bool && br == CTyp::Bool {
                     Ok(())
                 } else {
                     Err(TypeError::decl(
                         &sig.name,
-                        TypeError::bool(&kctx, &vctx, &relation),
+                        TypeError::bool(&kctx, &vctx, relation),
                     ))
                 }
             }
             Body::Func { body } => {
-                let br = body.infer(&kctx, &fctx, &vctx)?;
+                let br = body.infer(&kctx, fctx, &vctx)?;
                 // Use lub_equ rather than strict structural equality so that
                 // a body inferred as `Fin<n>` (e.g. a bare numeric literal)
                 // coerces to a `Base(F)` return type via the scalar

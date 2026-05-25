@@ -22,9 +22,9 @@ where
     }
 }
 
-impl<'a> fmt::Display for Nothing {
+impl fmt::Display for Nothing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Nothing as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Nothing as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_nothing_clone() {
         let nothing = Nothing;
-        let cloned = nothing.clone();
+        let cloned = nothing;
         assert_eq!(nothing, cloned);
     }
 }

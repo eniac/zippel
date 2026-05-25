@@ -5,7 +5,7 @@
 //! via the `PartialEq` (graph isomorphism) implementation.
 
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, PRef, Ref, UDag, UDags, mk};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
