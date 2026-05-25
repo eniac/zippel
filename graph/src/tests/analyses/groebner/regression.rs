@@ -3,9 +3,9 @@
 //! For each fixture (family × size × monomial order) compute the
 //! reduced GB through both backends and assert element-wise equality
 //! of the resulting `Vec<SparsePolynomial<Fr, T>>`. ark-gb is the
-//! shipping production path; the legacy in-tree implementation lives
-//! in `#[cfg(test)]` scope (see `buchberger::legacy_compute_reduced_gb`)
-//! specifically so this test (and `speedup_bench`) can A/B against it.
+//! shipping production path; the legacy in-tree implementation lives under
+//! `tests::analyses::groebner::legacy` so this test (and `speedup_bench`)
+//! can A/B against it without building the legacy path outside tests.
 //!
 //! Run with:
 //! ```sh
@@ -23,12 +23,10 @@ use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
 use crate::PRef;
-use crate::analyses::groebner::buchberger::legacy_compute_reduced_gb;
 use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm, Monomial};
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
-
-#[path = "../../../../benches/groebner_shared.rs"]
-mod shared;
+use crate::tests::analyses::groebner::legacy::legacy_compute_reduced_gb;
+use crate::tests::analyses::groebner::shared;
 
 /// Compute the reduced Gröbner basis of `input` through both the legacy
 /// in-tree Buchberger and the ark-gb-backed `T::compute_reduced_gb`, then

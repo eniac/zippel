@@ -514,8 +514,8 @@ fn constant_only_basis<F: Field, T: ZipMonomial>(
 }
 
 /// Sort the basis in zippel's canonical order: ascending by leading
-/// term under `T::cmp` (the same sort `legacy_reduce_groebner_basis`
-/// applies at the end). ark-gb's internal sort uses ark-gb's `Ord` on
+/// term under `T::cmp` (the same sort used by the test-only legacy
+/// reducer). ark-gb's internal sort uses ark-gb's `Ord` on
 /// the wrapper monomial, which agrees with `T::cmp` *up to* leading
 /// convention; this re-sort makes the basis Vec match the legacy
 /// output element-by-element.

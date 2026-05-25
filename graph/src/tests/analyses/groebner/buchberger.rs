@@ -1,7 +1,8 @@
 //! Unit tests for the legacy in-tree Buchberger implementation. Production
 //! code in `analyses::groebner::buchberger` dispatches through ark-gb, but the
-//! `legacy_*` methods (and these tests) are retained as the algorithmic
-//! reference. See `tests::groebner::regression` for cross-backend equality.
+//! test-only legacy implementation and these tests are retained as the
+//! algorithmic reference. See `tests::analyses::groebner::regression` for
+//! cross-backend equality.
 
 #![cfg(test)]
 

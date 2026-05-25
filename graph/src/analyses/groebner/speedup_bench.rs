@@ -18,15 +18,10 @@ use std::time::{Duration, Instant};
 use ark_bls12_381::Fr;
 
 use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_grevlex;
-use crate::analyses::groebner::buchberger::legacy_compute_reduced_gb;
 use crate::analyses::groebner::monomial::GrevLexTerm;
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
-
-// Pull in the Katsura/Cyclic polynomial generators (and `mk_vars`) from
-// the workspace `benches/groebner_shared.rs`. The 4 `..` segments
-// resolve from `graph/src/analyses/groebner/` up to the workspace root.
-#[path = "../../../../benches/groebner_shared.rs"]
-mod shared;
+use crate::tests::analyses::groebner::legacy::legacy_compute_reduced_gb;
+use crate::tests::analyses::groebner::shared;
 
 fn time_once<R>(f: impl FnOnce() -> R) -> (R, Duration) {
     let t0 = Instant::now();
