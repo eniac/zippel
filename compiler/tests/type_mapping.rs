@@ -154,3 +154,31 @@ fn render_type_at_node_propagates_node_id_in_error() {
         other => panic!("expected UnsupportedType, got {other:?}"),
     }
 }
+
+#[test]
+fn verifier_options_render_same_base_types() {
+    // CodegenOptions::verifier() shares the same RustTarget as prover(); the
+    // rendered type strings must be identical regardless of codegen mode.
+    let prover_opts = CodegenOptions::prover();
+    let verifier_opts = CodegenOptions::verifier();
+
+    for typ in [ATyp::Base(ABase::Scalar), ATyp::Base(ABase::G1)] {
+        assert_eq!(
+            compiler::testing::render_type(&typ, &prover_opts).unwrap(),
+            compiler::testing::render_type(&typ, &verifier_opts).unwrap(),
+            "prover and verifier must render {typ:?} identically"
+        );
+    }
+}
+
+#[test]
+fn maps_vec_of_vec_scalar() {
+    let opts = opts();
+    // Vec<Vec<Scalar>> — recursive rendering must compose correctly.
+    let inner = ATyp::Vec(Box::new(ATyp::Base(ABase::Scalar)), 4);
+    let outer = ATyp::Vec(Box::new(inner), 3);
+    assert_eq!(
+        compiler::testing::render_type(&outer, &opts).unwrap(),
+        "Vec<Vec<ark_bls12_381::Fr>>"
+    );
+}

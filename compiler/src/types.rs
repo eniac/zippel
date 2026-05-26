@@ -32,7 +32,11 @@ pub(crate) fn render_type_at_node(
             node,
             typ: format!("{typ:?}"),
         }),
-        ATyp::Vec(inner, _) => {
+        ATyp::Vec(inner, _len) => {
+            // Graph IR vectors carry a fixed compile-time length, but we
+            // render them as heap-allocated `Vec<T>` for now.  A future pass
+            // can switch to `[T; N]` once const-generic array generation is
+            // supported.
             let inner_str = render_type_at_node(inner, options, node)?;
             Ok(format!("Vec<{inner_str}>"))
         }
