@@ -44,3 +44,14 @@ where
     let options = CodegenOptions::verifier();
     compile_with_options(dag, &options, writer)
 }
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use backend::ATyp;
+
+    use crate::{CodegenOptions, Result, types};
+
+    pub fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String> {
+        types::render_type(typ, options)
+    }
+}
