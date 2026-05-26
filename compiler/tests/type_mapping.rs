@@ -44,7 +44,9 @@ fn maps_vectors_and_records_without_value() {
         "Vec<ark_bls12_381::Fr>"
     );
 
-    // Record: ok -> Bool, s -> Scalar  (insertion order preserved)
+    // Record: "ok" -> Bool, "s" -> Scalar.
+    // share::Ctx iterates in key-sorted order ("ok" < "s"), which happens to
+    // match the insertion order here, yielding (bool, ark_bls12_381::Fr).
     let mut fields: Ctx<String, ATyp> = Ctx::new();
     fields.insert(&"ok".to_string(), &ATyp::Base(ABase::Bool));
     fields.insert(&"s".to_string(), &ATyp::Base(ABase::Scalar));
@@ -52,6 +54,59 @@ fn maps_vectors_and_records_without_value() {
     assert_eq!(
         compiler::testing::render_type(&record_typ, &opts).unwrap(),
         "(bool, ark_bls12_381::Fr)"
+    );
+}
+
+#[test]
+fn record_iteration_is_key_sorted_not_insertion_order() {
+    let opts = opts();
+
+    // Insert "z" before "a"; key-sorted order produces "a" first, then "z",
+    // so the Rust tuple should be (ark_bls12_381::Fr, bool).
+    let mut fields: Ctx<String, ATyp> = Ctx::new();
+    fields.insert(&"z".to_string(), &ATyp::Base(ABase::Bool));
+    fields.insert(&"a".to_string(), &ATyp::Base(ABase::Scalar));
+    let record_typ = ATyp::Record(fields);
+    assert_eq!(
+        compiler::testing::render_type(&record_typ, &opts).unwrap(),
+        "(ark_bls12_381::Fr, bool)"
+    );
+}
+
+#[test]
+fn record_empty_renders_unit_tuple() {
+    let opts = opts();
+    let empty: Ctx<String, ATyp> = Ctx::new();
+    assert_eq!(
+        compiler::testing::render_type(&ATyp::Record(empty), &opts).unwrap(),
+        "()"
+    );
+}
+
+#[test]
+fn record_single_field_renders_one_element_tuple() {
+    let opts = opts();
+    let mut fields: Ctx<String, ATyp> = Ctx::new();
+    fields.insert(&"x".to_string(), &ATyp::Base(ABase::Scalar));
+    assert_eq!(
+        compiler::testing::render_type(&ATyp::Record(fields), &opts).unwrap(),
+        "(ark_bls12_381::Fr,)"
+    );
+}
+
+#[test]
+fn maps_nested_vec_of_records() {
+    let opts = opts();
+
+    // Vec<(bool, ark_bls12_381::Fr)>
+    let mut fields: Ctx<String, ATyp> = Ctx::new();
+    fields.insert(&"b".to_string(), &ATyp::Base(ABase::Bool));
+    fields.insert(&"s".to_string(), &ATyp::Base(ABase::Scalar));
+    let record_typ = ATyp::Record(fields);
+    let nested = ATyp::Vec(Box::new(record_typ), 2);
+    assert_eq!(
+        compiler::testing::render_type(&nested, &opts).unwrap(),
+        "Vec<(bool, ark_bls12_381::Fr)>"
     );
 }
 
@@ -69,4 +124,33 @@ fn rejects_fin_until_index_codegen_is_added() {
         err.to_string().contains("Fin"),
         "error message should mention Fin, got: {err}"
     );
+}
+
+#[test]
+fn rejects_polynomial_types() {
+    let opts = opts();
+
+    for typ in [ATyp::Uni(4), ATyp::Mle(3), ATyp::VPoly(2, 3)] {
+        let err = compiler::testing::render_type(&typ, &opts).unwrap_err();
+        assert!(
+            matches!(err, CompilerError::UnsupportedType { .. }),
+            "expected UnsupportedType for {typ:?}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn render_type_at_node_propagates_node_id_in_error() {
+    let opts = opts();
+    let fin_typ = ATyp::Base(ABase::Fin(CRange::new(0, 4)));
+
+    // Use a non-zero node to verify the id is threaded through correctly.
+    let err = compiler::testing::render_type_at_node(&fin_typ, &opts, 42).unwrap_err();
+
+    match err {
+        CompilerError::UnsupportedType { node, .. } => {
+            assert_eq!(node, 42, "node id must be propagated verbatim");
+        }
+        other => panic!("expected UnsupportedType, got {other:?}"),
+    }
 }

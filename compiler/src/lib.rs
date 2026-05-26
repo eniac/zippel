@@ -54,4 +54,12 @@ pub mod testing {
     pub fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String> {
         types::render_type(typ, options)
     }
+
+    pub fn render_type_at_node(
+        typ: &ATyp,
+        options: &CodegenOptions,
+        node: usize,
+    ) -> Result<String> {
+        types::render_type_at_node(typ, options, node)
+    }
 }

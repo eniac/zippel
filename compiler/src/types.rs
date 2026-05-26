@@ -42,7 +42,13 @@ pub(crate) fn render_type_at_node(
                 .map(|(_, v)| render_type_at_node(v, options, node))
                 .collect();
             let parts = parts?;
-            Ok(format!("({})", parts.join(", ")))
+            // Rust tuple syntax requires a trailing comma for exactly one element
+            // so that `(T,)` is a tuple rather than the parenthesised expression `(T)`.
+            Ok(match parts.len() {
+                0 => "()".to_string(),
+                1 => format!("({},)", parts[0]),
+                _ => format!("({})", parts.join(", ")),
+            })
         }
         ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => Err(CompilerError::UnsupportedType {
             node,
