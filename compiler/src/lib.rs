@@ -15,13 +15,25 @@ mod types;
 pub use error::{CompilerError, Result};
 pub use options::{CodegenMode, CodegenOptions, RustTarget};
 
+pub fn compile_with_options<C, A, W>(
+    dag: &Dag<C, A>,
+    options: &CodegenOptions,
+    writer: W,
+) -> Result<()>
+where
+    C: ArkConfig,
+    W: Write,
+{
+    emit::emit_dag(dag, options, writer)
+}
+
 pub fn compile_prover<C, A, W>(dag: &Dag<C, A>, writer: W) -> Result<()>
 where
     C: ArkConfig,
     W: Write,
 {
     let options = CodegenOptions::prover();
-    emit::emit_dag(dag, &options, writer)
+    compile_with_options(dag, &options, writer)
 }
 
 pub fn compile_verifier<C, A, W>(dag: &Dag<C, A>, writer: W) -> Result<()>
@@ -30,5 +42,5 @@ where
     W: Write,
 {
     let options = CodegenOptions::verifier();
-    emit::emit_dag(dag, &options, writer)
+    compile_with_options(dag, &options, writer)
 }
