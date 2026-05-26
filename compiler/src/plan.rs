@@ -74,6 +74,7 @@ pub struct CodegenPlan {
 /// - Preserve ASCII alphanumeric characters and `_`.
 /// - Replace any other character with `_`.
 /// - Prefix with `_` if the result is empty or starts with a digit.
+/// - Rename bare `_`, which is a Rust wildcard rather than a usable binding.
 /// - Suffix Rust keywords with `_`.
 #[allow(dead_code)]
 fn sanitize_ident(raw: &str) -> String {
@@ -90,6 +91,9 @@ fn sanitize_ident(raw: &str) -> String {
 
     if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');
+    }
+    if out == "_" {
+        out = "_zippel".to_string();
     }
     if is_rust_keyword(&out) {
         out.push('_');
@@ -394,6 +398,7 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
 
     fn assert_valid_rust_ident(name: &str) {
         assert!(!name.is_empty(), "identifier must be non-empty");
+        assert_ne!(name, "_", "`_` is not a reusable Rust binding");
         let first = name.chars().next().unwrap();
         assert!(
             first == '_' || first.is_ascii_alphabetic(),
@@ -522,6 +527,7 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
         assert_eq!(names.reserve("x'"), "x_");
         assert_eq!(names.reserve("x_"), "x__1");
         assert_eq!(names.reserve("1abc"), "_1abc");
+        assert_eq!(names.reserve("_"), "_zippel");
         assert_eq!(names.reserve("n12"), "n12");
         assert_eq!(names.reserve("n12"), "n12_1");
     }
