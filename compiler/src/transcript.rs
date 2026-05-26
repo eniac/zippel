@@ -1,16 +1,25 @@
 //! Transcript and challenge code generation support.
 
+use crate::options::RustTarget;
+
 /// Return helper Rust source for the given session identifier.
 ///
 /// The source includes a `ZIPPEL_SESSION` constant, serialization helpers,
 /// a spongefish prover-state factory, and a scalar-challenge helper.  None
 /// of the emitted text references Zippel-internal crates (`backend`,
 /// `graph`, `runtime`).
-pub(crate) fn helper_source(session: &str) -> String {
+pub(crate) fn helper_source(session: &str, target: &RustTarget) -> String {
+    let scalar_type = target.scalar_type;
     format!(
         r#"const ZIPPEL_SESSION: &str = {session:?};
 
 struct InstanceBytes(Vec<u8>);
+
+impl Encoding<[u8]> for InstanceBytes {{
+    fn encode(&self) -> impl AsRef<[u8]> {{
+        self.0.as_slice()
+    }}
+}}
 
 fn serialize_to_bytes<T: ark_serialize::CanonicalSerialize>(
     value: &T,
@@ -21,24 +30,29 @@ fn serialize_to_bytes<T: ark_serialize::CanonicalSerialize>(
 }}
 
 fn public_message<T: ark_serialize::CanonicalSerialize>(
+    state: &mut spongefish::ProverState,
     value: &T,
-) -> Result<Vec<u8>, GeneratedError> {{
-    serialize_to_bytes(value)
+) -> Result<(), GeneratedError> {{
+    let bytes = serialize_to_bytes(value)?;
+    state.public_message(bytes.as_slice());
+    Ok(())
 }}
 
 fn zippel_state(instance_bytes: Vec<u8>) -> spongefish::ProverState {{
-    let _ = instance_bytes;
-    let io = spongefish::IOPattern::new(ZIPPEL_SESSION);
-    io.to_prover_state()
+    let session = session_id_from_str(ZIPPEL_SESSION);
+    let instance = InstanceBytes(instance_bytes);
+    domain_separator!("zippel")
+        .session(session)
+        .instance(&instance)
+        .std_prover()
 }}
 
-fn challenge_scalar(state: &mut spongefish::ProverState) -> ark_bls12_381::Fr {{
+fn challenge_scalar(state: &mut spongefish::ProverState) -> {scalar_type} {{
     use ark_ff::PrimeField;
 
-    let mut bytes = [0u8; 64];
-    state.fill_challenge_bytes(&mut bytes).expect("challenge bytes");
-    let bit_size = (<ark_bls12_381::Fr as PrimeField>::MODULUS_BIT_SIZE as usize).div_ceil(8);
-    ark_bls12_381::Fr::from_le_bytes_mod_order(&bytes[..bit_size.min(64)])
+    let challenge_bytes: [u8; 32] = state.verifier_message();
+    let byte_size = (<{scalar_type} as PrimeField>::MODULUS_BIT_SIZE as usize).div_ceil(8);
+    {scalar_type}::from_le_bytes_mod_order(&challenge_bytes[..byte_size.min(32)])
 }}
 "#
     )

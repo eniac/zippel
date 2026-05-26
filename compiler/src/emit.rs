@@ -27,14 +27,16 @@ where
 
 fn common_prelude(options: &CodegenOptions) -> String {
     format!(
-        r#"use ark_ec::CurveGroup;
-use ark_std::UniformRand;
+        r#"#![allow(dead_code, unused_imports, unused_variables)]
+
 use ark_serialize::CanonicalSerialize;
+use spongefish::{{domain_separator, session_id_from_str, DuplexSpongeInterface, Encoding}};
 
 #[derive(Debug)]
 pub enum GeneratedError {{
     Serialization(ark_serialize::SerializationError),
     Join(tokio::task::JoinError),
+    Unimplemented(&'static str),
 }}
 
 impl From<ark_serialize::SerializationError> for GeneratedError {{
@@ -49,47 +51,84 @@ impl From<tokio::task::JoinError> for GeneratedError {{
     }}
 }}
 
+impl std::fmt::Display for GeneratedError {{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{
+        match self {{
+            Self::Serialization(err) => write!(f, "serialization error: {{err}}"),
+            Self::Join(err) => write!(f, "tokio task join error: {{err}}"),
+            Self::Unimplemented(msg) => write!(f, "generated code scaffold is incomplete: {{msg}}"),
+        }}
+    }}
+}}
+
+impl std::error::Error for GeneratedError {{}}
+
 {}
 "#,
-        transcript::helper_source(&options.session)
+        transcript::helper_source(&options.session, &options.target)
     )
 }
 
-fn emit_prover(_plan: &plan::CodegenPlan, options: &CodegenOptions) -> String {
+fn render_params<'a>(inputs: impl IntoIterator<Item = &'a plan::PlanArg>) -> String {
+    inputs
+        .into_iter()
+        .filter(|arg| !arg.from_transcript)
+        .map(|arg| format!("    {}: {}", arg.rust_name, arg.rust_type))
+        .collect::<Vec<_>>()
+        .join(",\n")
+}
+
+fn render_proof_fields(plan: &plan::CodegenPlan) -> String {
+    plan.proof_outputs
+        .iter()
+        .filter_map(|idx| plan.nodes.iter().find(|node| node.index == *idx))
+        .map(|node| format!("    pub {}: {},", node.var, node.rust_type))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn emit_prover(plan: &plan::CodegenPlan, options: &CodegenOptions) -> String {
+    let params = render_params(&plan.inputs);
+    let proof_fields = render_proof_fields(plan);
     format!(
         r#"{}
 #[derive(Clone, Debug)]
 pub struct Proof {{
-    pub u: ark_bls12_381::G1Projective,
-    pub z: ark_bls12_381::Fr,
+{}
 }}
 
+#[allow(unused_variables)]
 pub async fn prove(
-    _x: ark_bls12_381::Fr,
-    _g: ark_bls12_381::G1Projective,
-    _h: ark_bls12_381::G1Projective,
+{}
 ) -> Result<Proof, GeneratedError> {{
-    Err(GeneratedError::Serialization(
-        ark_serialize::SerializationError::InvalidData,
-    ))
+    Err(GeneratedError::Unimplemented("Schnorr operation lowering is not emitted yet"))
 }}
 "#,
-        common_prelude(options)
+        common_prelude(options),
+        proof_fields,
+        params
     )
 }
 
-fn emit_verifier(_plan: &plan::CodegenPlan, options: &CodegenOptions) -> String {
+fn emit_verifier(plan: &plan::CodegenPlan, options: &CodegenOptions) -> String {
+    let mut params = Vec::new();
+    let public_params = render_params(&plan.inputs);
+    if !public_params.is_empty() {
+        params.push(public_params);
+    }
+    params.push(format!("    proof: &{}", options.proof_type_path));
+    let params = params.join(",\n");
+
     format!(
         r#"{}
+#[allow(unused_variables)]
 pub async fn verify(
-    _g: ark_bls12_381::G1Projective,
-    _h: ark_bls12_381::G1Projective,
-    _proof: &{},
+{}
 ) -> Result<bool, GeneratedError> {{
     Ok(false)
 }}
 "#,
         common_prelude(options),
-        options.proof_type_path
+        params
     )
 }
