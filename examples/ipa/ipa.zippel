@@ -3,7 +3,7 @@
 // which corresponds to Protocol 1 in the Bulletproofs paper images).
 // N_current: Current dimension of vectors g, h, a, b.
 // u_base_for_ipa: The 'u' base to be used for L,R commitments and base case check in this IPA run.
-proto ipa_recursive<G: Group, F: Scalar<G>>(
+fn ipa_recursive<G: Group, F: Scalar<G>>(
     public g_vec_k: [G; 1],          // Current g bases for this round
     public h_vec_k: [G; 1],          // Current h bases for this round
     public u_base_for_ipa: G,                // The 'u' to use for this IPA instance's L,R, and base check
@@ -37,7 +37,7 @@ proto ipa_recursive<G: Group, F: Scalar<G>>(
         p_commitment_k == expected_P_at_base
 }
 
-proto ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
+fn ipa_recursive<G: Group, F: Scalar<G>, S: Size, N_current: 1..S+1>(
     public g_vec_k: [G; 2^N_current],          // Current g bases for this round
     public h_vec_k: [G; 2^N_current],          // Current h bases for this round
     public u_base_for_ipa: G,                  // The 'u' to use for this IPA instance's L,R, and base check
