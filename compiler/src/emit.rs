@@ -125,7 +125,7 @@ fn emit_verifier(plan: &plan::CodegenPlan, options: &CodegenOptions) -> String {
 pub async fn verify(
 {}
 ) -> Result<bool, GeneratedError> {{
-    Ok(false)
+    Err(GeneratedError::Unimplemented("Schnorr verifier lowering is not emitted yet"))
 }}
 "#,
         common_prelude(options),
