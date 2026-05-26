@@ -209,3 +209,69 @@ fn challenge_nodes_are_always_transcript_nodes() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test 5 – Unsupported input type propagates an error.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unsupported_input_type_propagates_error() {
+    use backend::{ATyp, ArkBls12_381};
+    use compiler::CompilerError;
+    use graph::{ArgKind, Dag, Node};
+    use lang::id::Vid;
+    use lang::typ::{Distribution, Nothing, Qualifier};
+
+    // Build a minimal DAG with a single Arg node whose type (Uni) cannot be
+    // rendered to a Rust type string.
+    let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
+    dag.add_node(Node::Arg(
+        Vid::new("p"),
+        ATyp::Uni(4),
+        Qualifier::Public,
+        Distribution::Nonuniform,
+        ArgKind::Input,
+    ));
+
+    let options = compiler::CodegenOptions::prover();
+    let err = compiler::testing::build_plan(&dag, &options)
+        .expect_err("build_plan must fail for an unsupported input type");
+
+    assert!(
+        matches!(err, CompilerError::UnsupportedType { .. }),
+        "expected UnsupportedType, got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 – Unsupported typed non-input node propagates an error.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unsupported_typed_node_propagates_error() {
+    use backend::{ATyp, ArkBls12_381};
+    use compiler::CompilerError;
+    use graph::{ArgKind, Dag, Node};
+    use lang::id::Vid;
+    use lang::typ::{Distribution, Nothing, Qualifier};
+
+    // A Relation-kind Arg node has a type but is not in `input_args()`.
+    // build_plan must attempt to render its type and propagate the error.
+    let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
+    dag.add_node(Node::Arg(
+        Vid::new("p"),
+        ATyp::Uni(4),
+        Qualifier::Public,
+        Distribution::Nonuniform,
+        ArgKind::Relation,
+    ));
+
+    let options = compiler::CodegenOptions::prover();
+    let err = compiler::testing::build_plan(&dag, &options)
+        .expect_err("build_plan must fail for an unsupported typed non-input node");
+
+    assert!(
+        matches!(err, CompilerError::UnsupportedType { .. }),
+        "expected UnsupportedType, got {err:?}"
+    );
+}

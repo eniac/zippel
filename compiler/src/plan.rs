@@ -174,11 +174,11 @@ where
 
     let mut inputs: Vec<PlanArg> = input_indices
         .iter()
-        .filter_map(|&idx| {
+        .map(|&idx| {
             let graph_node = &dag[idx];
             if let Node::Arg(name, typ, qualifier, distribution, kind) = graph_node {
-                let rust_type = types::render_type_at_node(typ, options, idx.index()).ok()?;
-                Some(PlanArg {
+                let rust_type = types::render_type_at_node(typ, options, idx.index())?;
+                Ok(PlanArg {
                     node: idx,
                     name: name.0.clone(),
                     rust_type,
@@ -187,10 +187,14 @@ where
                     from_transcript: matches!(kind, ArgKind::TranscriptInput),
                 })
             } else {
-                None
+                // input_args() only returns Arg nodes; this branch is unreachable.
+                Err(CompilerError::UnsupportedNode {
+                    node: idx.index(),
+                    detail: "non-Arg node in input_args()".to_string(),
+                })
             }
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     // Stable external signatures: sort by name.
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -214,11 +218,7 @@ where
             None => continue,
         };
 
-        let rust_type = match types::render_type_at_node(&typ, options, idx.index()) {
-            Ok(s) => s,
-            // Skip nodes whose types we cannot render (e.g. polynomials).
-            Err(_) => continue,
-        };
+        let rust_type = types::render_type_at_node(&typ, options, idx.index())?;
 
         // Variable name: prefer DAG vctx, then arg name, else synthesise.
         let var = match dag.find_var(idx) {
