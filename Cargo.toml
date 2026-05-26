@@ -216,3 +216,7 @@ path = "examples/hyperplonk_permutation/main.rs"
 [[example]]
 name = "hyperplonk"
 path = "examples/hyperplonk/main.rs"
+
+[[example]]
+name = "bccgp"
+path = "examples/bccgp/main.rs"
