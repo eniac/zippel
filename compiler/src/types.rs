@@ -6,12 +6,14 @@ use crate::error::{CompilerError, Result};
 use crate::options::CodegenOptions;
 
 /// Render a Graph IR type into a Rust type string using default node context.
+#[allow(dead_code)]
 pub(crate) fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String> {
     render_type_at_node(typ, options, 0)
 }
 
 /// Render a Graph IR type into a Rust type string, attaching `node` to any
 /// error for diagnostics.
+#[allow(dead_code)]
 pub(crate) fn render_type_at_node(
     typ: &ATyp,
     options: &CodegenOptions,
