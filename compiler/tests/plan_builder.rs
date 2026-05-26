@@ -42,7 +42,7 @@ fn schnorr_handler() -> ZippelHandler<ArkBls12_381> {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 – Prover plan: stable inputs, transcript, and topological nodes.
+// Test 1 - Prover plan: stable inputs, transcript, and topological nodes.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -81,7 +81,7 @@ fn prover_plan_has_stable_inputs_transcript_and_topological_nodes() {
     // Transcript order must have at least two entries.
     assert!(
         plan.transcript_order.len() >= 2,
-        "transcript order must have ≥ 2 entries; got {}",
+        "transcript order must have >= 2 entries; got {}",
         plan.transcript_order.len()
     );
 
@@ -113,7 +113,7 @@ fn prover_plan_has_stable_inputs_transcript_and_topological_nodes() {
         for &dep in &n.dependencies {
             assert!(
                 seen.contains(&dep),
-                "dependency {:?} of node {:?} ({}) has not been defined yet — \
+                "dependency {:?} of node {:?} ({}) has not been defined yet - \
                  topological ordering is violated",
                 dep,
                 n.index,
@@ -125,7 +125,7 @@ fn prover_plan_has_stable_inputs_transcript_and_topological_nodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2 – Verifier plan: check nodes and verifier-mode inputs.
+// Test 2 - Verifier plan: check nodes and verifier-mode inputs.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -161,7 +161,7 @@ fn verifier_plan_finds_check_nodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3 – Variable names are sanitised (no empty, no digit-leading identifiers).
+// Test 3 - Variable names are sanitised (no empty, no digit-leading identifiers).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -188,7 +188,7 @@ fn plan_node_vars_are_valid_rust_idents() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4 – Challenge flags are consistent with transcript flags.
+// Test 4 - Challenge flags are consistent with transcript flags.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -211,7 +211,7 @@ fn challenge_nodes_are_always_transcript_nodes() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 – Unsupported input type propagates an error.
+// Test 5 - Unsupported input type propagates an error.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -244,7 +244,7 @@ fn unsupported_input_type_propagates_error() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6 – Unsupported typed non-input node propagates an error.
+// Test 6 - Unsupported typed non-input node propagates an error.
 // ---------------------------------------------------------------------------
 
 #[test]

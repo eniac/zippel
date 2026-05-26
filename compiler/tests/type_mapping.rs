@@ -174,7 +174,7 @@ fn verifier_options_render_same_base_types() {
 #[test]
 fn maps_vec_of_vec_scalar() {
     let opts = opts();
-    // Vec<Vec<Scalar>> — recursive rendering must compose correctly.
+    // Vec<Vec<Scalar>> - recursive rendering must compose correctly.
     let inner = ATyp::Vec(Box::new(ATyp::Base(ABase::Scalar)), 4);
     let outer = ATyp::Vec(Box::new(inner), 3);
     assert_eq!(

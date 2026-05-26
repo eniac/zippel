@@ -103,7 +103,7 @@ where
     C: ArkConfig,
 {
     // ------------------------------------------------------------------
-    // Step 1 – Kahn-style deterministic topological sort.
+    // Step 1 - Kahn-style deterministic topological sort.
     // ------------------------------------------------------------------
 
     // Count incoming edges for every node so we can identify "ready" roots.
@@ -168,7 +168,7 @@ where
     }
 
     // ------------------------------------------------------------------
-    // Step 2 – Collect input arguments.
+    // Step 2 - Collect input arguments.
     // ------------------------------------------------------------------
     let input_indices: BTreeSet<NodeIndex> = dag.input_args().into_iter().collect();
 
@@ -200,7 +200,7 @@ where
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
 
     // ------------------------------------------------------------------
-    // Step 3 – Build PlanNodes for non-input nodes.
+    // Step 3 - Build PlanNodes for non-input nodes.
     // ------------------------------------------------------------------
     let mut nodes: Vec<PlanNode> = Vec::new();
 
@@ -247,7 +247,7 @@ where
     }
 
     // ------------------------------------------------------------------
-    // Step 4 – Assemble the plan.
+    // Step 4 - Assemble the plan.
     // ------------------------------------------------------------------
     Ok(CodegenPlan {
         mode: options.mode,
