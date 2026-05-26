@@ -31,8 +31,6 @@ pub enum PlanOpKind {
     Check,
     /// A transparent reference to another node (Op::Ref — used in verifier Transcr rewrites).
     Ref,
-    /// Any other op without a dedicated lowering.
-    Other(String),
 }
 
 /// A single typed input argument in the codegen plan.
@@ -213,6 +211,34 @@ impl NameAllocator {
 // Plan builder
 // ---------------------------------------------------------------------------
 
+fn op_variant_name<C, R>(op: &Op<C, R>) -> &'static str
+where
+    C: ArkConfig,
+{
+    match op {
+        Op::Value(_) => "Value",
+        Op::Ref(_, _) => "Ref",
+        Op::Bin(_, _, _, _) => "Bin",
+        Op::Ram(_, _) => "Ram",
+        Op::Vec(_) => "Vec",
+        Op::Record(_) => "Record",
+        Op::Random(_, _) => "Random",
+        Op::Pair(_, _, _) => "Pair",
+        Op::Challenge(_, _) => "Challenge",
+        Op::Ifft(_) => "Ifft",
+        Op::Interpolate(_, _) => "Interpolate",
+        Op::Fft(_) => "Fft",
+        Op::Poly(_) => "Poly",
+        Op::Mle(_) => "Mle",
+        Op::Marginalize(_) => "Marginalize",
+        Op::Proj(_, _, _) => "Proj",
+        Op::Coef(_) => "Coef",
+        Op::Evaluate(_, _) => "Evaluate",
+        Op::Check(_) => "Check",
+        Op::Reduce(_, _) => "Reduce",
+    }
+}
+
 /// Build a deterministic [`CodegenPlan`] from `dag` using `options`.
 ///
 /// # Errors
@@ -359,11 +385,21 @@ where
                     Op::Challenge(_, _) => PlanOpKind::Challenge,
                     Op::Check(_) => PlanOpKind::Check,
                     Op::Ref(_, _) => PlanOpKind::Ref,
-                    _ => PlanOpKind::Other("other".to_string()),
+                    _ => {
+                        return Err(CompilerError::UnsupportedOp {
+                            node: idx.index(),
+                            op: op_variant_name(op).to_string(),
+                        });
+                    }
                 };
                 (kind, operands)
             }
-            _ => (PlanOpKind::Other("non-op".to_string()), vec![]),
+            _ => {
+                return Err(CompilerError::UnsupportedNode {
+                    node: idx.index(),
+                    detail: "typed non-operation node".to_string(),
+                });
+            }
         };
 
         // Variable name: prefer DAG vctx, then arg name, else synthesise.
@@ -647,6 +683,30 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
         assert!(
             matches!(err, CompilerError::UnsupportedType { .. }),
             "expected UnsupportedType, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unsupported_operation_propagates_error() {
+        use backend::Value;
+        use backend::op::{Op, mk};
+        use graph::{Dag, Node};
+        use lang::typ::Nothing;
+
+        let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
+        let node = dag.add_node(Node::Op(
+            mk::<ArkBls12_381>(Op::Value(Value::Bool(true))),
+            Nothing,
+        ));
+
+        let options = CodegenOptions::prover();
+        let err = build_plan(&dag, &options)
+            .expect_err("build_plan must fail for an unsupported operation");
+
+        assert!(
+            matches!(err, CompilerError::UnsupportedOp { node: n, .. } if n == node.index()),
+            "expected UnsupportedOp at node {}, got {err:?}",
+            node.index()
         );
     }
 }

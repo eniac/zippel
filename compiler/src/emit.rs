@@ -7,7 +7,7 @@ use lang::ast::BinOp;
 use lang::typ::Qualifier;
 use petgraph::graph::NodeIndex;
 
-use crate::error::Result;
+use crate::error::{CompilerError, Result};
 use crate::options::{CodegenMode, CodegenOptions};
 use crate::plan::{CodegenPlan, PlanArg, PlanNode, PlanOpKind};
 use crate::{expr, plan, transcript};
@@ -25,7 +25,7 @@ where
     let source = match options.mode {
         CodegenMode::Prover => emit_prover(&codegen_plan, options),
         CodegenMode::Verifier => emit_verifier(&codegen_plan, options),
-    };
+    }?;
     writer.write_all(source.as_bytes())?;
     Ok(())
 }
@@ -114,43 +114,51 @@ fn build_inline_expr(
     node_idx: NodeIndex,
     plan: &CodegenPlan,
     var_map: &BTreeMap<NodeIndex, String>,
-) -> String {
+) -> Result<String> {
     // Already resolved?
     if let Some(var) = var_map.get(&node_idx) {
-        return var.clone();
+        return Ok(var.clone());
     }
     // Check plan inputs first (should already be in var_map, but as fallback)
     if let Some(input) = plan.inputs.iter().find(|a| a.node == node_idx) {
-        return input.rust_name.clone();
+        return Ok(input.rust_name.clone());
     }
     // Find in plan nodes and inline
     if let Some(pnode) = plan.nodes.iter().find(|n| n.index == node_idx) {
         match &pnode.op_kind {
             PlanOpKind::Bin(op) if pnode.ordered_operands.len() >= 2 => {
-                let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map);
-                let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map);
-                let op_str = match op {
-                    BinOp::Add => "+",
-                    BinOp::Sub => "-",
-                    BinOp::Mul => "*",
-                    BinOp::Equ => "==",
-                    BinOp::And => "&&",
-                    _ => "/* ? */",
-                };
-                format!("{left} {op_str} {right}")
+                let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
+                let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
+                expr::lower_bin(pnode.index.index(), *op, &left, &right)
             }
-            PlanOpKind::Ref if !pnode.ordered_operands.is_empty() => {
-                build_inline_expr(pnode.ordered_operands[0], plan, var_map)
+            PlanOpKind::Bin(op) => Err(CompilerError::UnsupportedOp {
+                node: pnode.index.index(),
+                op: format!("{op:?} with fewer than two operands"),
+            }),
+            PlanOpKind::Ref => {
+                let ref_idx =
+                    pnode
+                        .ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: pnode.index.index(),
+                            op: "Ref with no operand".to_string(),
+                        })?;
+                build_inline_expr(*ref_idx, plan, var_map)
             }
-            _ => pnode.var.clone(),
+            _ => Err(CompilerError::MissingDependency {
+                node: pnode.index.index(),
+            }),
         }
     } else {
-        format!("/* unknown node {} */", node_idx.index())
+        Err(CompilerError::MissingDependency {
+            node: node_idx.index(),
+        })
     }
 }
 
 /// Look up the Rust type string for a node (checking both inputs and plan nodes).
-fn node_type<'a>(node_idx: NodeIndex, plan: &'a CodegenPlan) -> &'a str {
+fn node_type(node_idx: NodeIndex, plan: &CodegenPlan) -> &str {
     if let Some(pn) = plan.nodes.iter().find(|n| n.index == node_idx) {
         return pn.rust_type.as_str();
     }
@@ -219,7 +227,7 @@ fn emit_instance_bytes_section(plan: &CodegenPlan) -> String {
 // Prover emission
 // ---------------------------------------------------------------------------
 
-fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> String {
+fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> Result<String> {
     let params = render_params(&plan.inputs);
     let proof_fields = render_proof_fields(plan);
 
@@ -279,10 +287,9 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> String {
             }
 
             PlanOpKind::Bin(op) if node.ordered_operands.len() >= 2 => {
-                let left = build_inline_expr(node.ordered_operands[0], plan, &var_map);
-                let right = build_inline_expr(node.ordered_operands[1], plan, &var_map);
-                let expr = expr::lower_bin(node.index.index(), *op, &left, &right)
-                    .unwrap_or_else(|_| format!("{left} /* unsupported op */ {right}"));
+                let left = build_inline_expr(node.ordered_operands[0], plan, &var_map)?;
+                let right = build_inline_expr(node.ordered_operands[1], plan, &var_map)?;
+                let expr = expr::lower_bin(node.index.index(), *op, &left, &right)?;
 
                 if should_emit_as_let(node, &use_counts) {
                     body.push_str(&format!("    let {} = {};\n", node.var, expr));
@@ -308,7 +315,7 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> String {
             PlanOpKind::Ref => {
                 if let Some(&ref_idx) = node.ordered_operands.first() {
                     if node.is_transcript {
-                        let expr = build_inline_expr(ref_idx, plan, &var_map);
+                        let expr = build_inline_expr(ref_idx, plan, &var_map)?;
                         body.push_str(&format!("    let {} = {};\n", node.var, expr));
                         if is_pre_challenge {
                             body.push_str(&format!(
@@ -319,16 +326,28 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> String {
                         var_map.insert(node.index, node.var.clone());
                     } else if let Some(ref_var) = var_map.get(&ref_idx).cloned() {
                         var_map.insert(node.index, ref_var);
+                    } else {
+                        return Err(CompilerError::MissingDependency {
+                            node: ref_idx.index(),
+                        });
                     }
+                } else {
+                    return Err(CompilerError::UnsupportedOp {
+                        node: node.index.index(),
+                        op: "Ref with no operand".to_string(),
+                    });
                 }
             }
 
-            PlanOpKind::Check | PlanOpKind::Other(_) => {
-                // Skip check and unknown nodes in prover.
+            PlanOpKind::Check => {
+                // Verifier checks are not part of prover source emission.
             }
 
-            PlanOpKind::Bin(_) => {
-                // Bin with wrong operand count: skip.
+            PlanOpKind::Bin(op) => {
+                return Err(CompilerError::UnsupportedOp {
+                    node: node.index.index(),
+                    op: format!("{op:?} with fewer than two operands"),
+                });
             }
         }
     }
@@ -355,7 +374,7 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> String {
 
     body.push_str(&format!("    Ok(Proof {{ {proof_fields_expr} }})\n"));
 
-    format!(
+    Ok(format!(
         r#"{}
 #[derive(Clone, Debug)]
 pub struct Proof {{
@@ -372,14 +391,14 @@ pub async fn prove(
         proof_fields,
         params,
         body
-    )
+    ))
 }
 
 // ---------------------------------------------------------------------------
 // Verifier emission
 // ---------------------------------------------------------------------------
 
-fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> String {
+fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> Result<String> {
     // Build var_map seeded with all input args.
     let mut var_map: BTreeMap<NodeIndex, String> = plan
         .inputs
@@ -390,12 +409,12 @@ fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> String {
     // First pass: resolve Ref-kind Transcr nodes so their indices map to the
     // same var as the underlying arg.
     for node in &plan.nodes {
-        if matches!(node.op_kind, PlanOpKind::Ref) && node.is_transcript {
-            if let Some(&ref_idx) = node.ordered_operands.first() {
-                if let Some(var) = var_map.get(&ref_idx).cloned() {
-                    var_map.insert(node.index, var);
-                }
-            }
+        if matches!(node.op_kind, PlanOpKind::Ref)
+            && node.is_transcript
+            && let Some(&ref_idx) = node.ordered_operands.first()
+            && let Some(var) = var_map.get(&ref_idx).cloned()
+        {
+            var_map.insert(node.index, var);
         }
     }
 
@@ -422,43 +441,54 @@ fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> String {
         if pos >= challenge_pos {
             break;
         }
-        if let Some(t_node) = plan.nodes.iter().find(|n| n.index == t_idx) {
-            if matches!(t_node.op_kind, PlanOpKind::Ref) {
-                if let Some(&ref_idx) = t_node.ordered_operands.first() {
-                    if let Some(input) = plan
-                        .inputs
-                        .iter()
-                        .find(|a| a.node == ref_idx && a.from_transcript)
-                    {
-                        pre_challenge_absorb.push(input.rust_name.clone());
-                    }
-                }
-            }
+        if let Some(t_node) = plan.nodes.iter().find(|n| n.index == t_idx)
+            && matches!(t_node.op_kind, PlanOpKind::Ref)
+            && let Some(&ref_idx) = t_node.ordered_operands.first()
+            && let Some(input) = plan
+                .inputs
+                .iter()
+                .find(|a| a.node == ref_idx && a.from_transcript)
+        {
+            pre_challenge_absorb.push(input.rust_name.clone());
         }
     }
 
     // Find the check node and extract the two sides of the equality.
-    let check_info = plan.nodes.iter().find(|n| n.is_check).and_then(|check| {
-        let equ_idx = *check.ordered_operands.first()?;
-        let equ_node = plan.nodes.iter().find(|n| n.index == equ_idx)?;
-        if equ_node.ordered_operands.len() < 2 {
-            return None;
-        }
-        let left_idx = equ_node.ordered_operands[0];
-        let right_idx = equ_node.ordered_operands[1];
-        let left_type = node_type(left_idx, plan).to_string();
-        let right_type = node_type(right_idx, plan).to_string();
-        Some((left_idx, right_idx, left_type, right_type))
-    });
-
-    let (left_idx, right_idx, left_type, right_type) = check_info.unwrap_or_else(|| {
-        let first = plan
-            .checks
-            .first()
-            .copied()
-            .unwrap_or_else(|| NodeIndex::new(0));
-        (first, first, "bool".to_string(), "bool".to_string())
-    });
+    let check = plan
+        .nodes
+        .iter()
+        .find(|n| n.is_check)
+        .ok_or(CompilerError::MissingVerifierCheck)?;
+    let equ_idx = *check
+        .ordered_operands
+        .first()
+        .ok_or_else(|| CompilerError::UnsupportedOp {
+            node: check.index.index(),
+            op: "Check with no operand".to_string(),
+        })?;
+    let equ_node = plan
+        .nodes
+        .iter()
+        .find(|n| n.index == equ_idx)
+        .ok_or_else(|| CompilerError::MissingDependency {
+            node: equ_idx.index(),
+        })?;
+    if !matches!(equ_node.op_kind, PlanOpKind::Bin(BinOp::Equ)) {
+        return Err(CompilerError::UnsupportedOp {
+            node: equ_node.index.index(),
+            op: "verifier check must reference an equality node".to_string(),
+        });
+    }
+    if equ_node.ordered_operands.len() < 2 {
+        return Err(CompilerError::UnsupportedOp {
+            node: equ_node.index.index(),
+            op: "equality node with fewer than two operands".to_string(),
+        });
+    }
+    let left_idx = equ_node.ordered_operands[0];
+    let right_idx = equ_node.ordered_operands[1];
+    let left_type = node_type(left_idx, plan).to_string();
+    let right_type = node_type(right_idx, plan).to_string();
 
     // Build body.
     let mut body = String::new();
@@ -502,8 +532,8 @@ fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> String {
     }
 
     // Build inline expressions for the two sides of the check.
-    let left_expr = build_inline_expr(left_idx, plan, &var_map);
-    let right_expr = build_inline_expr(right_idx, plan, &var_map);
+    let left_expr = build_inline_expr(left_idx, plan, &var_map)?;
+    let right_expr = build_inline_expr(right_idx, plan, &var_map)?;
 
     // Tokio-parallel check.
     body.push_str(&format!(
@@ -525,7 +555,7 @@ fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> String {
     params.push(format!("    proof: &{}", options.proof_type_path));
     let params = params.join(",\n");
 
-    format!(
+    Ok(format!(
         r#"{}
 #[allow(unused_variables)]
 pub async fn verify(
@@ -536,5 +566,5 @@ pub async fn verify(
         common_prelude(options),
         params,
         body
-    )
+    ))
 }

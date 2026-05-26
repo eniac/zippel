@@ -19,6 +19,9 @@ pub enum CompilerError {
     #[error("missing generated variable for dependency node {node}")]
     MissingDependency { node: usize },
 
+    #[error("verifier graph does not contain a supported check node")]
+    MissingVerifierCheck,
+
     #[error("generated source I/O failed")]
     Io(#[from] std::io::Error),
 }
