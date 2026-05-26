@@ -47,9 +47,12 @@ where
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing {
-    use backend::ATyp;
+    use backend::{ATyp, ArkConfig};
+    use graph::Dag;
 
-    use crate::{CodegenOptions, Result, types};
+    use crate::{CodegenOptions, Result, plan, types};
+
+    pub use crate::plan::{CodegenPlan, PlanArg, PlanNode};
 
     pub fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String> {
         types::render_type(typ, options)
@@ -61,5 +64,12 @@ pub mod testing {
         node: usize,
     ) -> Result<String> {
         types::render_type_at_node(typ, options, node)
+    }
+
+    pub fn build_plan<C, A>(dag: &Dag<C, A>, options: &CodegenOptions) -> Result<CodegenPlan>
+    where
+        C: ArkConfig,
+    {
+        plan::build_plan(dag, options)
     }
 }
