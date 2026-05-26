@@ -1,0 +1,34 @@
+use std::io::Write;
+
+use backend::ArkConfig;
+use graph::Dag;
+
+mod emit;
+mod error;
+mod expr;
+mod options;
+mod plan;
+mod schedule;
+mod transcript;
+mod types;
+
+pub use error::{CompilerError, Result};
+pub use options::{CodegenMode, CodegenOptions, RustTarget};
+
+pub fn compile_prover<C, A, W>(dag: &Dag<C, A>, writer: W) -> Result<()>
+where
+    C: ArkConfig,
+    W: Write,
+{
+    let options = CodegenOptions::prover();
+    emit::emit_dag(dag, &options, writer)
+}
+
+pub fn compile_verifier<C, A, W>(dag: &Dag<C, A>, writer: W) -> Result<()>
+where
+    C: ArkConfig,
+    W: Write,
+{
+    let options = CodegenOptions::verifier();
+    emit::emit_dag(dag, &options, writer)
+}

@@ -1,7 +1,7 @@
 [workspace]
-members = [ "lang", "runtime", "share" , "graph", "backend"]
-exclude = [ "sumcheck_compare" ]
-default-members = [ ".", "lang", "runtime", "share" , "graph", "backend"]
+members = [ "lang", "runtime", "share" , "graph", "backend", "compiler"]
+exclude = [ "sumcheck_compare", "examples/schnorr-rs" ]
+default-members = [ ".", "lang", "runtime", "share" , "graph", "backend", "compiler"]
 resolver = "2"
 
 [package]

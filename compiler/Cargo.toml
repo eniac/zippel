@@ -1,0 +1,21 @@
+[package]
+name = "compiler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+backend = { path = "../backend" }
+graph = { path = "../graph" }
+lang = { path = "../lang" }
+share = { path = "../share" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = "0.5.0"
+petgraph = "0.7.1"
+thiserror = "2.0"
+
+[dev-dependencies]
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+tempfile = "3.10"
+zippel = { path = ".." }
