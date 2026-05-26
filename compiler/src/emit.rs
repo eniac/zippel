@@ -35,12 +35,13 @@ where
 // ---------------------------------------------------------------------------
 
 fn common_prelude(options: &CodegenOptions) -> String {
+    let transcript_helpers = transcript::helper_source(&options.session, &options.target);
     format!(
         r#"#![allow(dead_code, unused_imports, unused_variables)]
 
 use ark_serialize::CanonicalSerialize;
 use ark_std::UniformRand;
-use spongefish::{{domain_separator, session_id_from_str, DuplexSpongeInterface, Encoding}};
+use spongefish::{{DuplexSpongeInterface, Encoding, domain_separator, session_id_from_str}};
 
 #[derive(Debug)]
 pub enum GeneratedError {{
@@ -75,7 +76,7 @@ impl std::error::Error for GeneratedError {{}}
 
 {}
 "#,
-        transcript::helper_source(&options.session, &options.target)
+        transcript_helpers.trim_end()
     )
 }
 
@@ -83,13 +84,24 @@ impl std::error::Error for GeneratedError {{}}
 // Shared rendering helpers
 // ---------------------------------------------------------------------------
 
-fn render_params<'a>(inputs: impl IntoIterator<Item = &'a PlanArg>) -> String {
+fn render_param_lines<'a>(inputs: impl IntoIterator<Item = &'a PlanArg>) -> Vec<String> {
     inputs
         .into_iter()
         .filter(|arg| !arg.from_transcript)
         .map(|arg| format!("    {}: {}", arg.rust_name, arg.rust_type))
-        .collect::<Vec<_>>()
-        .join(",\n")
+        .collect()
+}
+
+fn render_param_list(lines: Vec<String>) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("{},", lines.join(",\n"))
+    }
+}
+
+fn render_params<'a>(inputs: impl IntoIterator<Item = &'a PlanArg>) -> String {
+    render_param_list(render_param_lines(inputs))
 }
 
 fn render_proof_fields(plan: &CodegenPlan) -> String {
@@ -547,13 +559,9 @@ fn emit_verifier(plan: &CodegenPlan, options: &CodegenOptions) -> Result<String>
     body.push_str("    Ok(left == right)\n");
 
     // Build params.
-    let mut params = Vec::new();
-    let public_params = render_params(&plan.inputs);
-    if !public_params.is_empty() {
-        params.push(public_params);
-    }
+    let mut params = render_param_lines(&plan.inputs);
     params.push(format!("    proof: &{}", options.proof_type_path));
-    let params = params.join(",\n");
+    let params = render_param_list(params);
 
     Ok(format!(
         r#"{}
