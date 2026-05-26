@@ -52,7 +52,7 @@ pub mod testing {
 
     use crate::{CodegenOptions, Result, plan, types};
 
-    pub use crate::plan::{CodegenPlan, PlanArg, PlanNode};
+    pub use crate::plan::{CodegenPlan, PlanArg, PlanNode, PlanOpKind};
 
     pub fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String> {
         types::render_type(typ, options)

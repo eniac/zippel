@@ -112,6 +112,8 @@ edition = "2024"
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", rev = "c1f4f5665504154a9de2345f464b0b3da72c28ec" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", rev = "c1f4f5665504154a9de2345f464b0b3da72c28ec" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", rev = "c1f4f5665504154a9de2345f464b0b3da72c28ec" }
+ark-std = "0.5.0"
+rand = "0.8"
 spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", rev = "bdc640573a102b536d38a7613c1297b2b067fb1e", features = ["ark-ff", "ark-ec"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 "#,

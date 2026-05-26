@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use backend::ArkConfig;
+use backend::op::Op;
 use graph::{ArgKind, Node};
+use lang::ast::BinOp;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
@@ -15,6 +17,23 @@ use crate::types;
 // Public data structures (re-exported via compiler::testing when the feature
 // gate is active; the *module* itself stays private).
 // ---------------------------------------------------------------------------
+
+/// The operation kind for a [`PlanNode`], derived from the Graph IR [`Op`] variant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PlanOpKind {
+    /// A random-element sample.
+    Random,
+    /// A binary arithmetic/logic operation.
+    Bin(BinOp),
+    /// A random-oracle challenge query.
+    Challenge,
+    /// A verifier equality check.
+    Check,
+    /// A transparent reference to another node (Op::Ref — used in verifier Transcr rewrites).
+    Ref,
+    /// Any other op without a dedicated lowering.
+    Other(String),
+}
 
 /// A single typed input argument in the codegen plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +65,10 @@ pub struct PlanNode {
     pub is_transcript: bool,
     pub is_challenge: bool,
     pub is_check: bool,
+    /// The kind of operation this node computes.
+    pub op_kind: PlanOpKind,
+    /// Ordered operand [`NodeIndex`] values from [`Op::references()`].
+    pub ordered_operands: Vec<NodeIndex>,
 }
 
 /// Deterministic codegen metadata derived from a Graph IR DAG.
@@ -78,6 +101,9 @@ pub struct CodegenPlan {
 /// - Suffix Rust keywords with `_`.
 #[allow(dead_code)]
 fn sanitize_ident(raw: &str) -> String {
+    let raw = raw
+        .split_once("_NodeIndex(")
+        .map_or(raw, |(prefix, _)| prefix);
     let mut out: String = raw
         .chars()
         .map(|c| {
@@ -323,9 +349,28 @@ where
 
         let rust_type = types::render_type_at_node(&typ, options, idx.index())?;
 
+        let (op_kind, ordered_operands) = match graph_node {
+            Node::Op(hop, _) | Node::Transcr(hop, _) => {
+                let op = &**hop;
+                let operands: Vec<NodeIndex> = op.references().iter().map(|r| r.0).collect();
+                let kind = match op {
+                    Op::Random(_, _) => PlanOpKind::Random,
+                    Op::Bin(binop, _, _, _) => PlanOpKind::Bin(*binop),
+                    Op::Challenge(_, _) => PlanOpKind::Challenge,
+                    Op::Check(_) => PlanOpKind::Check,
+                    Op::Ref(_, _) => PlanOpKind::Ref,
+                    _ => PlanOpKind::Other("other".to_string()),
+                };
+                (kind, operands)
+            }
+            _ => (PlanOpKind::Other("non-op".to_string()), vec![]),
+        };
+
         // Variable name: prefer DAG vctx, then arg name, else synthesise.
         let raw_var = match dag.find_var(idx) {
             Some(vid) => vid.0.clone(),
+            None if matches!(&op_kind, PlanOpKind::Random) => "r".to_string(),
+            None if matches!(&op_kind, PlanOpKind::Challenge) => "c".to_string(),
             None => format!("n{}", idx.index()),
         };
         let var = names.reserve(&raw_var);
@@ -346,6 +391,8 @@ where
             is_transcript: graph_node.is_transcript(),
             is_challenge: graph_node.is_challenge(),
             is_check: graph_node.is_verifier_check(),
+            op_kind,
+            ordered_operands,
         };
         nodes.push(plan_node);
     }
