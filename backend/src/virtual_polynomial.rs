@@ -270,11 +270,9 @@ impl<F: Field> VirtualPolynomial<F> {
             let mut term = *coeff;
             for &idx in indices {
                 // We know this is a constant, so extract it
-                if let Some(scalar) = self.flattened_polys[idx].to_scalar() {
+                {
+                    let scalar = self.flattened_polys[idx].to_scalar()?;
                     term *= scalar;
-                } else {
-                    // Should not happen since we checked above
-                    return None;
                 }
             }
             result += term;
@@ -308,11 +306,9 @@ impl<F: Field> VirtualPolynomial<F> {
             let mut term = *coeff;
             for &idx in indices {
                 // We know this is a constant, so extract it
-                if let Some(scalar) = self.flattened_polys[idx].as_ref().clone().into_scalar() {
+                {
+                    let scalar = self.flattened_polys[idx].as_ref().clone().into_scalar()?;
                     term *= scalar;
-                } else {
-                    // Should not happen since we checked above
-                    return None;
                 }
             }
             result += term;

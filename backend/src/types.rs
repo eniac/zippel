@@ -206,10 +206,9 @@ impl ATyp {
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
                 for (name, field_typ) in fields.iter() {
-                    if let Some(atyp) = ATyp::from_ctyp(field_typ, kctx) {
+                    {
+                        let atyp = ATyp::from_ctyp(field_typ, kctx)?;
                         atyp_fields.insert(name, &atyp);
-                    } else {
-                        return None;
                     }
                 }
                 Some(ATyp::Record(atyp_fields))

@@ -257,7 +257,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             // Start with the coefficient
             let mut new_mono = SparsePolynomial::lit(&coeff);
             // Apply the mapping function to each variable in the term
-            for (var, power) in term.vars().into_iter().zip(term.powers().into_iter()) {
+            for (var, power) in term.vars().into_iter().zip(term.powers()) {
                 let mut p = f(var);
                 p.pow(power);
                 new_mono *= p;

@@ -319,9 +319,9 @@ impl<C: ArkConfig, A: fmt::Display> fmt::Display for Node<C, A> {
             Node::Op(op, ann) | Node::Transcr(op, ann) => {
                 let ann = ann.to_string();
                 if ann.is_empty() {
-                    write!(f, "{}", &**op)
+                    write!(f, "{}", **op)
                 } else {
-                    write!(f, "{} @ {}", &**op, ann)
+                    write!(f, "{} @ {}", **op, ann)
                 }
             }
         }
