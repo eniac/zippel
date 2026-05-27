@@ -328,7 +328,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-        let result = completeness.run();
+        let result = completeness.run::<8>();
         match &result {
             Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
             Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),
@@ -339,7 +339,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_knowledge(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
-        let result = knowledge.run();
+        let result = knowledge.run::<8>();
         match &result {
             Ok(()) => info!("ZK protocol: {}", g_analyze.name()),
             Err(e) => info!("Knowledge leak in {}: {}", g_analyze.name(), e),
