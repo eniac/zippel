@@ -1,66 +1,39 @@
 use backend::ArkConfig;
-use backend::op::{HasOpFactory, Ref};
+use backend::op::HasOpFactory;
 use share::Set;
-use std::collections::HashMap;
 
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder};
-use crate::{DQDag, PRef};
+use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
+use crate::analyses::TransClos;
+use crate::DQDag;
+use crate::PRef;
 use log::debug;
-use petgraph::graph::NodeIndex;
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
+/// One shared namespace is used for prover, relation, and verifier.
 pub struct CompletenessAnalysis<C: ArkConfig> {
-    pub prover: GroebnerBuilder<C, GrevLexTerm>,
-    pub verifier: GroebnerBuilder<C, GrevLexTerm>,
+    pub prover: GroebnerResult<C, GrevLexTerm>,
+    pub verifier: GroebnerResult<C, GrevLexTerm>,
 }
 
-/// Invert a node_map (old_dag_idx → new_subgraph_Ref) to build a PRef remapping closure.
-fn make_remap_fn(node_map: &HashMap<NodeIndex, Ref>) -> impl Fn(&PRef) -> PRef + '_ {
-    let inverse: HashMap<NodeIndex, (NodeIndex, Ref)> = node_map
-        .iter()
-        .map(|(old_idx, new_ref)| (new_ref.node(), (*old_idx, *new_ref)))
-        .collect();
-
-    move |pref: &PRef| {
-        if let Some((old_idx, _)) = inverse.get(&pref.node()) {
-            PRef {
-                reference: Ref(*old_idx),
-                ..pref.clone()
-            }
-        } else {
-            pref.clone()
-        }
-    }
-}
-
-/// Build a remap closure from a NodeIndex→NodeIndex map with an override.
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
-        let (prover, prover_node_map) = dag.get_prover();
+        let mut builder = GroebnerBuilder::new();
 
-        // Build prover basis from prover subgraph, then remap to full-DAG namespace
-        let mut g_prover = GroebnerBuilder::new();
-        g_prover.add_input(&prover);
-        let prover_remap = make_remap_fn(&prover_node_map);
-        g_prover.remap_vars(&prover_remap);
+        // Build prover basis using TransClos::prover (already in input namespace).
+        let mut prover_result = builder.build(TransClos::prover(dag));
 
-        // Build relation basis directly from full DAG.
-        // relation() remaps to input namespace so refs are consistent.
-        let mut g_rel = GroebnerBuilder::new();
-        g_rel.add_relation(dag);
+        // Merge the relation (also in input namespace).
+        let rel_result = builder.build(TransClos::relation(dag));
+        prover_result.merge(&rel_result);
 
-        // Combine: prover + relation
-        let mut g_ps = g_prover;
-        g_ps.merge(&g_rel);
-
-        let mut g_impl = GroebnerBuilder::new();
-        g_impl.add_input(dag);
+        // Build verifier basis from the full DAG (same shared namespace).
+        let verifier_result = builder.build(TransClos::input(dag));
 
         Self {
-            prover: g_ps,
-            verifier: g_impl,
+            prover: prover_result,
+            verifier: verifier_result,
         }
     }
 
@@ -323,6 +296,7 @@ mod tests {
     fn test_buchberger_spoly_produces_ux_hr() {
         use backend::ATyp;
         use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
 
         let mk_var = |name: &str, idx: usize| -> PRef {
             PRef::from_var(

@@ -1,7 +1,8 @@
 #[cfg(test)]
 use crate::WritePdf;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{ElimTerm, GroebnerBasis, GroebnerBuilder, SparsePolynomial};
+use crate::analyses::groebner::{ElimTerm, GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
+use crate::analyses::TransClos;
 use crate::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
@@ -11,16 +12,16 @@ use log::warn;
 
 /// Perform a knowledge analysis using Groebner bases.
 pub struct KnowledgeAnalysis<C: ArkConfig> {
-    builder: GroebnerBuilder<C, ElimTerm>,
+    result: GroebnerResult<C, ElimTerm>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
     /// polynomials that are derivable from the precondition (not real leaks).
     relation_basis: Option<GroebnerBasis<C::F, ElimTerm>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
-    pub fn new(gb: GroebnerBuilder<C, ElimTerm>) -> Self {
+    pub fn new(gb: GroebnerResult<C, ElimTerm>) -> Self {
         Self {
-            builder: gb,
+            result: gb,
             relation_basis: None,
         }
     }
@@ -31,27 +32,27 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     pub fn from_input_with_w<const W: usize>(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
-        gb.add_input(dag);
+        let mut result = gb.build(TransClos::input(dag));
 
-        // Include the relation (where clause) in the main basis so Buchberger
-        // can use it for substitution (e.g., g*x → h). Build a separate
-        // relation-only basis to later identify and skip precondition polys.
+        if dag.relation_node().is_some() {
+            let rel_result = gb.build(TransClos::relation(dag));
+            result.merge(&rel_result);
+        }
+
         let relation_basis = if dag.relation_node().is_some() {
-            gb.add_relation(dag);
-            gb.add_relation(dag);
             // Build a relation-only basis using the *same* canonical args and
             // packed width as the main builder, so polynomials in the two bases
             // share variable names and `contains_poly` matches correctly.
             let mut rel_gb = GroebnerBuilder::new();
-            rel_gb.add_relation(dag);
-            rel_gb.run::<W>();
-            Some(rel_gb.basis)
+            let mut rel_result = rel_gb.build(TransClos::relation(dag));
+            rel_result.run::<W>();
+            Some(rel_result.basis)
         } else {
             None
         };
 
         Self {
-            builder: gb,
+            result,
             relation_basis,
         }
     }
@@ -59,9 +60,9 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     #[cfg(test)]
     pub fn from_relation(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
-        gb.add_relation(dag);
+        let result = gb.build(TransClos::relation(dag));
         Self {
-            builder: gb,
+            result,
             relation_basis: None,
         }
     }
@@ -90,7 +91,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn private(&self) -> Vec<PRef> {
-        self.builder
+        self.result
             .vars()
             .into_iter()
             .filter(|v| v.is_private())
@@ -98,7 +99,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn public(&self) -> Vec<PRef> {
-        self.builder
+        self.result
             .vars()
             .into_iter()
             .filter(|v| v.is_public())
@@ -106,7 +107,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn eliminate_var(&mut self) {
-        self.builder.basis.basis.retain(|p| {
+        self.result.basis.basis.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
                 return true;
@@ -124,7 +125,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn eliminate_groups(&mut self) {
-        self.builder.eliminate_monomial(&|t| {
+        self.result.eliminate_monomial(&|t| {
             let mono_sum = t
                 .iter()
                 .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
@@ -139,7 +140,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
-        self.builder.run::<W>();
+self.result.run();
 
         // Delete varieties with elimination variables
         self.eliminate_var();
@@ -147,7 +148,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         // Delete varieties where group elements are multiplied
         self.eliminate_groups();
 
-        for p in self.builder.basis.iter() {
+        for p in self.result.basis.iter() {
             if Self::is_leak(p) {
                 // Skip polynomials derivable from the relation (precondition).
                 // The verifier already knows these — they're not new leaks.

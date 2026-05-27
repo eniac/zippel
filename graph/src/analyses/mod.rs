@@ -9,7 +9,7 @@ pub mod knowledge;
 
 pub use completeness::CompletenessAnalysis;
 pub use error::AnalysisError;
-pub use groebner::{GroebnerBasis, GroebnerBuilder};
+pub use groebner::{GroebnerBasis, GroebnerBuilder, GroebnerNamespace, GroebnerResult};
 pub use knowledge::KnowledgeAnalysis;
 pub use qualifier::QualifierPropagation;
 pub use trans_clos::TransClos;
