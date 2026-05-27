@@ -1,6 +1,7 @@
 use crate::{PolyError, PolyVariant};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalSerialize, SerializationError};
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
@@ -77,18 +78,19 @@ impl<F: Field> VirtualPolynomial<F> {
             return Ok(self.clone());
         }
 
-        let mut new_flattened = Vec::with_capacity(self.flattened_polys.len());
-
-        for poly_arc in &self.flattened_polys {
-            let fixed_variant = match &**poly_arc {
-                PolyVariant::DenseMle(mle) => {
-                    PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
-                }
-                other => other.clone(),
-            };
-
-            new_flattened.push(Arc::new(fixed_variant));
-        }
+        let new_flattened: Vec<Arc<PolyVariant<F>>> = self
+            .flattened_polys
+            .par_iter()
+            .map(|poly_arc| -> Result<Arc<PolyVariant<F>>, PolyError<F>> {
+                let fixed_variant = match &**poly_arc {
+                    PolyVariant::DenseMle(mle) => {
+                        PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
+                    }
+                    other => other.clone(),
+                };
+                Ok(Arc::new(fixed_variant))
+            })
+            .collect::<Result<_, _>>()?;
 
         let mut new_lookup = HashMap::new();
         for (idx, poly) in new_flattened.iter().enumerate() {
