@@ -254,7 +254,15 @@ pub trait ArkGroupOps<G: CurveGroup> {
     /// Group vec operations
     #[inline]
     fn vec_mul(g: &G, f: &[G::Scalar]) -> Vec<G::MulBase> {
-        g.batch_mul(f)
+        // batch_mul builds a window-sized precomputed table whose construction
+        // costs ~85 modular inversions on BLS12-381 G1 — fine when amortized
+        // over many scalars, but ~85x wasted work for a single one. Single
+        // Group * Scalar ops in zippel route through here too, so special-case.
+        if f.len() == 1 {
+            vec![(*g * f[0]).into_affine()]
+        } else {
+            g.batch_mul(f)
+        }
     }
     #[inline]
     fn vec_dot(g: &[G::MulBase], f: &[G::Scalar]) -> G {
@@ -310,7 +318,11 @@ pub trait ArkPairingOps<P: Pairing> {
     /// Group vec operations
     #[inline]
     fn vec_mul(g: &PairingOutput<P>, f: &[P::ScalarField]) -> Vec<PairingOutput<P>> {
-        g.batch_mul(f)
+        if f.len() == 1 {
+            vec![*g * f[0]]
+        } else {
+            g.batch_mul(f)
+        }
     }
     #[inline]
     fn vec_dot(g: &[PairingOutput<P>], f: &[P::ScalarField]) -> PairingOutput<P> {
