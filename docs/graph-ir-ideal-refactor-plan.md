@@ -25,8 +25,6 @@
   2. Introduce GroebnerNamespace without changing encoding behavior
       - Add a namespace struct owning:
           - prefs
-          - pl
-          - np
           - ref_aliases
           - div_wit
           - sentinel counter/allocation state
@@ -101,7 +99,6 @@
         otherwise remove it.
   10. Documentation and cleanup
 
-  - Write this plan to docs/graph-ir-ideal-refactor-plan.md.
   - Extend docs/poly-encoding.md with the logical-vs-physical indexing invariant.
   - Remove dead typ.inner_type code if still present.
   - Remove unused StaticAnalysis.
