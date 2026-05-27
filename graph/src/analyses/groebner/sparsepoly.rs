@@ -53,7 +53,7 @@ impl<F: Field, T: Monomial> MulAssign for SparsePolynomial<F, T> {
         for (term1, coeff1) in self.terms.iter() {
             for (term2, coeff2) in other.terms.iter() {
                 let new_term = term1.clone() * term2.clone();
-                let new_coeff = coeff1.clone() * coeff2.clone();
+                let new_coeff = *coeff1 * *coeff2;
                 *new_terms.entry(new_term).or_insert(F::zero()) += new_coeff;
             }
         }
@@ -159,7 +159,7 @@ impl<F: Field, T: Monomial> fmt::Display for SparsePolynomial<F, T> {
                     terms.push(format!("+ {}", term));
                 } else if coeff.is_zero() {
                     continue;
-                } else if coeff.clone().neg().is_one() {
+                } else if (*coeff).neg().is_one() {
                     terms.push(format!("- {}", term));
                     first = false;
                 } else if first {
@@ -211,7 +211,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
     }
 
     pub fn leading_term(&self) -> Option<(F, T)> {
-        self.terms.first().map(|(t, c)| (c.clone(), t.clone()))
+        self.terms.first().map(|(t, c)| (*c, t.clone()))
     }
 
     pub fn contains(&self, v: &PRef) -> bool {
@@ -257,7 +257,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             // Start with the coefficient
             let mut new_mono = SparsePolynomial::lit(&coeff);
             // Apply the mapping function to each variable in the term
-            for (var, power) in term.vars().into_iter().zip(term.powers().into_iter()) {
+            for (var, power) in term.vars().into_iter().zip(term.powers()) {
                 let mut p = f(var);
                 p.pow(power);
                 new_mono *= p;
@@ -274,7 +274,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         let new_terms: Vec<(T, F)> = self
             .terms
             .iter()
-            .map(|(t, coeff)| (term.clone() * t.clone(), coeff.clone() * scalar.clone()))
+            .map(|(t, coeff)| (term.clone() * t.clone(), *coeff * scalar))
             .collect();
 
         // Need to handle combining like terms and sorting.

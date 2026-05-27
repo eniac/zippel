@@ -180,11 +180,11 @@ impl PRef {
 
     pub fn with_index(&self, index: usize) -> Self {
         PRef {
-            reference: self.reference.clone(),
+            reference: self.reference,
             index: self.index + index,
             typ: self.typ.clone(),
-            qualifier: self.qualifier.clone(),
-            distribution: self.distribution.clone(),
+            qualifier: self.qualifier,
+            distribution: self.distribution,
             from_transcript: self.from_transcript,
             name: self.name.clone(),
         }

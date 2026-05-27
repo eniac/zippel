@@ -17,7 +17,7 @@ where
     D: DocAllocator<'a, A>,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self))
+        allocator.text(self.to_string())
     }
 
     fn is_nil(&self) -> bool {
@@ -31,7 +31,7 @@ where
     D: DocAllocator<'a, A>,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
-        allocator.text(format!("{}", self))
+        allocator.text(self.to_string())
     }
 
     fn is_nil(&self) -> bool {

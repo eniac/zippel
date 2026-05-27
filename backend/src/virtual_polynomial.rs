@@ -1,6 +1,7 @@
 use crate::{PolyError, PolyVariant};
 use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalSerialize, SerializationError};
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
@@ -77,18 +78,19 @@ impl<F: Field> VirtualPolynomial<F> {
             return Ok(self.clone());
         }
 
-        let mut new_flattened = Vec::with_capacity(self.flattened_polys.len());
-
-        for poly_arc in &self.flattened_polys {
-            let fixed_variant = match &**poly_arc {
-                PolyVariant::DenseMle(mle) => {
-                    PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
-                }
-                other => other.clone(),
-            };
-
-            new_flattened.push(Arc::new(fixed_variant));
-        }
+        let new_flattened: Vec<Arc<PolyVariant<F>>> = self
+            .flattened_polys
+            .par_iter()
+            .map(|poly_arc| -> Result<Arc<PolyVariant<F>>, PolyError<F>> {
+                let fixed_variant = match &**poly_arc {
+                    PolyVariant::DenseMle(mle) => {
+                        PolyVariant::DenseMle(mle.clone()).evaluate_or_fix_mle(points)?
+                    }
+                    other => other.clone(),
+                };
+                Ok(Arc::new(fixed_variant))
+            })
+            .collect::<Result<_, _>>()?;
 
         let mut new_lookup = HashMap::new();
         for (idx, poly) in new_flattened.iter().enumerate() {
@@ -240,7 +242,7 @@ impl<F: Field> VirtualPolynomial<F> {
         for (coeff, indices) in &self.products {
             let mut prod = *coeff;
             for &idx in indices {
-                prod = prod * self.flattened_polys[idx].evaluate_mv(point)?;
+                prod *= self.flattened_polys[idx].evaluate_mv(point)?;
             }
             result += prod;
         }
@@ -261,9 +263,7 @@ impl<F: Field> VirtualPolynomial<F> {
     pub fn to_scalar(&self) -> Option<F> {
         // Check if all referenced polynomials are constants
         for poly_arc in &self.flattened_polys {
-            if poly_arc.to_scalar().is_none() {
-                return None;
-            }
+            poly_arc.to_scalar()?;
         }
 
         // All polynomials are constants, so we can evaluate the sum of products
@@ -272,11 +272,9 @@ impl<F: Field> VirtualPolynomial<F> {
             let mut term = *coeff;
             for &idx in indices {
                 // We know this is a constant, so extract it
-                if let Some(scalar) = self.flattened_polys[idx].to_scalar() {
+                {
+                    let scalar = self.flattened_polys[idx].to_scalar()?;
                     term *= scalar;
-                } else {
-                    // Should not happen since we checked above
-                    return None;
                 }
             }
             result += term;
@@ -301,9 +299,7 @@ impl<F: Field> VirtualPolynomial<F> {
     pub fn into_scalar(self) -> Option<F> {
         // Check if all referenced polynomials are constants
         for poly_arc in &self.flattened_polys {
-            if poly_arc.as_ref().clone().into_scalar().is_none() {
-                return None;
-            }
+            poly_arc.as_ref().clone().into_scalar()?;
         }
 
         // All polynomials are constants, so we can evaluate the sum of products
@@ -312,11 +308,9 @@ impl<F: Field> VirtualPolynomial<F> {
             let mut term = *coeff;
             for &idx in indices {
                 // We know this is a constant, so extract it
-                if let Some(scalar) = self.flattened_polys[idx].as_ref().clone().into_scalar() {
+                {
+                    let scalar = self.flattened_polys[idx].as_ref().clone().into_scalar()?;
                     term *= scalar;
-                } else {
-                    // Should not happen since we checked above
-                    return None;
                 }
             }
             result += term;
@@ -594,7 +588,7 @@ impl<F: Field> Add for &VirtualPolynomial<F> {
 
     fn add(self, other: Self) -> Self::Output {
         let mut result = self.clone();
-        result.add_virtual(&other);
+        result.add_virtual(other);
         result
     }
 }
@@ -605,7 +599,7 @@ impl<F: Field> Sub for &VirtualPolynomial<F> {
     fn sub(self, other: Self) -> Self::Output {
         let mut other_neg = other.clone();
         other_neg.neg_virtual();
-        other_neg.add_virtual(&self);
+        other_neg.add_virtual(self);
         other_neg
     }
 }
@@ -625,7 +619,7 @@ impl<F: Field> Mul for &VirtualPolynomial<F> {
 
     fn mul(self, other: Self) -> Self::Output {
         let result = self.clone();
-        result.mul_virtual(&other)
+        result.mul_virtual(other)
     }
 }
 

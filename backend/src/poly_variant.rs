@@ -95,6 +95,34 @@ pub enum PolyVariant<F: Field> {
     SparseMultivariate(SparseMultivariatePolynomial<F>),
 }
 
+/// Parallel replacement for `ark_poly::DenseMultilinearExtension::fix_variables`.
+/// The arkworks implementation uses sequential `for` loops; this mirrors
+/// hyperplonk's `fix_one_variable_helper` which fills each round's halved
+/// buffer with `par_iter_mut`.
+fn fix_first_variables_parallel<F: Field>(
+    mle: &DenseMultilinearExtension<F>,
+    partial_point: &[F],
+) -> DenseMultilinearExtension<F> {
+    assert!(
+        partial_point.len() <= mle.num_vars(),
+        "invalid size of partial point"
+    );
+    let nv = mle.num_vars();
+    let dim = partial_point.len();
+    let mut data: Vec<F> = mle.evaluations.clone();
+    for (i, &r) in partial_point.iter().enumerate() {
+        let half = 1usize << (nv - i - 1);
+        let mut next = vec![F::zero(); half];
+        next.par_iter_mut().enumerate().for_each(|(b, slot)| {
+            let left = data[b << 1];
+            let right = data[(b << 1) + 1];
+            *slot = left + r * (right - left);
+        });
+        data = next;
+    }
+    DenseMultilinearExtension::from_evaluations_slice(nv - dim, &data[..(1 << (nv - dim))])
+}
+
 impl<F: Field> PolyVariant<F> {
     /// Get the degree of the polynomial
     pub fn degree(&self) -> usize {
@@ -406,7 +434,7 @@ impl<F: Field> PolyVariant<F> {
                     (0, mle.evaluations[0]),
                     (1, mle.evaluations[1] - mle.evaluations[0]),
                 ]);
-                Ok(PolyVariant::SparseUni(&mle_as_uni + &p))
+                Ok(PolyVariant::SparseUni(&mle_as_uni + p))
             }
 
             // Sparse multivariate + Sparse multivariate
@@ -754,8 +782,10 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseMle(mle) => {
                 if points.len() < mle.num_vars() {
-                    // Partial evaluation - fix first k variables
-                    let fixed = mle.fix_variables(points);
+                    // Partial evaluation - fix first k variables.
+                    // ark_poly::DenseMultilinearExtension::fix_variables is
+                    // single-threaded; replicate hyperplonk's parallel form.
+                    let fixed = fix_first_variables_parallel(mle, points);
                     Ok(PolyVariant::DenseMle(fixed))
                 } else if points.len() == mle.num_vars() {
                     // Full evaluation - return as constant polynomial

@@ -100,7 +100,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mat_c: Vec<F> = vec![F::from(0u64), F::from(0u64), F::from(1u64)];
 
     // Verify the R1CS relation: Az ∘ Bz = Cz
-    let z = vec![x0, w0, w1];
+    let z = [x0, w0, w1];
     for i in 0..M {
         let az_i: F = (0..N).map(|j| mat_a[i * N + j] * z[j]).sum();
         let bz_i: F = (0..N).map(|j| mat_b[i * N + j] * z[j]).sum();

@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![allow(clippy::result_large_err)]
 
 use lazy_static::lazy_static;
 

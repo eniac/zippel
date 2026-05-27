@@ -126,7 +126,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         .map(|i| {
             let mut acc = <ArkBls12_381 as ArkConfig>::G1::zero();
             for j in 0..h_y_size {
-                acc = acc + h_y_vals[j] * f_evals[i * h_y_size + j];
+                acc += h_y_vals[j] * f_evals[i * h_y_size + j];
             }
             acc
         })

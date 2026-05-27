@@ -1,0 +1,102 @@
+// Bootle et al. (BCCGP) 2016 Inner Product Argument
+
+// Base case (n=1)
+fn bccgp_recursive<G: Group, F: Scalar<G>>(
+    public g_vec: [G; 1],
+    public h_vec: [G; 1],
+    public p_commitment: G,
+    public c_val: F,
+    private a_vec: [F; 1],
+    private b_vec: [F; 1]
+) -> Bool {
+    let a_scalar = a_vec[0];
+    let b_scalar = b_vec[0];
+
+    a_scalar_transcript <- a_scalar;
+    b_scalar_transcript <- b_scalar;
+
+    // Check P == g^a + h^b (additive)
+    let expected_p = g_vec[0] * a_scalar_transcript + h_vec[0] * b_scalar_transcript;
+    
+    // Check c == a * b
+    let expected_c = a_scalar_transcript * b_scalar_transcript;
+
+    (p_commitment == expected_p) && (c_val == expected_c)
+}
+
+// Recursive step (n > 1)
+fn bccgp_recursive<G: Group, F: Scalar<G>, S: Size, N: 1..S+1>(
+    public g_vec: [G; 2^N],
+    public h_vec: [G; 2^N],
+    public p_commitment: G,
+    public c_val: F,
+    private a_vec: [F; 2^N],
+    private b_vec: [F; 2^N]
+) -> Bool {
+    let a_l = a_vec[0..2^(N-1)];
+    let a_r = a_vec[2^(N-1)..2^N];
+    let b_l = b_vec[0..2^(N-1)];
+    let b_r = b_vec[2^(N-1)..2^N];
+
+    let g_l = g_vec[0..2^(N-1)];
+    let g_r = g_vec[2^(N-1)..2^N];
+    let h_l = h_vec[0..2^(N-1)];
+    let h_r = h_vec[2^(N-1)..2^N];
+
+    let c_l = dot(a_l, b_r);
+    let c_r = dot(a_r, b_l);
+
+    // L = g_R^a_L * h_L^b_R (multiplicative) -> g_R*a_L + h_L*b_R (additive)
+    l_transcript <- dot(g_r, a_l) + dot(h_l, b_r);
+    
+    // R = g_L^a_R * h_R^b_L (multiplicative) -> g_L*a_R + h_R*b_L (additive)
+    r_transcript <- dot(g_l, a_r) + dot(h_r, b_l);
+
+    c_l_transcript <- c_l;
+    c_r_transcript <- c_r;
+
+    x_challenge <- challenge<F>;
+
+    let x_inv = 1 / x_challenge;
+    let x_sq = x_challenge * x_challenge;
+    let x_inv_sq = x_inv * x_inv;
+
+    let g_prime = g_l * x_inv + g_r * x_challenge;
+    let h_prime = h_l * x_challenge + h_r * x_inv;
+
+    let p_prime = l_transcript * x_sq + p_commitment + r_transcript * x_inv_sq;
+    let c_prime = c_val + c_l_transcript * x_sq + c_r_transcript * x_inv_sq;
+
+    let a_prime = a_l * x_challenge + a_r * x_inv;
+    let b_prime = b_l * x_inv + b_r * x_challenge;
+
+    bccgp_recursive(
+        g_prime,
+        h_prime,
+        p_prime,
+        c_prime,
+        a_prime,
+        b_prime
+    )
+}
+
+proto bccgp_ipa<G: Group, F: Scalar<G>, S: Size, N_CONST: 2^S>(
+    public g_vec: [G; N_CONST],
+    public h_vec: [G; N_CONST],
+    public p_commitment: G,
+    public c_val: F,
+    private a_vec: [F; N_CONST],
+    private b_vec: [F; N_CONST]
+) where
+    (p_commitment == dot(g_vec, a_vec) + dot(h_vec, b_vec)) && (c_val == dot(a_vec, b_vec))
+{
+    let verification_result = bccgp_recursive(
+        g_vec,
+        h_vec,
+        p_commitment,
+        c_val,
+        a_vec,
+        b_vec
+    );
+    verify(verification_result)
+}

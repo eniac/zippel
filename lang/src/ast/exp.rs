@@ -716,15 +716,19 @@ impl<N> Exp<N> {
     pub fn range(r: Range<N>) -> Self {
         Exp::Range(r)
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn add(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Add, Box::new(l), Box::new(r))
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Sub, Box::new(l), Box::new(r))
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Mul, Box::new(l), Box::new(r))
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn div(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Div, Box::new(l), Box::new(r))
     }
@@ -734,6 +738,7 @@ impl<N> Exp<N> {
     pub fn dot(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Dot, Box::new(l), Box::new(r))
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn rem(l: Self, r: Self) -> Self {
         Exp::Bin(BinOp::Rem, Box::new(l), Box::new(r))
     }
@@ -793,7 +798,7 @@ impl<N> Exp<N> {
             Exp::Reduce(_, box p) => p.is_pure(),
             Exp::Vec(v) => v.iter().all(|e| e.is_pure()),
             Exp::Bin(_, box a, box b) => a.is_pure() && b.is_pure(),
-            Exp::Evaluate(box p, ox) => p.is_pure() && ox.as_ref().map_or(true, |x| x.is_pure()),
+            Exp::Evaluate(box p, ox) => p.is_pure() && ox.as_ref().is_none_or(|x| x.is_pure()),
             Exp::Pair(box a, box b) => a.is_pure() && b.is_pure(),
             Exp::Map(box a, _, box b) => a.is_pure() && b.is_pure(),
             Exp::Ram(box a, box b) => a.is_pure() && b.is_pure(),
@@ -1167,7 +1172,7 @@ impl From<bool> for UExp {
 /// Display instance calls the pretty printer
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <BinOp as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <BinOp as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -1426,9 +1431,9 @@ impl<'pest> FromPest<'pest> for UExp {
                     ))
                 }
                 Rule::record_exp => {
-                    let mut inner = pair.into_inner();
+                    let inner = pair.into_inner();
                     let mut fields = Ctx::new();
-                    while let Some(field_pair) = inner.next() {
+                    for field_pair in inner {
                         if field_pair.as_rule() == Rule::record_field_exp {
                             let mut field_inner = field_pair.into_inner();
                             let field_name = Vid::from_pest(&mut field_inner)?.0;

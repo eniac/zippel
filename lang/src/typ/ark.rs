@@ -37,7 +37,7 @@ where
 
 impl<'a> fmt::Display for Ark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ark as Pretty<'a, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Ark as Pretty<'a, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(100, f)
     }
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn test_ark_clone() {
         let ark = Ark::Scalar;
-        let cloned = ark.clone();
+        let cloned = ark;
         assert_eq!(ark, cloned);
     }
 }

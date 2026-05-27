@@ -253,13 +253,13 @@ pub trait ArkGroupOps<G: CurveGroup> {
 
     /// Group vec operations
     #[inline]
-    fn vec_mul(g: &G, f: &Vec<G::Scalar>) -> Vec<G::MulBase> {
-        g.batch_mul(&f[..])
+    fn vec_mul(g: &G, f: &[G::Scalar]) -> Vec<G::MulBase> {
+        g.batch_mul(f)
     }
     #[inline]
-    fn vec_dot(g: &Vec<G::MulBase>, f: &Vec<G::Scalar>) -> G {
+    fn vec_dot(g: &[G::MulBase], f: &[G::Scalar]) -> G {
         // TODO: What does Err<usize> mean here?
-        G::msm(&g[..], &f[..]).unwrap()
+        G::msm(g, f).unwrap()
     }
     #[inline]
     fn write(g: &G, f: &mut fmt::Formatter) -> fmt::Result {
@@ -309,13 +309,13 @@ pub trait ArkPairingOps<P: Pairing> {
 
     /// Group vec operations
     #[inline]
-    fn vec_mul(g: &PairingOutput<P>, f: &Vec<P::ScalarField>) -> Vec<PairingOutput<P>> {
-        g.batch_mul(&f[..])
+    fn vec_mul(g: &PairingOutput<P>, f: &[P::ScalarField]) -> Vec<PairingOutput<P>> {
+        g.batch_mul(f)
     }
     #[inline]
-    fn vec_dot(g: &Vec<PairingOutput<P>>, f: &Vec<P::ScalarField>) -> PairingOutput<P> {
+    fn vec_dot(g: &[PairingOutput<P>], f: &[P::ScalarField]) -> PairingOutput<P> {
         // TODO: What does Err<usize> mean here?
-        <PairingOutput<P> as VariableBaseMSM>::msm(&g[..], &f[..]).unwrap()
+        <PairingOutput<P> as VariableBaseMSM>::msm(g, f).unwrap()
     }
     #[inline]
     fn write(g: &PairingOutput<P>, f: &mut fmt::Formatter) -> fmt::Result {

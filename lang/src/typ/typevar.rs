@@ -242,7 +242,7 @@ impl<'pest> FromPest<'pest> for UTypeVars {
                                         .iter()
                                         .any(|tv: &UTypeVar| &tv.id == f && tv.kind.is_group())
                                 })
-                                .then(|| ())
+                                .then_some(())
                                 .ok_or(ConversionError::Malformed(InputError::ScalarGroup(
                                     fs.clone(),
                                     tv.kind.clone(),

@@ -1,6 +1,7 @@
 //! Node construction and manipulation tests
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod node_tests {
     use crate::tests::test_helpers::*;
     use crate::{Node, Op, Ref, mk};
@@ -99,8 +100,8 @@ mod node_tests {
         let ref2 = Ref(NodeIndex::new(2));
 
         let op = Op::<C, Ref>::add(
-            Op::reference(ref1.clone(), ATyp::scalar()),
-            Op::reference(ref2.clone(), ATyp::scalar()),
+            Op::reference(ref1, ATyp::scalar()),
+            Op::reference(ref2, ATyp::scalar()),
             ATyp::scalar(),
         );
 

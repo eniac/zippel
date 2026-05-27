@@ -12,6 +12,7 @@ pub struct QualifierPropagation {
 
 /// Propagate qualifiers [private, public] through the DAG
 impl QualifierPropagation {
+    #[allow(clippy::wrong_self_convention)]
     fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
@@ -85,7 +86,7 @@ impl QualifierPropagation {
                     continue;
                 }
                 Node::Op(op, _) => {
-                    qp.from_op(&op).and_then(|q| qp.quals.insert(&n, &q));
+                    qp.from_op(op).and_then(|q| qp.quals.insert(&n, &q));
                 }
             }
 
@@ -105,13 +106,10 @@ impl QualifierPropagation {
                         // Transcript nodes are always Public (verifier-observable)
                         Qualifier::Public
                     } else {
-                        qp.quals
-                            .get(&i)
-                            .unwrap_or_else(|| &Qualifier::Local)
-                            .clone()
+                        *qp.quals.get(&i).unwrap_or(&Qualifier::Local)
                     })
                 },
-                |_, e| e.clone(),
+                |_, e| *e,
             ),
             vctx: dag.vctx.clone(),
             transcript_vars: dag.transcript_vars.clone(),

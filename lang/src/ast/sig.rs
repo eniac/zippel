@@ -9,6 +9,7 @@ use std::fmt;
 use thiserror::Error;
 
 #[derive(PartialEq, Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SigError {
     #[error("SigError: Arity mismatch: expected {0} arguments, got {1}")]
     ArityMismatch(usize, usize),
@@ -52,12 +53,12 @@ impl CSig {
             shifted.tid_subst(&id, &Tid::fresh(&id.0, &mut keys));
         }
 
-        let kind_ctx = shifted.typevars.to_ctx().union(&kctx);
+        let kind_ctx = shifted.typevars.to_ctx().union(kctx);
 
         // Unification of arguments and parameters
         let mut args = Vec::new();
         for (l, r) in shifted.args.iter().zip(typs.iter()) {
-            let typ = CTyp::unify(&l.typ, &r, &kind_ctx, &mut subs)
+            let typ = CTyp::unify(&l.typ, r, &kind_ctx, &mut subs)
                 .map_err(|e| SigError::Unify(shifted.clone(), typs.clone(), e))?;
             args.push(GArg {
                 qualifier: l.qualifier,

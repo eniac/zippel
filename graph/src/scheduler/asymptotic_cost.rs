@@ -11,6 +11,12 @@ use std::marker::PhantomData;
 /// An implementation, asymptotic cost model that estimates the cost of operations based on their types.
 pub struct AsymptoticCost<C: ArkConfig>(PhantomData<C>);
 
+impl<C: ArkConfig> Default for AsymptoticCost<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C: ArkConfig> AsymptoticCost<C> {
     const INT_ADD: f64 = 1.0;
     const INT_MUL: f64 = 2.0;
@@ -50,11 +56,6 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             }
             (ATyp::Uni(_lt), _) => 1.0,
             (_, _) => 1.0,
-            (ATyp::Uni(lt), ATyp::Uni(rt)) => {
-                (*lt.max(rt) as f64) * Self::SCALAR_ADD / (nthreads as f64)
-            }
-            (ATyp::Uni(_lt), _) => 1.0,
-            (_, _) => 1.0, // (_, _) => unreachable!(),
         }
     }
 

@@ -82,7 +82,7 @@ impl MonoTerm {
     fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
         let mut result = F::one();
         for (var, power) in self.0.iter() {
-            if let Some(value) = p.get(&var) {
+            if let Some(value) = p.get(var) {
                 for _ in 0..*power {
                     result *= value;
                 }
@@ -289,6 +289,7 @@ impl Default for GrevLexTerm {
 /// Multiplies two terms in place. (var, power) pairs are combined by adding powers
 /// for common variables.
 impl MulAssign for ElimTerm {
+    #[allow(clippy::suspicious_op_assign_impl)]
     fn mul_assign(&mut self, other: Self) {
         for (var, power) in other.0.iter() {
             *self.0.0.entry(var.clone()).or_insert(0) += power;
@@ -297,6 +298,7 @@ impl MulAssign for ElimTerm {
 }
 
 impl MulAssign for GrevLexTerm {
+    #[allow(clippy::suspicious_op_assign_impl)]
     fn mul_assign(&mut self, other: Self) {
         for (var, power) in other.0.iter() {
             *self.0.0.entry(var.clone()).or_insert(0) += power;
@@ -343,7 +345,6 @@ impl<'a> Mul for &'a GrevLexTerm {
 }
 
 /// Display for Monomials
-
 impl fmt::Display for ElimTerm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)

@@ -35,7 +35,7 @@ impl LubError {
         LubError::KindNotFound(id.clone())
     }
     pub fn bad_range(r: &Range<usize>, e: RangeError) -> Self {
-        LubError::BadRange(r.clone(), e)
+        LubError::BadRange(*r, e)
     }
     pub fn equ<K: fmt::Display>(a: &K, b: &K) -> Self {
         LubError::Equ(a.to_string(), b.to_string())
@@ -115,9 +115,9 @@ impl Lub for Range<usize> {
     fn lub_equ(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(b, e)))?;
 
         // Find the maximum of the starts and minimum of the ends
         let new_start = std::cmp::min(a.start, b.start);
@@ -134,71 +134,71 @@ impl Lub for Range<usize> {
     fn lub_add(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(a.clone() + b.clone())
+        Ok(*a + *b)
     }
 
     fn lub_sub(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::sub(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(a.clone() - b.clone())
+        Ok(*a - *b)
     }
 
     fn lub_mul(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::mul(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(a.clone() * b.clone())
+        Ok(*a * *b)
     }
 
     fn lub_div(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate Ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::div(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::div(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::div(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::div(&a, &b), LubError::bad_range(b, e)))?;
 
         // Check if the divisor range includes zero
         if b.start == 0 {
             return Err(LubError::div(&a, &b)); // Division by zero is undefined
         }
 
-        Ok(a.clone() / b.clone())
+        Ok(*a / *b)
     }
 
     fn lub_pow(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate Ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::pow(&a, &b), LubError::bad_range(b, e)))?;
 
-        Ok(a.clone() ^ b.clone())
+        Ok(*a ^ *b)
     }
 
     fn lub_rem(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate Ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::rem(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::rem(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::rem(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::rem(&a, &b), LubError::bad_range(b, e)))?;
 
         // Check if the divisor range includes zero
         if b.start == 0 {
             return Err(LubError::rem(&a, &b)); // Division by zero is undefined
         }
 
-        Ok(a.clone() % b.clone())
+        Ok(*a % *b)
     }
 
     fn lub_dot(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
@@ -208,9 +208,9 @@ impl Lub for Range<usize> {
     fn lub_concat(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::concat(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::concat(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::concat(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::concat(&a, &b), LubError::bad_range(b, e)))?;
 
         if let Some(c) = a.concat(b) {
             Ok(c)
@@ -221,9 +221,9 @@ impl Lub for Range<usize> {
     fn lub_and(a: &Self, b: &Self, _: &Nothing) -> Result<Self, LubError> {
         // Validate ranges
         a.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(&a, e)))?;
+            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(a, e)))?;
         b.check()
-            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(&b, e)))?;
+            .map_err(|e| LubError::next(LubError::add(&a, &b), LubError::bad_range(b, e)))?;
 
         Err(LubError::and(&a, &b))
     }
@@ -237,9 +237,9 @@ impl Lub for Tid {
     type Context = Ctx<Tid, CKind>;
     /// Can the two kinds be unified into one kind that describes both?
     fn lub_equ(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
 
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
@@ -252,18 +252,15 @@ impl Lub for Tid {
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
             }
-            (_, _) => Err(LubError::equ(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::equ(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     /// Least-upper-bound for addition of different kinds
     fn lub_add(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
 
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
@@ -276,18 +273,15 @@ impl Lub for Tid {
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
             }
-            (_, _) => Err(LubError::add(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::add(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     /// Least-upper-bound for subtraction same as addition
     fn lub_sub(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
 
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
@@ -300,17 +294,14 @@ impl Lub for Tid {
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
             }
-            (_, _) => Err(LubError::sub(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::sub(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     /// Least-upper-bound for multiplication of different kinds
     fn lub_mul(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
@@ -330,42 +321,33 @@ impl Lub for Tid {
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
             }
-            (_, _) => Err(LubError::mul(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::mul(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     fn lub_pair(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             // Group multiplication is only allowed for pairing friendly curves
             // G1 * G2 => Pairing(G1, G2)
             // forces G1: Group, G2: Group
             (Kind::Group, Kind::Group) => {
-                if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(&a, &b)) {
+                if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(a, b)) {
                     Ok(pid.clone())
                 } else {
-                    Err(LubError::pair(
-                        &CTypeVar::new(&a, &ka),
-                        &CTypeVar::new(&b, &kb),
-                    ))
+                    Err(LubError::pair(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
                 }
             }
-            (_, _) => Err(LubError::pair(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::pair(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     /// Least-upper-bound for division of different kinds
     fn lub_div(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         match (ka, kb) {
             (Kind::Field, Kind::Field) if a == b => Ok(a.clone()),
@@ -375,41 +357,32 @@ impl Lub for Tid {
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
             }
-            (_, _) => Err(LubError::div(
-                &CTypeVar::new(&a, &ka),
-                &CTypeVar::new(&b, &kb),
-            )),
+            (_, _) => Err(LubError::div(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb))),
         }
     }
 
     /// Least-upper-bound for remainder of different kinds
     fn lub_rem(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(&a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(&b).ok_or(LubError::kind_not_found(&b))?;
-        Err(LubError::rem(
-            &CTypeVar::new(&a, &ka),
-            &CTypeVar::new(&b, &kb),
-        ))
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
+        Err(LubError::rem(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
     }
 
     /// Least-upper-bound for exponentiation of different kinds
     fn lub_pow(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(&a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(&b).ok_or(LubError::kind_not_found(&b))?;
-        Err(LubError::pow(
-            &CTypeVar::new(&a, &ka),
-            &CTypeVar::new(&b, &kb),
-        ))
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
+        Err(LubError::pow(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
     }
 
     /// Least-upper-bound for dot product is the same as multiplication (for kinds)
     fn lub_dot(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(&a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(&b).ok_or(LubError::kind_not_found(&b))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
         Self::lub_mul(a, b, ctx).map_err(|e| {
             LubError::next(
-                LubError::dot(&CTypeVar::new(&a, &ka), &CTypeVar::new(&b, &kb)),
+                LubError::dot(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)),
                 e,
             )
         })
@@ -417,24 +390,18 @@ impl Lub for Tid {
 
     /// Least-upper-bound for Concatenation is always an error
     fn lub_concat(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
 
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
-        Err(LubError::sub(
-            &CTypeVar::new(&a, &ka),
-            &CTypeVar::new(&b, &kb),
-        ))
+        Err(LubError::sub(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
     }
 
     fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
-        let ka = ctx.get(a).ok_or(LubError::kind_not_found(&a))?;
-        let kb = ctx.get(b).ok_or(LubError::kind_not_found(&b))?;
+        let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
-        Err(LubError::and(
-            &CTypeVar::new(&a, &ka),
-            &CTypeVar::new(&b, &kb),
-        ))
+        Err(LubError::and(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
     }
 }
 
@@ -564,9 +531,9 @@ impl Lub for CTyp {
             // a Vec as a coefficient list — semantically opaque, removed.
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(LubError::next(
+                let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::add(&x, &y),
-                    LubError::kind_not_found(&a),
+                    LubError::kind_not_found(a),
                 ))?;
                 if ka == &Kind::Field {
                     Ok(CTyp::base(a))
@@ -638,9 +605,9 @@ impl Lub for CTyp {
             // Phase B: polynomial ↔ Vec is now a type error (see lub_add).
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(LubError::next(
+                let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::sub(&x, &y),
-                    LubError::kind_not_found(&a),
+                    LubError::kind_not_found(a),
                 ))?;
                 if ka.is_scalar() {
                     Ok(CTyp::base(a))
@@ -730,9 +697,9 @@ impl Lub for CTyp {
             }
             // Indices can act like finite fields
             (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
-                let ka = ctx.get(&a).ok_or(LubError::next(
+                let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::mul(&x, &y),
-                    LubError::kind_not_found(&a),
+                    LubError::kind_not_found(a),
                 ))?;
                 if ka == &Kind::Field {
                     Ok(CTyp::base(a))
@@ -875,9 +842,9 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?,
             )),
             (CTyp::Base(a), CTyp::Fin(_)) => {
-                let ka = ctx.get(&a).ok_or(LubError::next(
+                let ka = ctx.get(a).ok_or(LubError::next(
                     LubError::pow(&x, &y),
-                    LubError::kind_not_found(&a),
+                    LubError::kind_not_found(a),
                 ))?;
                 if ka.is_scalar() {
                     Ok(CTyp::base(a))
@@ -916,7 +883,7 @@ impl Lub for CTyp {
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
                     // Type [a] and [b] should be multiplied
-                    Ok(CTyp::lub_mul(&a, &b, ctx)
+                    Ok(CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
                 } else {
                     Err(LubError::dot(&x, &y))
@@ -934,7 +901,7 @@ impl Lub for CTyp {
             // Vec<A> ++ Vec<B> = Vec<C> if A = B = C
             (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
                 // Type [a] and [b] should be the same ([t])
-                let t = CTyp::lub_equ(&a, &b, kctx)
+                let t = CTyp::lub_equ(a, b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
 
                 // Add the sizes of the vectors
@@ -946,7 +913,7 @@ impl Lub for CTyp {
             // Vec<A, n> ++ B = Vec<C, n+1> if A = B = C
             (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
                 // Type [a] and [b] should be the same ([t])
-                let t = CTyp::lub_equ(&a, &b, kctx)
+                let t = CTyp::lub_equ(a, b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
                 // Add an element to the vector
                 Ok(CTyp::vec(&t, n + 1))
@@ -956,18 +923,19 @@ impl Lub for CTyp {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             // Bool && Bool = Bool
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
             // Vec<Bool> && Bool = Bool (forall)
             (CTyp::Bool, CTyp::Vec(box a, _)) | (CTyp::Vec(box a, _), CTyp::Bool) => {
-                Ok(CTyp::lub_and(&a, &CTyp::bool(), ctx)
+                Ok(CTyp::lub_and(a, &CTyp::bool(), ctx)
                     .map_err(|e| LubError::next(LubError::and(&x, &y), e))?)
             }
             // Vec<Bool> && Vec<Bool> = Bool (forall)
             (CTyp::Vec(box a, _), CTyp::Vec(box b, _)) => {
-                Ok(CTyp::lub_and(&a, &b, ctx)
+                Ok(CTyp::lub_and(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::and(&x, &y), e))?)
             }
             (_, _) => Err(LubError::and(&x, &y)),
@@ -1130,7 +1098,7 @@ fn lub_typ() {
     assert!(CTyp::lub_equ(&CTyp::vec(&tf, 10), &CTyp::vec(&tf, 11), &ctx).is_err());
     assert!(CTyp::lub_equ(&CTyp::vec(&tf, 10), &CTyp::vec(&tg1, 10), &ctx).is_err());
     assert_eq!(
-        CTyp::lub_equ(&&CTyp::uni(&f, 10), &&CTyp::uni(&f, 11), &ctx),
+        CTyp::lub_equ(&CTyp::uni(&f, 10), &CTyp::uni(&f, 11), &ctx),
         Ok(CTyp::uni(&f, 11))
     );
 

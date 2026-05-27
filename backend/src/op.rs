@@ -432,12 +432,12 @@ impl<C: HasOpFactory> GOp<C> {
                     return Op::ram(
                         v_inner_clone(&v),
                         Op::Value(Value::VecIndex(
-                            vr.iter().map(|j| vl[*j].clone()).collect::<Vec<_>>(),
+                            vr.iter().map(|j| vl[*j]).collect::<Vec<_>>(),
                         )),
                     );
                 }
                 Op::Value(Value::Index(j)) => {
-                    return Op::ram(v_inner_clone(&v), Op::Value(Value::Index(vl[*j].clone())));
+                    return Op::ram(v_inner_clone(&v), Op::Value(Value::Index(vl[*j])));
                 }
                 _ => {}
             }
@@ -861,7 +861,7 @@ impl<C: ArkConfig> GOp<C> {
 
     pub fn references(&self) -> Vec<Ref> {
         match self {
-            Op::Ref(n, _) => vec![n.clone()],
+            Op::Ref(n, _) => vec![*n],
             Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
                 a.references().into_iter().chain(b.references()).collect()
             }
@@ -937,7 +937,7 @@ impl<C: HasOpFactory> GOp<C> {
 
     pub fn map_refs<F: Fn(Ref) -> Ref>(&self, f: &F) -> GOp<C> {
         match self {
-            Op::Ref(r, typ) => Op::Ref(f(r.clone()), typ.clone()),
+            Op::Ref(r, typ) => Op::Ref(f(*r), typ.clone()),
             Op::Bin(op, a, b, typ) => Op::Bin(
                 *op,
                 mk::<C>(a.map_refs(f)),
@@ -983,7 +983,7 @@ impl<C: HasOpFactory> GOp<C> {
     ) -> GOp<C> {
         match self {
             Op::Ref(r, _) => {
-                if let Some(next) = vars.get(&r) {
+                if let Some(next) = vars.get(r) {
                     if except(r, next) {
                         return self.clone();
                     }
@@ -1048,7 +1048,7 @@ where
 
 impl fmt::Display for Ref {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Ref as Pretty<'_, BoxAllocator, ()>>::pretty(self.clone(), &BoxAllocator)
+        <Ref as Pretty<'_, BoxAllocator, ()>>::pretty(*self, &BoxAllocator)
             .1
             .render_fmt(100, f)
     }

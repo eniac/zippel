@@ -87,7 +87,7 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
         let w_val = F::rand(&mut rng);
         w_vec.push(w_val);
 
-        let pk_affines = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &vec![w_val]);
+        let pk_affines = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[w_val]);
         let pk = pk_affines.into_iter().next().unwrap();
         pk_vec.push(pk);
 
