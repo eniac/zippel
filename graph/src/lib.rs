@@ -20,7 +20,6 @@ pub mod scheduler;
 #[cfg(test)]
 mod tests;
 
-pub use analyses::StaticAnalysis;
 pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
