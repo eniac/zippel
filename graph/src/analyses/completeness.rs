@@ -67,9 +67,13 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        self.prover.run();
-        self.verifier.run();
+    /// Run completeness analysis with explicit W parameter.
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn run_with_w<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
+        self.prover.run::<W>();
+        self.verifier.run::<W>();
         debug!("Prover:\n{}", self.prover);
         debug!("Impl:\n{}", self.verifier);
 
@@ -97,6 +101,33 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             }
         }
         Ok(())
+    }
+
+    /// Run completeness analysis with automatic W dispatch.
+    /// Counts variables and selects W=8 (≤63 vars) or W=16 (≤127 vars).
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+        use crate::analyses::groebner::ark_gb_adapter::{collect_vars_grevlex, max_vars_for_w};
+        
+        // Collect variables from both prover and verifier bases
+        let prover_polys: Vec<_> = self.prover.basis.iter().cloned().collect();
+        let verifier_polys: Vec<_> = self.verifier.basis.iter().cloned().collect();
+        
+        let prover_nvars = collect_vars_grevlex(&prover_polys).len();
+        let verifier_nvars = collect_vars_grevlex(&verifier_polys).len();
+        let actual_nvars = prover_nvars.max(verifier_nvars);
+        
+        if actual_nvars <= max_vars_for_w(8) {
+            self.run_with_w::<8>()
+        } else if actual_nvars <= max_vars_for_w(16) {
+            self.run_with_w::<16>()
+        } else {
+            panic!(
+                "Problem has {} variables; max supported is {} (W=16). \
+                 To handle larger problems, add W=32 dispatch.",
+                actual_nvars,
+                max_vars_for_w(16)
+            );
+        }
     }
 }
 
@@ -351,7 +382,7 @@ mod tests {
         assert!(spoly == expected_positive || spoly == expected_negative);
 
         let basis = GroebnerBasis::new(5, vec![p1, p2]);
-        let gb = basis.buchberger_and_reduce();
+        let gb = basis.buchberger_and_reduce::<8>();
 
         let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
         let rem = gb.reduce(target);

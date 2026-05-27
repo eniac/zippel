@@ -38,7 +38,7 @@ fn compare<T: Monomial + std::fmt::Debug>(
     input: Vec<SparsePolynomial<Fr, T>>,
 ) {
     let legacy = legacy_compute_reduced_gb(num_vars, input.clone());
-    let ark = T::compute_reduced_gb(num_vars, input);
+    let ark = T::compute_reduced_gb::<_, 8>(num_vars, input);
     assert_eq!(legacy, ark, "[{label}] backends disagree on reduced GB");
 }
 

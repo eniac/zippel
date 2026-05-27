@@ -40,7 +40,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             let mut rel_gb = GroebnerBuilder::new();
             rel_gb.register_input_args(dag);
             rel_gb.add_relation(dag);
-            rel_gb.run();
+            rel_gb.run::<8>();  // Small problems, use W=8
             Some(rel_gb.basis)
         } else {
             None
@@ -129,9 +129,13 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         });
     }
 
-    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+    /// Run knowledge analysis with explicit W parameter.
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn run_with_w<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
-        self.builder.run();
+        self.builder.run::<W>();
 
         // Delete varieties with elimination variables
         self.eliminate_var();
@@ -153,6 +157,30 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             }
         }
         Ok(())
+    }
+
+    /// Run knowledge analysis with automatic W dispatch.
+    /// Counts variables and selects W=8 (≤63 vars) or W=16 (≤127 vars).
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+        use crate::analyses::groebner::ark_gb_adapter::{collect_vars_elim, max_vars_for_w};
+        
+        // Collect variables from the builder basis
+        let polys: Vec<_> = self.builder.basis.iter().cloned().collect();
+        let (keep_vars, elim_vars) = collect_vars_elim(&polys);
+        let actual_nvars = keep_vars.len() + elim_vars.len();
+        
+        if actual_nvars <= max_vars_for_w(8) {
+            self.run_with_w::<8>()
+        } else if actual_nvars <= max_vars_for_w(16) {
+            self.run_with_w::<16>()
+        } else {
+            panic!(
+                "Problem has {} variables; max supported is {} (W=16). \
+                 To handle larger problems, add W=32 dispatch.",
+                actual_nvars,
+                max_vars_for_w(16)
+            );
+        }
     }
 }
 

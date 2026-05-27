@@ -46,7 +46,10 @@ pub trait Monomial:
     /// This is the Groebner backend hook for the supported term orderings.
     /// `GrevLexTerm` routes through the ark-gb grevlex adapter, and
     /// `ElimTerm` routes through the ark-gb elim adapter.
-    fn compute_reduced_gb<F: Field>(
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    fn compute_reduced_gb<F: Field, const W: usize>(
         num_vars: usize,
         input: Vec<SparsePolynomial<F, Self>>,
     ) -> Vec<SparsePolynomial<F, Self>>
@@ -449,32 +452,17 @@ impl Monomial for GrevLexTerm {
     /// Override the default Buchberger backend: route through the
     /// external `ark-gb` crate, which is ~10000× faster than the in-tree
     /// implementation on Katsura/Cyclic-n.
-    fn compute_reduced_gb<F: Field>(
+    ///
+    /// W is the packed monomial width. Caller must ensure W is appropriate.
+    fn compute_reduced_gb<F: Field, const W: usize>(
         num_vars: usize,
         input: Vec<SparsePolynomial<F, Self>>,
     ) -> Vec<SparsePolynomial<F, Self>>
     where
         Self: Sized,
     {
-        use crate::analyses::groebner::ark_gb_adapter::{
-            collect_vars_grevlex, compute_reduced_gb_grevlex, max_vars_for_w,
-        };
-
-        let actual_nvars = collect_vars_grevlex(&input).len();
-
-        // Smart dispatch based on variable count
-        if actual_nvars <= max_vars_for_w(8) {
-            compute_reduced_gb_grevlex::<F, 8>(num_vars, input)
-        } else if actual_nvars <= max_vars_for_w(16) {
-            compute_reduced_gb_grevlex::<F, 16>(num_vars, input)
-        } else {
-            panic!(
-                "Problem has {} variables; max supported is {} (W=16). \
-                 To handle larger problems, add W=32 dispatch.",
-                actual_nvars,
-                max_vars_for_w(16)
-            )
-        }
+        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_grevlex;
+        compute_reduced_gb_grevlex::<F, W>(num_vars, input)
     }
 }
 
@@ -506,33 +494,17 @@ impl Monomial for ElimTerm {
     /// Override the default Buchberger backend: route through the
     /// external `ark-gb` crate with an elim-aware monomial wrapper.
     /// See `ark_gb_adapter::compute_reduced_gb_elim` for the encoding.
-    fn compute_reduced_gb<F: Field>(
+    ///
+    /// W is the packed monomial width. Caller must ensure W is appropriate.
+    fn compute_reduced_gb<F: Field, const W: usize>(
         num_vars: usize,
         input: Vec<SparsePolynomial<F, Self>>,
     ) -> Vec<SparsePolynomial<F, Self>>
     where
         Self: Sized,
     {
-        use crate::analyses::groebner::ark_gb_adapter::{
-            collect_vars_elim, compute_reduced_gb_elim, max_vars_for_w,
-        };
-
-        let (keep_vars, elim_vars) = collect_vars_elim(&input);
-        let actual_nvars = keep_vars.len() + elim_vars.len();
-
-        // Smart dispatch based on variable count
-        if actual_nvars <= max_vars_for_w(8) {
-            compute_reduced_gb_elim::<F, 8>(num_vars, input)
-        } else if actual_nvars <= max_vars_for_w(16) {
-            compute_reduced_gb_elim::<F, 16>(num_vars, input)
-        } else {
-            panic!(
-                "Problem has {} variables; max supported is {} (W=16). \
-                 To handle larger problems, add W=32 dispatch.",
-                actual_nvars,
-                max_vars_for_w(16)
-            )
-        }
+        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_elim;
+        compute_reduced_gb_elim::<F, W>(num_vars, input)
     }
 }
 

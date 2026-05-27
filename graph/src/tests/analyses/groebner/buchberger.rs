@@ -280,7 +280,7 @@ fn test_linear() {
         debug!("{}", p);
     }
 
-    let groebner_basis = initial_basis.buchberger();
+    let groebner_basis = initial_basis.buchberger::<8>();
     debug!("Computed Gröbner Basis:");
     for p in groebner_basis.iter() {
         debug!("{}", p);
@@ -310,7 +310,7 @@ fn test_maple() {
     ]);
 
     let initial_basis = GroebnerBasis::new(num_vars, vec![f1, f2]);
-    let groebner_basis = initial_basis.buchberger_and_reduce();
+    let groebner_basis = initial_basis.buchberger_and_reduce::<8>();
 
     // The correct result should be:
     // t*x + t - y

@@ -143,8 +143,11 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     /// Dispatches via [`Monomial::compute_reduced_gb`]: `GrevLexTerm`
     /// routes through the ark-gb grevlex adapter, and `ElimTerm` routes
     /// through the ark-gb elim adapter.
-    pub fn buchberger_and_reduce(self) -> Self {
-        let reduced = T::compute_reduced_gb(self.num_vars, self.basis);
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn buchberger_and_reduce<const W: usize>(self) -> Self {
+        let reduced = T::compute_reduced_gb::<_, W>(self.num_vars, self.basis);
         Self::new(self.num_vars, reduced)
     }
 
@@ -152,17 +155,23 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     /// [`Self::buchberger_and_reduce`]; the result is fully reduced
     /// (`buchberger_and_reduce`'s output is also a Gröbner basis, so
     /// returning it from `buchberger` satisfies the weaker contract).
-    pub fn buchberger(&self) -> Self {
-        let reduced = T::compute_reduced_gb(self.num_vars, self.basis.clone());
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn buchberger<const W: usize>(&self) -> Self {
+        let reduced = T::compute_reduced_gb::<_, W>(self.num_vars, self.basis.clone());
         Self::new(self.num_vars, reduced)
     }
 
     /// Reduce an existing Gröbner basis to its minimal, reduced form.
     /// Uses the same backend dispatch as [`Self::buchberger_and_reduce`]
     /// and is idempotent on an already-reduced basis.
-    pub fn reduce_groebner_basis(&mut self) {
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn reduce_groebner_basis<const W: usize>(&mut self) {
         let basis = std::mem::take(&mut self.basis);
-        self.basis = T::compute_reduced_gb(self.num_vars, basis);
+        self.basis = T::compute_reduced_gb::<_, W>(self.num_vars, basis);
     }
 }
 
