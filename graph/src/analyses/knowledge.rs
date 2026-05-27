@@ -38,11 +38,11 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         // relation-only basis to later identify and skip precondition polys.
         let relation_basis = if dag.relation_node().is_some() {
             gb.add_relation(dag);
+            gb.add_relation(dag);
             // Build a relation-only basis using the *same* canonical args and
             // packed width as the main builder, so polynomials in the two bases
             // share variable names and `contains_poly` matches correctly.
             let mut rel_gb = GroebnerBuilder::new();
-            rel_gb.register_input_args(dag);
             rel_gb.add_relation(dag);
             rel_gb.run::<W>();
             Some(rel_gb.basis)

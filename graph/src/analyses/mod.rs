@@ -14,7 +14,6 @@ pub use knowledge::KnowledgeAnalysis;
 pub use qualifier::QualifierPropagation;
 pub use trans_clos::TransClos;
 pub use uniform::UniformityPropagation;
-
 use crate::Dag;
 use backend::ArkConfig;
 

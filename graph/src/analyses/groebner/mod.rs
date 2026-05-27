@@ -162,10 +162,6 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     /// and `p % d` in a program share the same witnesses and reduce
     /// `verify(p == d * q + r)` to the canonical row directly.
     pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
-    /// Phase B (from main): canonical alias map for input/relation arg
-    /// markers that bind the same protocol parameter under different
-    /// `Ref` indices. Looked up by `find_ref` and populated by `add_tc`.
-    pub ref_aliases: std::collections::HashMap<Ref, PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> Default for GroebnerBuilder<C, T> {
@@ -182,7 +178,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             pl: Ctx::new(),
             args: Set::new(),
             div_wit: Ctx::new(),
-            ref_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -192,16 +187,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
     /// Resolve a `Ref` to a `PRef` known by this builder.
     ///
-    /// Phase B: every `Ref` carries a unique `NodeIndex`. The Inp and Rel
-    /// markers' arg children alias to a canonical `PRef` via `ref_aliases`,
-    /// after which lookup is a single keyed scan against the closure. If
-    /// the ref is not present (e.g., it points at a non-modelled op like
-    /// `Op::Random`/`Op::Challenge`), register it as an opaque variable in
-    /// `np` so downstream consumers see a consistent `PRef`.
+    /// Lookup is by `Ref` against known variables and args. If the ref is not
+    /// present (e.g., it points at a non-modelled op like `Op::Random`/
+    /// `Op::Challenge`), register it as an opaque variable in `np` so
+    /// downstream consumers see a consistent `PRef`.
     pub fn find_ref(&mut self, r: &Ref) -> PRef {
-        if let Some(p) = self.ref_aliases.get(r).cloned() {
-            return p;
-        }
         if let Some(v) = self.vars().into_iter().find(|v| v.reference == *r) {
             return v;
         }
@@ -857,58 +847,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     pub fn add_input(&mut self, g: &DQDag<C>) {
-        let tc = TransClos::from_input(g);
+        let tc = TransClos::input(g);
         self.add_tc(tc);
     }
 
     pub fn add_relation(&mut self, g: &DQDag<C>) {
-        let tc = TransClos::from_relation(g);
+        let tc = TransClos::relation(g);
         self.add_tc(tc);
     }
 
-    /// Register only the *args* of the input marker, without any of its
-    /// body operations. Useful when bootstrapping a relation-only builder
-    /// that must agree with a separate input-aware builder on which
-    /// `Ref` is the canonical one for each protocol parameter.
-    pub fn register_input_args(&mut self, g: &DQDag<C>) {
-        let tc = TransClos::from_input(g);
-        for new_arg in tc.args.iter() {
-            let canonical = self
-                .args
-                .iter()
-                .find(|a| a.name() == new_arg.name())
-                .cloned();
-            match canonical {
-                Some(c) if c.reference != new_arg.reference => {
-                    self.ref_aliases.insert(new_arg.reference, c);
-                }
-                None => {
-                    self.args.insert(new_arg.clone());
-                }
-                _ => {}
-            }
-        }
-    }
-
     fn add_tc(&mut self, tc: TransClos<C>) {
-        // Phase B: when add_tc runs more than once (e.g. add_input then
-        // add_relation), the same protocol parameter shows up with a
-        // different `Ref` (different `Node::Arg` per marker). Canonicalise
-        // by name: keep the first PRef seen, alias subsequent Refs to it.
-        for new_arg in tc.args.iter() {
-            let canonical = self
-                .args
-                .iter()
-                .find(|a| a.name() == new_arg.name())
-                .cloned();
-            match canonical {
-                Some(c) if c.reference != new_arg.reference => {
-                    self.ref_aliases.insert(new_arg.reference, c);
-                }
-                None => {
-                    self.args.insert(new_arg.clone());
-                }
-                _ => {}
+        for new_arg in tc.prefs.iter() {
+            if !self.args.contains(new_arg) {
+                self.args.insert(new_arg.clone());
             }
         }
 

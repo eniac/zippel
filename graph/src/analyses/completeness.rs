@@ -46,12 +46,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let prover_remap = make_remap_fn(&prover_node_map);
         g_prover.remap_vars(&prover_remap);
 
-        // Build relation basis directly from full DAG (shared namespace).
-        // Phase B: register input args first so that `x` referenced by
-        // relation polynomials canonicalises to the same `Ref` used by
-        // the prover basis.
+        // Build relation basis directly from full DAG.
+        // relation() remaps to input namespace so refs are consistent.
         let mut g_rel = GroebnerBuilder::new();
-        g_rel.register_input_args(dag);
         g_rel.add_relation(dag);
 
         // Combine: prover + relation
