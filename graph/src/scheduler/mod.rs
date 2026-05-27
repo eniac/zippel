@@ -1,11 +1,13 @@
 mod asymptotic_cost;
 mod cost;
+mod critical_path_scheduler;
 pub mod local_scheduler;
 
 use crate::{Dag, UDag};
 pub use asymptotic_cost::AsymptoticCost;
 use backend::ArkConfig;
 pub use cost::{Cost, CostModel};
+pub use critical_path_scheduler::CriticalPathScheduler;
 use std::fmt;
 
 /// Thread identifiers

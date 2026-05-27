@@ -8,4 +8,5 @@ pub mod op_unit_tests;
 pub mod pinning_tests;
 pub mod polynomial_laws;
 pub mod redundant_infer_tests;
+pub mod scheduler_tests;
 pub mod test_helpers;

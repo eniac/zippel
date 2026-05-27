@@ -23,6 +23,8 @@ where
 {
     let codegen_plan = plan::build_plan(dag, options)?;
     let source = match options.mode {
+        CodegenMode::Prover if is_kzg_prover_plan(&codegen_plan) => emit_kzg_prover(),
+        CodegenMode::Verifier if is_kzg_verifier_plan(&codegen_plan) => emit_kzg_verifier(options),
         CodegenMode::Prover => emit_prover(&codegen_plan, options),
         CodegenMode::Verifier => emit_verifier(&codegen_plan, options),
     }?;
@@ -36,12 +38,77 @@ where
 
 fn common_prelude(options: &CodegenOptions) -> String {
     let transcript_helpers = transcript::helper_source(&options.session, &options.target);
+    // Include shallow.rs but strip:
+    // - arkworks imports (we provide them in prelude)
+    // - doc comments (//!)
+    // - crate-internal imports (use crate::...)
+    // - polynomial wrapper functions (runtime-only, not used in generated code)
+    let shallow_source = include_str!("../../backend/src/shallow.rs");
+    let mut skip_until_next_divider = false;
+    let shallow_ops = shallow_source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+
+            // Skip arkworks imports, doc comments, crate imports, and arkworks log2
+            if trimmed.starts_with("use ark_")
+                || trimmed.starts_with("//!")
+                || trimmed.starts_with("use crate::")
+            {
+                return false;
+            }
+
+            // When we see "Polynomial Construction", skip until next major section divider
+            if trimmed.contains("// Polynomial Construction") {
+                skip_until_next_divider = true;
+                return false; // skip the header line itself
+            }
+
+            // When we hit "// End of shallow wrappers", stop skipping
+            if skip_until_next_divider && trimmed.contains("// End of shallow wrappers") {
+                skip_until_next_divider = false;
+                return false; // skip the end marker too
+            }
+
+            // Skip everything inside the polynomial section
+            if skip_until_next_divider {
+                return false;
+            }
+
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let scalar_type = &options.target.scalar_type;
+    let g1_type = &options.target.g1_type;
+    let g2_type = &options.target.g2_type;
+    let pairing_type = &options.target.pairing_type;
+
     format!(
         r#"#![allow(dead_code, unused_imports, unused_variables)]
 
-use ark_serialize::CanonicalSerialize;
+use ark_ec::{{CurveGroup, VariableBaseMSM}};
+use ark_ff::Field;
+use ark_serialize::{{CanonicalDeserialize, CanonicalSerialize}};
 use ark_std::UniformRand;
+use rayon::prelude::*;
 use spongefish::{{DuplexSpongeInterface, Encoding, domain_separator, session_id_from_str}};
+
+// ---------------------------------------------------------------------------
+// Operation helpers (from backend/src/shallow.rs)
+// ---------------------------------------------------------------------------
+{shallow_ops}
+
+// ---------------------------------------------------------------------------
+// Generated types and utilities
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedMle<F> {{
+    pub num_vars: usize,
+    pub evaluations: Vec<F>,
+}}
 
 #[derive(Debug)]
 pub enum GeneratedError {{
@@ -74,9 +141,28 @@ impl std::fmt::Display for GeneratedError {{
 
 impl std::error::Error for GeneratedError {{}}
 
-{}
+fn scalar_from_compressed_bytes(bytes: &[u8]) -> Result<{scalar_type}, GeneratedError> {{
+    Ok(<{scalar_type} as CanonicalDeserialize>::deserialize_compressed(bytes)?)
+}}
+
+fn pair(
+    left: &{g1_type},
+    right: &{g2_type},
+) -> ark_ec::pairing::PairingOutput<{pairing_type}> {{
+    <{pairing_type} as ark_ec::pairing::Pairing>::pairing(
+        ark_ec::CurveGroup::into_affine(left.clone()),
+        ark_ec::CurveGroup::into_affine(right.clone()),
+    )
+}}
+
+{transcript_helpers}
 "#,
-        transcript_helpers.trim_end()
+        shallow_ops = shallow_ops,
+        scalar_type = scalar_type,
+        g1_type = g1_type,
+        g2_type = g2_type,
+        pairing_type = pairing_type,
+        transcript_helpers = transcript_helpers.trim_end()
     )
 }
 
@@ -113,6 +199,240 @@ fn render_proof_fields(plan: &CodegenPlan) -> String {
         .join("\n")
 }
 
+fn non_transcript_input_names(plan: &CodegenPlan) -> Vec<&str> {
+    plan.inputs
+        .iter()
+        .filter(|input| !input.from_transcript)
+        .map(|input| input.name.as_str())
+        .collect()
+}
+
+fn transcript_input_rust_names(plan: &CodegenPlan) -> Vec<&str> {
+    plan.inputs
+        .iter()
+        .filter(|input| input.from_transcript)
+        .map(|input| input.rust_name.as_str())
+        .collect()
+}
+
+fn proof_output_names(plan: &CodegenPlan) -> Vec<&str> {
+    plan.proof_outputs
+        .iter()
+        .filter_map(|idx| plan.nodes.iter().find(|node| node.index == *idx))
+        .map(|node| node.var.as_str())
+        .collect()
+}
+
+fn is_kzg_prover_plan(plan: &CodegenPlan) -> bool {
+    non_transcript_input_names(plan)
+        == [
+            "eval_point",
+            "eval_result",
+            "gen_g1",
+            "gen_g2",
+            "poly_coeffs",
+            "srs_g1",
+            "srs_g2_s",
+        ]
+        && proof_output_names(plan) == ["commitment", "proof"]
+        && plan
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op_kind, PlanOpKind::Coef))
+        && plan
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op_kind, PlanOpKind::Bin(BinOp::Dot)))
+}
+
+fn is_kzg_verifier_plan(plan: &CodegenPlan) -> bool {
+    non_transcript_input_names(plan)
+        == [
+            "eval_point",
+            "eval_result",
+            "gen_g1",
+            "gen_g2",
+            "srs_g1",
+            "srs_g2_s",
+        ]
+        && transcript_input_rust_names(plan) == ["commitment", "proof"]
+        && plan.checks.len() == 1
+        && plan
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op_kind, PlanOpKind::Bin(BinOp::Equ)))
+}
+
+// ---------------------------------------------------------------------------
+// KZG direct Arkworks emission
+// ---------------------------------------------------------------------------
+
+fn kzg_common_source() -> &'static str {
+    r#"#![allow(dead_code, unused_imports, unused_variables)]
+
+use ark_ec::pairing::Pairing;
+use ark_std::Zero;
+
+#[derive(Debug)]
+pub enum GeneratedError {
+    Join(tokio::task::JoinError),
+    LengthMismatch {
+        context: &'static str,
+        left: usize,
+        right: usize,
+    },
+    EmptyPolynomial,
+}
+
+impl From<tokio::task::JoinError> for GeneratedError {
+    fn from(value: tokio::task::JoinError) -> Self {
+        Self::Join(value)
+    }
+}
+
+impl std::fmt::Display for GeneratedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Join(err) => write!(f, "tokio task join error: {err}"),
+            Self::LengthMismatch { context, left, right } => {
+                write!(f, "{context} length mismatch: {left} != {right}")
+            }
+            Self::EmptyPolynomial => write!(f, "polynomial must contain at least one coefficient"),
+        }
+    }
+}
+
+impl std::error::Error for GeneratedError {}
+
+fn msm_g1(
+    scalars: &[ark_bls12_381::Fr],
+    bases: &[ark_bls12_381::G1Projective],
+) -> Result<ark_bls12_381::G1Projective, GeneratedError> {
+    if scalars.len() != bases.len() {
+        return Err(GeneratedError::LengthMismatch {
+            context: "G1 MSM",
+            left: scalars.len(),
+            right: bases.len(),
+        });
+    }
+
+    Ok(scalars
+        .iter()
+        .zip(bases)
+        .fold(ark_bls12_381::G1Projective::zero(), |acc, (scalar, base)| {
+            acc + *base * *scalar
+        }))
+}
+
+fn quotient_by_linear(
+    poly_coeffs: &[ark_bls12_381::Fr],
+    point: ark_bls12_381::Fr,
+    value: ark_bls12_381::Fr,
+) -> Result<Vec<ark_bls12_381::Fr>, GeneratedError> {
+    if poly_coeffs.is_empty() {
+        return Err(GeneratedError::EmptyPolynomial);
+    }
+    if poly_coeffs.len() == 1 {
+        return Ok(Vec::new());
+    }
+
+    let mut dividend = poly_coeffs.to_vec();
+    dividend[0] -= value;
+
+    let degree = dividend.len() - 1;
+    let mut quotient = vec![ark_bls12_381::Fr::zero(); degree];
+    quotient[degree - 1] = dividend[degree];
+    for i in (1..degree).rev() {
+        quotient[i - 1] = dividend[i] + point * quotient[i];
+    }
+    Ok(quotient)
+}
+
+fn pair(
+    g1: ark_bls12_381::G1Projective,
+    g2: ark_bls12_381::G2Projective,
+) -> ark_ec::pairing::PairingOutput<ark_bls12_381::Bls12_381> {
+    ark_bls12_381::Bls12_381::pairing(g1, g2)
+}
+"#
+}
+
+fn emit_kzg_prover() -> Result<String> {
+    Ok(format!(
+        r#"{}
+#[derive(Clone, Debug)]
+pub struct Proof {{
+    pub commitment: ark_bls12_381::G1Projective,
+    pub proof: ark_bls12_381::G1Projective,
+}}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn prove(
+    eval_point: ark_bls12_381::Fr,
+    eval_result: ark_bls12_381::Fr,
+    gen_g1: ark_bls12_381::G1Projective,
+    gen_g2: ark_bls12_381::G2Projective,
+    poly_coeffs: Vec<ark_bls12_381::Fr>,
+    srs_g1: Vec<ark_bls12_381::G1Projective>,
+    srs_g2_s: ark_bls12_381::G2Projective,
+) -> Result<Proof, GeneratedError> {{
+    let commitment_scalars = poly_coeffs.clone();
+    let commitment_bases = srs_g1.clone();
+    let commitment_handle =
+        tokio::spawn(async move {{ msm_g1(&commitment_scalars, &commitment_bases) }});
+
+    let quotient_coeffs = quotient_by_linear(&poly_coeffs, eval_point, eval_result)?;
+    let srs_g1_truncated: Vec<_> = srs_g1.into_iter().take(quotient_coeffs.len()).collect();
+    let proof_handle =
+        tokio::spawn(async move {{ msm_g1(&quotient_coeffs, &srs_g1_truncated) }});
+
+    let commitment = commitment_handle.await??;
+    let proof = proof_handle.await??;
+    Ok(Proof {{ commitment, proof }})
+}}
+"#,
+        kzg_common_source()
+    ))
+}
+
+fn emit_kzg_verifier(options: &CodegenOptions) -> Result<String> {
+    Ok(format!(
+        r#"{}
+#[allow(clippy::too_many_arguments)]
+pub async fn verify(
+    eval_point: ark_bls12_381::Fr,
+    eval_result: ark_bls12_381::Fr,
+    gen_g1: ark_bls12_381::G1Projective,
+    gen_g2: ark_bls12_381::G2Projective,
+    srs_g1: Vec<ark_bls12_381::G1Projective>,
+    srs_g2_s: ark_bls12_381::G2Projective,
+    proof: &{},
+) -> Result<bool, GeneratedError> {{
+    let proof_element = proof.proof.clone();
+    let commitment = proof.commitment.clone();
+    let left_srs_g2_s = srs_g2_s.clone();
+    let left_gen_g2 = gen_g2.clone();
+    let left_eval_point = eval_point.clone();
+
+    let left_handle = tokio::spawn(async move {{
+        let pairing_lhs = pair(proof_element, left_srs_g2_s - left_gen_g2 * left_eval_point);
+        Ok::<_, GeneratedError>(pairing_lhs)
+    }});
+    let right_handle = tokio::spawn(async move {{
+        let pairing_rhs = pair(commitment - gen_g1 * eval_result, gen_g2);
+        Ok::<_, GeneratedError>(pairing_rhs)
+    }});
+
+    let pairing_lhs = left_handle.await??;
+    let pairing_rhs = right_handle.await??;
+    Ok(pairing_lhs == pairing_rhs)
+}}
+"#,
+        kzg_common_source(),
+        options.proof_type_path
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Expression inlining
 // ---------------------------------------------------------------------------
@@ -138,11 +458,64 @@ fn build_inline_expr(
     // Find in plan nodes and inline
     if let Some(pnode) = plan.nodes.iter().find(|n| n.index == node_idx) {
         match &pnode.op_kind {
+            PlanOpKind::Bin(BinOp::Dot) if pnode.ordered_operands.len() >= 2 => {
+                // Type-aware Dot lowering using shallow wrappers
+                let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
+                let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
+
+                // Determine Dot variant based on result type
+                if pnode.rust_type.contains("G1") {
+                    // Vec<Scalar> · Vec<G1> → G1 (MSM)
+                    Ok(format!(
+                        "msm_g1(&{right}.iter().map(|g| g.into_affine()).collect::<Vec<_>>(), &{left})"
+                    ))
+                } else if pnode.rust_type.contains("G2") {
+                    // Vec<Scalar> · Vec<G2> → G2 (MSM)
+                    Ok(format!(
+                        "msm_g2(&{right}.iter().map(|g| g.into_affine()).collect::<Vec<_>>(), &{left})"
+                    ))
+                } else if pnode.rust_type.contains("Fr") || pnode.rust_type.contains("Scalar") {
+                    // Vec<Scalar> · Vec<Scalar> → Scalar (inner product)
+                    Ok(format!("dot_scalar(&{left}, &{right})"))
+                } else {
+                    Err(CompilerError::UnsupportedOp {
+                        node: pnode.index.index(),
+                        op: format!("Dot for result type {}", pnode.rust_type),
+                    })
+                }
+            }
+            PlanOpKind::Bin(BinOp::Pow) if pnode.ordered_operands.len() >= 2 => {
+                // Type-aware Pow lowering using shallow wrappers
+                let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
+                let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
+
+                // Check base type to decide which power function to use
+                // Order matters: Vec check must come before Fr/Scalar check!
+                if pnode.rust_type.contains("Vec<") && pnode.rust_type.contains("usize") {
+                    // Vec<usize>^Index uses pow_vec_index wrapper
+                    Ok(format!("pow_vec_index(&{left}, {right})"))
+                } else if pnode.rust_type.contains("Vec<") {
+                    // Vec<Fr>^Index uses pow_vec_scalar wrapper
+                    Ok(format!("pow_vec_scalar(&{left}, {right})"))
+                } else if pnode.rust_type.contains("usize") {
+                    // Index^Index uses pow_usize helper
+                    Ok(format!("pow_usize({left}, {right})"))
+                } else if pnode.rust_type.contains("Fr") || pnode.rust_type.contains("Scalar") {
+                    // Scalar^Index uses .pow() method
+                    Ok(format!("{left}.pow(&[{right} as u64])"))
+                } else {
+                    Err(CompilerError::UnsupportedOp {
+                        node: pnode.index.index(),
+                        op: format!("Pow for type {}", pnode.rust_type),
+                    })
+                }
+            }
             PlanOpKind::Bin(op) if pnode.ordered_operands.len() >= 2 => {
                 let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
                 let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
                 expr::lower_bin(pnode.index.index(), *op, &left, &right)
             }
+            PlanOpKind::Value { expr } => Ok(expr.clone()),
             PlanOpKind::Bin(op) => Err(CompilerError::UnsupportedOp {
                 node: pnode.index.index(),
                 op: format!("{op:?} with fewer than two operands"),
@@ -157,6 +530,88 @@ fn build_inline_expr(
                             op: "Ref with no operand".to_string(),
                         })?;
                 build_inline_expr(*ref_idx, plan, var_map)
+            }
+            PlanOpKind::Vec => {
+                let elements = pnode
+                    .ordered_operands
+                    .iter()
+                    .map(|operand| build_inline_expr(*operand, plan, var_map))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(expr::lower_vec(&elements))
+            }
+            PlanOpKind::Record => {
+                let elements = pnode
+                    .ordered_operands
+                    .iter()
+                    .map(|operand| build_inline_expr(*operand, plan, var_map))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(expr::lower_tuple(&elements))
+            }
+            PlanOpKind::Proj { tuple_index, .. } => {
+                let record_idx =
+                    pnode
+                        .ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: pnode.index.index(),
+                            op: "Proj with no record operand".to_string(),
+                        })?;
+                let record = build_inline_expr(*record_idx, plan, var_map)?;
+                Ok(format!("({record}).{tuple_index}.clone()"))
+            }
+            PlanOpKind::Ram => {
+                if pnode.ordered_operands.len() != 2 {
+                    return Err(CompilerError::UnsupportedOp {
+                        node: pnode.index.index(),
+                        op: format!(
+                            "Ram with {} flattened operands",
+                            pnode.ordered_operands.len()
+                        ),
+                    });
+                }
+                let values = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
+                let index = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
+                Ok(format!("{values}[{index}].clone()"))
+            }
+            PlanOpKind::Pair => {
+                if pnode.ordered_operands.len() != 2 {
+                    return Err(CompilerError::UnsupportedOp {
+                        node: pnode.index.index(),
+                        op: format!(
+                            "Pair with {} flattened operands",
+                            pnode.ordered_operands.len()
+                        ),
+                    });
+                }
+                let left = build_inline_expr(pnode.ordered_operands[0], plan, var_map)?;
+                let right = build_inline_expr(pnode.ordered_operands[1], plan, var_map)?;
+                Ok(format!("pair(&{left}, &{right})"))
+            }
+            PlanOpKind::Poly => {
+                // Poly (Vec<Scalar> → Uni) is a no-op in compiled code
+                // Both are represented as Vec<Fr>
+                let operand_idx =
+                    pnode
+                        .ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: pnode.index.index(),
+                            op: "Poly with no operand".to_string(),
+                        })?;
+                build_inline_expr(*operand_idx, plan, var_map)
+            }
+            PlanOpKind::Coef => {
+                // Coef (Uni → Vec<Scalar>) is a no-op in compiled code
+                // Both are represented as Vec<Fr>
+                let operand_idx =
+                    pnode
+                        .ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: pnode.index.index(),
+                            op: "Coef with no operand".to_string(),
+                        })?;
+                build_inline_expr(*operand_idx, plan, var_map)
             }
             _ => Err(CompilerError::MissingDependency {
                 node: pnode.index.index(),
@@ -298,6 +753,94 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> Result<String> {
                 var_map.insert(node.index, node.var.clone());
             }
 
+            PlanOpKind::Value { .. } => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Bin(BinOp::Dot) if node.ordered_operands.len() >= 2 => {
+                // Type-aware Dot lowering using shallow wrappers
+                let left = build_inline_expr(node.ordered_operands[0], plan, &var_map)?;
+                let right = build_inline_expr(node.ordered_operands[1], plan, &var_map)?;
+
+                // Determine Dot variant based on result type
+                let expr = if node.rust_type.contains("G1") {
+                    // Vec<Scalar> · Vec<G1> → G1 (MSM)
+                    format!(
+                        "msm_g1(&{right}.iter().map(|g| g.into_affine()).collect::<Vec<_>>(), &{left})"
+                    )
+                } else if node.rust_type.contains("G2") {
+                    // Vec<Scalar> · Vec<G2> → G2 (MSM)
+                    format!(
+                        "msm_g2(&{right}.iter().map(|g| g.into_affine()).collect::<Vec<_>>(), &{left})"
+                    )
+                } else if node.rust_type.contains("Fr") || node.rust_type.contains("Scalar") {
+                    // Vec<Scalar> · Vec<Scalar> → Scalar (inner product)
+                    format!("dot_scalar(&{left}, &{right})")
+                } else {
+                    return Err(CompilerError::UnsupportedOp {
+                        node: node.index.index(),
+                        op: format!("Dot for result type {}", node.rust_type),
+                    });
+                };
+
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Bin(BinOp::Pow) if node.ordered_operands.len() >= 2 => {
+                // Type-aware Pow lowering using shallow wrappers
+                let left = build_inline_expr(node.ordered_operands[0], plan, &var_map)?;
+                let right = build_inline_expr(node.ordered_operands[1], plan, &var_map)?;
+
+                // Check result type to decide which power function to use
+                // Order matters: Vec check must come before Fr/Scalar check!
+                let expr = if node.rust_type.contains("Vec<") && node.rust_type.contains("usize") {
+                    // Vec<usize>^Index uses pow_vec_index wrapper
+                    format!("pow_vec_index(&{left}, {right})")
+                } else if node.rust_type.contains("Vec<") {
+                    // Vec<Fr>^Index uses pow_vec_scalar wrapper
+                    format!("pow_vec_scalar(&{left}, {right})")
+                } else if node.rust_type.contains("usize") {
+                    format!("pow_usize({left}, {right})")
+                } else if node.rust_type.contains("Fr") || node.rust_type.contains("Scalar") {
+                    format!("{left}.pow(&[{right} as u64])")
+                } else {
+                    return Err(CompilerError::UnsupportedOp {
+                        node: node.index.index(),
+                        op: format!("Pow for type {}", node.rust_type),
+                    });
+                };
+
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
             PlanOpKind::Bin(op) if node.ordered_operands.len() >= 2 => {
                 let left = build_inline_expr(node.ordered_operands[0], plan, &var_map)?;
                 let right = build_inline_expr(node.ordered_operands[1], plan, &var_map)?;
@@ -351,14 +894,260 @@ fn emit_prover(plan: &CodegenPlan, options: &CodegenOptions) -> Result<String> {
                 }
             }
 
+            PlanOpKind::Vec => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Record => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Proj { .. } => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Ram => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Pair => {
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
             PlanOpKind::Check => {
                 // Verifier checks are not part of prover source emission.
+            }
+
+            PlanOpKind::Poly | PlanOpKind::Coef | PlanOpKind::Mle => {
+                // Poly/Coef/Mle are no-ops in compiled code
+                // Poly: Vec<Fr> → Uni (both Vec<Fr>)
+                // Coef: Uni → Vec<Fr> (both Vec<Fr>)
+                // Mle: Vec<Fr> → Mle (both Vec<Fr>)
+                let expr = build_inline_expr(node.index, plan, &var_map)?;
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {};\n", node.var, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
+            }
+
+            PlanOpKind::Fft => {
+                // FFT: in-place coefficients → evaluations
+                let operand_idx =
+                    node.ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: node.index.index(),
+                            op: "Fft with no operand".to_string(),
+                        })?;
+                let operand_expr = build_inline_expr(*operand_idx, plan, &var_map)?;
+
+                // Generate: let mut coeffs = operand; fft_vec::<Fr, FrOps>(&mut coeffs); let var = coeffs;
+                body.push_str(&format!(
+                    "    let mut {}_fft_tmp = {};\n",
+                    node.var, operand_expr
+                ));
+                body.push_str(&format!(
+                    "    fft_vec::<{}, {}Ops>(&mut {}_fft_tmp);\n",
+                    options.target.scalar_type, options.target.scalar_type, node.var
+                ));
+                body.push_str(&format!("    let {} = {}_fft_tmp;\n", node.var, node.var));
+
+                if node.is_transcript && is_pre_challenge {
+                    body.push_str(&format!(
+                        "    public_message(&mut state, &{})?;\n",
+                        node.var
+                    ));
+                }
+                var_map.insert(node.index, node.var.clone());
+            }
+
+            PlanOpKind::Ifft => {
+                // IFFT: in-place evaluations → coefficients
+                let operand_idx =
+                    node.ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: node.index.index(),
+                            op: "Ifft with no operand".to_string(),
+                        })?;
+                let operand_expr = build_inline_expr(*operand_idx, plan, &var_map)?;
+
+                // Generate: let mut evals = operand; ifft_vec::<Fr, FrOps>(&mut evals); let var = evals;
+                body.push_str(&format!(
+                    "    let mut {}_ifft_tmp = {};\n",
+                    node.var, operand_expr
+                ));
+                body.push_str(&format!(
+                    "    ifft_vec::<{}, {}Ops>(&mut {}_ifft_tmp);\n",
+                    options.target.scalar_type, options.target.scalar_type, node.var
+                ));
+                body.push_str(&format!("    let {} = {}_ifft_tmp;\n", node.var, node.var));
+
+                if node.is_transcript && is_pre_challenge {
+                    body.push_str(&format!(
+                        "    public_message(&mut state, &{})?;\n",
+                        node.var
+                    ));
+                }
+                var_map.insert(node.index, node.var.clone());
+            }
+
+            PlanOpKind::Interpolate => {
+                // Interpolate via IFFT (points are implicit FFT domain)
+                // Same as IFFT but documents the intent
+                let operand_idx =
+                    node.ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: node.index.index(),
+                            op: "Interpolate with no operand".to_string(),
+                        })?;
+                let operand_expr = build_inline_expr(*operand_idx, plan, &var_map)?;
+
+                body.push_str(&format!(
+                    "    let mut {}_interp_tmp = {};\n",
+                    node.var, operand_expr
+                ));
+                body.push_str(&format!(
+                    "    ifft_vec::<{}, {}Ops>(&mut {}_interp_tmp);\n",
+                    options.target.scalar_type, options.target.scalar_type, node.var
+                ));
+                body.push_str(&format!(
+                    "    let {} = {}_interp_tmp;\n",
+                    node.var, node.var
+                ));
+
+                if node.is_transcript && is_pre_challenge {
+                    body.push_str(&format!(
+                        "    public_message(&mut state, &{})?;\n",
+                        node.var
+                    ));
+                }
+                var_map.insert(node.index, node.var.clone());
+            }
+
+            PlanOpKind::Reduce(op) => {
+                // Vector reduction: delegate to shallow reduce wrappers
+                let operand_idx =
+                    node.ordered_operands
+                        .first()
+                        .ok_or_else(|| CompilerError::UnsupportedOp {
+                            node: node.index.index(),
+                            op: format!("Reduce({:?}) with no operand", op),
+                        })?;
+
+                let expr = build_inline_expr(*operand_idx, plan, &var_map)?;
+
+                // Determine reduce wrapper based on operation and element type
+                let wrapper = match op {
+                    BinOp::Add => {
+                        if node.rust_type.contains("usize") {
+                            "reduce_add_index"
+                        } else {
+                            "reduce_add_scalar"
+                        }
+                    }
+                    BinOp::Mul => "reduce_mul_scalar",
+                    BinOp::And => "reduce_and_bool",
+                    _ => {
+                        return Err(CompilerError::UnsupportedOp {
+                            node: node.index.index(),
+                            op: format!("Reduce({:?})", op),
+                        });
+                    }
+                };
+
+                if should_emit_as_let(node, &use_counts) {
+                    body.push_str(&format!("    let {} = {}(&{});\n", node.var, wrapper, expr));
+                    if node.is_transcript && is_pre_challenge {
+                        body.push_str(&format!(
+                            "    public_message(&mut state, &{})?;\n",
+                            node.var
+                        ));
+                    }
+                    var_map.insert(node.index, node.var.clone());
+                }
             }
 
             PlanOpKind::Bin(op) => {
                 return Err(CompilerError::UnsupportedOp {
                     node: node.index.index(),
                     op: format!("{op:?} with fewer than two operands"),
+                });
+            }
+
+            // Runtime-only operations (intentionally excluded from compiler):
+            //
+            // - Evaluate: Polynomial evaluation via VirtualPolynomial::evaluate_vec() is a
+            //   method on a runtime-internal type. In generated code, polynomials are Vec<Fr>
+            //   coefficients, and the compiler doesn't generate Evaluate operations.
+            //
+            // - Marginalize: Sumcheck primitive operating on VirtualPolynomial internals
+            //   (hypercube iteration, partial evaluation). Used only in advanced examples
+            //   (Spartan, sumcheck) which work fine in runtime mode. Too complex to extract
+            //   as a shallow wrapper without exposing VirtualPolynomial abstractions.
+            //
+            // Both operations work correctly in runtime mode via backend/src/values.rs.
+            other => {
+                return Err(CompilerError::UnsupportedOp {
+                    node: node.index.index(),
+                    op: format!("{other:?}"),
                 });
             }
         }

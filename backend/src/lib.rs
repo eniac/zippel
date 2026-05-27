@@ -4,6 +4,7 @@ pub mod config;
 pub mod nothing;
 pub mod op;
 pub mod poly_variant;
+pub mod shallow;
 pub mod types;
 pub mod values;
 pub mod virtual_polynomial;

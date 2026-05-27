@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use backend::ArkConfig;
+use ark_serialize::CanonicalSerialize;
 use backend::op::Op;
+use backend::{ATyp, ArkConfig, Value};
 use graph::{ArgKind, Node};
 use lang::ast::BinOp;
 use lang::typ::{Distribution, Qualifier};
@@ -21,6 +22,8 @@ use crate::types;
 /// The operation kind for a [`PlanNode`], derived from the Graph IR [`Op`] variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanOpKind {
+    /// A literal constant embedded in the Graph IR.
+    Value { expr: String },
     /// A random-element sample.
     Random,
     /// A binary arithmetic/logic operation.
@@ -31,6 +34,34 @@ pub enum PlanOpKind {
     Check,
     /// A transparent reference to another node (Op::Ref — used in verifier Transcr rewrites).
     Ref,
+    /// Random access into a vector-shaped value.
+    Ram,
+    /// A vector constructor.
+    Vec,
+    /// A record constructor.
+    Record,
+    /// A bilinear pairing operation.
+    Pair,
+    /// A polynomial constructor.
+    Poly,
+    /// Coefficients of a polynomial.
+    Coef,
+    /// A polynomial evaluation operation.
+    Evaluate,
+    /// Inverse FFT from domain evaluations to univariate coefficients.
+    Ifft,
+    /// Explicit-point univariate interpolation.
+    Interpolate,
+    /// Forward FFT from univariate coefficients to domain evaluations.
+    Fft,
+    /// Multilinear extension constructor.
+    Mle,
+    /// Sum-check marginalization helper.
+    Marginalize,
+    /// A vector reduction operation.
+    Reduce(BinOp),
+    /// A record projection.
+    Proj { field: String, tuple_index: usize },
 }
 
 /// A single typed input argument in the codegen plan.
@@ -211,31 +242,114 @@ impl NameAllocator {
 // Plan builder
 // ---------------------------------------------------------------------------
 
-fn op_variant_name<C, R>(op: &Op<C, R>) -> &'static str
-where
-    C: ArkConfig,
-{
-    match op {
-        Op::Value(_) => "Value",
-        Op::Ref(_, _) => "Ref",
-        Op::Bin(_, _, _, _) => "Bin",
-        Op::Ram(_, _) => "Ram",
-        Op::Vec(_) => "Vec",
-        Op::Record(_) => "Record",
-        Op::Random(_, _) => "Random",
-        Op::Pair(_, _, _) => "Pair",
-        Op::Challenge(_, _) => "Challenge",
-        Op::Ifft(_) => "Ifft",
-        Op::Interpolate(_, _) => "Interpolate",
-        Op::Fft(_) => "Fft",
-        Op::Poly(_) => "Poly",
-        Op::Mle(_) => "Mle",
-        Op::Marginalize(_) => "Marginalize",
-        Op::Proj(_, _, _) => "Proj",
-        Op::Coef(_) => "Coef",
-        Op::Evaluate(_, _) => "Evaluate",
-        Op::Check(_) => "Check",
-        Op::Reduce(_, _) => "Reduce",
+fn record_field_index(node: usize, record_type: &ATyp, field: &str) -> Result<usize> {
+    let ATyp::Record(fields) = record_type else {
+        return Err(CompilerError::UnsupportedOp {
+            node,
+            op: format!("Proj on non-record type {record_type:?}"),
+        });
+    };
+
+    fields
+        .iter()
+        .position(|(name, _)| name == field)
+        .ok_or_else(|| CompilerError::UnsupportedOp {
+            node,
+            op: format!("Proj of missing field {field}"),
+        })
+}
+
+fn value_literal_expr<C: ArkConfig>(node: usize, value: &Value<C>) -> Result<String> {
+    match value {
+        Value::Bool(value) => Ok(value.to_string()),
+        Value::Index(value) => Ok(format!("{value}usize")),
+        Value::Scalar(value) => Ok(format!(
+            "scalar_from_compressed_bytes(&{})?",
+            compressed_bytes_expr(node, value)?
+        )),
+        Value::VecBool(values) => Ok(format!(
+            "vec![{}]",
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Value::VecIndex(values) => Ok(format!(
+            "vec![{}]",
+            values
+                .iter()
+                .map(|value| format!("{value}usize"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Value::VecScalar(values) => Ok(format!(
+            "vec![{}]",
+            values
+                .iter()
+                .map(|value| {
+                    Ok(format!(
+                        "scalar_from_compressed_bytes(&{})?",
+                        compressed_bytes_expr(node, value)?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
+        )),
+        Value::Vec(values) => Ok(format!(
+            "vec![{}]",
+            values
+                .iter()
+                .map(|value| value_literal_expr(node, value))
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
+        )),
+        other => Err(CompilerError::UnsupportedOp {
+            node,
+            op: format!("Value literal {}", value_variant_name(other)),
+        }),
+    }
+}
+
+fn compressed_bytes_expr<T: CanonicalSerialize>(node: usize, value: &T) -> Result<String> {
+    let mut bytes = Vec::new();
+    value
+        .serialize_compressed(&mut bytes)
+        .map_err(|_| CompilerError::UnsupportedOp {
+            node,
+            op: "Value literal serialization".to_string(),
+        })?;
+    Ok(format!(
+        "[{}]",
+        bytes
+            .iter()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn value_variant_name<C: ArkConfig>(value: &Value<C>) -> &'static str {
+    match value {
+        Value::Bool(_) => "Bool",
+        Value::VecBool(_) => "VecBool",
+        Value::Index(_) => "Index",
+        Value::Scalar(_) => "Scalar",
+        Value::VecIndex(_) => "VecIndex",
+        Value::VecScalar(_) => "VecScalar",
+        Value::G1(_) => "G1",
+        Value::G2(_) => "G2",
+        Value::GT(_) => "GT",
+        Value::VecG1(_) => "VecG1",
+        Value::VecG2(_) => "VecG2",
+        Value::VecGT(_) => "VecGT",
+        Value::G1Affine(_) => "G1Affine",
+        Value::G2Affine(_) => "G2Affine",
+        Value::VecG1Affine(_) => "VecG1Affine",
+        Value::VecG2Affine(_) => "VecG2Affine",
+        Value::Vec(_) => "Vec",
+        Value::Record(_) => "Record",
+        Value::Poly(_) => "Poly",
     }
 }
 
@@ -380,17 +494,31 @@ where
                 let op = &**hop;
                 let operands: Vec<NodeIndex> = op.references().iter().map(|r| r.0).collect();
                 let kind = match op {
+                    Op::Value(value) => PlanOpKind::Value {
+                        expr: value_literal_expr(idx.index(), value)?,
+                    },
                     Op::Random(_, _) => PlanOpKind::Random,
                     Op::Bin(binop, _, _, _) => PlanOpKind::Bin(*binop),
                     Op::Challenge(_, _) => PlanOpKind::Challenge,
                     Op::Check(_) => PlanOpKind::Check,
                     Op::Ref(_, _) => PlanOpKind::Ref,
-                    _ => {
-                        return Err(CompilerError::UnsupportedOp {
-                            node: idx.index(),
-                            op: op_variant_name(op).to_string(),
-                        });
-                    }
+                    Op::Ram(_, _) => PlanOpKind::Ram,
+                    Op::Vec(_) => PlanOpKind::Vec,
+                    Op::Record(_) => PlanOpKind::Record,
+                    Op::Pair(_, _, _) => PlanOpKind::Pair,
+                    Op::Poly(_) => PlanOpKind::Poly,
+                    Op::Coef(_) => PlanOpKind::Coef,
+                    Op::Evaluate(_, _) => PlanOpKind::Evaluate,
+                    Op::Ifft(_) => PlanOpKind::Ifft,
+                    Op::Interpolate(_, _) => PlanOpKind::Interpolate,
+                    Op::Fft(_) => PlanOpKind::Fft,
+                    Op::Mle(_) => PlanOpKind::Mle,
+                    Op::Marginalize(_) => PlanOpKind::Marginalize,
+                    Op::Reduce(binop, _) => PlanOpKind::Reduce(*binop),
+                    Op::Proj(record, field, _) => PlanOpKind::Proj {
+                        field: field.clone(),
+                        tuple_index: record_field_index(idx.index(), &record.typ(), field)?,
+                    },
                 };
                 (kind, operands)
             }
@@ -635,7 +763,7 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
     }
 
     #[test]
-    fn unsupported_input_type_propagates_error() {
+    fn mle_input_type_builds_plan_arg() {
         use backend::ATyp;
         use graph::{ArgKind, Dag, Node};
         use lang::id::Vid;
@@ -644,24 +772,21 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
         let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
         dag.add_node(Node::Arg(
             Vid::new("p"),
-            ATyp::Uni(4),
+            ATyp::Mle(4),
             Qualifier::Public,
             Distribution::Nonuniform,
             ArgKind::Input,
         ));
 
         let options = CodegenOptions::prover();
-        let err = build_plan(&dag, &options)
-            .expect_err("build_plan must fail for an unsupported input type");
+        let plan = build_plan(&dag, &options).expect("Mle input types should render");
 
-        assert!(
-            matches!(err, CompilerError::UnsupportedType { .. }),
-            "expected UnsupportedType, got {err:?}"
-        );
+        assert_eq!(plan.inputs.len(), 1);
+        assert_eq!(plan.inputs[0].rust_type, "GeneratedMle<ark_bls12_381::Fr>");
     }
 
     #[test]
-    fn unsupported_typed_node_propagates_error() {
+    fn typed_non_input_arg_is_rejected_even_when_type_renders() {
         use backend::ATyp;
         use graph::{ArgKind, Dag, Node};
         use lang::id::Vid;
@@ -670,7 +795,7 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
         let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
         dag.add_node(Node::Arg(
             Vid::new("p"),
-            ATyp::Uni(4),
+            ATyp::Mle(4),
             Qualifier::Public,
             Distribution::Nonuniform,
             ArgKind::Relation,
@@ -678,35 +803,93 @@ proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) wh
 
         let options = CodegenOptions::prover();
         let err = build_plan(&dag, &options)
-            .expect_err("build_plan must fail for an unsupported typed non-input node");
+            .expect_err("build_plan must fail for a typed non-input arg node");
 
         assert!(
-            matches!(err, CompilerError::UnsupportedType { .. }),
-            "expected UnsupportedType, got {err:?}"
+            matches!(err, CompilerError::UnsupportedNode { .. }),
+            "expected UnsupportedNode, got {err:?}"
         );
     }
 
     #[test]
-    fn unsupported_operation_propagates_error() {
+    fn supported_value_operation_builds_plan() {
         use backend::Value;
         use backend::op::{Op, mk};
         use graph::{Dag, Node};
         use lang::typ::Nothing;
 
         let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
-        let node = dag.add_node(Node::Op(
+        dag.add_node(Node::Op(
             mk::<ArkBls12_381>(Op::Value(Value::Bool(true))),
             Nothing,
         ));
 
         let options = CodegenOptions::prover();
-        let err = build_plan(&dag, &options)
-            .expect_err("build_plan must fail for an unsupported operation");
+        let plan = build_plan(&dag, &options).expect("Value nodes are classified in the plan");
 
         assert!(
-            matches!(err, CompilerError::UnsupportedOp { node: n, .. } if n == node.index()),
-            "expected UnsupportedOp at node {}, got {err:?}",
-            node.index()
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node.op_kind, super::PlanOpKind::Value { .. })),
+            "plan should contain a Value-classified node"
         );
+    }
+
+    #[test]
+    fn remaining_polynomial_ops_are_classified_in_plan() {
+        use backend::Value;
+        use backend::op::{GOp, Op, mk};
+        use graph::{Dag, Node};
+        use lang::typ::Nothing;
+
+        fn assert_single_op_kind(
+            op: GOp<ArkBls12_381>,
+            expected: impl FnOnce(&super::PlanOpKind) -> bool,
+        ) {
+            let mut dag: Dag<ArkBls12_381, Nothing> = Dag::new();
+            dag.add_node(Node::Op(mk::<ArkBls12_381>(op), Nothing));
+
+            let options = CodegenOptions::prover();
+            let plan = build_plan(&dag, &options).expect("op should be classified in the plan");
+            assert_eq!(plan.nodes.len(), 1, "test DAG should contain one op node");
+            assert!(
+                expected(&plan.nodes[0].op_kind),
+                "unexpected op kind: {:?}",
+                plan.nodes[0].op_kind
+            );
+        }
+
+        let evals = GOp::<ArkBls12_381>::value(&Value::VecIndex(vec![1, 2]));
+        let points = GOp::<ArkBls12_381>::value(&Value::VecIndex(vec![0, 1]));
+        let poly = GOp::<ArkBls12_381>::poly(evals.clone());
+
+        assert_single_op_kind(GOp::ifft(evals.clone()), |kind| {
+            matches!(kind, super::PlanOpKind::Ifft)
+        });
+        assert_single_op_kind(GOp::fft(poly), |kind| {
+            matches!(kind, super::PlanOpKind::Fft)
+        });
+        assert_single_op_kind(GOp::interpolate(points, evals), |kind| {
+            matches!(kind, super::PlanOpKind::Interpolate)
+        });
+        assert_single_op_kind(GOp::mle(GOp::value(&Value::Bool(true))), |kind| {
+            matches!(kind, super::PlanOpKind::Mle)
+        });
+
+        let mut cfg_fields = Ctx::new();
+        cfg_fields.insert(
+            &"poly".to_string(),
+            &mk(GOp::<ArkBls12_381>::poly(GOp::value(&Value::VecIndex(
+                vec![1, 2],
+            )))),
+        );
+        cfg_fields.insert(
+            &"challenge".to_string(),
+            &mk(GOp::<ArkBls12_381>::value(&Value::Index(0))),
+        );
+        let cfg = Op::Record(cfg_fields);
+        assert_single_op_kind(GOp::marginalize(cfg), |kind| {
+            matches!(kind, super::PlanOpKind::Marginalize)
+        });
     }
 }

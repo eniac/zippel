@@ -15,10 +15,40 @@ pub(crate) fn lower_bin(node: usize, op: BinOp, left: &str, right: &str) -> Resu
         BinOp::Mul => Ok(format!("{left} * {right}")),
         BinOp::Equ => Ok(format!("{left} == {right}")),
         BinOp::And => Ok(format!("{left} && {right}")),
+        BinOp::Pow => Err(CompilerError::UnsupportedOp {
+            node,
+            op: "Pow should be handled by build_inline_expr (type-aware)".to_string(),
+        }),
+        BinOp::Concat => Ok(format!("[{left}.as_slice(), {right}.as_slice()].concat()")),
+        BinOp::Div => Ok(format!(
+            "{left} * {right}.inverse().expect(\"division by zero\")"
+        )),
+        BinOp::Rem => Ok(format!("{left} % {right}")),
         other => Err(CompilerError::UnsupportedOp {
             node,
             op: format!("{other:?}"),
         }),
+    }
+}
+
+pub(crate) fn lower_vec(elements: &[String]) -> String {
+    let elements = elements
+        .iter()
+        .map(|element| format!("{element}.clone()"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("vec![{elements}]")
+}
+
+pub(crate) fn lower_tuple(elements: &[String]) -> String {
+    let elements = elements
+        .iter()
+        .map(|element| format!("{element}.clone()"))
+        .collect::<Vec<_>>();
+    match elements.len() {
+        0 => "()".to_string(),
+        1 => format!("({},)", elements[0]),
+        _ => format!("({})", elements.join(", ")),
     }
 }
 

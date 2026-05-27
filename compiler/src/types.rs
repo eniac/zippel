@@ -2,7 +2,7 @@
 
 use backend::{ABase, ATyp};
 
-use crate::error::{CompilerError, Result};
+use crate::error::Result;
 use crate::options::CodegenOptions;
 
 /// Render a Graph IR type into a Rust type string using default node context.
@@ -14,6 +14,7 @@ pub(crate) fn render_type(typ: &ATyp, options: &CodegenOptions) -> Result<String
 /// Render a Graph IR type into a Rust type string, attaching `node` to any
 /// error for diagnostics.
 #[allow(dead_code)]
+#[allow(clippy::only_used_in_recursion)]
 pub(crate) fn render_type_at_node(
     typ: &ATyp,
     options: &CodegenOptions,
@@ -28,10 +29,7 @@ pub(crate) fn render_type_at_node(
             options.target.pairing_type
         )),
         ATyp::Base(ABase::Bool) => Ok("bool".to_string()),
-        ATyp::Base(ABase::Fin(_)) => Err(CompilerError::UnsupportedType {
-            node,
-            typ: format!("{typ:?}"),
-        }),
+        ATyp::Base(ABase::Fin(_)) => Ok("usize".to_string()),
         ATyp::Vec(inner, _len) => {
             // Graph IR vectors carry a fixed compile-time length, but we
             // render them as heap-allocated `Vec<T>` for now.  A future pass
@@ -54,10 +52,14 @@ pub(crate) fn render_type_at_node(
                 _ => format!("({})", parts.join(", ")),
             })
         }
-        ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => Err(CompilerError::UnsupportedType {
-            node,
-            typ: format!("{typ:?}"),
-        }),
+        ATyp::Uni(_) | ATyp::VPoly(_, _) => {
+            // Generated Rust currently represents univariate polynomial-shaped
+            // intermediates as coefficient vectors.  This is sufficient for
+            // the KZG codegen milestone; richer polynomial wrappers can be
+            // introduced when more polynomial operations are emitted.
+            Ok(format!("Vec<{}>", options.target.scalar_type))
+        }
+        ATyp::Mle(_) => Ok(format!("GeneratedMle<{}>", options.target.scalar_type)),
     }
 }
 
@@ -68,7 +70,6 @@ mod tests {
     use share::Ctx;
 
     use super::{render_type, render_type_at_node};
-    use crate::error::CompilerError;
     use crate::options::CodegenOptions;
 
     fn opts() -> CodegenOptions {
@@ -169,47 +170,44 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fin_until_index_codegen_is_added() {
+    fn maps_fin_to_usize_for_index_codegen() {
         let opts = opts();
         let fin_typ = ATyp::Base(ABase::Fin(CRange::new(0, 4)));
-        let err = render_type(&fin_typ, &opts).unwrap_err();
-
-        assert!(
-            matches!(err, CompilerError::UnsupportedType { .. }),
-            "expected UnsupportedType, got {err:?}"
-        );
-        assert!(
-            err.to_string().contains("Fin"),
-            "error message should mention Fin, got: {err}"
-        );
+        assert_eq!(render_type(&fin_typ, &opts).unwrap(), "usize");
     }
 
     #[test]
-    fn rejects_polynomial_types() {
+    fn maps_univariate_polynomial_types_to_scalar_vectors() {
         let opts = opts();
 
-        for typ in [ATyp::Uni(4), ATyp::Mle(3), ATyp::VPoly(2, 3)] {
-            let err = render_type(&typ, &opts).unwrap_err();
-            assert!(
-                matches!(err, CompilerError::UnsupportedType { .. }),
-                "expected UnsupportedType for {typ:?}, got {err:?}"
-            );
+        for typ in [ATyp::Uni(4), ATyp::VPoly(1, 3)] {
+            assert_eq!(render_type(&typ, &opts).unwrap(), "Vec<ark_bls12_381::Fr>");
         }
     }
 
     #[test]
-    fn render_type_at_node_propagates_node_id_in_error() {
+    fn maps_mle_to_generated_dense_mle_type() {
         let opts = opts();
-        let fin_typ = ATyp::Base(ABase::Fin(CRange::new(0, 4)));
+        assert_eq!(
+            render_type(&ATyp::Mle(3), &opts).unwrap(),
+            "GeneratedMle<ark_bls12_381::Fr>"
+        );
+    }
 
-        let err = render_type_at_node(&fin_typ, &opts, 42).unwrap_err();
+    #[test]
+    fn records_can_contain_fin_and_mle_fields() {
+        let opts = opts();
+        let mut fields: Ctx<String, ATyp> = Ctx::new();
+        fields.insert(
+            &"index".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::new(0, 4))),
+        );
+        fields.insert(&"poly".to_string(), &ATyp::Mle(3));
 
-        match err {
-            CompilerError::UnsupportedType { node, .. } => {
-                assert_eq!(node, 42, "node id must be propagated verbatim");
-            }
-            other => panic!("expected UnsupportedType, got {other:?}"),
-        }
+        assert_eq!(
+            render_type_at_node(&ATyp::Record(fields), &opts, 42).unwrap(),
+            "(usize, GeneratedMle<ark_bls12_381::Fr>)"
+        );
     }
 
     #[test]
