@@ -2,11 +2,11 @@ use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use share::Set;
 
-use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
-use crate::analyses::TransClos;
 use crate::DQDag;
 use crate::PRef;
+use crate::analyses::TransClos;
+use crate::analyses::error::AnalysisError;
+use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 use log::debug;
 
 /// Perform a completeness analysis using Groebner bases.

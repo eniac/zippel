@@ -1,8 +1,10 @@
 #[cfg(test)]
 use crate::WritePdf;
-use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{ElimTerm, GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::analyses::TransClos;
+use crate::analyses::error::AnalysisError;
+use crate::analyses::groebner::{
+    ElimTerm, GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial,
+};
 use crate::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
