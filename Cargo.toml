@@ -17,9 +17,9 @@ graph = { path = "./graph" }
 runtime = { path = "./runtime" }
 env_logger = "0.11.8"
 log = "0.4.27"
-ark-std = "0.5.0"
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = { version = "0.5.0", features = ["parallel"] }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 rand = { version = "0.8", features = ["std"] }
 spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
 
