@@ -456,7 +456,25 @@ impl Monomial for GrevLexTerm {
     where
         Self: Sized,
     {
-        crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_grevlex(num_vars, input)
+        use crate::analyses::groebner::ark_gb_adapter::{
+            collect_vars_grevlex, compute_reduced_gb_grevlex, max_vars_for_w,
+        };
+
+        let actual_nvars = collect_vars_grevlex(&input).len();
+
+        // Smart dispatch based on variable count
+        if actual_nvars <= max_vars_for_w(8) {
+            compute_reduced_gb_grevlex::<F, 8>(num_vars, input)
+        } else if actual_nvars <= max_vars_for_w(16) {
+            compute_reduced_gb_grevlex::<F, 16>(num_vars, input)
+        } else {
+            panic!(
+                "Problem has {} variables; max supported is {} (W=16). \
+                 To handle larger problems, add W=32 dispatch.",
+                actual_nvars,
+                max_vars_for_w(16)
+            )
+        }
     }
 }
 
@@ -495,7 +513,26 @@ impl Monomial for ElimTerm {
     where
         Self: Sized,
     {
-        crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_elim(num_vars, input)
+        use crate::analyses::groebner::ark_gb_adapter::{
+            collect_vars_elim, compute_reduced_gb_elim, max_vars_for_w,
+        };
+
+        let (keep_vars, elim_vars) = collect_vars_elim(&input);
+        let actual_nvars = keep_vars.len() + elim_vars.len();
+
+        // Smart dispatch based on variable count
+        if actual_nvars <= max_vars_for_w(8) {
+            compute_reduced_gb_elim::<F, 8>(num_vars, input)
+        } else if actual_nvars <= max_vars_for_w(16) {
+            compute_reduced_gb_elim::<F, 16>(num_vars, input)
+        } else {
+            panic!(
+                "Problem has {} variables; max supported is {} (W=16). \
+                 To handle larger problems, add W=32 dispatch.",
+                actual_nvars,
+                max_vars_for_w(16)
+            )
+        }
     }
 }
 

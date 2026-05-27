@@ -68,17 +68,13 @@ use crate::analyses::groebner::monomial::{
 };
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
 
-/// ark-gb's packed-monomial width. `W = 8` ⇒ up to 63 variables, 64 bytes
-/// per monomial. We pick W=8 (not the ark-gb default of 4) to fit zippel's
-/// completeness analyses (e.g. `mle_product_relation_completeness`
-/// uses 32 variables).
-const W: usize = 8;
-
-/// Max variables ark-gb's `W = 8` layout can represent.
-const MAX_VARS: usize = W * 8 - 1;
-
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
 const MAX_EXPONENT: usize = 127;
+
+/// Compute the max variables a given W layout can represent.
+pub(crate) const fn max_vars_for_w(w: usize) -> usize {
+    w * 8 - 1
+}
 
 // ---------------------------------------------------------------------------
 // Shim trait: borrow the underlying zippel `MonoTerm` from either of the
@@ -114,11 +110,9 @@ impl HasMonoTerm for ElimTerm {
 // GrevLexTerm path.
 // ---------------------------------------------------------------------------
 
-/// `GrevLexTerm` backend: routes through ark-gb's built-in
-/// `ArkGrev<W>`. Constant-only inputs are handled inline; inputs
-/// exceeding ark-gb's W=8 packed layout (>63 variables or any
-/// exponent >127) panic with a clear diagnostic.
-pub(crate) fn compute_reduced_gb_grevlex<F: Field>(
+/// `GrevLexTerm` backend: fully parametric on W.
+/// Routes through ark-gb's built-in `ArkGrev<W>`.
+pub(crate) fn compute_reduced_gb_grevlex<F: Field, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, GrevLexTerm>>,
 ) -> Vec<SparsePolynomial<F, GrevLexTerm>> {
@@ -129,7 +123,7 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field>(
         return constant_only_basis(&input);
     }
 
-    assert_fits_in_ark_gb(actual_nvars, exponents_fit(&input));
+    assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit(&input));
 
     let var_index = index_map(&var_order);
     let ring: Arc<Ring<F, W>> = Arc::new(
@@ -139,7 +133,12 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field>(
     let polys: Vec<Poly<F, ArkGrev<W>, W>> = input
         .into_iter()
         .map(|p| {
-            zippel_poly_to_ark_gb::<F, GrevLexTerm, ArkGrev<W>>(&ring, &var_index, actual_nvars, p)
+            zippel_poly_to_ark_gb::<F, GrevLexTerm, ArkGrev<W>, W>(
+                &ring,
+                &var_index,
+                actual_nvars,
+                p,
+            )
         })
         .collect();
 
@@ -147,13 +146,15 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field>(
 
     let mut out: Vec<SparsePolynomial<F, GrevLexTerm>> = gb
         .into_iter()
-        .map(|p| ark_gb_to_zippel::<F, GrevLexTerm, ArkGrev<W>>(&ring, &var_order, p))
+        .map(|p| ark_gb_to_zippel::<F, GrevLexTerm, ArkGrev<W>, W>(&ring, &var_order, p))
         .collect();
     sort_basis_by_zippel_lt(&mut out);
     out
 }
 
-fn collect_vars_grevlex<F: Field>(input: &[SparsePolynomial<F, GrevLexTerm>]) -> Vec<PRef> {
+pub(crate) fn collect_vars_grevlex<F: Field>(
+    input: &[SparsePolynomial<F, GrevLexTerm>],
+) -> Vec<PRef> {
     collect_pref_set(input).iter().cloned().collect()
 }
 
@@ -162,36 +163,65 @@ fn collect_vars_grevlex<F: Field>(input: &[SparsePolynomial<F, GrevLexTerm>]) ->
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    /// Per-byte elim mask for the currently-active ElimTerm
-    /// `compute_reduced_gb_elim` call. Byte `b` is `0x7F` if the
-    /// ark-gb variable at byte position `b` is in zippel's elimination
-    /// block, else `0`. `[u64; W]` mirrors ark-gb's W=8 packed layout
-    /// (8 u64 words × 8 bytes = 64 bytes per monomial).
-    static ELIM_BYTE_MASK: Cell<[u64; W]> = const { Cell::new([0u64; W]) };
+    /// Per-byte elim mask for W=8 layouts (up to 63 variables).
+    static ELIM_BYTE_MASK_W8: Cell<[u64; 8]> = const { Cell::new([0u64; 8]) };
+    /// Per-byte elim mask for W=16 layouts (up to 127 variables).
+    static ELIM_BYTE_MASK_W16: Cell<[u64; 16]> = const { Cell::new([0u64; 16]) };
 }
 
 /// RAII guard that installs an elim-byte-mask for the duration of a
 /// `compute_reduced_gb_elim` call, restoring the previous mask on drop.
-/// Needed because [`ZippelElimMono::cmp`] has no `&Ring` parameter and
-/// must read the partition from somewhere ambient.
-struct ElimMaskGuard {
+/// Generic over W to support both W=8 and W=16.
+struct ElimMaskGuard<const W: usize> {
     prev: [u64; W],
 }
 
-impl ElimMaskGuard {
+impl<const W: usize> ElimMaskGuard<W> {
     fn install(mask: [u64; W]) -> Self {
-        let prev = ELIM_BYTE_MASK.with(|c| {
-            let p = c.get();
-            c.set(mask);
-            p
-        });
+        let prev = match W {
+            8 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W8.with(|c| {
+                    let p = c.get();
+                    let mut m = [0u64; 8];
+                    m.copy_from_slice(&mask);
+                    c.set(m);
+                    arr_w.copy_from_slice(&p);
+                });
+                arr_w
+            }
+            16 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W16.with(|c| {
+                    let p = c.get();
+                    let mut m = [0u64; 16];
+                    m.copy_from_slice(&mask);
+                    c.set(m);
+                    arr_w.copy_from_slice(&p);
+                });
+                arr_w
+            }
+            _ => panic!("Unsupported W={W} for ElimMaskGuard"),
+        };
         Self { prev }
     }
 }
 
-impl Drop for ElimMaskGuard {
+impl<const W: usize> Drop for ElimMaskGuard<W> {
     fn drop(&mut self) {
-        ELIM_BYTE_MASK.with(|c| c.set(self.prev));
+        match W {
+            8 => {
+                let mut m = [0u64; 8];
+                m.copy_from_slice(&self.prev);
+                ELIM_BYTE_MASK_W8.with(|c| c.set(m));
+            }
+            16 => {
+                let mut m = [0u64; 16];
+                m.copy_from_slice(&self.prev);
+                ELIM_BYTE_MASK_W16.with(|c| c.set(m));
+            }
+            _ => panic!("Unsupported W={W} for ElimMaskGuard"),
+        }
     }
 }
 
@@ -199,7 +229,7 @@ impl Drop for ElimMaskGuard {
 /// elim positions and `0` elsewhere, this returns the elim-block total
 /// degree.
 #[inline]
-fn elim_total_deg(packed: &[u64; W], mask: &[u64; W]) -> u32 {
+fn elim_total_deg<const W: usize>(packed: &[u64; W], mask: &[u64; W]) -> u32 {
     let mut total: u32 = 0;
     for word in 0..W {
         let m = packed[word] & mask[word];
@@ -211,10 +241,11 @@ fn elim_total_deg(packed: &[u64; W], mask: &[u64; W]) -> u32 {
 }
 
 /// ark-gb monomial wrapper implementing zippel's block-elimination order.
+/// Generic over W to support both W=8 (up to 63 vars) and W=16 (up to 127 vars).
 ///
 /// `cmp` and `cmp_key`:
-/// * `cmp` reads the byte-mask from [`ELIM_BYTE_MASK`] (set by the
-///   active `ElimMaskGuard`) to compute the elim-block total degree;
+/// * `cmp` reads the byte-mask from the appropriate thread_local (set by the
+///   active `ElimMaskGuard<W>`) to compute the elim-block total degree;
 ///   if it ties, falls through to ark-gb's full degrevlex on the
 ///   underlying packed bytes.
 /// * `cmp_key` puts `elim_total_deg` into `pre_key` and the standard
@@ -224,26 +255,44 @@ fn elim_total_deg(packed: &[u64; W], mask: &[u64; W]) -> u32 {
 ///   "elim block rev-lex first, then keep block rev-lex" — the exact
 ///   ordering zippel's [`ElimTerm`] produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ZippelElimMono(ArkMono<W>);
+pub(crate) struct ZippelElimMono<const W: usize>(ArkMono<W>);
 
-impl From<ArkMono<W>> for ZippelElimMono {
+impl<const W: usize> From<ArkMono<W>> for ZippelElimMono<W> {
     fn from(m: ArkMono<W>) -> Self {
         ZippelElimMono(m)
     }
 }
 
-impl PartialOrd for ZippelElimMono {
+impl<const W: usize> PartialOrd for ZippelElimMono<W> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for ZippelElimMono {
+impl<const W: usize> Ord for ZippelElimMono<W> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        let mask = ELIM_BYTE_MASK.with(|c| c.get());
-        let a_elim = elim_total_deg(self.0.packed(), &mask);
-        let b_elim = elim_total_deg(other.0.packed(), &mask);
+        let mask = match W {
+            8 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W8.with(|c| {
+                    let m = c.get();
+                    arr_w.copy_from_slice(&m);
+                });
+                arr_w
+            }
+            16 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W16.with(|c| {
+                    let m = c.get();
+                    arr_w.copy_from_slice(&m);
+                });
+                arr_w
+            }
+            _ => panic!("Unsupported W={W} in ZippelElimMono::cmp"),
+        };
+        let a_elim = elim_total_deg::<W>(self.0.packed(), &mask);
+        let b_elim = elim_total_deg::<W>(other.0.packed(), &mask);
         match a_elim.cmp(&b_elim) {
             Ordering::Equal => {}
             ord => return ord,
@@ -253,7 +302,7 @@ impl Ord for ZippelElimMono {
     }
 }
 
-impl<F: Field> ArkMonomial<F, W> for ZippelElimMono {
+impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
     #[inline]
     fn one(ring: &Ring<F, W>) -> Self {
         ZippelElimMono(ArkMono::<W>::one(ring))
@@ -301,18 +350,35 @@ impl<F: Field> ArkMonomial<F, W> for ZippelElimMono {
         // XOR-flipped packed bytes; since the adapter assigned elim
         // `PRef`s to high ark-gb indices, the natural byte order gives
         // the within-block reverse-lex tiebreak in the correct blocks.
-        let mask = ELIM_BYTE_MASK.with(|c| c.get());
-        let elim_deg = elim_total_deg(packed.packed(), &mask) as u64;
+        let mask = match W {
+            8 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W8.with(|c| {
+                    let m = c.get();
+                    arr_w.copy_from_slice(&m);
+                });
+                arr_w
+            }
+            16 => {
+                let mut arr_w = [0u64; W];
+                ELIM_BYTE_MASK_W16.with(|c| {
+                    let m = c.get();
+                    arr_w.copy_from_slice(&m);
+                });
+                arr_w
+            }
+            _ => panic!("Unsupported W={W} in ZippelElimMono::cmp_key"),
+        };
+        let elim_deg = elim_total_deg::<W>(packed.packed(), &mask) as u64;
         let flip = ring.cmp_flip_mask();
         let key: [u64; W] = std::array::from_fn(|i| packed.packed()[i] ^ flip[i]);
         (elim_deg, key)
     }
 }
 
-/// `ElimTerm` backend: route to ark-gb with elim-aware monomial
-/// ordering. Constant-only inputs are handled inline; inputs
-/// exceeding ark-gb's W=8 packed layout panic with a clear diagnostic.
-pub(crate) fn compute_reduced_gb_elim<F: Field>(
+/// `ElimTerm` backend: fully parametric on W.
+/// Routes to ark-gb with elim-aware monomial ordering.
+pub(crate) fn compute_reduced_gb_elim<F: Field, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, ElimTerm>>,
 ) -> Vec<SparsePolynomial<F, ElimTerm>> {
@@ -324,7 +390,7 @@ pub(crate) fn compute_reduced_gb_elim<F: Field>(
         return constant_only_basis(&input);
     }
 
-    assert_fits_in_ark_gb(actual_nvars, exponents_fit(&input));
+    assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit(&input));
 
     // Var order: keeps at indices [0, |keep|), elims at [|keep|, nvars).
     // Eliminated PRefs at high indices map to high byte positions in
@@ -340,26 +406,34 @@ pub(crate) fn compute_reduced_gb_elim<F: Field>(
         Ring::<F, W>::new(actual_nvars as u32).expect("nvars within ark-gb packing layout"),
     );
 
-    let _guard = ElimMaskGuard::install(build_elim_byte_mask(keep_vars.len(), actual_nvars));
+    let _guard =
+        ElimMaskGuard::<W>::install(build_elim_byte_mask::<W>(keep_vars.len(), actual_nvars));
 
-    let polys: Vec<Poly<F, ZippelElimMono, W>> = input
+    let polys: Vec<Poly<F, ZippelElimMono<W>, W>> = input
         .into_iter()
         .map(|p| {
-            zippel_poly_to_ark_gb::<F, ElimTerm, ZippelElimMono>(&ring, &var_index, actual_nvars, p)
+            zippel_poly_to_ark_gb::<F, ElimTerm, ZippelElimMono<W>, W>(
+                &ring,
+                &var_index,
+                actual_nvars,
+                p,
+            )
         })
         .collect();
 
-    let gb = ark_gb::bba::compute_gb_serial::<F, ZippelElimMono, W>(Arc::clone(&ring), polys);
+    let gb = ark_gb::bba::compute_gb_serial::<F, ZippelElimMono<W>, W>(Arc::clone(&ring), polys);
 
     let mut out: Vec<SparsePolynomial<F, ElimTerm>> = gb
         .into_iter()
-        .map(|p| ark_gb_to_zippel::<F, ElimTerm, ZippelElimMono>(&ring, &var_order, p))
+        .map(|p| ark_gb_to_zippel::<F, ElimTerm, ZippelElimMono<W>, W>(&ring, &var_order, p))
         .collect();
     sort_basis_by_zippel_lt(&mut out);
     out
 }
 
-fn collect_vars_elim<F: Field>(input: &[SparsePolynomial<F, ElimTerm>]) -> (Vec<PRef>, Vec<PRef>) {
+pub(crate) fn collect_vars_elim<F: Field>(
+    input: &[SparsePolynomial<F, ElimTerm>],
+) -> (Vec<PRef>, Vec<PRef>) {
     let set = collect_pref_set(input);
     let mut keep: Vec<PRef> = Vec::new();
     let mut elim: Vec<PRef> = Vec::new();
@@ -377,7 +451,7 @@ fn collect_vars_elim<F: Field>(input: &[SparsePolynomial<F, ElimTerm>]) -> (Vec<
 /// to elim vars. With elim vars at ark-gb indices `[num_keep, nvars)`,
 /// their byte positions are `byte_index_for_var(nvars, i) = i + (W*8 - 1) - nvars`
 /// for `i ∈ [num_keep, nvars)`. We OR `0x7F` into those byte slots.
-fn build_elim_byte_mask(num_keep: usize, nvars: usize) -> [u64; W] {
+fn build_elim_byte_mask<const W: usize>(num_keep: usize, nvars: usize) -> [u64; W] {
     let mut mask = [0u64; W];
     for i in num_keep..nvars {
         let byte_idx = i + W * 8 - 1 - nvars;
@@ -422,7 +496,12 @@ fn exponents_fit<F: Field, T: ZipMonomial + HasMonoTerm>(input: &[SparsePolynomi
 /// (in the ark-gb monomial type `M`). Caller guarantees every `PRef` in the
 /// term is present in `var_index`, and per-variable exponents fit (checked
 /// by `exponents_fit` before invocation).
-fn zippel_poly_to_ark_gb<F: Field, T: ZipMonomial + HasMonoTerm, M: ArkMonomial<F, W>>(
+fn zippel_poly_to_ark_gb<
+    F: Field,
+    T: ZipMonomial + HasMonoTerm,
+    M: ArkMonomial<F, W>,
+    const W: usize,
+>(
     ring: &Ring<F, W>,
     var_index: &Ctx<PRef, usize>,
     nvars: usize,
@@ -450,7 +529,7 @@ fn zippel_poly_to_ark_gb<F: Field, T: ZipMonomial + HasMonoTerm, M: ArkMonomial<
 /// Convert an ark-gb polynomial back to a zippel polynomial in the term
 /// type `T`. `T: From<Vec<(PRef, usize)>>` is implied by the `Monomial`
 /// supertrait, so the bound is automatic.
-fn ark_gb_to_zippel<F: Field, T: ZipMonomial, M: ArkMonomial<F, W>>(
+fn ark_gb_to_zippel<F: Field, T: ZipMonomial, M: ArkMonomial<F, W>, const W: usize>(
     ring: &Ring<F, W>,
     var_order: &[PRef],
     p: Poly<F, M, W>,
@@ -485,13 +564,15 @@ fn index_map(var_order: &[PRef]) -> Ctx<PRef, usize> {
         })
 }
 
-/// Panic if the input exceeds ark-gb's W=8 packed-monomial layout.
+/// Assert that the input fits ark-gb's `W` layout (≤ max_vars variables,
+/// all exponents ≤ 127). Panics with a clear diagnostic if not.
 /// Caller has already handled the `actual_nvars == 0` (constant-only) case.
-fn assert_fits_in_ark_gb(actual_nvars: usize, exponents_ok: bool) {
+fn assert_fits_in_ark_gb<const W: usize>(actual_nvars: usize, exponents_ok: bool) {
+    let max_vars = max_vars_for_w(W);
     assert!(
-        actual_nvars <= MAX_VARS,
-        "input has {actual_nvars} variables; ark-gb's W=8 layout supports ≤ {MAX_VARS}. \
-         Bump the const-generic W in the adapter to support larger problems."
+        actual_nvars <= max_vars,
+        "input has {actual_nvars} variables; ark-gb's W={W} layout supports ≤ {max_vars}. \
+         Bump W or file an issue if you need support for larger problems."
     );
     assert!(
         exponents_ok,

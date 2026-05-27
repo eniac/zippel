@@ -43,7 +43,8 @@ fn fmt_dur(d: Duration) -> String {
 fn compare(label: &str, num_vars: usize, input: Vec<SparsePolynomial<Fr, GrevLexTerm>>) {
     let (legacy_result, t_legacy) =
         time_once(|| legacy_compute_reduced_gb(num_vars, input.clone()));
-    let (ark_result, t_ark) = time_once(|| compute_reduced_gb_grevlex(num_vars, input.clone()));
+    let (ark_result, t_ark) =
+        time_once(|| compute_reduced_gb_grevlex::<_, 8>(num_vars, input.clone()));
 
     let ratio = t_legacy.as_secs_f64() / t_ark.as_secs_f64().max(1e-9);
     println!(

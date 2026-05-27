@@ -11,19 +11,11 @@ thiserror = "2.0.11"
 backend = { path = "../backend" }
 share = { path = "../share" }
 lang = { path = "../lang" }
-<<<<<<< HEAD
-ark-gb = { path = "../../ark-gb" }
+ark-gb = { git = "https://github.com/elefthei/ark-gb.git" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-=======
-ark-gb = { git = "https://github.com/elefthei/ark-gb.git" }
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
->>>>>>> c18cd2a (build(graph): use git dep for ark-gb instead of path)
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = { version = "0.5.0", features = ["parallel"] }
 log = "0.4.27"
