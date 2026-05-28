@@ -149,9 +149,12 @@ pub struct GroebnerNamespace<C: ArkConfig> {
     pub args: Set<PRef>,
     pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
     /// Monotonically decreasing counter for sentinel PRef NodeIndex allocation.
-    /// Reserves usize::MAX-0 for __gt__. Div witnesses and other sentinels start
-    /// at MAX-1 and count down.
+    /// Starts at usize::MAX and decrements; so sentinel indices never collide
+    /// with real DAG node indices (which grow up from 0).
     sentinel_counter: usize,
+    /// Cached GT sentinel — allocated once via sentinel_pref on first call to
+    /// gt_pref(), then reused.
+    gt_sentinel: Option<PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
@@ -159,9 +162,8 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         Self {
             args: Set::new(),
             div_wit: Ctx::new(),
-            // Reserve usize::MAX-0 for group sentinels.
-            // Div witnesses and other sentinels start from MAX-1 downward.
-            sentinel_counter: usize::MAX - 1,
+            sentinel_counter: usize::MAX,
+            gt_sentinel: None,
         }
     }
 
@@ -177,23 +179,18 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         pref
     }
 
-    /// Phase 12: lazy accessor for the GT generator sentinel `__gt__`.
-    /// Uses the reserved slot at `usize::MAX`.
+    /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
+    /// Idempotent — allocates once, then returns the cached PRef.
     pub fn gt_pref(&mut self, np: &mut Ctx<PRef, GOp<C>>) -> PRef {
-        let vid = Vid::from("__gt__");
-        let idx = NodeIndex::new(usize::MAX);
-        let pref = PRef::from_var(
-            vid,
-            idx,
-            ATyp::gt(),
-            0,
-            Qualifier::Public,
-            Distribution::default(),
-        );
-        if !np.contains(&pref) {
-            np.insert(&pref, &Op::Ref(pref.reference, ATyp::gt()));
+        if let Some(pr) = self.gt_sentinel.as_ref() {
+            return pr.clone();
         }
-        pref
+        let pr = self.sentinel_pref("__zippel::gb::gt", ATyp::gt());
+        if !np.contains(&pr) {
+            np.insert(&pr, &Op::Ref(pr.reference, ATyp::gt()));
+        }
+        self.gt_sentinel = Some(pr.clone());
+        pr
     }
 }
 
@@ -382,14 +379,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         )
     }
 
-    /// Phase 12: lazy accessor for the GT generator sentinel `__gt__`.
+    /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
     ///
     /// `Op::Pair(a, b)` emits the basis row
-    ///   `var(pr) − to_poly(a)·to_poly(b)·var(__gt__) = 0`
+    ///   `var(pr) − to_poly(a)·to_poly(b)·var(__zippel::gb::gt) = 0`
     /// which encodes the pairing axiom
-    ///   `pair(__g1__, __g2__) = __gt__`
+    ///   `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
     /// combined with bilinearity:
-    ///   `pair(α·__g1__, β·__g2__) = α·β·__gt__`.
+    ///   `pair(α·g1, β·g2) = α·β·gt`.
     fn gt_pref(&mut self, result: &mut GroebnerResult<C, T>) -> PRef {
         self.ns.gt_pref(&mut result.np)
     }
@@ -459,11 +456,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let mq = ma - mb;
         let mr = mb - 1;
 
-        // Mint stable witness PRefs. Offsets 1000+2k / 1001+2k are far from
-        // the phase-12 sentinel offsets (1..3) and from real DAG node indices.
+        // Mint stable witness PRefs using reserved synthetic names.
         let counter = self.ns.div_wit.len();
-        let q_name = format!("__div_q_{}__", counter);
-        let r_name = format!("__div_r_{}__", counter);
+        let q_name = format!("__zippel::gb::div_q::{}", counter);
+        let r_name = format!("__zippel::gb::div_r::{}", counter);
         let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), result);
         let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), result);
 
@@ -829,19 +825,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Phase 12: `Op::Pair(a, b, _)` — bilinear pairing.
             //
             // In exponent space, if we model every group element as
-            //   E : G1 ≅ e_E · __g1__,   F : G2 ≅ e_F · __g2__
+            //   E : G1 ≅ e_E · g1,   F : G2 ≅ e_F · g2
             // then by bilinearity
-            //   pair(E, F) = e_E · e_F · pair(__g1__, __g2__)
-            //             = e_E · e_F · __gt__.
+            //   pair(E, F) = e_E · e_F · pair(g1, g2)
+            //             = e_E · e_F · gt.
             //
             // Since the existing Bin(Add/Sub/Mul) arms on group-typed
             // operands already propagate through `to_poly` as F-ring
             // arithmetic on the group vars (treating each group var
             // as its own exponent), we can read the exponent of each
             // operand directly off `to_poly(a)[0]` / `to_poly(b)[0]`.
-            // The final `var(__gt__)` factor carries the GT "unit" and
+            // The final `var(gt)` factor carries the GT "unit" and
             // lets `pair(P,Q) + pair(P',Q)` collapse to
-            // `(e_P + e_P') · e_Q · var(__gt__)` under Buchberger.
+            // `(e_P + e_P') · e_Q · var(gt)` under Buchberger.
             Op::Pair(a, b, _) => {
                 let e_a = self
                     .to_poly(a.get(), result)
@@ -1306,14 +1302,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.np.insert(&pr, &raw);
                 }
             }
-            // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via __gt__
-            // sentinel. The result `pr : GT` is bound to the exponent-space
-            // bilinear form:
+            // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
+            // `__zippel::gb::gt` sentinel. The result `pr : GT` is bound to
+            // the exponent-space bilinear form:
             //
-            //   var(pr) = to_poly(a) · to_poly(b) · var(__gt__)
+            //   var(pr) = to_poly(a) · to_poly(b) · var(__zippel::gb::gt)
             //
-            // which encodes both the pairing axiom `pair(__g1__, __g2__) =
-            // __gt__` and full bilinearity. Matching pair expressions on both
+            // which encodes both the pairing axiom
+            // `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
+            // and full bilinearity. Matching pair expressions on both
             // sides of a `verify(lhs == rhs)` then cancel under Buchberger
             // because their basis rows are identical F-polynomials.
             Op::Pair(ref a, ref b, _) => {
@@ -2711,18 +2708,18 @@ mod tests {
         builder.add_op(result.clone(), op, &mut gresult);
 
         // Recover the q_wit / r_wit PRefs (minted by sentinel_pref starting
-        // at MAX-1 and decrementing: q_wit=MAX-1, r_wit=MAX-2).
+        // at MAX and decrementing: q_wit=MAX, r_wit=MAX-1).
         let q_wit = PRef::from_var(
-            Vid::from("__div_q_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 1),
+            Vid::from("__zippel::gb::div_q::0"),
+            petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
             0,
             Qualifier::Public,
             Distribution::default(),
         );
         let r_wit = PRef::from_var(
-            Vid::from("__div_r_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 2),
+            Vid::from("__zippel::gb::div_r::0"),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
             Qualifier::Public,
@@ -2854,9 +2851,10 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
+        // q_wit=MAX, r_wit=MAX-1 (fresh builder, counter starts at MAX).
         let r_wit = PRef::from_var(
-            Vid::from("__div_r_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 2),
+            Vid::from("__zippel::gb::div_r::0"),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
             Qualifier::Public,

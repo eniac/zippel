@@ -56,7 +56,7 @@ impl<C: ArkConfig> ZippelDomainSeparator<C> {
                 let vid_bytes = vid.0.as_bytes();
                 instance_buf.extend_from_slice(vid_bytes);
 
-                let type_size = arg.typ.size();
+                let type_size = arg.typ.physical_len();
                 instance_buf.extend_from_slice(&(type_size as u64).to_le_bytes());
             }
         }

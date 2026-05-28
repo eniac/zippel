@@ -150,7 +150,7 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
     match t {
         ATyp::Uni(m) => ATyp::vec(&ATyp::scalar(), m + 1),
         ATyp::Mle(n) => ATyp::vec(&ATyp::scalar(), 1usize << n),
-        v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.size()),
+        v @ ATyp::VPoly(_, _) => ATyp::vec(&ATyp::scalar(), v.physical_len()),
         ATyp::Vec(box elem, n) => ATyp::vec(&elem, n), // already a vec; identity
         other => other,                                // defensive
     }

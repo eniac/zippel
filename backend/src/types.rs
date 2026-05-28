@@ -162,14 +162,122 @@ impl ATyp {
     /// - `Mle(n)` has `2^n` evaluations over the boolean hypercube.
     /// - `VPoly(n, m)` has `C(m + n, n)` multi-indices with total
     ///   degree `≤ m`.
-    pub fn size(&self) -> usize {
+    pub fn physical_len(&self) -> usize {
         match self {
-            ATyp::Vec(t, n) => t.size() * n,
+            ATyp::Vec(t, n) => t.physical_len() * n,
             ATyp::Base(_) => 1,
-            ATyp::Record(fields) => fields.iter().map(|(_, t)| t.size()).sum(),
+            ATyp::Record(fields) => fields.iter().map(|(_, t)| t.physical_len()).sum(),
             ATyp::Uni(m) => *m + 1,
             ATyp::Mle(n) => 1usize << *n,
             ATyp::VPoly(n, m) => binomial(*m + *n, *n),
+        }
+    }
+
+    /// Number of logical slots in this type.
+    ///
+    /// - `Vec(T, n)` → `n` (one logical slot per element)
+    /// - `Uni(m)` → `m + 1` (one coefficient per degree level)
+    /// - `Mle(n)` → `2^n`
+    /// - `VPoly(n, m)` → `C(m + n, n)`
+    /// - `Base` / `Record` → `size()` (no logical/physical split)
+    pub fn logical_len(&self) -> usize {
+        match self {
+            ATyp::Vec(_, n) => *n,
+            ATyp::Uni(m) => *m + 1,
+            ATyp::Mle(n) => 1usize << *n,
+            ATyp::VPoly(n, m) => binomial(*m + *n, *n),
+            ATyp::Base(_) | ATyp::Record(_) => self.physical_len(),
+        }
+    }
+
+    /// Type of logical slot `i`. Returns `None` if `i >= logical_len()`.
+    ///
+    /// - `Vec(T, n)` → `T` for all slots
+    /// - All polynomial types → `ATyp::scalar()`
+    /// - `Base` → `None` (only one slot, use `size()` = 1)
+    /// - `Record` → type of field `i`
+    pub fn logical_slot_type(&self, i: usize) -> Option<ATyp> {
+        match self {
+            ATyp::Vec(t, n) => {
+                if i < *n {
+                    Some((**t).clone())
+                } else {
+                    None
+                }
+            }
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                if i < self.logical_len() {
+                    Some(ATyp::scalar())
+                } else {
+                    None
+                }
+            }
+            ATyp::Base(_) => None,
+            ATyp::Record(fields) => fields.iter().nth(i).map(|(_, t)| t.clone()),
+        }
+    }
+
+    /// Physical offset of logical slot `i`. Returns `None` if `i >= logical_len()`.
+    ///
+    /// - `Vec(T, n)` → `i * T.physical_len()` (each element occupies `T.physical_len()` physical slots)
+    /// - All polynomial types → `i` (each coefficient is one physical slot)
+    /// - `Base` → `None`
+    /// - `Record` → sum of sizes of preceding fields
+    pub fn logical_slot_offset(&self, i: usize) -> Option<usize> {
+        match self {
+            ATyp::Vec(t, n) => {
+                if i < *n {
+                    Some(i * t.physical_len())
+                } else {
+                    None
+                }
+            }
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                if i < self.logical_len() {
+                    Some(i)
+                } else {
+                    None
+                }
+            }
+            ATyp::Base(_) => None,
+            ATyp::Record(fields) => {
+                if i < fields.len() {
+                    Some(fields.iter().take(i).map(|(_, t)| t.physical_len()).sum())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Type at physical slot offset `i`. Returns `None` if `i >= physical_len()`.
+    ///
+    /// For leaf types (scalar, group), every physical slot is the same type.
+    /// For `Vec(T, n)`, physical slots are `T.physical_len()` wide per element.
+    /// For `Record`, physical slots follow field order.
+    pub fn physical_slot_type(&self, i: usize) -> Option<ATyp> {
+        if i >= self.physical_len() {
+            return None;
+        }
+        match self {
+            ATyp::Base(b) => Some(ATyp::Base(b.clone())),
+            ATyp::Vec(t, _n) => {
+                let inner_size = t.physical_len();
+                let slot_in_elem = i % inner_size;
+                t.physical_slot_type(slot_in_elem)
+            }
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => Some(ATyp::scalar()),
+            ATyp::Record(fields) => {
+                let mut offset = 0;
+                for (_, ft) in fields.iter() {
+                    let fsize = ft.physical_len();
+                    if i < offset + fsize {
+                        return ft.physical_slot_type(i - offset);
+                    }
+                    offset += fsize;
+                }
+                None
+            }
         }
     }
 
@@ -1193,5 +1301,131 @@ mod tests {
             );
             Ok(())
         });
+    }
+
+    // --- Type-layout API tests ---
+
+    #[test]
+    fn logical_len_scalar() {
+        assert_eq!(ATyp::scalar().logical_len(), 1);
+    }
+
+    #[test]
+    fn logical_len_g1() {
+        assert_eq!(ATyp::g1().logical_len(), 1);
+    }
+
+    #[test]
+    fn logical_len_vec_scalar() {
+        assert_eq!(ATyp::vec_scalar(5).logical_len(), 5);
+    }
+
+    #[test]
+    fn logical_len_vec_g1() {
+        assert_eq!(ATyp::vec_g1(3).logical_len(), 3);
+    }
+
+    #[test]
+    fn logical_len_uni() {
+        assert_eq!(ATyp::uni(4).logical_len(), 5);
+    }
+
+    #[test]
+    fn logical_len_mle() {
+        assert_eq!(ATyp::mle(3).logical_len(), 8);
+    }
+
+    #[test]
+    fn logical_len_vpoly() {
+        assert_eq!(ATyp::vpoly(2, 3).logical_len(), 10); // C(5,2)=10
+    }
+
+    #[test]
+    fn logical_slot_type_vec_scalar() {
+        let t = ATyp::vec_scalar(3);
+        for i in 0..3 {
+            assert_eq!(t.logical_slot_type(i), Some(ATyp::scalar()));
+        }
+        assert_eq!(t.logical_slot_type(3), None);
+    }
+
+    #[test]
+    fn logical_slot_type_vpoly() {
+        let t = ATyp::vpoly(2, 3);
+        for i in 0..10 {
+            assert_eq!(t.logical_slot_type(i), Some(ATyp::scalar()));
+        }
+        assert_eq!(t.logical_slot_type(10), None);
+    }
+
+    #[test]
+    fn logical_slot_type_uni() {
+        let t = ATyp::uni(4);
+        for i in 0..5 {
+            assert_eq!(t.logical_slot_type(i), Some(ATyp::scalar()));
+        }
+        assert_eq!(t.logical_slot_type(5), None);
+    }
+
+    #[test]
+    fn logical_slot_offset_vec_scalar() {
+        let t = ATyp::vec_scalar(4);
+        assert_eq!(t.logical_slot_offset(0), Some(0));
+        assert_eq!(t.logical_slot_offset(1), Some(1));
+        assert_eq!(t.logical_slot_offset(3), Some(3));
+        assert_eq!(t.logical_slot_offset(4), None);
+    }
+
+    #[test]
+    fn logical_slot_offset_vec_g1() {
+        let t = ATyp::vec_g1(3);
+        assert_eq!(t.logical_slot_offset(0), Some(0));
+        assert_eq!(t.logical_slot_offset(1), Some(1));
+        assert_eq!(t.logical_slot_offset(2), Some(2));
+        assert_eq!(t.logical_slot_offset(3), None);
+    }
+
+    #[test]
+    fn logical_slot_offset_vpoly() {
+        let t = ATyp::vpoly(2, 3);
+        assert_eq!(t.logical_slot_offset(0), Some(0));
+        assert_eq!(t.logical_slot_offset(9), Some(9));
+        assert_eq!(t.logical_slot_offset(10), None);
+    }
+
+    #[test]
+    fn physical_slot_type_scalar() {
+        assert_eq!(ATyp::scalar().physical_slot_type(0), Some(ATyp::scalar()));
+        assert_eq!(ATyp::scalar().physical_slot_type(1), None);
+    }
+
+    #[test]
+    fn physical_slot_type_g1() {
+        assert_eq!(ATyp::g1().physical_slot_type(0), Some(ATyp::g1()));
+        assert_eq!(ATyp::g1().physical_slot_type(1), None);
+    }
+
+    #[test]
+    fn physical_slot_type_vec_scalar() {
+        let t = ATyp::vec_scalar(4);
+        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(3), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(4), None);
+    }
+
+    #[test]
+    fn physical_slot_type_uni() {
+        let t = ATyp::uni(4);
+        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(4), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(5), None);
+    }
+
+    #[test]
+    fn physical_slot_type_vpoly() {
+        let t = ATyp::vpoly(2, 3);
+        assert_eq!(t.physical_slot_type(0), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(9), Some(ATyp::scalar()));
+        assert_eq!(t.physical_slot_type(10), None);
     }
 }

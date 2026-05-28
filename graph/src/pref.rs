@@ -195,17 +195,17 @@ impl PRef {
             Some(v) => format!("{}", v),
             None => format!("{}", self.reference),
         };
-        if self.typ.size() > 1 && self.distribution.is_uniform() {
+        if self.typ.physical_len() > 1 && self.distribution.is_uniform() {
             format!(
                 "{} uniform {}[{}]: {}",
                 self.qualifier, label, self.index, self.typ
             )
-        } else if self.typ.size() > 1 && self.distribution.is_uniform_nz() {
+        } else if self.typ.physical_len() > 1 && self.distribution.is_uniform_nz() {
             format!(
                 "{} uniform* {}[{}]: {}",
                 self.qualifier, label, self.index, self.typ
             )
-        } else if self.typ.size() > 1 {
+        } else if self.typ.physical_len() > 1 {
             format!("{} {}[{}]: {}", self.qualifier, label, self.index, self.typ)
         } else if self.distribution.is_uniform() {
             format!("{} uniform {}: {}", self.qualifier, label, self.typ)
