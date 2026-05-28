@@ -26,6 +26,10 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn from_input(dag: &DQDag<C>) -> Self {
+        Self::from_input_with_w::<8>(dag)
+    }
+
+    pub fn from_input_with_w<const W: usize>(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
         gb.add_input(dag);
 
@@ -34,13 +38,13 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         // relation-only basis to later identify and skip precondition polys.
         let relation_basis = if dag.relation_node().is_some() {
             gb.add_relation(dag);
-            // Build a relation-only basis using the *same* canonical args
-            // as the main builder, so polynomials in the two bases share
-            // variable names and `contains_poly` matches correctly.
+            // Build a relation-only basis using the *same* canonical args and
+            // packed width as the main builder, so polynomials in the two bases
+            // share variable names and `contains_poly` matches correctly.
             let mut rel_gb = GroebnerBuilder::new();
             rel_gb.register_input_args(dag);
             rel_gb.add_relation(dag);
-            rel_gb.run::<8>(); // Small problems, use W=8
+            rel_gb.run::<W>();
             Some(rel_gb.basis)
         } else {
             None
@@ -131,8 +135,8 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     /// Run knowledge analysis.
     ///
-    /// W is the packed monomial width (8 or 16). Caller must ensure W is
-    /// appropriate for the problem size (≤63 vars for W=8, ≤127 vars for W=16).
+    /// W is the packed monomial width. Caller must ensure W is appropriate
+    /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
         self.builder.run::<W>();

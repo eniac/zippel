@@ -4,7 +4,10 @@ use graph::Dag;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{
     UDag, UDags,
-    analyses::{AnalysisError, CompletenessAnalysis, QualifierPropagation, UniformityPropagation},
+    analyses::{
+        AnalysisError, CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation,
+        UniformityPropagation,
+    },
 };
 use graph::{WritePdf, analyses::KnowledgeAnalysis};
 use lang::ast::{CModule, UModule};
@@ -328,7 +331,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-        let result = completeness.run::<8>();
+        let result = completeness.run::<DEFAULT_GB_W>();
         match &result {
             Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
             Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),
@@ -338,8 +341,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
     pub fn analyze_knowledge(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
-        let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
-        let result = knowledge.run::<8>();
+        let mut knowledge = KnowledgeAnalysis::from_input_with_w::<DEFAULT_GB_W>(g_analyze);
+        let result = knowledge.run::<DEFAULT_GB_W>();
         match &result {
             Ok(()) => info!("ZK protocol: {}", g_analyze.name()),
             Err(e) => info!("Knowledge leak in {}: {}", g_analyze.name(), e),

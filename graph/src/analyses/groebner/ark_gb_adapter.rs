@@ -29,18 +29,15 @@
 //!
 //! 1. Collect the union of `PRef`s used in `input`.
 //! 2. Partition (elim path only) and assign ark-gb indices `0..nvars`.
-//! 3. Build `Arc<Ring<F, W>>` (W = 8 ⇒ ≤ 63 variables).
+//! 3. Build `Arc<Ring<F, W>>` (W = 128 ⇒ ≤ 1023 variables).
 //! 4. Convert each `SparsePolynomial` to `ark_gb::Poly<F, M, W>`.
 //! 5. Call `ark_gb::compute_gb(ring, polys)`.
 //! 6. Convert the result back to zippel's `Vec<SparsePolynomial<F, T>>`.
 //!
 //! # Limits
 //!
-//! The W=8 packing (64 bytes per monomial) supports ≤ 63 variables and
-//! per-var exponents ≤ 127. Inputs exceeding either bound panic with a
-//! clear message — every workload we currently care about (Buchberger
-//! benches, all `knowledge` and `completeness` analyses, including the
-//! 32-var `mle_product_relation_completeness`) fits comfortably.
+//! The W packing supports `W * 8 - 1` variables and per-var exponents ≤ 127.
+//! Inputs exceeding either bound panic with a clear message.
 //! Inputs whose union of `PRef`s is empty are handled inline (all-constant
 //! polynomials → the unit ideal `[1]` if any constant is nonzero, else
 //! the empty basis).
@@ -180,6 +177,8 @@ thread_local! {
     static ELIM_BYTE_MASK_W8: Cell<[u64; 8]> = const { Cell::new([0u64; 8]) };
     /// Per-byte elim mask for W=16 layouts (up to 127 variables).
     static ELIM_BYTE_MASK_W16: Cell<[u64; 16]> = const { Cell::new([0u64; 16]) };
+    /// Per-byte elim mask for W=128 layouts (up to 1023 variables).
+    static ELIM_BYTE_MASK_W128: Cell<[u64; 128]> = const { Cell::new([0u64; 128]) };
 }
 
 /// Get the current elim mask from thread-local storage.
@@ -197,6 +196,14 @@ fn get_elim_mask<const W: usize>() -> [u64; W] {
         16 => {
             let mut result = [0u64; W];
             ELIM_BYTE_MASK_W16.with(|c| {
+                let mask = c.get();
+                result.copy_from_slice(&mask);
+            });
+            result
+        }
+        128 => {
+            let mut result = [0u64; W];
+            ELIM_BYTE_MASK_W128.with(|c| {
                 let mask = c.get();
                 result.copy_from_slice(&mask);
             });
@@ -220,13 +227,18 @@ fn set_elim_mask<const W: usize>(mask: &[u64; W]) {
             m.copy_from_slice(mask);
             ELIM_BYTE_MASK_W16.with(|c| c.set(m));
         }
+        128 => {
+            let mut m = [0u64; 128];
+            m.copy_from_slice(mask);
+            ELIM_BYTE_MASK_W128.with(|c| c.set(m));
+        }
         _ => panic!("Unsupported W={W} for elim mask"),
     }
 }
 
 /// RAII guard that installs an elim-byte-mask for the duration of a
 /// `compute_reduced_gb_elim` call, restoring the previous mask on drop.
-/// Generic over W to support both W=8 and W=16.
+/// Generic over W to support W=8, W=16, and W=128.
 struct ElimMaskGuard<const W: usize> {
     prev: [u64; W],
 }
@@ -261,7 +273,7 @@ fn elim_total_deg<const W: usize>(packed: &[u64; W], mask: &[u64; W]) -> u32 {
 }
 
 /// ark-gb monomial wrapper implementing zippel's block-elimination order.
-/// Generic over W to support both W=8 (up to 63 vars) and W=16 (up to 127 vars).
+/// Generic over W to support W=8, W=16, and W=128 layouts.
 ///
 /// `cmp` and `cmp_key`:
 /// * `cmp` reads the byte-mask from the appropriate thread_local (set by the
@@ -593,4 +605,35 @@ fn sort_basis_by_zippel_lt<F: Field, T: ZipMonomial>(basis: &mut [SparsePolynomi
         let lt2 = p2.leading_term().map(|(_, t)| t);
         lt1.cmp(&lt2)
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bls12_381::Fr;
+    use backend::ATyp;
+    use lang::typ::{Distribution, Qualifier};
+    use petgraph::graph::NodeIndex;
+
+    #[test]
+    fn elim_adapter_supports_w128_with_more_than_127_variables() {
+        let vars = (0..130)
+            .map(|i| {
+                PRef::from_node(
+                    NodeIndex::new(i + 1),
+                    ATyp::scalar(),
+                    0,
+                    Qualifier::Local,
+                    Distribution::Nonuniform,
+                )
+            })
+            .map(|v| (v, 1usize))
+            .collect::<Vec<_>>();
+        let product = ElimTerm::from(vars);
+        let polynomial = SparsePolynomial::from(vec![(&product, Fr::from(1u64))]);
+
+        let basis = compute_reduced_gb_elim::<Fr, 128>(130, vec![polynomial]);
+
+        assert_eq!(basis.len(), 1);
+    }
 }

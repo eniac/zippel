@@ -69,8 +69,8 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 
     /// Run completeness analysis.
     ///
-    /// W is the packed monomial width (8 or 16). Caller must ensure W is
-    /// appropriate for the problem size (≤63 vars for W=8, ≤127 vars for W=16).
+    /// W is the packed monomial width. Caller must ensure W is appropriate
+    /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         self.prover.run::<W>();
         self.verifier.run::<W>();
