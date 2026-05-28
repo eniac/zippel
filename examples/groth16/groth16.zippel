@@ -45,6 +45,7 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public omega: F,
     private witness_assignment: [F; L]
 ) where
+    // TODO: update relation
     let full_assignment = instance_assignment ++ witness_assignment;
     let a_evals = [reduce(+, [mat_a[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
     let b_evals = [reduce(+, [mat_b[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
