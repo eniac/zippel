@@ -289,7 +289,18 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 let ob = self.trans_clos_op(dag, b.get().clone(), index);
                 Op::Pair(mk::<C>(oa), mk::<C>(ob), t)
             }
-            op => op,
+            Op::Random(t, b) => Op::Random(t, b),
+            Op::Challenge(t, b) => Op::Challenge(t, b),
+            Op::Marginalize(op) => {
+                Op::Marginalize(mk::<C>(self.trans_clos_op(dag, op.get().clone(), index)))
+            }
+            Op::Proj(op, field, typ) => {
+                Op::Proj(
+                    mk::<C>(self.trans_clos_op(dag, op.get().clone(), index)),
+                    field.clone(),
+                    typ.clone(),
+                )
+            }
         }
     }
 
@@ -657,4 +668,58 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn trans_clos_marginalize_and_proj_children_canonicalized() {
+        let g = make_qualified_dag(
+            r#"
+            proto foo<F: Field>(public a: F) where a == a {
+                let one = a - a + 1;
+                let zero = a - a;
+                let p = mle([one, zero, zero, zero]);
+                let cfg = {| poly: p, num_variables: 1, max_degree: 1, round: 0, challenge: zero |};
+                let out = marginalize(cfg);
+                let evs = out.evaluations;
+                verify(evs[0] + evs[1] == one)
+            }"#,
+        );
+
+        let tc = TransClos::input(&g);
+
+        let has_marginalize = tc
+            .clos
+            .iter()
+            .any(|(_, op)| matches!(op, Op::Marginalize(_)));
+        let has_proj = tc
+            .clos
+            .iter()
+            .any(|(_, op)| matches!(op, Op::Proj(_, _, _)));
+        assert!(has_marginalize, "clos should contain Op::Marginalize");
+        assert!(has_proj, "clos should contain Op::Proj");
+
+        let canonical_nodes: std::collections::HashSet<_> =
+            tc.clos.iter().map(|(pr, _)| pr.node()).collect();
+
+        for (_, op) in tc.clos.iter() {
+            if let Op::Marginalize(inner) = op {
+                if let Op::Ref(r, _) = inner.get() {
+                    assert!(
+                        canonical_nodes.contains(&r.node()),
+                        "Marginalize child Op::Ref({:?}) should be canonical in clos",
+                        r.node()
+                    );
+                }
+            }
+            if let Op::Proj(inner, _, _) = op {
+                if let Op::Ref(r, _) = inner.get() {
+                    assert!(
+                        canonical_nodes.contains(&r.node()),
+                        "Proj child Op::Ref({:?}) should be canonical in clos",
+                        r.node()
+                    );
+                }
+            }
+        }
+    }
+
 }
