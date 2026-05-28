@@ -336,7 +336,9 @@ fn groth16_bench(c: &mut Criterion) {
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
                 let scheduled_prover = handler.default_schedule_prover();
-                let proof = handler.run_prover(scheduled_prover, zippel_inputs.clone());
+                let proof = handler
+                    .run_prover(scheduled_prover, zippel_inputs.clone())
+                    .unwrap();
                 let scheduled_verifier = handler.default_schedule_verifier();
 
                 group.bench_with_input(
@@ -476,7 +478,9 @@ fn groth16_bench(c: &mut Criterion) {
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
                 let scheduled_prover = handler.default_schedule_prover();
-                let proof = handler.run_prover(scheduled_prover, noh_inputs.clone());
+                let proof = handler
+                    .run_prover(scheduled_prover, noh_inputs.clone())
+                    .unwrap();
                 let scheduled_verifier = handler.default_schedule_verifier();
 
                 group.bench_with_input(
