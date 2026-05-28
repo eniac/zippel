@@ -72,7 +72,11 @@ where
     for &n in sizes {
         let sys = build(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter_batched(|| sys.clone(), |s| s.buchberger::<8>(), BatchSize::SmallInput)
+            b.iter_batched(
+                || sys.clone(),
+                |s| s.buchberger::<8>(),
+                BatchSize::SmallInput,
+            )
         });
     }
     group.finish();
