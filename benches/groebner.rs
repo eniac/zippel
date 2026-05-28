@@ -72,7 +72,11 @@ where
     for &n in sizes {
         let sys = build(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
-            b.iter_batched(|| sys.clone(), |s| s.buchberger(), BatchSize::SmallInput)
+            b.iter_batched(
+                || sys.clone(),
+                |s| s.buchberger::<8>(),
+                BatchSize::SmallInput,
+            )
         });
     }
     group.finish();
@@ -97,7 +101,7 @@ fn bench_buchberger_reduced<T: Monomial, F>(
         group.bench_with_input(BenchmarkId::from_parameter(n), &sys, |b, sys| {
             b.iter_batched(
                 || sys.clone(),
-                |s| s.buchberger_and_reduce(),
+                |s| s.buchberger_and_reduce::<8>(),
                 BatchSize::SmallInput,
             )
         });
@@ -117,7 +121,7 @@ where
     group.measurement_time(MEASUREMENT_TIME);
     for &n in sizes {
         let input = build(n);
-        let g = input.clone().buchberger();
+        let g = input.clone().buchberger::<8>();
         group.bench_with_input(BenchmarkId::from_parameter(n), &(g, input), |b, (g, i)| {
             b.iter(|| g.contains(i))
         });

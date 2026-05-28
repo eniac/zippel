@@ -1,5 +1,14 @@
 #![feature(box_patterns)]
 #![allow(clippy::result_large_err)]
+
+// In #[cfg(test)] builds, alias the crate as `graph` so that test-only
+// modules included via `#[path]` from outside the crate root (e.g. the
+// `groebner_shared.rs` bench helper sourced by `speedup_bench.rs`) can
+// reference `graph::PRef`, `graph::analyses::...`, etc. with the same
+// paths they use when compiled as external bench / integration test code.
+#[cfg(test)]
+extern crate self as graph;
+
 pub mod analyses;
 mod dep;
 pub mod domain_seperator;
@@ -353,47 +362,49 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .find(|edge| edge.weight().is_transcript())
     }
 
-    /// Get all transcript node from the graph (challenges and proof nodes)
+    /// Get all transcript nodes from the graph (challenges and proof nodes),
+    /// topologically ordered with respect to `Dep::Transcript` edges.
+    ///
+    /// Graph construction maintains transcript nodes as a single transcript-edge
+    /// chain, so ordering is just walking from the root transcript node to the end
+    /// of that chain.
     pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
-        let transcript_nodes_list: Vec<NodeIndex> = self
+        let transcript_nodes: Vec<NodeIndex> = self
             .graph
             .node_indices()
-            .filter(|n| self[*n].is_transcript())
+            .filter(|&node| self[node].is_transcript())
             .collect();
 
-        // Do a topological sort of the transcript nodes
-        let mut ordered = Vec::new();
-        if !transcript_nodes_list.is_empty() {
-            let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-            let mut has_parent_in_list = HashSet::new();
+        if transcript_nodes.is_empty() {
+            return Vec::new();
+        }
 
-            for &node in &transcript_nodes_list {
-                for parent in self
-                    .graph
-                    .neighbors_directed(node, petgraph::Direction::Incoming)
-                {
-                    if transcript_nodes_list.contains(&parent) {
-                        parent_map.insert(node, parent);
-                        has_parent_in_list.insert(node);
-                    }
+        let transcript_node_set: HashSet<NodeIndex> = transcript_nodes.iter().copied().collect();
+        let mut transcript_child_by_parent: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+        let mut nodes_with_transcript_parent: HashSet<NodeIndex> = HashSet::new();
+
+        for &node in &transcript_nodes {
+            if let Some(edge) = self.transcript_edge(node, Direction::Incoming) {
+                let parent = edge.source();
+                if transcript_node_set.contains(&parent) {
+                    transcript_child_by_parent.insert(parent, node);
+                    nodes_with_transcript_parent.insert(node);
                 }
             }
-
-            let root = transcript_nodes_list
-                .iter()
-                .find(|&&n| !has_parent_in_list.contains(&n))
-                .expect("Cycle detected in transcript nodes");
-
-            let mut current = *root;
-            ordered.push(current);
-            while let Some(&child) = transcript_nodes_list
-                .iter()
-                .find(|&&n| parent_map.get(&n) == Some(&current))
-            {
-                ordered.push(child);
-                current = child;
-            }
         }
+
+        let root = transcript_nodes
+            .iter()
+            .find(|&&n| !nodes_with_transcript_parent.contains(&n))
+            .expect("Cycle detected in transcript nodes");
+
+        let mut ordered = vec![*root];
+        let mut current = *root;
+        while let Some(&child) = transcript_child_by_parent.get(&current) {
+            ordered.push(child);
+            current = child;
+        }
+
         ordered
     }
 

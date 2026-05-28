@@ -11,6 +11,7 @@ thiserror = "2.0.11"
 backend = { path = "../backend" }
 share = { path = "../share" }
 lang = { path = "../lang" }
+ark-gb = { git = "https://github.com/elefthei/ark-gb.git" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }

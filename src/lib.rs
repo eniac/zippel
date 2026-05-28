@@ -328,7 +328,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-        let result = completeness.run();
+        let result = completeness.run::<8>();
         match &result {
             Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
             Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),
@@ -339,7 +339,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_knowledge(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut knowledge = KnowledgeAnalysis::from_input(g_analyze);
-        let result = knowledge.run();
+        let result = knowledge.run::<8>();
         match &result {
             Ok(()) => info!("ZK protocol: {}", g_analyze.name()),
             Err(e) => info!("Knowledge leak in {}: {}", g_analyze.name(), e),
@@ -526,6 +526,58 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
         assert!(
             result.passed,
             "eq_proof with a == b should pass verification"
+        );
+    }
+
+    /// Regression for issue #157: re-logging earlier transcript values after a
+    /// challenge must preserve every proof element and verifier alignment.
+    #[test]
+    fn test_runtime_issue_157_transcript_relogs_after_challenge() {
+        let src = r#"
+proto repro<F: Field>(private s: F) where s == s {
+    c <- challenge<F>;
+    a <- c;
+    b <- a;
+    d <- c;
+    e <- c;
+    f <- c;
+    g <- c;
+    verify(a == g)
+}
+"#;
+        const EXPECTED_PROOF_VALUES: usize = 6;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("issue_157_relogs.zippel");
+        std::fs::write(&file_path, src).unwrap();
+        let args = ZippelArgs::new(file_path);
+        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+        handler.compile(&Ctx::new());
+
+        let mut inputs = Ctx::<Vid, Value<ArkBls12_381>>::new();
+        inputs.insert(
+            &Vid::new("s"),
+            &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
+        );
+
+        let scheduled_prover = handler.default_schedule_prover();
+        let proof = handler
+            .run_prover(scheduled_prover, inputs)
+            .expect("run_prover failed");
+        assert_eq!(
+            proof.len(),
+            EXPECTED_PROOF_VALUES,
+            "issue #157 repro should emit all six non-challenge transcript proof values"
+        );
+
+        let scheduled_verifier = handler.default_schedule_verifier();
+        let verifier_result = handler
+            .run_verifier(scheduled_verifier, proof)
+            .expect("run_verifier failed");
+        let result = check_verification(verifier_result);
+        assert!(
+            result.passed,
+            "issue #157 repro should pass verification after transcript relogs"
         );
     }
 
