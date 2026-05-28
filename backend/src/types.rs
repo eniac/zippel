@@ -10,7 +10,7 @@ use std::fmt;
 /// Used by `ATyp::size` to count coefficients of `VPoly(n, m)` — the
 /// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
 /// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
-fn binomial(n: usize, k: usize) -> usize {
+pub fn binomial(n: usize, k: usize) -> usize {
     if k > n {
         return 0;
     }

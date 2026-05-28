@@ -16,7 +16,7 @@ pub use config::{
 pub use nothing::{NoCurve, NoField, NoPairing};
 pub use op::{GOp, HasOpFactory, Op, Ref};
 pub use poly_variant::{PolyError, PolyVariant};
-pub use types::{ABase, ATyp};
+pub use types::{ABase, ATyp, binomial};
 pub use values::{Value, value_to_bytes};
 pub use virtual_polynomial::VirtualPolynomial;
 

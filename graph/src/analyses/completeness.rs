@@ -15,25 +15,33 @@ use log::debug;
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerResult<C, GrevLexTerm>,
     pub verifier: GroebnerResult<C, GrevLexTerm>,
+    /// Public input args from the verifier's TransClos, used to determine
+    /// verifier-visible variables.
+    pub public_args: Set<PRef>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let mut builder = GroebnerBuilder::new();
 
-        // Build prover basis using TransClos::prover (already in input namespace).
         let mut prover_result = builder.build(TransClos::prover(dag));
 
-        // Merge the relation (also in input namespace).
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
-        // Build verifier basis from the full DAG (same shared namespace).
-        let verifier_result = builder.build(TransClos::input(dag));
+        let verifier_tc = TransClos::input(dag);
+        let public_args: Set<PRef> = verifier_tc
+            .prefs
+            .iter()
+            .filter(|a| a.is_public())
+            .cloned()
+            .collect();
+        let verifier_result = builder.build(verifier_tc);
 
         Self {
             prover: prover_result,
             verifier: verifier_result,
+            public_args,
         }
     }
 
@@ -50,14 +58,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         // Verifier-visible variables: prover computation nodes + public input arguments.
         // Private inputs are prover-only and not visible to the verifier.
         let prover_vars = self.prover.vars();
-        let public_args: Set<PRef> = self
-            .verifier
-            .args
-            .iter()
-            .filter(|a| a.is_public())
-            .cloned()
-            .collect();
-        let verifier_visible = prover_vars.union(public_args);
+        let verifier_visible = prover_vars.union(self.public_args.clone());
 
         // Check all verifier polynomials whose variables are verifier-visible.
         // Polynomials with verifier-internal nodes are skipped.

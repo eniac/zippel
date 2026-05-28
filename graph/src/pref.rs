@@ -5,7 +5,7 @@ use lang::{ast::CArg, id::Vid, typ::Distribution};
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty};
 
-use backend::ATyp;
+use backend::{ATyp, binomial};
 use std::fmt;
 
 /// A reference to a node in the graph, with all associated metadata.
@@ -178,16 +178,102 @@ impl PRef {
         self.name.as_ref()
     }
 
-    pub fn with_index(&self, index: usize) -> Self {
-        PRef {
+    pub fn with_slot(&self, index: usize) -> Option<Self> {
+        let slot_typ = self.typ.physical_slot_type(index)?;
+        Some(PRef {
             reference: self.reference,
             index: self.index + index,
-            typ: self.typ.clone(),
+            typ: slot_typ,
             qualifier: self.qualifier,
             distribution: self.distribution,
             from_transcript: self.from_transcript,
             name: self.name.clone(),
+        })
+    }
+
+    /// Logical slot access: returns a PRef at logical slot `i` with the
+    /// type of that slot and the physical offset computed via
+    /// `ATyp::logical_slot_offset`.
+    ///
+    /// For `Vec(T, n)`, `with_index(i)` returns a PRef of type `T` at
+    /// physical offset `i * T.physical_len()`.
+    /// For polynomial types (Uni, Mle, VPoly), every logical slot has
+    /// type `ATyp::scalar()` at physical offset `i`.
+    ///
+    /// Returns `None` if `i >= logical_len()`.
+    pub fn with_index(&self, i: usize) -> Option<Self> {
+        let slot_typ = self.typ.logical_slot_type(i)?;
+        let slot_offset = self.typ.logical_slot_offset(i)?;
+        Some(PRef {
+            reference: self.reference,
+            index: self.index + slot_offset,
+            typ: slot_typ,
+            qualifier: self.qualifier,
+            distribution: self.distribution,
+            from_transcript: self.from_transcript,
+            name: self.name.clone(),
+        })
+    }
+
+    /// Logical slot access: returns a PRef at logical slot `i` with the all physical slot PRefs for this type.
+    ///
+    /// For leaf types (scalar, group), returns a single-element vec with
+    /// `self`. For `Vec(T, n)`, returns `n` logical elements, each
+    /// recursively expanded via `T.logical_slots()`. For polynomial types,
+    /// returns one PRef per coefficient (all scalar-typed).
+    fn collect_slots(&self) -> Vec<Self> {
+        match &self.typ {
+            ATyp::Base(_) => vec![self.clone()],
+            ATyp::Uni(m) => (0..=*m).filter_map(|i| self.with_slot(i)).collect(),
+            ATyp::Mle(n) => (0..(1usize << *n))
+                .filter_map(|i| self.with_slot(i))
+                .collect(),
+            ATyp::VPoly(n, m) => {
+                let count = binomial(*m + *n, *n);
+                (0..count).filter_map(|i| self.with_slot(i)).collect()
+            }
+            ATyp::Vec(t, n) => {
+                let mut out = Vec::with_capacity(self.typ.physical_len());
+                for i in 0..*n {
+                    let offset = i * t.physical_len();
+                    let elem = PRef {
+                        reference: self.reference,
+                        index: self.index + offset,
+                        typ: (**t).clone(),
+                        qualifier: self.qualifier,
+                        distribution: self.distribution,
+                        from_transcript: self.from_transcript,
+                        name: self.name.clone(),
+                    };
+                    out.extend(elem.collect_slots());
+                }
+                out
+            }
+            ATyp::Record(fields) => {
+                let mut out = Vec::with_capacity(self.typ.physical_len());
+                let mut offset = 0usize;
+                for (_, ft) in fields.iter() {
+                    let field = PRef {
+                        reference: self.reference,
+                        index: self.index + offset,
+                        typ: ft.clone(),
+                        qualifier: self.qualifier,
+                        distribution: self.distribution,
+                        from_transcript: self.from_transcript,
+                        name: self.name.clone(),
+                    };
+                    out.extend(field.collect_slots());
+                    offset += ft.physical_len();
+                }
+                out
+            }
         }
+    }
+
+    /// Returns all physical slot PRefs for this type, one per flattened
+    /// scalar position.
+    pub fn slots(&self) -> Vec<Self> {
+        self.collect_slots()
     }
 
     pub fn verbose(&self) -> String {
