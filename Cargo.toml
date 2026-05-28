@@ -35,8 +35,8 @@ tempfile = "3.10"
 criterion = "0.5"
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git" }
-ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 petgraph = "0.7.1"
 
 [patch.crates-io]
@@ -45,9 +45,11 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
-ark-snark = { git = "https://github.com/arkworks-rs/snark.git" }
-ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git" }
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "release/0.6.0" }
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "release/0.6.0" }
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
+ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 
 [[bench]]
 name = "graph_execution"
