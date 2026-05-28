@@ -891,10 +891,10 @@ mod tests {
     /// Phase 11 regression, un-ignored in phase 12: bilinearity over sums —
     /// `pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q)`.
     ///
-    /// Under phase 12, `pair(a,b)` is `to_poly(a)·to_poly(b)·var(__gt__)`.
+    /// Under phase 12, `pair(a,b)` is `to_poly(a)·to_poly(b)·var(__zippel::gb::gt)`.
     /// Since `to_poly(P1+P2) = var(P1) + var(P2)` (existing Bin(Add) arm)
     /// and GT addition lowers to `Bin(Add, _, _, GT)`, both sides reduce
-    /// to the same F-polynomial `(var(P1)+var(P2))·var(Q)·var(__gt__)`.
+    /// to the same F-polynomial `(var(P1)+var(P2))·var(Q)·var(__zippel::gb::gt)`.
     #[test]
     fn pair_bilinear_additive_completeness() {
         let ex = r#"
@@ -946,7 +946,7 @@ mod tests {
     /// Phase 12 regression: bilinear product —
     /// `pair((a·b)·P, Q) == pair(a·P, b·Q)`.
     ///
-    /// Both sides reduce to `a·b·exp_P·exp_Q·var(__gt__)` in exponent
+    /// Both sides reduce to `a·b·exp_P·exp_Q·var(__zippel::gb::gt)` in exponent
     /// space, cancelling under Buchberger.
     #[test]
     fn pair_bilinear_product_completeness() {
@@ -1084,7 +1084,7 @@ mod tests {
     ///
     /// Runs `examples/kzg/kzg.zippel` through `CompletenessAnalysis`.
     /// Relies on:
-    ///   * Phase 12 pairing layer — `pair(a,b) = to_poly(a)·to_poly(b)·var(__gt__)`.
+    ///   * Phase 12 pairing layer — `pair(a,b) = to_poly(a)·to_poly(b)·var(__zippel::gb::gt)`.
     ///   * Phase 13 poly division — `q_val = (p_val − y) / poly([−z, 1])`
     ///     lowers to the shared-witness identity
     ///     `p_val − y = poly([−z,1]) · q_wit + r_wit`.
