@@ -5,7 +5,7 @@
 //! via the `PartialEq` (graph isomorphism) implementation.
 
 use crate::node::ArgKind;
-use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Ref, UDag, UDags, mk};
+use crate::{Dep, DepType, GOp, GraphError, HOp, Node, Nothing, Ref, UDag, UDags, mk};
 use backend::{ATyp, ArkBls12_381};
 use lang::ast::{BinOp, UModule};
 use lang::id::Vid;
@@ -698,8 +698,13 @@ fn pin_interpolate() {
         GOp::index(2),
         GOp::index(3),
     ]);
-    let interpolate_node = expected.add_node(Node::interpolate(&points, &var_a));
-    expected.add_edges(DepType::Data, interpolate_node, points);
+    // add_exp materializes the Vec, creating a node for it
+    let points_node = expected.add_node(Node::Op(mk::<B>(points.clone()), Nothing));
+    let points_typ = points.typ();
+    let points_ref = GOp::underscore(points_node, points_typ);
+    expected.add_edges(DepType::Data, points_node, points);
+    let interpolate_node = expected.add_node(Node::interpolate(&points_ref, &var_a));
+    expected.add_edges(DepType::Data, interpolate_node, points_ref);
     expected.add_edges(DepType::Data, interpolate_node, var_a);
 
     assert!(gs[0] == expected);
