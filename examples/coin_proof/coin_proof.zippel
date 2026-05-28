@@ -1,0 +1,113 @@
+// E-Cash Coin Validity Proof from https://eprint.iacr.org/2012/226.pdf
+
+proto coin_proof<G: Group, F: Scalar<G>>(
+    // Private witnesses
+    private x1: F,
+    private x2: F,
+    private r_y: F,
+    private sk_u: F,
+    private alpha: F,
+    private beta: F,
+    private s: F,
+    private t: F,
+    private r_b: F,
+    private r_c: F,
+    private r_d: F,
+    private r_beta: F,
+    private r_c_alpha: F,
+    private r_d_beta: F,
+    
+    // Public parameters
+    public f: G,
+    public g: G,
+    public h: G,
+    public h1: G,
+    public h2: G,
+    
+    // Public inputs
+    public big_y: G,
+    public big_s: G,
+    public big_t: G,
+    public big_b: G,
+    public big_c: G,
+    public big_d: G,
+    public j: F
+) where
+    big_b == g * sk_u + h * r_b &&
+    big_c == g * s + h * r_c &&
+    big_d == g * t + h * r_d &&
+    big_y == h1 * x1 + h2 * x2 + f * r_y &&
+    big_s == g * alpha + g * x1 &&
+    big_t == g * sk_u + g * r_beta + g * x2 &&
+    g + h * r_c_alpha == (g * j + big_c) * alpha &&
+    g + h * r_d_beta == (g * j + big_d) * beta
+{
+    // 1. Blindings
+    let k_x1 = random<F>;
+    let k_x2 = random<F>;
+    let k_r_y = random<F>;
+    let k_sk_u = random<F>;
+    let k_alpha = random<F>;
+    let k_beta = random<F>;
+    let k_s = random<F>;
+    let k_t = random<F>;
+    let k_r_b = random<F>;
+    let k_r_c = random<F>;
+    let k_r_d = random<F>;
+    let k_r_beta = random<F>;
+    let k_r_c_alpha = random<F>;
+    let k_r_d_beta = random<F>;
+
+    // 2. Commitments
+    let t_big_b = g * k_sk_u + h * k_r_b;
+    let t_big_c = g * k_s + h * k_r_c;
+    let t_big_d = g * k_t + h * k_r_d;
+    let t_big_y = h1 * k_x1 + h2 * k_x2 + f * k_r_y;
+    let t_big_s = g * k_alpha + g * k_x1;
+    let t_big_t = g * k_sk_u + g * k_r_beta + g * k_x2;
+    let t_g1 = (g * j + big_c) * k_alpha;
+    let t_h1 = h * k_r_c_alpha;
+    let t_g2 = (g * j + big_d) * k_beta;
+    let t_h2 = h * k_r_d_beta;
+
+    // 3. Log commitments
+    t_big_b <- t_big_b;
+    t_big_c <- t_big_c;
+    t_big_d <- t_big_d;
+    t_big_y <- t_big_y;
+    t_big_s <- t_big_s;
+    t_big_t <- t_big_t;
+    t_g1 <- t_g1;
+    t_h1 <- t_h1;
+    t_g2 <- t_g2;
+    t_h2 <- t_h2;
+
+    // 4. Challenge
+    ch <- challenge<F>;
+
+    // 5. Responses
+    z_x1 <- k_x1 + x1 * ch;
+    z_x2 <- k_x2 + x2 * ch;
+    z_r_y <- k_r_y + r_y * ch;
+    z_sk_u <- k_sk_u + sk_u * ch;
+    z_alpha <- k_alpha + alpha * ch;
+    z_beta <- k_beta + beta * ch;
+    z_s <- k_s + s * ch;
+    z_t <- k_t + t * ch;
+    z_r_b <- k_r_b + r_b * ch;
+    z_r_c <- k_r_c + r_c * ch;
+    z_r_d <- k_r_d + r_d * ch;
+    z_r_beta <- k_r_beta + r_beta * ch;
+    z_r_c_alpha <- k_r_c_alpha + r_c_alpha * ch;
+    z_r_d_beta <- k_r_d_beta + r_d_beta * ch;
+
+    // 6. Verifier Checks
+    verify(g * z_sk_u + h * z_r_b == t_big_b + big_b * ch);
+    verify(g * z_s + h * z_r_c == t_big_c + big_c * ch);
+    verify(g * z_t + h * z_r_d == t_big_d + big_d * ch);
+    verify(h1 * z_x1 + h2 * z_x2 + f * z_r_y == t_big_y + big_y * ch);
+    verify(g * z_alpha + g * z_x1 == t_big_s + big_s * ch);
+    verify(g * z_sk_u + g * z_r_beta + g * z_x2 == t_big_t + big_t * ch);
+    verify(g * ch + h * z_r_c_alpha + t_g1 == (g * j + big_c) * z_alpha + t_h1);
+    verify(g * ch + h * z_r_d_beta + t_g2 == (g * j + big_d) * z_beta + t_h2)
+}

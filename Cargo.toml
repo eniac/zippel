@@ -220,3 +220,8 @@ path = "examples/hyperplonk/main.rs"
 [[example]]
 name = "bccgp"
 path = "examples/bccgp/main.rs"
+
+[[example]]
+name = "coin_proof"
+path = "examples/coin_proof/main.rs"
+
