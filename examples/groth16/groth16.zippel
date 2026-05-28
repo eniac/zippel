@@ -13,9 +13,10 @@
 // encode: constraint rows (0..C), identity rows for inputs (C..C+M), zero-padded (C+M..D)
 // where C=num_constraints, M=num_inputs, D=domain_size.
 //
-// mat_a, mat_b, mat_c, and omega are public since they encode the circuit structure
-// (not the witness) and omega is a random element only used for FFT. Random blinding
-// factors r and s are sampled internally via random<F>.
+// mat_a, mat_b, mat_c are public since they encode the circuit structure
+// (not the witness) and omega is the multiplicative generator used as the
+// coset offset for the coset FFT. Random blinding factors r and s are
+// sampled internally via random<F>.
 //
 // Size parameters (following Groth16 paper):
 //   M: number of public inputs (including the constant 1)
@@ -45,7 +46,11 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public omega: F,
     private witness_assignment: [F; L]
 ) where
-    // TODO: update relation
+    // TODO: update relation — currently only encodes constraint rows (0..C).
+    // Missing: identity rows for public inputs (C..C+M) that `build_dense_matrix_a`
+    // adds, and trailing zero-padded rows (C+M..D). Re-enabling analysis without
+    // these will produce incorrect completeness/zk results. Do not re-enable until
+    // the full QAP relation (including h(X) trim) is specified here.
     let full_assignment = instance_assignment ++ witness_assignment;
     let a_evals = [reduce(+, [mat_a[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
     let b_evals = [reduce(+, [mat_b[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];

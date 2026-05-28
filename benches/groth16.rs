@@ -37,18 +37,15 @@ impl ConstraintSynthesizer<F> for BenchCircuit {
         let num_cons = self.num_constraints;
         let mut witness_vars = Vec::new();
         for _ in 0..(2 * num_cons) {
-            let w = cs.new_witness_variable(|| Ok(F::rand(&mut rand::rngs::OsRng)))?;
-            witness_vars.push(w);
-        }
-        let mut output_vars = Vec::new();
-        for _ in 0..num_cons {
-            let o = cs.new_input_variable(|| Ok(F::rand(&mut rand::rngs::OsRng)))?;
-            output_vars.push(o);
+            let val = F::rand(&mut rand::rngs::OsRng);
+            let w = cs.new_witness_variable(|| Ok(val))?;
+            witness_vars.push((w, val));
         }
         for i in 0..num_cons {
-            let w1 = witness_vars[2 * i];
-            let w2 = witness_vars[2 * i + 1];
-            let out = output_vars[i];
+            let (w1, v1) = witness_vars[2 * i];
+            let (w2, v2) = witness_vars[2 * i + 1];
+            let out_val = v1 * v2;
+            let out = cs.new_input_variable(|| Ok(out_val))?;
             cs.enforce_constraint_arity_3(
                 R1CS_PREDICATE_LABEL,
                 || LinearCombination::from(w1),
@@ -65,7 +62,6 @@ struct BenchData {
     vk: ark_groth16::VerifyingKey<E>,
     instance_assignment: Vec<F>,
     witness_assignment: Vec<F>,
-    full_assignment: Vec<F>,
     h_coeffs: Vec<F>,
     matrices: Vec<ark_relations::gr1cs::Matrix<F>>,
     num_inputs: usize,
@@ -161,7 +157,6 @@ fn setup_bench(num_constraints: usize) -> BenchData {
         vk,
         instance_assignment,
         witness_assignment,
-        full_assignment,
         h_coeffs,
         matrices,
         num_inputs,
@@ -218,7 +213,7 @@ fn groth16_bench(c: &mut Criterion) {
                     &mut rand::rngs::OsRng,
                 )
                 .unwrap();
-                let public_inputs = &data.full_assignment[1..data.num_inputs];
+                let public_inputs = &data.instance_assignment[1..data.num_inputs];
                 b.iter(|| Groth16::<E>::verify_proof(&pvk, &proof, public_inputs).unwrap());
             },
         );
@@ -300,7 +295,11 @@ fn groth16_bench(c: &mut Criterion) {
                     sizes.insert(&Tid::new("H"), &dims.2);
                     handler.compile(&sizes);
                     let scheduled = handler.default_schedule_prover();
-                    b.iter(|| handler.run_prover(scheduled.clone(), zippel_inputs.clone()));
+                    b.iter(|| {
+                        handler
+                            .run_prover(scheduled.clone(), zippel_inputs.clone())
+                            .unwrap()
+                    });
                 },
             );
 
@@ -345,7 +344,11 @@ fn groth16_bench(c: &mut Criterion) {
                     BenchmarkId::new("zippel_opt_verifier", size),
                     &(),
                     |b, _| {
-                        b.iter(|| handler.run_verifier(scheduled_verifier.clone(), proof.clone()));
+                        b.iter(|| {
+                            handler
+                                .run_verifier(scheduled_verifier.clone(), proof.clone())
+                                .unwrap()
+                        });
                     },
                 );
             }
@@ -437,7 +440,11 @@ fn groth16_bench(c: &mut Criterion) {
                     sizes.insert(&Tid::new("D"), &dims.3);
                     handler.compile(&sizes);
                     let scheduled = handler.default_schedule_prover();
-                    b.iter(|| handler.run_prover(scheduled.clone(), noh_inputs.clone()));
+                    b.iter(|| {
+                        handler
+                            .run_prover(scheduled.clone(), noh_inputs.clone())
+                            .unwrap()
+                    });
                 },
             );
 
@@ -487,7 +494,11 @@ fn groth16_bench(c: &mut Criterion) {
                     BenchmarkId::new("zippel_noh_verifier", size),
                     &(),
                     |b, _| {
-                        b.iter(|| handler.run_verifier(scheduled_verifier.clone(), proof.clone()));
+                        b.iter(|| {
+                            handler
+                                .run_verifier(scheduled_verifier.clone(), proof.clone())
+                                .unwrap()
+                        });
                     },
                 );
             }
