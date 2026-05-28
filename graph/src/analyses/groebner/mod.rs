@@ -1257,14 +1257,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // logical element to pr. We can use `to_poly` and should add
             // this to np if it is a runtime index.
             Op::Ram(ref a, ref b) => {
-                let n = pr.typ.logical_len();
                 let raw = Op::Ram(a.clone(), b.clone());
-                for i in 0..n {
-                    let pf = pr.clone().with_index(i).unwrap();
-                    result.np.insert(&pf, &raw);
-                }
-                if n == 0 {
+                let slots: Vec<PRef> = pr.slots();
+                if slots.is_empty() {
                     result.np.insert(&pr, &raw);
+                }
+                for pf in slots {
+                    result.np.insert(&pf, &raw);
                 }
             }
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
