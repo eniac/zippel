@@ -142,7 +142,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
-self.result.run::<W>();
+        self.result.run::<W>();
 
         // Delete varieties with elimination variables
         self.eliminate_var();

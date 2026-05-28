@@ -11,7 +11,6 @@ pub(crate) mod ark_gb_adapter;
 #[cfg(test)]
 mod speedup_bench;
 
-
 use crate::analyses::TransClos;
 use crate::pref::PRef;
 use crate::{GOp, HOp, Op, Ref};
@@ -238,7 +237,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         }
     }
 
-/// Compute Groebner basis using Buchberger algorithm.
+    /// Compute Groebner basis using Buchberger algorithm.
     ///
     /// W is the packed monomial width (8 or 16). Caller must ensure W is
     /// appropriate for the problem size (≤63 vars for W=8, ≤127 vars for W=16).
