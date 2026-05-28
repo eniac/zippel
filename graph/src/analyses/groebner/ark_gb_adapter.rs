@@ -171,13 +171,6 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field, const W: usize>(
     )
 }
 
-pub(crate) fn collect_vars_grevlex<F: Field>(
-    input: &[SparsePolynomial<F, GrevLexTerm>],
-) -> Vec<PRef> {
-    let (vars, _) = collect_and_validate(input);
-    vars.iter().cloned().collect()
-}
-
 // ---------------------------------------------------------------------------
 // ElimTerm path.
 // ---------------------------------------------------------------------------
