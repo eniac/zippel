@@ -149,7 +149,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         };
 
         // Pre-populate index with transcript nodes so trans_clos_op
-        // doesn't recurse past them into prover-only nodes.
+        // doesn't recurse past them into prover-only nodes. Also add
+        // transcript source PRefs to prefs — they are opaque inputs to
+        // the verifier, analogous to public args.
         let mut index: HashMap<NodeIndex, usize> = HashMap::new();
         for &n in &transcripts {
             match &dag[n] {
@@ -157,6 +159,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 | Node::Transcr(op, (qualifier, distribution)) => {
                     let inner = op.get();
                     let pref = PRef::from_ref(Ref::new(n), inner.typ(), *qualifier, *distribution);
+                    tc.prefs.push(pref.clone());
                     let idx = tc.clos.len();
                     tc.clos.push((pref, inner.clone()));
                     index.insert(n, idx);
