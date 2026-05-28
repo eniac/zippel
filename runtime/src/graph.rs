@@ -170,47 +170,6 @@ fn update_successors<C: ArkConfig>(
     }
 }
 
-/// Topological sort of transcript node indices.
-///
-/// Transcript nodes form a chain in the DAG. This function finds the
-/// root (no parent in the transcript list) and walks the chain.
-fn order_transcript_nodes<C: ArkConfig>(
-    transcript_indices: Vec<NodeIndex>,
-    graph: &Dag<C, Arc<RuntimeInformation<C>>>,
-) -> Vec<NodeIndex> {
-    if transcript_indices.is_empty() {
-        return Vec::new();
-    }
-
-    let transcript_set: HashSet<NodeIndex> = transcript_indices.iter().copied().collect();
-    let mut child_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-    let mut has_parent = HashSet::new();
-
-    for &node in &transcript_indices {
-        for parent in graph.neighbors_directed(node, Direction::Incoming) {
-            if transcript_set.contains(&parent) {
-                child_map.insert(parent, node);
-                has_parent.insert(node);
-            }
-        }
-    }
-
-    // Find root (no parent in transcript list).
-    let root = transcript_indices
-        .iter()
-        .find(|&&n| !has_parent.contains(&n))
-        .expect("Cycle detected in transcript nodes");
-
-    // Walk the chain.
-    let mut ordered = vec![*root];
-    let mut current = *root;
-    while let Some(&child) = child_map.get(&current) {
-        ordered.push(child);
-        current = child;
-    }
-    ordered
-}
-
 // ---------------------------------------------------------------------------
 // MutexGraph implementation
 // ---------------------------------------------------------------------------
@@ -391,8 +350,8 @@ impl<C: ArkConfig> MutexGraph<C> {
                 Node::Arg(_, _, _, _, _) => {}
             }
         }
-        let result_indices: Vec<NodeIndex> = match result_kind {
-            ResultKind::Prover => order_transcript_nodes(result_indices, &g.mutex_graph),
+        let result_indices = match result_kind {
+            ResultKind::Prover => g.mutex_graph.order_transcript_nodes(&result_indices),
             ResultKind::Verifier => result_indices,
         };
 

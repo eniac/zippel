@@ -1668,6 +1668,30 @@ fn pin_transcript_nodes_order() {
     }
 }
 
+/// Shared transcript ordering helper preserves chain order regardless of input order.
+#[test]
+fn pin_order_transcript_nodes_helper_matches_transcript_nodes_for_runtime_subset() {
+    let src = r#"
+        proto foo<F: Field>(private s: F) where s == s {
+            a <- s + s;
+            c <- challenge<F>;
+            b <- c;
+            verify(a == b)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let ordered_transcript_nodes = dag.transcript_nodes();
+    let mut reversed_transcript_nodes = ordered_transcript_nodes.clone();
+    reversed_transcript_nodes.reverse();
+
+    assert_eq!(
+        dag.order_transcript_nodes(&reversed_transcript_nodes),
+        ordered_transcript_nodes
+    );
+}
+
 /// get_proof_nodes and get_challenge_nodes partition transcript nodes correctly.
 #[test]
 fn pin_proof_vs_challenge_nodes() {
@@ -1692,6 +1716,62 @@ fn pin_proof_vs_challenge_nodes() {
     for p in &proof_nodes {
         assert!(!challenge_nodes.contains(p));
     }
+}
+
+/// Regression for issue #157: transcript ordering must retain all post-challenge
+/// transcript binds, even when they re-log earlier transcript nodes via `Ref`.
+#[test]
+fn pin_transcript_nodes_preserve_post_challenge_relogs_issue_157() {
+    let src = r#"
+        proto repro<F: Field>(private s: F) where s == s {
+            c <- challenge<F>;
+            a <- c;
+            b <- a;
+            d <- c;
+            e <- c;
+            f <- c;
+            g <- c;
+            verify(a == g)
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    const EXPECTED_TRANSCRIPT_NODES: usize = 7;
+    const EXPECTED_PROOF_NODES: usize = 6;
+    const EXPECTED_CHALLENGE_NODES: usize = 1;
+
+    let transcript_nodes = dag.transcript_nodes();
+    let proof_nodes = dag.get_proof_nodes();
+    let challenge_nodes = dag.get_challenge_nodes();
+    let (prover, _) = dag.get_prover();
+    let verifier = dag.get_verifier().unwrap();
+
+    assert_eq!(
+        transcript_nodes.len(),
+        EXPECTED_TRANSCRIPT_NODES,
+        "Issue #157 repro should keep all 7 transcript nodes in order"
+    );
+    assert_eq!(
+        proof_nodes.len(),
+        EXPECTED_PROOF_NODES,
+        "Issue #157 repro should expose 6 proof transcript nodes"
+    );
+    assert_eq!(
+        challenge_nodes.len(),
+        EXPECTED_CHALLENGE_NODES,
+        "Issue #157 repro should expose exactly one challenge node"
+    );
+    assert_eq!(
+        prover.transcript_nodes().len(),
+        EXPECTED_TRANSCRIPT_NODES,
+        "Issue #157 repro should preserve all transcript nodes in prover projection"
+    );
+    assert_eq!(
+        verifier.transcript_nodes().len(),
+        EXPECTED_TRANSCRIPT_NODES,
+        "Issue #157 repro should preserve all transcript nodes in verifier projection"
+    );
 }
 
 /// trc computes transitive-reflexive closure correctly.

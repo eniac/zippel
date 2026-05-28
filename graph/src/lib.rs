@@ -362,48 +362,54 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .find(|edge| edge.weight().is_transcript())
     }
 
-    /// Get all transcript node from the graph (challenges and proof nodes)
-    pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
-        let transcript_nodes_list: Vec<NodeIndex> = self
-            .graph
-            .node_indices()
-            .filter(|n| self[*n].is_transcript())
-            .collect();
+    /// Order transcript node indices by following their transcript-edge chain.
+    ///
+    /// Graph construction maintains transcript nodes as a single chain. This helper
+    /// assumes the provided indices come from such a graph and walks from the
+    /// root transcript node to the end of the chain.
+    pub fn order_transcript_nodes(&self, transcript_nodes: &[NodeIndex]) -> Vec<NodeIndex> {
+        if transcript_nodes.is_empty() {
+            return Vec::new();
+        }
 
-        // Do a topological sort of the transcript nodes
-        let mut ordered = Vec::new();
-        if !transcript_nodes_list.is_empty() {
-            let mut parent_map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
-            let mut has_parent_in_list = HashSet::new();
+        let transcript_node_set: HashSet<NodeIndex> = transcript_nodes.iter().copied().collect();
+        let mut transcript_child_by_parent: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+        let mut nodes_with_transcript_parent: HashSet<NodeIndex> = HashSet::new();
 
-            for &node in &transcript_nodes_list {
-                for parent in self
-                    .graph
-                    .neighbors_directed(node, petgraph::Direction::Incoming)
-                {
-                    if transcript_nodes_list.contains(&parent) {
-                        parent_map.insert(node, parent);
-                        has_parent_in_list.insert(node);
-                    }
+        for &node in transcript_nodes {
+            if let Some(edge) = self.transcript_edge(node, Direction::Incoming) {
+                let parent = edge.source();
+                if transcript_node_set.contains(&parent) {
+                    transcript_child_by_parent.insert(parent, node);
+                    nodes_with_transcript_parent.insert(node);
                 }
             }
-
-            let root = transcript_nodes_list
-                .iter()
-                .find(|&&n| !has_parent_in_list.contains(&n))
-                .expect("Cycle detected in transcript nodes");
-
-            let mut current = *root;
-            ordered.push(current);
-            while let Some(&child) = transcript_nodes_list
-                .iter()
-                .find(|&&n| parent_map.get(&n) == Some(&current))
-            {
-                ordered.push(child);
-                current = child;
-            }
         }
+
+        let root = transcript_nodes
+            .iter()
+            .find(|&&n| !nodes_with_transcript_parent.contains(&n))
+            .expect("Cycle detected in transcript nodes");
+
+        let mut ordered = vec![*root];
+        let mut current = *root;
+        while let Some(&child) = transcript_child_by_parent.get(&current) {
+            ordered.push(child);
+            current = child;
+        }
+
         ordered
+    }
+
+    /// Get all transcript nodes from the graph (challenges and proof nodes).
+    pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
+        let transcript_nodes: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|&node| self[node].is_transcript())
+            .collect();
+
+        self.order_transcript_nodes(&transcript_nodes)
     }
 
     /// Get all proof nodes from the graph
