@@ -40,7 +40,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             let mut rel_gb = GroebnerBuilder::new();
             rel_gb.register_input_args(dag);
             rel_gb.add_relation(dag);
-            rel_gb.run();
+            rel_gb.run::<8>(); // Small problems, use W=8
             Some(rel_gb.basis)
         } else {
             None
@@ -129,9 +129,13 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         });
     }
 
-    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+    /// Run knowledge analysis.
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size (≤63 vars for W=8, ≤127 vars for W=16).
+    pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
         // Compute the Groebner basis
-        self.builder.run();
+        self.builder.run::<W>();
 
         // Delete varieties with elimination variables
         self.eliminate_var();
@@ -202,7 +206,7 @@ fn knowledge_foo() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner bases
-    assert!(kz.run().is_err());
+    assert!(kz.run::<8>().is_err());
 }
 
 #[test]
@@ -237,7 +241,7 @@ fn groebner_bar() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run().is_ok());
+    assert!(kz.run::<8>().is_ok());
 }
 
 #[test]
@@ -271,7 +275,7 @@ fn groebner_baz() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
     // Compute the Groebner basis
-    assert!(kz.run().is_ok());
+    assert!(kz.run::<8>().is_ok());
 }
 
 /// This example is somewhat contrived. Here is how we leak s = s'.
@@ -313,7 +317,7 @@ fn groebner_ex3() {
     // Create an object computing the Groebner basis
     let mut kz = KnowledgeAnalysis::from_input(&g);
 
-    assert!(kz.run().is_err());
+    assert!(kz.run::<8>().is_err());
 }
 
 #[test]
@@ -336,7 +340,7 @@ fn schnorr_zk() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_ok(),
+        kz.run::<8>().is_ok(),
         "Schnorr protocol should be zero-knowledge"
     );
 }
@@ -361,7 +365,7 @@ fn zk_regression_direct_secret_leak() {
     let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
-    let result = kz.run();
+    let result = kz.run::<8>();
     if let Err(ref e) = result {
         eprintln!("Leak detected: {}", e);
     }
@@ -390,7 +394,7 @@ fn zk_leak_unblinded_linear_combination() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_err(),
+        kz.run::<8>().is_err(),
         "d <- x + y leaks x (verifier knows y and d)"
     );
 }
@@ -415,7 +419,7 @@ fn zk_leak_no_random_blinding() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_err(),
+        kz.run::<8>().is_err(),
         "z <- x*c without random blinding leaks x"
     );
 }
@@ -440,7 +444,7 @@ fn zk_leak_secret_difference_on_transcript() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_err(),
+        kz.run::<8>().is_err(),
         "a - b = s - t leaks relationship between secrets"
     );
 }
@@ -467,7 +471,7 @@ fn zk_safe_schnorr_with_blinding() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_ok(),
+        kz.run::<8>().is_ok(),
         "Schnorr with proper blinding should be ZK"
     );
 }
@@ -496,7 +500,7 @@ fn zk_multiple_verify_one_safe_one_subtle_leak() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_err(),
+        kz.run::<8>().is_err(),
         "One safe and one leaking verify should fail knowledge analysis"
     );
 }
@@ -526,7 +530,7 @@ fn zk_multiple_verify_both_safe() {
 
     let mut kz = KnowledgeAnalysis::from_input(&g);
     assert!(
-        kz.run().is_ok(),
+        kz.run::<8>().is_ok(),
         "Two verify statements both properly blinded with independent randoms should pass knowledge analysis"
     );
 }
@@ -560,7 +564,7 @@ fn knowledge_named_let_eval_product() {
     let mut kz = KnowledgeAnalysis::from_input(&g);
     // All inputs are public so nothing could leak; trivially ZK.
     assert!(
-        kz.run().is_ok(),
+        kz.run::<8>().is_ok(),
         "public-only eval protocol should be ZK (no private secrets to leak)"
     );
 }

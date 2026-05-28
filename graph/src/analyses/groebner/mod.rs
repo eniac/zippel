@@ -6,6 +6,11 @@ pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
+pub(crate) mod ark_gb_adapter;
+
+#[cfg(test)]
+mod speedup_bench;
+
 use crate::DQDag;
 use crate::analyses::TransClos;
 use crate::pref::PRef;
@@ -245,10 +250,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    /// Compute Groebner basis using Buchberger algorithm,
-    pub fn run(&mut self) {
+    /// Compute Groebner basis using Buchberger algorithm.
+    ///
+    /// W is the packed monomial width (8 or 16). Caller must ensure W is
+    /// appropriate for the problem size.
+    pub fn run<const W: usize>(&mut self) {
         // Compute the Groebner basis using Buchberger algorithm
-        self.basis = self.basis.clone().buchberger_and_reduce();
+        self.basis = self.basis.clone().buchberger_and_reduce::<W>();
     }
 
     /// Remap all PRef variables in the basis, pl, np, and args using a mapping function.

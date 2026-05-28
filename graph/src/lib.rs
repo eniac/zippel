@@ -1,5 +1,14 @@
 #![feature(box_patterns)]
 #![allow(clippy::result_large_err)]
+
+// In #[cfg(test)] builds, alias the crate as `graph` so that test-only
+// modules included via `#[path]` from outside the crate root (e.g. the
+// `groebner_shared.rs` bench helper sourced by `speedup_bench.rs`) can
+// reference `graph::PRef`, `graph::analyses::...`, etc. with the same
+// paths they use when compiled as external bench / integration test code.
+#[cfg(test)]
+extern crate self as graph;
+
 pub mod analyses;
 mod dep;
 pub mod domain_seperator;
