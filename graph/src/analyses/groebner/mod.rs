@@ -2710,11 +2710,11 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        // Recover the q_wit / r_wit PRefs (minted by sentinel_pref with
-        // Qualifier::Public and stable node indices MAX-4 / MAX-5).
+        // Recover the q_wit / r_wit PRefs (minted by sentinel_pref starting
+        // at MAX-1 and decrementing: q_wit=MAX-1, r_wit=MAX-2).
         let q_wit = PRef::from_var(
             Vid::from("__div_q_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 4),
+            petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 1),
             0,
             Qualifier::Public,
@@ -2722,7 +2722,7 @@ mod tests {
         );
         let r_wit = PRef::from_var(
             Vid::from("__div_r_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 5),
+            petgraph::graph::NodeIndex::new(usize::MAX - 2),
             ATyp::VPoly(1, 0),
             0,
             Qualifier::Public,
@@ -2856,7 +2856,7 @@ mod tests {
 
         let r_wit = PRef::from_var(
             Vid::from("__div_r_0__"),
-            petgraph::graph::NodeIndex::new(usize::MAX - 5),
+            petgraph::graph::NodeIndex::new(usize::MAX - 2),
             ATyp::VPoly(1, 0),
             0,
             Qualifier::Public,
