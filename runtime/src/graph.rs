@@ -334,11 +334,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                         .remaining_deps
                         .store(unique_preds.len(), Ordering::SeqCst);
 
-                    // Collect result indices inline.
+                    // Verifier results are terminal Check nodes. Prover results
+                    // are collected below via Dag::transcript_nodes(), which is
+                    // already transcript-edge-topologically ordered.
                     match (&g.mutex_graph[node_idx], result_kind) {
-                        (Node::Transcr(_, _), ResultKind::Prover) => {
-                            result_indices.push(node_idx);
-                        }
                         (Node::Op(op, _), ResultKind::Verifier) if matches!(**op, Op::Check(_)) => {
                             result_indices.push(node_idx);
                         }
@@ -351,7 +350,7 @@ impl<C: ArkConfig> MutexGraph<C> {
             }
         }
         let result_indices = match result_kind {
-            ResultKind::Prover => g.mutex_graph.order_transcript_nodes(&result_indices),
+            ResultKind::Prover => g.mutex_graph.transcript_nodes(),
             ResultKind::Verifier => result_indices,
         };
 

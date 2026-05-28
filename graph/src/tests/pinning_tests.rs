@@ -1668,30 +1668,6 @@ fn pin_transcript_nodes_order() {
     }
 }
 
-/// Shared transcript ordering helper preserves chain order regardless of input order.
-#[test]
-fn pin_order_transcript_nodes_helper_matches_transcript_nodes_for_runtime_subset() {
-    let src = r#"
-        proto foo<F: Field>(private s: F) where s == s {
-            a <- s + s;
-            c <- challenge<F>;
-            b <- c;
-            verify(a == b)
-        }
-    "#;
-    let gs = parse_and_build(src);
-    let dag = &gs[0];
-
-    let ordered_transcript_nodes = dag.transcript_nodes();
-    let mut reversed_transcript_nodes = ordered_transcript_nodes.clone();
-    reversed_transcript_nodes.reverse();
-
-    assert_eq!(
-        dag.order_transcript_nodes(&reversed_transcript_nodes),
-        ordered_transcript_nodes
-    );
-}
-
 /// get_proof_nodes and get_challenge_nodes partition transcript nodes correctly.
 #[test]
 fn pin_proof_vs_challenge_nodes() {

@@ -362,12 +362,19 @@ impl<C: ArkConfig, A> Dag<C, A> {
             .find(|edge| edge.weight().is_transcript())
     }
 
-    /// Order transcript node indices by following their transcript-edge chain.
+    /// Get all transcript nodes from the graph (challenges and proof nodes),
+    /// topologically ordered with respect to `Dep::Transcript` edges.
     ///
-    /// Graph construction maintains transcript nodes as a single chain. This helper
-    /// assumes the provided indices come from such a graph and walks from the
-    /// root transcript node to the end of the chain.
-    pub fn order_transcript_nodes(&self, transcript_nodes: &[NodeIndex]) -> Vec<NodeIndex> {
+    /// Graph construction maintains transcript nodes as a single transcript-edge
+    /// chain, so ordering is just walking from the root transcript node to the end
+    /// of that chain.
+    pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
+        let transcript_nodes: Vec<NodeIndex> = self
+            .graph
+            .node_indices()
+            .filter(|&node| self[node].is_transcript())
+            .collect();
+
         if transcript_nodes.is_empty() {
             return Vec::new();
         }
@@ -376,7 +383,7 @@ impl<C: ArkConfig, A> Dag<C, A> {
         let mut transcript_child_by_parent: HashMap<NodeIndex, NodeIndex> = HashMap::new();
         let mut nodes_with_transcript_parent: HashSet<NodeIndex> = HashSet::new();
 
-        for &node in transcript_nodes {
+        for &node in &transcript_nodes {
             if let Some(edge) = self.transcript_edge(node, Direction::Incoming) {
                 let parent = edge.source();
                 if transcript_node_set.contains(&parent) {
@@ -399,17 +406,6 @@ impl<C: ArkConfig, A> Dag<C, A> {
         }
 
         ordered
-    }
-
-    /// Get all transcript nodes from the graph (challenges and proof nodes).
-    pub fn transcript_nodes(&self) -> Vec<NodeIndex> {
-        let transcript_nodes: Vec<NodeIndex> = self
-            .graph
-            .node_indices()
-            .filter(|&node| self[node].is_transcript())
-            .collect();
-
-        self.order_transcript_nodes(&transcript_nodes)
     }
 
     /// Get all proof nodes from the graph
