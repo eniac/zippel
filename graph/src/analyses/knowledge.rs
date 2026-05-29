@@ -45,8 +45,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             // Build a relation-only basis using the *same* canonical args and
             // packed width as the main builder, so polynomials in the two bases
             // share variable names and `contains_poly` matches correctly.
-            let mut rel_gb = GroebnerBuilder::new();
-            let mut rel_result = rel_gb.build(TransClos::relation(dag));
+            let mut rel_result = gb.build(TransClos::relation(dag));
             rel_result.run::<W>();
             Some(rel_result.basis)
         } else {
