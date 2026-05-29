@@ -228,3 +228,7 @@ path = "examples/coin_proof/main.rs"
 [[example]]
 name = "membership"
 path = "examples/membership/main.rs"
+
+[[example]]
+name = "zeromorph_kzg"
+path = "examples/zeromorph_kzg/main.rs"
