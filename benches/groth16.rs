@@ -9,6 +9,7 @@ use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::AffineRepr;
 use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
+use ark_groth16::Proof;
 use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
 use ark_poly::GeneralEvaluationDomain;
@@ -71,6 +72,8 @@ struct BenchData {
     l: usize,
     h_size: usize,
     domain_size: usize,
+    ark_proof: Proof<E>,
+    public_inputs: Vec<F>,
 }
 
 fn build_dense_matrix_a(
@@ -152,6 +155,10 @@ fn setup_bench(num_constraints: usize) -> BenchData {
     let l = pk.l_query.len();
     let h_size = pk.h_query.len();
 
+    let ark_proof =
+        Groth16::<E>::create_random_proof_with_reduction(circuit, &pk, &mut rng).unwrap();
+    let public_inputs = instance_assignment[1..].to_vec();
+
     BenchData {
         pk,
         vk,
@@ -166,6 +173,8 @@ fn setup_bench(num_constraints: usize) -> BenchData {
         l,
         h_size,
         domain_size,
+        ark_proof,
+        public_inputs,
     }
 }
 
@@ -199,24 +208,14 @@ fn groth16_bench(c: &mut Criterion) {
         );
 
         // Arkworks verifier
-        group.bench_with_input(
-            BenchmarkId::new("arkworks_verifier", size),
-            &data,
-            |b, data| {
-                let pvk = ark_groth16::prepare_verifying_key(&data.vk);
-                let circuit = BenchCircuit {
-                    num_constraints: size,
-                };
-                let proof = Groth16::<E>::create_random_proof_with_reduction(
-                    circuit,
-                    &data.pk,
-                    &mut rand::rngs::OsRng,
-                )
-                .unwrap();
-                let public_inputs = &data.instance_assignment[1..data.num_inputs];
-                b.iter(|| Groth16::<E>::verify_proof(&pvk, &proof, public_inputs).unwrap());
-            },
-        );
+        {
+            let pvk = ark_groth16::prepare_verifying_key(&data.vk);
+            group.bench_with_input(BenchmarkId::new("arkworks_verifier", size), &(), |b, _| {
+                b.iter(|| {
+                    Groth16::<E>::verify_proof(&pvk, &data.ark_proof, &data.public_inputs).unwrap()
+                });
+            });
+        }
 
         // --- Zippel opt mode prover ---
         {
@@ -282,26 +281,23 @@ fn groth16_bench(c: &mut Criterion) {
             let h = data.h_size;
 
             // Zippel opt prover
-            group.bench_with_input(
-                BenchmarkId::new("zippel_opt_prover", size),
-                &(m, l, h),
-                |b, dims| {
-                    let args =
-                        ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
-                    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                    let mut sizes = Ctx::new();
-                    sizes.insert(&Tid::new("M"), &dims.0);
-                    sizes.insert(&Tid::new("L"), &dims.1);
-                    sizes.insert(&Tid::new("H"), &dims.2);
-                    handler.compile(&sizes);
-                    let scheduled = handler.default_schedule_prover();
+            {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &m);
+                sizes.insert(&Tid::new("L"), &l);
+                sizes.insert(&Tid::new("H"), &h);
+                handler.compile(&sizes);
+                let scheduled = handler.default_schedule_prover();
+                group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(), |b, _| {
                     b.iter(|| {
                         handler
                             .run_prover(scheduled.clone(), zippel_inputs.clone())
                             .unwrap()
                     });
-                },
-            );
+                });
+            }
 
             // Zippel opt verifier
             {
@@ -418,7 +414,7 @@ fn groth16_bench(c: &mut Criterion) {
                 (Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)),
                 (Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)),
                 (Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)),
-                (Vid("omega".to_string()), Value::Scalar(coset_offset)),
+                (Vid("coset_offset".to_string()), Value::Scalar(coset_offset)),
             ]);
 
             let m = data.m;
@@ -427,26 +423,24 @@ fn groth16_bench(c: &mut Criterion) {
             let d = data.domain_size;
 
             // Zippel noh prover
-            group.bench_with_input(
-                BenchmarkId::new("zippel_noh_prover", size),
-                &(m, l, c, d),
-                |b, dims| {
-                    let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
-                    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-                    let mut sizes = Ctx::new();
-                    sizes.insert(&Tid::new("M"), &dims.0);
-                    sizes.insert(&Tid::new("L"), &dims.1);
-                    sizes.insert(&Tid::new("C"), &dims.2);
-                    sizes.insert(&Tid::new("D"), &dims.3);
-                    handler.compile(&sizes);
-                    let scheduled = handler.default_schedule_prover();
+            {
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+                let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+                let mut sizes = Ctx::new();
+                sizes.insert(&Tid::new("M"), &m);
+                sizes.insert(&Tid::new("L"), &l);
+                sizes.insert(&Tid::new("C"), &c);
+                sizes.insert(&Tid::new("D"), &d);
+                handler.compile(&sizes);
+                let scheduled = handler.default_schedule_prover();
+                group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(), |b, _| {
                     b.iter(|| {
                         handler
                             .run_prover(scheduled.clone(), noh_inputs.clone())
                             .unwrap()
                     });
-                },
-            );
+                });
+            }
 
             // Zippel noh verifier
             {
@@ -476,7 +470,7 @@ fn groth16_bench(c: &mut Criterion) {
                     "mat_a",
                     "mat_b",
                     "mat_c",
-                    "omega",
+                    "coset_offset",
                 ];
                 let public_inputs_ctx: Ctx<Vid, Value<ArkBls12_381>> = noh_inputs
                     .clone()

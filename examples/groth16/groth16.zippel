@@ -1,10 +1,10 @@
 // Groth16 zkSNARK Protocol — Full QAP computation inside zippel
-// Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments.")
+// Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
 //
 // The entire h(X) = (A(X)·B(X) - C(X)) / Z_H(X) computation is done in zippel:
 //   1. Dense matvec: a_evals[i] = Σ_j mat_A[i,j] * assignment[j]
 //   2. IFFT evals → coefficients
-//   3. Coset FFT: coeffs * [omega^i] → eval → coset evals
+//   3. Coset FFT: coeffs * [coset_offset^i] → eval → coset evals
 //   4. Pointwise: (A*B - C) / Z_H in coset domain
 //   5. Inverse coset IFFT → h coefficients
 //   6. Trim trailing zero coefficient
@@ -14,7 +14,7 @@
 // where C=num_constraints, M=num_inputs, D=domain_size.
 //
 // mat_a, mat_b, mat_c are public since they encode the circuit structure
-// (not the witness) and omega is the multiplicative generator used as the
+// (not the witness) and coset_offset is the multiplicative generator used as the
 // coset offset for the coset FFT. Random blinding factors r and s are
 // sampled internally via random<F>.
 //
@@ -43,7 +43,7 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     public mat_a: [F; D*(M+L)],
     public mat_b: [F; D*(M+L)],
     public mat_c: [F; D*(M+L)],
-    public omega: F,
+    public coset_offset: F,
     private witness_assignment: [F; L]
 ) where
     // TODO: update relation — currently only encodes constraint rows (0..C).
@@ -72,17 +72,17 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     let c_coeff = coef(interpolate(c_evals_full));
 
     // Step 3: Coset FFT — multiply coefficients by shift_fwd, then FFT
-    let shift_fwd = [omega^i for i in 0..D];
-    let omega_inv = 1/omega;
-    let shift_inv = [omega_inv^i for i in 0..D];
+    let shift_fwd = [coset_offset^i for i in 0..D];
+    let offset_inv = 1/coset_offset;
+    let shift_inv = [offset_inv^i for i in 0..D];
 
     let a_coset = eval(poly(a_coeff * shift_fwd));
     let b_coset = eval(poly(b_coeff * shift_fwd));
     let c_coset = eval(poly(c_coeff * shift_fwd));
 
     // Step 4: Pointwise computation in coset domain
-    // Z_H(h·ω^i) = h^D - 1 is constant in the coset
-    let v_inv = 1/(omega^D - 1);
+    // Z_H(h·coset_offset^i) = h^D - 1 is constant in the coset
+    let v_inv = 1/(coset_offset^D - 1);
     let h_coset = (a_coset * b_coset - c_coset) * v_inv;
 
     // Step 5: Inverse coset IFFT → h coefficients (trim trailing zero)

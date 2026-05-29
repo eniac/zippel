@@ -560,7 +560,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     entries.push((Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)));
     entries.push((Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)));
     entries.push((Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)));
-    entries.push((Vid("omega".to_string()), Value::Scalar(coset_offset)));
+    entries.push((Vid("coset_offset".to_string()), Value::Scalar(coset_offset)));
     let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
 
     let public_input_names = [
@@ -580,7 +580,7 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         "mat_a",
         "mat_b",
         "mat_c",
-        "omega",
+        "coset_offset",
     ];
 
     let mut sizes = Ctx::new();

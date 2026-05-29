@@ -17,7 +17,7 @@ ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["pa
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-std = { version = "0.5.0", features = ["parallel"] }
+ark-std = { version = "0.6.0", features = ["parallel"] }
 log = "0.4.27"
 rand = { version = "0.8", features = ["std"] }
 spongefish = { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = [

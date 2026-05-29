@@ -125,7 +125,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -136,7 +136,7 @@ dependencies = [
  "ark-ec",
  "ark-ff",
  "ark-serialize",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -146,7 +146,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -162,7 +162,7 @@ dependencies = [
  "ark-relations",
  "ark-serialize",
  "ark-snark",
- "ark-std 0.6.0",
+ "ark-std",
  "blake2",
  "blake3",
  "derivative",
@@ -192,7 +192,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -204,7 +204,7 @@ dependencies = [
  "ark-ff",
  "ark-poly",
  "ark-serialize",
- "ark-std 0.6.0",
+ "ark-std",
  "educe",
  "fnv",
  "hashbrown 0.17.1",
@@ -224,7 +224,7 @@ dependencies = [
  "ark-bls12-377",
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -235,7 +235,7 @@ dependencies = [
  "ark-curve25519",
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -246,7 +246,7 @@ dependencies = [
  "ark-ff-asm",
  "ark-ff-macros",
  "ark-serialize",
- "ark-std 0.6.0",
+ "ark-std",
  "digest 0.10.7",
  "educe",
  "num-bigint",
@@ -296,7 +296,7 @@ dependencies = [
  "ark-relations",
  "ark-serialize",
  "ark-snark",
- "ark-std 0.6.0",
+ "ark-std",
  "rayon",
 ]
 
@@ -307,7 +307,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -317,7 +317,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -327,7 +327,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -338,7 +338,7 @@ dependencies = [
  "ahash",
  "ark-ff",
  "ark-serialize",
- "ark-std 0.6.0",
+ "ark-std",
  "educe",
  "fnv",
  "hashbrown 0.17.1",
@@ -353,7 +353,7 @@ dependencies = [
  "ark-ec",
  "ark-ff",
  "ark-relations",
- "ark-std 0.6.0",
+ "ark-std",
  "educe",
  "itertools 0.14.0",
  "num-bigint",
@@ -370,7 +370,7 @@ dependencies = [
  "ark-ff",
  "ark-poly",
  "ark-serialize",
- "ark-std 0.6.0",
+ "ark-std",
  "foldhash",
  "indexmap 2.14.0",
  "rayon",
@@ -385,7 +385,7 @@ source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45f
 dependencies = [
  "ark-ec",
  "ark-ff",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -394,7 +394,7 @@ version = "0.6.0"
 source = "git+https://github.com/arkworks-rs/algebra.git#af564e48d0109a9df81d45ff55ff0b628ece319d"
 dependencies = [
  "ark-serialize-derive",
- "ark-std 0.6.0",
+ "ark-std",
  "digest 0.10.7",
  "num-bigint",
  "rayon",
@@ -419,25 +419,13 @@ dependencies = [
  "ark-ff",
  "ark-relations",
  "ark-serialize",
- "ark-std 0.6.0",
-]
-
-[[package]]
-name = "ark-std"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
-dependencies = [
- "num-traits",
- "rand 0.8.6",
- "rayon",
+ "ark-std",
 ]
 
 [[package]]
 name = "ark-std"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "367c9c827ed431bff6868b7aa926e05b16eb46603cc8b6e768e4a5553fa1d155"
+source = "git+https://github.com/arkworks-rs/std.git?branch=release%2F0.6.0#72450ec485129163d2478254c24e709b917f5302"
 dependencies = [
  "num-traits",
  "rand 0.8.6",
@@ -452,7 +440,7 @@ dependencies = [
  "ark-ec",
  "ark-ff",
  "ark-pallas",
- "ark-std 0.6.0",
+ "ark-std",
 ]
 
 [[package]]
@@ -499,7 +487,7 @@ dependencies = [
  "ark-poly",
  "ark-secp256k1",
  "ark-serialize",
- "ark-std 0.5.0",
+ "ark-std",
  "ark-vesta",
  "hashconsing",
  "lang",
@@ -1094,7 +1082,7 @@ dependencies = [
  "ark-gb",
  "ark-poly",
  "ark-serialize",
- "ark-std 0.5.0",
+ "ark-std",
  "backend",
  "hashconsing",
  "itertools 0.14.0",
@@ -2050,7 +2038,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
- "ark-std 0.5.0",
+ "ark-std",
  "backend",
  "crossbeam-channel",
  "graph",
@@ -2959,7 +2947,7 @@ dependencies = [
  "ark-groth16",
  "ark-poly",
  "ark-relations",
- "ark-std 0.5.0",
+ "ark-std",
  "backend",
  "criterion",
  "env_logger",

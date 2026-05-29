@@ -17,7 +17,7 @@ graph = { path = "./graph" }
 runtime = { path = "./runtime" }
 env_logger = "0.11.8"
 log = "0.4.27"
-ark-std = { version = "0.5.0", features = ["parallel"] }
+ark-std = { version = "0.6.0", features = ["parallel"] }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = [
     "parallel",
 ] }
@@ -44,6 +44,7 @@ ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = { git = "https://github.com/arkworks-rs/std.git", branch = "release/0.6.0" }
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", branch = "release/0.6.0" }
 ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "release/0.6.0" }

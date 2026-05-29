@@ -1,5 +1,5 @@
 // Groth16 zkSNARK Protocol (h-coefficients provided externally)
-// Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments.")
+// Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
 //
 // This variant accepts h_coeffs as a private input, computed externally
 // by the Rust R1CS-to-QAP conversion. Compare with groth16.zippel which
