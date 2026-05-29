@@ -83,6 +83,9 @@ pub enum TypeError {
     #[error("ReduceError: Arguments to [reduce] must be a vector type:\n\t{0}, {1} |- reduce ({2}, {3} : {4})")]
     Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
 
+    #[error("ReduceAccError: reduce({2}, {3}) produces {4}, but {4} is not a valid left operand for {2} with element type {5}:\n\t{0}, {1} |- reduce ({2}, {3} : Vec<{5}>)")]
+    ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp, CTyp),
+
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
     Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
@@ -847,16 +850,24 @@ impl Typeable for CExp {
             }
 
             CExp::Reduce(op, box v) => {
-                // Type infer the vector expression
                 let tv = v
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
                     CTyp::Vec(box tv, n) if n > 0 => {
-                        // Infer the return type
-                        CTyp::lub_op(*op, &tv, &tv, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                        let result_type = CTyp::lub_op(*op, &tv, &tv, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        CTyp::lub_op(*op, &result_type, &tv, kctx).map_err(|_| {
+                            TypeError::ReduceAcc(
+                                kctx.clone(),
+                                vctx.clone(),
+                                *op,
+                                (*v).clone(),
+                                result_type,
+                                tv.clone(),
+                            )
+                        })
                     }
                     _ => Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
@@ -2119,6 +2130,24 @@ mod tests {
             e.infer(&KIND_CTX, &fctx, &vctx),
             Ok(poly_t),
             "reduce(+, [Poly<F, 1, 3>; 4]) must yield Poly<F, 1, 3>",
+        );
+    }
+
+    /// `reduce(dot, [Vec(F,2); 3])` must be rejected: dot produces a scalar F,
+    /// but F is not a valid left operand for dot with Vec(F,2).
+    #[test]
+    fn test_reduce_dot_nested_vec_rejected() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        let vec_t = CTyp::vec(&CTyp::Base(Tid::from("F")), 2);
+        vctx.insert(&Vid::from("vv"), &CTyp::vec(&vec_t, 3));
+
+        let e = CExp::reduce(BinOp::Dot, CExp::varstr("vv"));
+        let result = e.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            result.is_err(),
+            "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
+            result
         );
     }
 }

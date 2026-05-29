@@ -533,64 +533,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    /// Phase 10: generic dispatcher for `Op::Reduce(op, v)`.
-    ///
-    /// Returns `Some(polys)` when the inner BinOp has a polynomial
-    /// identity over `C::F`, `None` when it must stay opaque.
-    ///
-    /// Polynomial cases (result has `len(pr.typ)` slots, but we return
-    /// enough polys for the caller to drive `pr.with_slot(i)`):
-    ///
-    /// * `Add`    — scalar output, `Σ elems` (empty → `0`).
-    /// * `Sub`    — scalar output, left-fold difference `e_0 - e_1 - e_2 - …`
-    ///   (empty → `None`; we can't choose a neutral element).
-    /// * `Mul`    — scalar output, `Π elems` (empty → `1`).
-    /// * `Concat` — concatenation of slot-lists into a single vector
-    ///   of length `Σ |e_i|`. Elements are the raw slot polys.
-    ///
-    /// Opaque cases (`None`): `Div`, `Rem`, `Pow`, `Dot`, `Equ`, `And`
-    /// — they either aren't polynomial over the scalar field or would
-    /// require tracking inverses / boolean axioms that are outside
-    /// scope.
-    fn reduce_unfold(
-        &mut self,
-        op: BinOp,
-        elems: Vec<SparsePolynomial<C::F, T>>,
-    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
-        match op {
-            BinOp::Add => {
-                let mut acc = SparsePolynomial::<C::F, T>::zero();
-                for e in elems {
-                    acc = &acc + &e;
-                }
-                Some(vec![acc])
-            }
-            BinOp::Sub => {
-                let mut iter = elems.into_iter();
-                let first = iter.next()?;
-                let mut acc = first;
-                for e in iter {
-                    acc = &acc - &e;
-                }
-                Some(vec![acc])
-            }
-            BinOp::Mul => {
-                let mut acc = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                for e in elems {
-                    acc = &acc * &e;
-                }
-                Some(vec![acc])
-            }
-            BinOp::Concat => Some(elems),
-            // Non-polynomial or boolean-domain — stay opaque.
-            BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Dot | BinOp::Equ | BinOp::And => None,
-        }
-    }
-
     /// Shared helper for `Op::Evaluate(p, xs)` — returns `Some(polys)` when the
-    /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by both
-    /// `ref_vars` (when Eval appears nested inside another op) and `add_op`
-    /// (when Eval is the top-level op being bound to a PRef).
+    /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by
+    /// `add_op` (when Eval is the top-level op being bound to a PRef).
     fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Option<Vec<SparsePolynomial<C::F, T>>> {
         let p_typ = p.typ();
         let xs_polys = self.ref_vars(xs);
@@ -1069,20 +1014,106 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                 }
             }
-            // Phase 10: `Op::Reduce(op, v)` — unfold into `op`-fold of
-            // `ref_vars(v)` when the inner BinOp is polynomial over F.
-            // Otherwise opaque (np).
+            // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements:
+            //   acc₀ = v[0],  acc_i = op(acc_i-1, v[i]),  result = acc_n-1
+            //
+            // Physical slots from `ref_vars(v)` are chunked by `elem_len`
+            // (the element type's physical_len) into logical elements.
+            // The fold is performed per-slot-position across elements.
+            //
+            // For Add/Sub/Mul/And the result is a pure polynomial expression
+            // of the input slots, so the folded result can be computed
+            // directly.
+            //
+            // For Div, intermediate sentinel PRefs are created for each fold
+            // step and per-slot constraints `acc - elem * var(next) = 0`
+            // are emitted (matching the scalar Div fallback in add_op).
+            //
+            // For Equ, per-slot constraints `acc - elem = 0` and `var(next) = 0`
+            // are emitted (matching the Equ handler in add_op).
+            //
+            // For Rem and Pow, the constraint pattern can't be expressed
+            // purely in polynomial terms, so these stay opaque.
+            //
+            // Concat passes through all physical slots.
+            // Dot is unreachable (type checker rejects reduce(dot, _)).
             Op::Reduce(rop, ref v) => {
-                let elems = self.ref_vars(v);
-                match self.reduce_unfold(rop, elems) {
-                    Some(polys) => {
-                        for (pf, p) in pr.slots().into_iter().zip(polys) {
+                let v_typ = v.typ();
+                let (elem_t, n) = match &v_typ {
+                    ATyp::Vec(box e, n) => ((*e).clone(), *n),
+                    _ => unreachable!("Reduce operand must be Vec; type checker guarantees this"),
+                };
+
+                if n == 1 {
+                    let Op::Ref(r, _) = v.get() else {
+                        unreachable!(
+                            "Reduce operand must be Ref; got {:?}",
+                            std::mem::discriminant(v.get())
+                        )
+                    };
+                    let v_pref = self.find_ref(r);
+                    let elem_pref = v_pref.with_index(0).unwrap();
+                    self.link_to_witness(&pr, &elem_pref, result);
+                    return;
+                }
+
+                let elem_len = elem_t.physical_len();
+                let all_slots = self.ref_vars(v);
+                let elements: Vec<Vec<SparsePolynomial<C::F, T>>> =
+                    all_slots.chunks(elem_len).map(|c| c.to_vec()).collect();
+
+                match rop {
+                    BinOp::Add | BinOp::And => {
+                        let mut folded = vec![SparsePolynomial::<C::F, T>::zero(); elem_len];
+                        for elem in &elements {
+                            for (j, r) in folded.iter_mut().enumerate() {
+                                *r = &*r + &elem[j];
+                            }
+                        }
+                        for (pf, p) in pr.slots().into_iter().zip(folded) {
                             result.pl.insert(&pf, &p);
                             result.basis.push(p - SparsePolynomial::var(&pf));
                         }
                     }
-                    None => {
+                    BinOp::Sub => {
+                        let mut folded = elements[0].clone();
+                        for elem in &elements[1..] {
+                            for (j, r) in folded.iter_mut().enumerate() {
+                                *r = &*r - &elem[j];
+                            }
+                        }
+                        for (pf, p) in pr.slots().into_iter().zip(folded) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    BinOp::Mul => {
+                        let mut folded =
+                            vec![SparsePolynomial::<C::F, T>::lit(&C::F::one()); elem_len];
+                        for elem in &elements {
+                            for (j, r) in folded.iter_mut().enumerate() {
+                                *r = &*r * &elem[j];
+                            }
+                        }
+                        for (pf, p) in pr.slots().into_iter().zip(folded) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    BinOp::Concat => {
+                        for (pf, p) in pr.slots().into_iter().zip(all_slots) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    BinOp::Div | BinOp::Rem => {
                         result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
+                    }
+                    BinOp::Equ | BinOp::Pow => {
+                        result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
+                    }
+                    BinOp::Dot => {
+                        unreachable!("reduce(dot, _) is rejected by the type checker");
                     }
                 }
             }
@@ -1124,48 +1155,37 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                 }
             }
-            // Phase 10: `Op::Ram(a, b)` — RAM reads are treated as *fresh
-            // identifiers* in the Gröbner basis. A runtime RAM access can't
-            // be equated with any compile-time slot (the underlying array
-            // may have been mutated through an aliased reference, etc.), so
-            // even with a literal index we do not emit a basis row relating
-            // `pr` to `find_ref(a).with_slot(i)`.
-            //
-            // We do need every slot of `pr` to appear in `np`, otherwise
-            // `find_ref(Ref::Var(pr_name, _))` panics for subsequent ops
-            // that read the RAM result.
-            //
-            // FIXME: this seems problematic as it always link the first
-            // logical element to pr. We can use `ref_vars` and should add
-            // this to np if it is a runtime index.
+            // Phase 10: `Op::Ram(a, b)` — RAM reads with a literal index `i`
+            // resolve to the i-th logical element of the array. For compound
+            // element types, all physical slots are linked pairwise.
+            // Runtime indices fall back to opaque.
             Op::Ram(ref a, ref b) => match b.get() {
                 Op::Value(Value::Index(i)) => {
-                    let raw = Op::Ram(a.clone(), b.clone());
-                    if let Op::Ref(r, _) = a.get() {
-                        if let Some(array_pref) = self.ns.prefs.get(r) {
-                            if let Some(slot_pref) = array_pref.with_slot(*i) {
-                                let e = SparsePolynomial::var(&slot_pref);
-                                result.basis.push(e.clone() - SparsePolynomial::var(&pr));
-                                result.pl.insert(&pr, &e);
-                            } else {
-                                result.np.insert(&pr, &raw);
-                            }
-                        } else {
-                            result.np.insert(&pr, &raw);
-                        }
-                    } else {
-                        result.np.insert(&pr, &raw);
+                    let Op::Ref(r, _) = a.get() else {
+                        unreachable!(
+                            "Ram array operand must be Ref; got {:?}",
+                            std::mem::discriminant(a.get())
+                        )
+                    };
+                    let array_pref = self.find_ref(r);
+                    let Some(elem_pref) = array_pref.with_index(*i) else {
+                        unreachable!(
+                            "Ram operand with literal index must be within bound; Got {:?}",
+                            *i
+                        )
+                    };
+
+                    for (pf, e) in pr.slots().into_iter().zip(elem_pref.slots()) {
+                        let e_poly = SparsePolynomial::var(&e);
+                        result
+                            .basis
+                            .push(e_poly.clone() - SparsePolynomial::var(&pf));
+                        result.pl.insert(&pf, &e_poly);
                     }
                 }
                 _ => {
                     let raw = Op::Ram(a.clone(), b.clone());
-                    let slots: Vec<PRef> = pr.slots();
-                    if slots.is_empty() {
-                        result.np.insert(&pr, &raw);
-                    }
-                    for pf in slots {
-                        result.np.insert(&pf, &raw);
-                    }
+                    result.np.insert(&pr, &raw);
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
@@ -3456,6 +3476,151 @@ mod tests {
             ns_named_count >= 8,
             "namespace should register >= 8 named public prefs, got {}",
             ns_named_count
+        );
+    }
+
+    #[test]
+    fn test_reduce_add_over_scalar_vec() {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        // v : Vec(F, 3)  →  reduce(+, v) : F
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Vec(Box::new(ATyp::scalar()), 3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Reduce(
+            BinOp::Add,
+            mk::<ArkBls12_381>(Op::Ref(
+                Ref::new(NodeIndex::new(0)),
+                ATyp::Vec(Box::new(ATyp::scalar()), 3),
+            )),
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        let v0 = pref_v.clone().with_slot(0).unwrap();
+        let v1 = pref_v.clone().with_slot(1).unwrap();
+        let v2 = pref_v.clone().with_slot(2).unwrap();
+
+        let expected = &var(&v0) + &(&var(&v1) + &var(&v2));
+        let row = &expected - &var(&result);
+        assert!(
+            gresult.basis.iter().any(|r| r == &row),
+            "basis should contain v0+v1+v2 - result, got {:?}",
+            gresult.basis
+        );
+        assert_eq!(
+            gresult.pl.get(&result).cloned(),
+            Some(expected),
+            "pl[result] should map to v0+v1+v2"
+        );
+    }
+
+    #[test]
+    fn test_reduce_add_over_poly_vec() {
+        // reduce(+, [Poly(1,2); 3]) : Poly(1,2)
+        // Vec(Poly(1,2), 3) has 3 elements × 3 coefficients = 9 physical slots.
+        // reduce should produce 3 polynomials (one per coefficient position),
+        // where result[j] = v0[j] + v1[j] + v2[j].
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let poly_t = ATyp::Uni(2);
+        let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 3);
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            poly_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Reduce(
+            BinOp::Add,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        // Vec(Poly(1,2), 3): element 0 is slots 0,1,2; element 1 is slots 3,4,5; element 2 is slots 6,7,8.
+        let v0_c0 = pref_v.clone().with_index(0).unwrap().with_slot(0).unwrap();
+        let v0_c1 = pref_v.clone().with_index(0).unwrap().with_slot(1).unwrap();
+        let v0_c2 = pref_v.clone().with_index(0).unwrap().with_slot(2).unwrap();
+        let v1_c0 = pref_v.clone().with_index(1).unwrap().with_slot(0).unwrap();
+        let v1_c1 = pref_v.clone().with_index(1).unwrap().with_slot(1).unwrap();
+        let v1_c2 = pref_v.clone().with_index(1).unwrap().with_slot(2).unwrap();
+        let v2_c0 = pref_v.clone().with_index(2).unwrap().with_slot(0).unwrap();
+        let v2_c1 = pref_v.clone().with_index(2).unwrap().with_slot(1).unwrap();
+        let v2_c2 = pref_v.clone().with_index(2).unwrap().with_slot(2).unwrap();
+
+        let r_c0 = result.clone().with_slot(0).unwrap();
+        let r_c1 = result.clone().with_slot(1).unwrap();
+        let r_c2 = result.clone().with_slot(2).unwrap();
+
+        // result[0] = v0[0] + v1[0] + v2[0]
+        let expected_c0 = &var(&v0_c0) + &(&var(&v1_c0) + &var(&v2_c0));
+        let expected_c1 = &var(&v0_c1) + &(&var(&v1_c1) + &var(&v2_c1));
+        let expected_c2 = &var(&v0_c2) + &(&var(&v1_c2) + &var(&v2_c2));
+
+        assert_eq!(
+            gresult.pl.get(&r_c0).cloned(),
+            Some(expected_c0.clone()),
+            "pl[result[0]] = v0[0]+v1[0]+v2[0]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r_c1).cloned(),
+            Some(expected_c1.clone()),
+            "pl[result[1]] = v0[1]+v1[1]+v2[1]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r_c2).cloned(),
+            Some(expected_c2.clone()),
+            "pl[result[2]] = v0[2]+v1[2]+v2[2]"
+        );
+
+        let row0 = &expected_c0 - &var(&r_c0);
+        let row1 = &expected_c1 - &var(&r_c1);
+        let row2 = &expected_c2 - &var(&r_c2);
+        assert!(
+            gresult.basis.iter().any(|r| r == &row0),
+            "basis should contain row for coefficient 0"
+        );
+        assert!(
+            gresult.basis.iter().any(|r| r == &row1),
+            "basis should contain row for coefficient 1"
+        );
+        assert!(
+            gresult.basis.iter().any(|r| r == &row2),
+            "basis should contain row for coefficient 2"
         );
     }
 }
