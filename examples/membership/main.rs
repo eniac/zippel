@@ -21,7 +21,7 @@ fn main() {
         .into_iter()
         .filter(|(vid, _)| vid.0 != "f_coeffs")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    
+
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
     let proof = handler
