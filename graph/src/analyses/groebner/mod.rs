@@ -500,15 +500,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// `div_witnesses`. Emits `var(pr[j]) − var(wit[j]) = 0` for every
     /// `j < pr.typ.physical_len()`, and registers `pl[pr[j]] = var(wit[j])`.
     fn link_to_witness(&mut self, pr: &PRef, wit: &PRef, result: &mut GroebnerResult<C, T>) {
-        let n_pr = pr.typ.physical_len();
-        let n_wit = wit.typ.physical_len();
-        // Number of shared slots. If user's pr has more slots than the
-        // witness (unusual — would indicate the lub widened the result),
-        // link what we can; excess pr slots stay unconstrained (opaque).
-        let n = n_pr.min(n_wit);
-        for j in 0..n {
-            let pf = pr.clone().with_slot(j).unwrap();
-            let wf = wit.clone().with_slot(j).unwrap();
+        // Zip to min(pr slots, wit slots) — zip truncates to the shorter iterator.
+        // Excess pr slots stay unconstrained (opaque).
+        for (pf, wf) in pr.slots().into_iter().zip(wit.slots()) {
             let wvar = SparsePolynomial::var(&wf);
             result.pl.insert(&pf, &wvar);
             result.basis.push(&wvar - &SparsePolynomial::var(&pf));
@@ -743,32 +737,35 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         match op {
             Op::Ref(r, typ) => {
                 let ref_poly = self.ref_vars(&Op::Ref(r, typ));
-                for (i, p) in ref_poly.into_iter().enumerate() {
-                    let pf = pr.clone().with_slot(i).unwrap();
+                for (pf, p) in pr.slots().into_iter().zip(ref_poly) {
                     result.pl.insert(&pf, &p);
                     result.basis.push(p - SparsePolynomial::var(&pf));
                 }
             }
-            Op::Bin(BinOp::Add | BinOp::And, a, b, _) => self
-                .ref_vars(&a)
-                .into_iter()
-                .zip(self.ref_vars(&b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_slot(i).unwrap();
-                    result.pl.insert(&pf, &(&a + &b));
-                    result.basis.push(a + b - SparsePolynomial::var(&pf));
-                }),
-            Op::Bin(BinOp::Sub, a, b, _) => self
-                .ref_vars(&a)
-                .into_iter()
-                .zip(self.ref_vars(&b))
-                .enumerate()
-                .for_each(|(i, (a, b))| {
-                    let pf = pr.clone().with_slot(i).unwrap();
-                    result.pl.insert(&pf, &(&a - &b));
-                    result.basis.push(a - b - SparsePolynomial::var(&pf));
-                }),
+            Op::Bin(BinOp::Add | BinOp::And, a, b, _) => {
+                let pr_slots = pr.slots();
+                for ((a, b), pf) in self
+                    .ref_vars(&a)
+                    .into_iter()
+                    .zip(self.ref_vars(&b))
+                    .zip(&pr_slots)
+                {
+                    result.pl.insert(pf, &(&a + &b));
+                    result.basis.push(a + b - SparsePolynomial::var(pf));
+                }
+            }
+            Op::Bin(BinOp::Sub, a, b, _) => {
+                let pr_slots = pr.slots();
+                for ((a, b), pf) in self
+                    .ref_vars(&a)
+                    .into_iter()
+                    .zip(self.ref_vars(&b))
+                    .zip(&pr_slots)
+                {
+                    result.pl.insert(pf, &(&a - &b));
+                    result.basis.push(a - b - SparsePolynomial::var(pf));
+                }
+            }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
                 let a_typ = a.typ();
                 let b_typ = b.typ();
@@ -862,22 +859,22 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     };
                 match poly_result {
                     Some(polys) => {
-                        for (i, poly) in polys.into_iter().enumerate() {
-                            let pf = pr.clone().with_slot(i).unwrap();
+                        for (pf, poly) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &poly);
                             result.basis.push(poly - SparsePolynomial::var(&pf));
                         }
                     }
-                    None => self
-                        .ref_vars(a)
-                        .into_iter()
-                        .zip(self.ref_vars(b))
-                        .enumerate()
-                        .for_each(|(i, (ap, bp))| {
-                            let pf = pr.clone().with_slot(i).unwrap();
-                            result.pl.insert(&pf, &(&ap * &bp));
-                            result.basis.push(ap * bp - SparsePolynomial::var(&pf));
-                        }),
+                    None => {
+                        let pr_slots = pr.slots();
+                        self.ref_vars(a)
+                            .into_iter()
+                            .zip(self.ref_vars(b))
+                            .zip(&pr_slots)
+                            .for_each(|((ap, bp), pf)| {
+                                result.pl.insert(pf, &(&ap * &bp));
+                                result.basis.push(ap * bp - SparsePolynomial::var(pf));
+                            });
+                    }
                 }
             }
             Op::Bin(BinOp::Dot, a, b, _) => {
@@ -906,16 +903,16 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 if let Some((q_wit, _r_wit)) = self.div_witnesses(a, b, result) {
                     self.link_to_witness(&pr, &q_wit, result);
                 } else {
+                    let pr_slots = pr.slots();
                     self.ref_vars(a)
                         .into_iter()
                         .zip(self.ref_vars(b))
-                        .enumerate()
-                        .for_each(|(i, (a_p, b_p))| {
-                            let pf = pr.clone().with_slot(i).unwrap();
+                        .zip(&pr_slots)
+                        .for_each(|((a_p, b_p), pf)| {
                             result
                                 .np
-                                .insert(&pf, &Op::ram(op_for_div.clone(), Op::index(i)));
-                            result.basis.push(a_p - b_p * SparsePolynomial::var(&pf));
+                                .insert(pf, &Op::ram(op_for_div.clone(), Op::index(0)));
+                            result.basis.push(a_p - b_p * SparsePolynomial::var(pf));
                         });
                 }
             }
@@ -973,19 +970,18 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let n = v_polys.len();
                 if let Some(omega) = C::F::get_root_of_unity(n as u64) {
                     // Row i: Σ_j ω^{i·j} · pr[j] = v_polys[i]
-                    let coeff_vars: Vec<SparsePolynomial<C::F, T>> = (0..n)
-                        .map(|j| SparsePolynomial::var(&pr.clone().with_slot(j).unwrap()))
-                        .collect();
+                    let pr_slots = pr.slots();
+                    let coeff_vars: Vec<SparsePolynomial<C::F, T>> =
+                        pr_slots.iter().map(|s| SparsePolynomial::var(s)).collect();
                     for (i, vp) in v_polys.iter().enumerate().take(n) {
                         let lhs = dft_row(&coeff_vars, omega, i);
                         result.basis.push(&lhs - vp);
                     }
                     // Register each coefficient slot of `pr` in `pl` so
                     // `find_ref` can resolve `Ref::Var("p", _)` later.
-                    for j in 0..n {
-                        let pf = pr.clone().with_slot(j).unwrap();
-                        let v = SparsePolynomial::var(&pf);
-                        result.pl.insert(&pf, &v);
+                    for pf in &pr_slots {
+                        let v = SparsePolynomial::var(pf);
+                        result.pl.insert(pf, &v);
                     }
                 } else {
                     result.np.insert(&pr, &Op::Ifft(a.clone()));
@@ -999,12 +995,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let coeff_polys = self.ref_vars(a);
                 let n = coeff_polys.len();
                 if let Some(omega) = C::F::get_root_of_unity(n as u64) {
-                    for i in 0..n {
+                    let pr_slots = pr.slots();
+                    for (i, pf) in pr_slots.iter().enumerate() {
                         let lhs = dft_row(&coeff_polys, omega, i);
-                        let pf = pr.clone().with_slot(i).unwrap();
                         // Register v[i]'s polynomial form in pl and push basis eqn.
-                        result.pl.insert(&pf, &lhs);
-                        result.basis.push(&lhs - &SparsePolynomial::var(&pf));
+                        result.pl.insert(pf, &lhs);
+                        result.basis.push(&lhs - &SparsePolynomial::var(pf));
                     }
                 } else {
                     result.np.insert(&pr, &Op::Fft(a.clone()));
@@ -1025,8 +1021,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Op::Poly/Mle/Coef produced zero polys for {:?}",
                     pr.typ
                 );
-                for (i, p) in polys.into_iter().enumerate() {
-                    let pf = pr.clone().with_slot(i).unwrap();
+                for (pf, p) in pr.slots().into_iter().zip(polys) {
                     result.pl.insert(&pf, &p);
                     result.basis.push(p - SparsePolynomial::var(&pf));
                 }
@@ -1064,8 +1059,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let eval_result = self.eval_to_poly(p, xs);
                 match eval_result {
                     Some(polys) => {
-                        for (i, poly) in polys.into_iter().enumerate() {
-                            let pf = pr.clone().with_slot(i).unwrap();
+                        for (pf, poly) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &poly);
                             result.basis.push(poly - SparsePolynomial::var(&pf));
                         }
@@ -1082,8 +1076,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let elems = self.ref_vars(v);
                 match self.reduce_unfold(rop, elems) {
                     Some(polys) => {
-                        for (i, p) in polys.into_iter().enumerate() {
-                            let pf = pr.clone().with_slot(i).unwrap();
+                        for (pf, p) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &p);
                             result.basis.push(p - SparsePolynomial::var(&pf));
                         }
@@ -1121,8 +1114,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 };
                 match polys_opt {
                     Some(polys) => {
-                        for (i, p) in polys.into_iter().enumerate() {
-                            let pf = pr.clone().with_slot(i).unwrap();
+                        for (pf, p) in pr.slots().into_iter().zip(polys) {
                             result.pl.insert(&pf, &p);
                             result.basis.push(p - SparsePolynomial::var(&pf));
                         }
