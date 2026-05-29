@@ -1,5 +1,5 @@
 //! Criterion benchmarks comparing arkworks Groth16 prover/verifier with Zippel's
-//! across different circuit sizes (2^10 to 2^13 constraints).
+//! across different circuit sizes (2^10 to 2^12 constraints).
 //!
 //! Supports both noh (matvec + FFT inside zippel) and opt (h_coeffs external) modes.
 //!
@@ -291,11 +291,11 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
                 let scheduled = handler.default_schedule_prover();
                 group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(), |b, _| {
-                    b.iter(|| {
-                        handler
-                            .run_prover(scheduled.clone(), zippel_inputs.clone())
-                            .unwrap()
-                    });
+                    b.iter_batched(
+                        || (scheduled.clone(), zippel_inputs.clone()),
+                        |(scheduled, inputs)| handler.run_prover(scheduled, inputs).unwrap(),
+                        criterion::BatchSize::SmallInput,
+                    );
                 });
             }
 
@@ -340,11 +340,11 @@ fn groth16_bench(c: &mut Criterion) {
                     BenchmarkId::new("zippel_opt_verifier", size),
                     &(),
                     |b, _| {
-                        b.iter(|| {
-                            handler
-                                .run_verifier(scheduled_verifier.clone(), proof.clone())
-                                .unwrap()
-                        });
+                        b.iter_batched(
+                            || (scheduled_verifier.clone(), proof.clone()),
+                            |(scheduled, proof)| handler.run_verifier(scheduled, proof).unwrap(),
+                            criterion::BatchSize::SmallInput,
+                        );
                     },
                 );
             }
@@ -434,11 +434,11 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
                 let scheduled = handler.default_schedule_prover();
                 group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(), |b, _| {
-                    b.iter(|| {
-                        handler
-                            .run_prover(scheduled.clone(), noh_inputs.clone())
-                            .unwrap()
-                    });
+                    b.iter_batched(
+                        || (scheduled.clone(), noh_inputs.clone()),
+                        |(scheduled, inputs)| handler.run_prover(scheduled, inputs).unwrap(),
+                        criterion::BatchSize::SmallInput,
+                    );
                 });
             }
 
@@ -488,11 +488,11 @@ fn groth16_bench(c: &mut Criterion) {
                     BenchmarkId::new("zippel_noh_verifier", size),
                     &(),
                     |b, _| {
-                        b.iter(|| {
-                            handler
-                                .run_verifier(scheduled_verifier.clone(), proof.clone())
-                                .unwrap()
-                        });
+                        b.iter_batched(
+                            || (scheduled_verifier.clone(), proof.clone()),
+                            |(scheduled, proof)| handler.run_verifier(scheduled, proof).unwrap(),
+                            criterion::BatchSize::SmallInput,
+                        );
                     },
                 );
             }
