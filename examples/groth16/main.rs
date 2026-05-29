@@ -2,7 +2,9 @@ use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{FftField, One, UniformRand, Zero};
 use ark_groth16::Groth16;
+use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_poly::EvaluationDomain;
+use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination,
     R1CS_PREDICATE_LABEL, SynthesisMode,
@@ -16,263 +18,34 @@ use zippel::*;
 type E = Bls12_381;
 type F = Fr;
 
-#[derive(Clone)]
-struct MultiplyCircuit {
-    a: Option<F>,
-    b: Option<F>,
-}
-
-impl ConstraintSynthesizer<F> for MultiplyCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let a_var = cs.new_witness_variable(|| {
-            self.a
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let b_var = cs.new_witness_variable(|| {
-            self.b
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c_var = cs.new_input_variable(|| {
-            self.a
-                .and_then(|a| self.b.map(|b| a * b))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a_var),
-            || LinearCombination::from(b_var),
-            || LinearCombination::from(c_var),
-        )?;
-        Ok(())
-    }
-}
+const CONSTRAINT_SIZE: usize = 1 << 5;
 
 #[derive(Clone)]
-struct DoubleMulCircuit {
-    a: Option<F>,
-    b: Option<F>,
-    d: Option<F>,
+struct BenchCircuit {
+    num_constraints: usize,
 }
 
-impl ConstraintSynthesizer<F> for DoubleMulCircuit {
+impl ConstraintSynthesizer<F> for BenchCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let a_var = cs.new_witness_variable(|| {
-            self.a
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let b_var = cs.new_witness_variable(|| {
-            self.b
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let d_var = cs.new_witness_variable(|| {
-            self.d
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c1_var = cs.new_input_variable(|| {
-            self.a
-                .and_then(|a| self.b.map(|b| a * b))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c2_var = cs.new_input_variable(|| {
-            self.a
-                .and_then(|a| self.d.map(|d| a * d))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a_var),
-            || LinearCombination::from(b_var),
-            || LinearCombination::from(c1_var),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a_var),
-            || LinearCombination::from(d_var),
-            || LinearCombination::from(c2_var),
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct TripleMulCircuit {
-    a: Option<F>,
-    b: Option<F>,
-    d: Option<F>,
-    e: Option<F>,
-}
-
-impl ConstraintSynthesizer<F> for TripleMulCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let a_var = cs.new_witness_variable(|| {
-            self.a
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let b_var = cs.new_witness_variable(|| {
-            self.b
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let d_var = cs.new_witness_variable(|| {
-            self.d
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let e_var = cs.new_witness_variable(|| {
-            self.e
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c1_var = cs.new_input_variable(|| {
-            self.a
-                .and_then(|a| self.b.map(|b| a * b))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c2_var = cs.new_input_variable(|| {
-            self.a
-                .and_then(|a| self.d.map(|d| a * d))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        let c3_var = cs.new_input_variable(|| {
-            self.b
-                .and_then(|b| self.e.map(|e| b * e))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        })?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a_var),
-            || LinearCombination::from(b_var),
-            || LinearCombination::from(c1_var),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a_var),
-            || LinearCombination::from(d_var),
-            || LinearCombination::from(c2_var),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(b_var),
-            || LinearCombination::from(e_var),
-            || LinearCombination::from(c3_var),
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ComplexCircuit {
-    a: Option<F>,
-    b: Option<F>,
-    c: Option<F>,
-    d: Option<F>,
-    e: Option<F>,
-    f: Option<F>,
-    g: Option<F>,
-    h: Option<F>,
-    p: Option<F>,
-    q: Option<F>,
-}
-
-impl ConstraintSynthesizer<F> for ComplexCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> ark_relations::gr1cs::Result<()> {
-        let alloc =
-            |opt: Option<F>| opt.ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing);
-        let a = cs.new_witness_variable(|| alloc(self.a))?;
-        let b = cs.new_witness_variable(|| alloc(self.b))?;
-        let c = cs.new_witness_variable(|| alloc(self.c))?;
-        let d = cs.new_witness_variable(|| alloc(self.d))?;
-        let e = cs.new_witness_variable(|| alloc(self.e))?;
-        let f = cs.new_witness_variable(|| alloc(self.f))?;
-        let g = cs.new_witness_variable(|| alloc(self.g))?;
-        let h = cs.new_witness_variable(|| alloc(self.h))?;
-        let p = cs.new_witness_variable(|| alloc(self.p))?;
-        let q = cs.new_witness_variable(|| alloc(self.q))?;
-        let mul2 = |x: Option<F>, y: Option<F>| {
-            x.and_then(|x| y.map(|y| x * y))
-                .ok_or(ark_relations::gr1cs::SynthesisError::AssignmentMissing)
-        };
-        let o1 = cs.new_input_variable(|| mul2(self.a, self.b))?;
-        let o2 = cs.new_input_variable(|| mul2(self.c, self.d))?;
-        let o3 = cs.new_input_variable(|| mul2(self.e, self.f))?;
-        let o4 = cs.new_input_variable(|| mul2(self.g, self.h))?;
-        let o5 = cs.new_input_variable(|| mul2(self.a, self.c))?;
-        let o6 = cs.new_input_variable(|| mul2(self.b, self.e))?;
-        let o7 = cs.new_input_variable(|| mul2(self.d, self.g))?;
-        let o8 = cs.new_input_variable(|| mul2(self.f, self.h))?;
-        let o9 = cs.new_input_variable(|| mul2(self.p, self.q))?;
-        let o10 = cs.new_input_variable(|| mul2(self.a, self.p))?;
-        let o11 = cs.new_input_variable(|| mul2(self.e, self.p))?;
-        let o12 = cs.new_input_variable(|| mul2(self.h, self.q))?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a),
-            || LinearCombination::from(b),
-            || LinearCombination::from(o1),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(c),
-            || LinearCombination::from(d),
-            || LinearCombination::from(o2),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(e),
-            || LinearCombination::from(f),
-            || LinearCombination::from(o3),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(g),
-            || LinearCombination::from(h),
-            || LinearCombination::from(o4),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a),
-            || LinearCombination::from(c),
-            || LinearCombination::from(o5),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(b),
-            || LinearCombination::from(e),
-            || LinearCombination::from(o6),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(d),
-            || LinearCombination::from(g),
-            || LinearCombination::from(o7),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(f),
-            || LinearCombination::from(h),
-            || LinearCombination::from(o8),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(p),
-            || LinearCombination::from(q),
-            || LinearCombination::from(o9),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(a),
-            || LinearCombination::from(p),
-            || LinearCombination::from(o10),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(e),
-            || LinearCombination::from(p),
-            || LinearCombination::from(o11),
-        )?;
-        cs.enforce_constraint_arity_3(
-            R1CS_PREDICATE_LABEL,
-            || LinearCombination::from(h),
-            || LinearCombination::from(q),
-            || LinearCombination::from(o12),
-        )?;
+        let num_cons = self.num_constraints;
+        let mut witness_vars = Vec::new();
+        for _ in 0..(2 * num_cons) {
+            let val = F::rand(&mut rand::rngs::OsRng);
+            let w = cs.new_witness_variable(|| Ok(val))?;
+            witness_vars.push((w, val));
+        }
+        for i in 0..num_cons {
+            let (w1, v1) = witness_vars[2 * i];
+            let (w2, v2) = witness_vars[2 * i + 1];
+            let out_val = v1 * v2;
+            let out = cs.new_input_variable(|| Ok(out_val))?;
+            cs.enforce_constraint_arity_3(
+                R1CS_PREDICATE_LABEL,
+                || LinearCombination::from(w1),
+                || LinearCombination::from(w2),
+                || LinearCombination::from(out),
+            )?;
+        }
         Ok(())
     }
 }
@@ -471,13 +244,12 @@ fn build_dense_matrix_bc(
     dense
 }
 
-fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
+fn run_opt(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     h_coeffs: &[F],
     instance_assignment: &[F],
     witness_assignment: &[F],
-    _circuit: C,
 ) {
     let params = Groth16Params::from_keys(pk, vk);
     let m = vk.gamma_abc_g1.len();
@@ -526,18 +298,15 @@ fn run_opt<C: ConstraintSynthesizer<F> + Clone>(
         vk,
         instance_assignment,
     );
-
-    // run_analysis("examples/groth16/groth16-opt.zippel", "opt");
 }
 
-fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
+fn run_noh(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     matrices: &[ark_relations::gr1cs::Matrix<F>],
     instance_assignment: &[F],
     witness_assignment: &[F],
     num_constraints: usize,
-    _circuit: C,
 ) {
     let params = Groth16Params::from_keys(pk, vk);
     let n = pk.a_query.len();
@@ -545,7 +314,6 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
     let l = pk.l_query.len();
     let num_inputs = instance_assignment.len();
 
-    use ark_poly::GeneralEvaluationDomain;
     type Dm<FF> = GeneralEvaluationDomain<FF>;
     let domain = Dm::<F>::new(num_constraints + num_inputs).unwrap();
     let domain_size = domain.size();
@@ -597,102 +365,20 @@ fn run_noh<C: ConstraintSynthesizer<F> + Clone>(
         vk,
         instance_assignment,
     );
-
-    // run_analysis("examples/groth16/groth16.zippel", "noh");
-}
-
-#[allow(dead_code)]
-fn run_analysis(zippel_file: &str, mode_name: &str) {
-    println!("\n--- Static Analysis ({mode_name}) ---");
-    let analysis_start = Instant::now();
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from(zippel_file));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        analysis_handler.minimal_analysis()
-    });
-    let analysis_elapsed = analysis_start.elapsed();
-    match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
-        }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    }
-    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "noh".to_string());
-    let circuit_name = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| "single".to_string());
-    println!("=== Groth16 (ArkBls12_381) — mode: {mode}, circuit: {circuit_name} ===");
-    let mut rng = rand::rngs::OsRng;
+    println!("=== Groth16 (ArkBls12_381) — mode: {mode}, constraints: {CONSTRAINT_SIZE} ===");
 
-    if circuit_name == "double" {
-        let a_val = F::rand(&mut rng);
-        let b_val = F::rand(&mut rng);
-        let d_val = F::rand(&mut rng);
-        let circuit = DoubleMulCircuit {
-            a: Some(a_val),
-            b: Some(b_val),
-            d: Some(d_val),
-        };
-        setup_and_run(circuit, mode);
-    } else if circuit_name == "triple" {
-        let a_val = F::rand(&mut rng);
-        let b_val = F::rand(&mut rng);
-        let d_val = F::rand(&mut rng);
-        let e_val = F::rand(&mut rng);
-        let circuit = TripleMulCircuit {
-            a: Some(a_val),
-            b: Some(b_val),
-            d: Some(d_val),
-            e: Some(e_val),
-        };
-        setup_and_run(circuit, mode);
-    } else if circuit_name == "complex" {
-        let circuit = ComplexCircuit {
-            a: Some(F::rand(&mut rng)),
-            b: Some(F::rand(&mut rng)),
-            c: Some(F::rand(&mut rng)),
-            d: Some(F::rand(&mut rng)),
-            e: Some(F::rand(&mut rng)),
-            f: Some(F::rand(&mut rng)),
-            g: Some(F::rand(&mut rng)),
-            h: Some(F::rand(&mut rng)),
-            p: Some(F::rand(&mut rng)),
-            q: Some(F::rand(&mut rng)),
-        };
-        setup_and_run(circuit, mode);
-    } else {
-        let a_val = F::rand(&mut rng);
-        let b_val = F::rand(&mut rng);
-        let circuit = MultiplyCircuit {
-            a: Some(a_val),
-            b: Some(b_val),
-        };
-        setup_and_run(circuit, mode);
-    }
-}
-
-fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) {
+    let circuit = BenchCircuit {
+        num_constraints: CONSTRAINT_SIZE,
+    };
     let mut rng = rand::rngs::OsRng;
 
     let pk =
         Groth16::<E>::generate_random_parameters_with_reduction(circuit.clone(), &mut rng).unwrap();
     let vk = pk.vk.clone();
-
-    let n = pk.a_query.len();
-    let m = vk.gamma_abc_g1.len();
-    let l = pk.l_query.len();
-    let h = pk.h_query.len();
 
     let cs = ConstraintSystem::<F>::new_ref();
     cs.set_mode(SynthesisMode::Prove {
@@ -705,33 +391,33 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
     let cs_borrowed = cs.borrow().unwrap();
     let num_constraints = cs_borrowed.num_constraints();
     let num_inputs = cs_borrowed.num_instance_variables();
-    let num_witness = cs_borrowed.num_witness_variables();
-    println!("num_constraints={num_constraints} num_inputs={num_inputs} num_witness={num_witness}");
-    println!("N={n} M={m} L={l} H={h}");
-
-    let cs_borrowed = cs.borrow().unwrap();
     let matrices_map = cs_borrowed.to_matrices().unwrap();
     let matrices: Vec<_> = matrices_map
         .get(R1CS_PREDICATE_LABEL)
         .cloned()
         .unwrap_or_default();
-    let num_inputs = cs_borrowed.num_instance_variables();
-    let num_constraints = cs_borrowed.num_constraints();
     let instance_assignment: Vec<F> = cs_borrowed.instance_assignment().unwrap().to_vec();
     let witness_assignment: Vec<F> = cs_borrowed.witness_assignment().unwrap().to_vec();
 
-    use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
-    use ark_poly::GeneralEvaluationDomain;
+    println!("num_constraints={num_constraints} num_inputs={num_inputs}");
+    println!(
+        "N={} M={} L={} H={}",
+        pk.a_query.len(),
+        vk.gamma_abc_g1.len(),
+        pk.l_query.len(),
+        pk.h_query.len()
+    );
+
     type D<FF> = GeneralEvaluationDomain<FF>;
 
     if mode == "opt" {
-        let full_assignment_raw: Vec<F> =
+        let full_assignment: Vec<F> =
             [instance_assignment.clone(), witness_assignment.clone()].concat();
         let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
             &matrices,
             num_inputs,
             num_constraints,
-            &full_assignment_raw,
+            &full_assignment,
         )
         .unwrap();
 
@@ -741,7 +427,6 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &h_coeffs,
             &instance_assignment,
             &witness_assignment,
-            circuit,
         );
     } else {
         run_noh(
@@ -751,7 +436,6 @@ fn setup_and_run<C: ConstraintSynthesizer<F> + Clone>(circuit: C, mode: String) 
             &instance_assignment,
             &witness_assignment,
             num_constraints,
-            circuit,
         );
     }
 }
