@@ -243,9 +243,6 @@ fn groth16_bench(c: &mut Criterion) {
                 .map(|p| p.into_group())
                 .collect();
 
-            let mut h_coeffs_padded = data.h_coeffs.clone();
-            h_coeffs_padded.resize(data.h_size, F::zero());
-
             let zippel_inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("alpha_g1".to_string()), Value::G1(alpha_g1)),
                 (Vid("beta_g2".to_string()), Value::G2(beta_g2)),
@@ -270,17 +267,13 @@ fn groth16_bench(c: &mut Criterion) {
                     Vid("witness_assignment".to_string()),
                     Value::VecScalar(data.witness_assignment.clone()),
                 ),
-                (
-                    Vid("h_coeffs".to_string()),
-                    Value::VecScalar(h_coeffs_padded),
-                ),
             ]);
 
             let m = data.m;
             let l = data.l;
             let h = data.h_size;
 
-            // Zippel opt prover
+            // Zippel opt prover (includes h_coeffs computation)
             {
                 let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -291,11 +284,30 @@ fn groth16_bench(c: &mut Criterion) {
                 handler.compile(&sizes);
                 let scheduled = handler.default_schedule_prover();
                 group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(), |b, _| {
-                    b.iter_batched(
-                        || (scheduled.clone(), zippel_inputs.clone()),
-                        |(scheduled, inputs)| handler.run_prover(scheduled, inputs).unwrap(),
-                        criterion::BatchSize::SmallInput,
-                    );
+                    b.iter(|| {
+                        let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<
+                            F,
+                            GeneralEvaluationDomain<F>,
+                        >(
+                            &data.matrices,
+                            data.num_inputs,
+                            data.num_constraints,
+                            &[
+                                data.instance_assignment.clone(),
+                                data.witness_assignment.clone(),
+                            ]
+                            .concat(),
+                        )
+                        .unwrap();
+                        let mut h_coeffs_padded = h_coeffs;
+                        h_coeffs_padded.resize(data.h_size, F::zero());
+                        let mut inputs = zippel_inputs.clone();
+                        inputs.insert(
+                            &Vid("h_coeffs".to_string()),
+                            &Value::VecScalar(h_coeffs_padded),
+                        );
+                        handler.run_prover(scheduled.clone(), inputs).unwrap()
+                    });
                 });
             }
 
@@ -331,10 +343,24 @@ fn groth16_bench(c: &mut Criterion) {
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
                 let scheduled_prover = handler.default_schedule_prover();
-                let proof = handler
-                    .run_prover(scheduled_prover, zippel_inputs.clone())
-                    .unwrap();
+                let mut prover_inputs = zippel_inputs.clone();
+                let mut h_coeffs_padded = data.h_coeffs.clone();
+                h_coeffs_padded.resize(data.h_size, F::zero());
+                prover_inputs.insert(
+                    &Vid("h_coeffs".to_string()),
+                    &Value::VecScalar(h_coeffs_padded),
+                );
+                let proof = handler.run_prover(scheduled_prover, prover_inputs).unwrap();
                 let scheduled_verifier = handler.default_schedule_verifier();
+                let verification = check_verification(
+                    handler
+                        .run_verifier(scheduled_verifier.clone(), proof.clone())
+                        .unwrap(),
+                );
+                assert!(
+                    verification.passed,
+                    "opt verification failed in bench setup"
+                );
 
                 group.bench_with_input(
                     BenchmarkId::new("zippel_opt_verifier", size),
@@ -483,6 +509,15 @@ fn groth16_bench(c: &mut Criterion) {
                     .run_prover(scheduled_prover, noh_inputs.clone())
                     .unwrap();
                 let scheduled_verifier = handler.default_schedule_verifier();
+                let verification = check_verification(
+                    handler
+                        .run_verifier(scheduled_verifier.clone(), proof.clone())
+                        .unwrap(),
+                );
+                assert!(
+                    verification.passed,
+                    "noh verification failed in bench setup"
+                );
 
                 group.bench_with_input(
                     BenchmarkId::new("zippel_noh_verifier", size),
