@@ -225,3 +225,6 @@ path = "examples/bccgp/main.rs"
 name = "coin_proof"
 path = "examples/coin_proof/main.rs"
 
+[[example]]
+name = "membership"
+path = "examples/membership/main.rs"
