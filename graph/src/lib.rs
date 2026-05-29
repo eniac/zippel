@@ -1107,6 +1107,15 @@ impl<C: HasOpFactory> UDag<C> {
     /// This guarantees that `add_exp` always returns either `Op::Ref`
     /// or `Op::Value`, ensuring that compound ops never appear as
     /// inline children of other nodes in the transitive closure.
+    /// Materialize an operation into the DAG.
+    ///
+    /// If `op` is already `Op::Ref` or `Op::Value`, it is returned as-is.
+    /// Otherwise, a new DAG node is created for `op`, edges are added from
+    /// that node to all `Op::Ref` children of `op`, and an `Op::Ref` to
+    /// the new node is returned.
+    ///
+    /// This is the primary mechanism for enforcing `add_exp`'s invariant
+    /// that its return value is always `Op::Ref` or `Op::Value`.
     fn materialize(&mut self, op: GOp<C>, edge_type: DepType, atyp: ATyp) -> GOp<C> {
         match &op {
             Op::Ref(_, _) | Op::Value(_) => op,
@@ -1367,6 +1376,21 @@ impl<C: HasOpFactory> UDag<C> {
 
     /// Add an expression [exp] to the graph
     #[allow(clippy::too_many_arguments)]
+    /// Convert a `CExp` to a `GOp` while creating the graph.
+    ///
+    /// # Invariant
+    ///
+    /// This method guarantees that its return value is always `Op::Ref` or
+    /// `Op::Value`. Compound operations that would produce other variants
+    /// (e.g., `Op::Bin`, `Op::Vec`, `Op::Record`) are *materialized*: a DAG
+    /// node is created, edges are added, and an `Op::Ref` to the new node is
+    /// returned. The sole exception is the trampoline loop body, which may
+    /// produce intermediate non-Ref values that are consumed by later
+    /// iterations (e.g., `CExp::Let` bindings, `CExp::App` inlining).
+    ///
+    /// Downstream consumers (notably `trans_clos_op` and `ref_vars` in the
+    /// Groebner analysis) rely on this invariant: every top-level result from
+    /// `add_exp` can be assumed to be a `Ref` or `Value`.
     fn add_exp(
         &mut self,
         initial_exp: CExp,
@@ -1605,25 +1629,28 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Range(r) => return Ok(GOp::range(r)),
 
                 CExp::Map(box l, x, box e) => {
-                    // Type of [e]
                     let te = e.infer(kctx, &fctx.keys(), &vctx)?;
 
-                    // Op for [e]
                     let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
-                    // Get the size [n] from type [te]
                     let (ie, n) = te.into_vec();
 
-                    // Ops are saved here
+                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                        TypeError::next(
+                            TypeError::exp(kctx, &vctx, &exp),
+                            TypeError::ark(kctx, &vctx, &exp, &typ),
+                        )
+                    })?;
+                    let element_typ = atyp.clone().into_vec().0;
+
                     let mut res = Vec::with_capacity(n);
-                    // Create operations
                     for i in 0..n {
-                        // Add oe[i] to local vars and vctx
                         let mut local_vars = vars.clone();
                         let mut local_vctx = vctx.clone();
-                        local_vars.insert(&x, &GOp::ram(oe.clone(), GOp::index(i)));
+                        let ram_op = GOp::ram(oe.clone(), GOp::index(i));
+                        let ram_ref = self.materialize(ram_op, edge_type, element_typ.clone());
+                        local_vars.insert(&x, &ram_ref);
                         local_vctx.insert(&x, &ie);
-                        // Add subexpression
                         let ol = self.add_exp(
                             l.clone(),
                             transcr,
@@ -1635,12 +1662,6 @@ impl<C: HasOpFactory> UDag<C> {
                         )?;
                         res.push(ol);
                     }
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
-                        TypeError::next(
-                            TypeError::exp(kctx, &vctx, &exp),
-                            TypeError::ark(kctx, &vctx, &exp, &typ),
-                        )
-                    })?;
                     return Ok(self.materialize(GOp::vec(res), edge_type, atyp));
                 }
 
@@ -1928,7 +1949,6 @@ impl<C: HasOpFactory> UDag<C> {
                     return Ok(GOp::Value(poly_value));
                 }
                 CExp::Record(fields) => {
-                    // For records, we add each field to the graph and create a Record operation
                     let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
 
                     for (field_name, field_exp) in fields.iter() {
@@ -1945,8 +1965,13 @@ impl<C: HasOpFactory> UDag<C> {
                         field_ops.insert(field_name, &hop);
                     }
 
-                    // Return a Record operation with named fields
-                    return Ok(GOp::Record(field_ops));
+                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                        TypeError::next(
+                            TypeError::exp(kctx, &vctx, &exp),
+                            TypeError::ark(kctx, &vctx, &exp, &typ),
+                        )
+                    })?;
+                    return Ok(self.materialize(GOp::Record(field_ops), edge_type, atyp));
                 }
                 CExp::Proj(box record_exp, field_name) => {
                     // For projection, we need to extract the field from the record

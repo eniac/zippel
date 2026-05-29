@@ -1097,17 +1097,27 @@ fn pin_map() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
-    // Iteration 0: x = Ram(var_a, Index(0)); x + x → Bin(Add)
-    let ram0 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
-    let bin0 = expected.add_node(Node::bin(BinOp::Add, &ram0, &ram0, &s));
-    expected.add_edges(DepType::Data, bin0, ram0.clone());
-    expected.add_edges(DepType::Data, bin0, ram0);
+    // Iteration 0: x = Ram(var_a, Index(0)) — materialized into a Ram node
+    let ram0_op = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
+    let ram0 = expected.add_node(Node::Op(mk::<B>(ram0_op.clone()), Nothing));
+    expected.add_edges(DepType::Data, ram0, var_a.clone());
+    let ref_ram0 = GOp::<B>::underscore(ram0, s.clone());
 
-    // Iteration 1: x = Ram(var_a, Index(1)); x + x → Bin(Add)
-    let ram1 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(1));
-    let bin1 = expected.add_node(Node::bin(BinOp::Add, &ram1, &ram1, &s));
-    expected.add_edges(DepType::Data, bin1, ram1.clone());
-    expected.add_edges(DepType::Data, bin1, ram1);
+    // x + x → Bin(Add, ref_ram0, ref_ram0)
+    let bin0 = expected.add_node(Node::bin(BinOp::Add, &ref_ram0, &ref_ram0, &s));
+    expected.add_edges(DepType::Data, bin0, ref_ram0.clone());
+    expected.add_edges(DepType::Data, bin0, ref_ram0);
+
+    // Iteration 1: x = Ram(var_a, Index(1)) — materialized into a Ram node
+    let ram1_op = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(1));
+    let ram1 = expected.add_node(Node::Op(mk::<B>(ram1_op.clone()), Nothing));
+    expected.add_edges(DepType::Data, ram1, var_a);
+    let ref_ram1 = GOp::<B>::underscore(ram1, s.clone());
+
+    // x + x → Bin(Add, ref_ram1, ref_ram1)
+    let bin1 = expected.add_node(Node::bin(BinOp::Add, &ref_ram1, &ref_ram1, &s));
+    expected.add_edges(DepType::Data, bin1, ref_ram1.clone());
+    expected.add_edges(DepType::Data, bin1, ref_ram1);
 
     // Result: Vec([ref_bin0, ref_bin1]) — non-Ref op → ret node
     let ref_bin0 = GOp::<B>::underscore(bin0, s.clone());
@@ -1364,13 +1374,30 @@ fn pin_proj_var_record() {
     let gs = parse_and_build(src);
 
     let mut expected = UDag::<B>::new();
-    let _s = ATyp::scalar();
+    let s = ATyp::scalar();
+
+    let mut record_fields = Ctx::<String, ATyp>::new();
+    record_fields.insert(&"x".to_string(), &s);
+    record_fields.insert(&"y".to_string(), &s);
+    let record_typ = ATyp::Record(record_fields);
 
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
     let _arg_a = _inp_args[0];
     let _arg_b = _inp_args[1];
 
-    // r = {x: a, y: b}; r.x reduces to `a`, a Ref → no Ret added.
+    // r = {| x: a, y: b |} — materialized into a Record node with edges to arg refs
+    let ref_a = GOp::<B>::underscore(_arg_a, s.clone());
+    let ref_b = GOp::<B>::underscore(_arg_b, s.clone());
+    let mut fields = Ctx::<String, HOp<B>>::new();
+    fields.insert(&"x".to_string(), &mk::<B>(ref_a.clone()));
+    fields.insert(&"y".to_string(), &mk::<B>(ref_b.clone()));
+    let rec_node = expected.add_node(Node::Op(mk::<B>(GOp::Record(fields)), Nothing));
+    expected.add_edges(DepType::Data, rec_node, ref_a);
+    expected.add_edges(DepType::Data, rec_node, ref_b);
+
+    // r.x — Proj derefs Ref(Record) to extract field x, returns Ref(arg_a) directly.
+    // The return value is a Ref, so no ret node is added.
+    // The Record node remains in the graph as a structural dependency.
 
     assert!(gs[0] == expected);
 }
@@ -2378,25 +2405,39 @@ fn pin_map_nested_binop() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, vs2);
 
-    // Iteration 0: x = Ram(a, 0); x*x → mul0; mul0 + x → add0
-    let ram0 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
-    let mul0 = expected.add_node(Node::bin(BinOp::Mul, &ram0, &ram0, &s));
-    expected.add_edges(DepType::Data, mul0, ram0.clone());
-    expected.add_edges(DepType::Data, mul0, ram0.clone());
-    let ref_mul0 = GOp::<B>::underscore(mul0, s.clone());
-    let add0 = expected.add_node(Node::bin(BinOp::Add, &ref_mul0, &ram0, &s));
-    expected.add_edges(DepType::Data, add0, ref_mul0);
-    expected.add_edges(DepType::Data, add0, ram0);
+    // Iteration 0: x = Ram(a, 0) — materialized into a Ram node
+    let ram0_op = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(0));
+    let ram0_node = expected.add_node(Node::Op(mk::<B>(ram0_op), Nothing));
+    expected.add_edges(DepType::Data, ram0_node, var_a.clone());
+    let ref_ram0 = GOp::<B>::underscore(ram0_node, s.clone());
 
-    // Iteration 1: x = Ram(a, 1); x*x → mul1; mul1 + x → add1
-    let ram1 = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(1));
-    let mul1 = expected.add_node(Node::bin(BinOp::Mul, &ram1, &ram1, &s));
-    expected.add_edges(DepType::Data, mul1, ram1.clone());
-    expected.add_edges(DepType::Data, mul1, ram1.clone());
+    // x*x → mul0
+    let mul0 = expected.add_node(Node::bin(BinOp::Mul, &ref_ram0, &ref_ram0, &s));
+    expected.add_edges(DepType::Data, mul0, ref_ram0.clone());
+    expected.add_edges(DepType::Data, mul0, ref_ram0.clone());
+    let ref_mul0 = GOp::<B>::underscore(mul0, s.clone());
+
+    // mul0 + x → add0
+    let add0 = expected.add_node(Node::bin(BinOp::Add, &ref_mul0, &ref_ram0, &s));
+    expected.add_edges(DepType::Data, add0, ref_mul0);
+    expected.add_edges(DepType::Data, add0, ref_ram0);
+
+    // Iteration 1: x = Ram(a, 1) — materialized into a Ram node
+    let ram1_op = GOp::<B>::ram(var_a.clone(), GOp::<B>::index(1));
+    let ram1_node = expected.add_node(Node::Op(mk::<B>(ram1_op), Nothing));
+    expected.add_edges(DepType::Data, ram1_node, var_a);
+    let ref_ram1 = GOp::<B>::underscore(ram1_node, s.clone());
+
+    // x*x → mul1
+    let mul1 = expected.add_node(Node::bin(BinOp::Mul, &ref_ram1, &ref_ram1, &s));
+    expected.add_edges(DepType::Data, mul1, ref_ram1.clone());
+    expected.add_edges(DepType::Data, mul1, ref_ram1.clone());
     let ref_mul1 = GOp::<B>::underscore(mul1, s.clone());
-    let add1 = expected.add_node(Node::bin(BinOp::Add, &ref_mul1, &ram1, &s));
+
+    // mul1 + x → add1
+    let add1 = expected.add_node(Node::bin(BinOp::Add, &ref_mul1, &ref_ram1, &s));
     expected.add_edges(DepType::Data, add1, ref_mul1);
-    expected.add_edges(DepType::Data, add1, ram1);
+    expected.add_edges(DepType::Data, add1, ref_ram1);
 
     // Result: Vec([ref_add0, ref_add1]) → ret node
     let ref_add0 = GOp::<B>::underscore(add0, s.clone());

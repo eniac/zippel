@@ -726,11 +726,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .map(|s| SparsePolynomial::var(&s))
                     .collect()
             }
-            Op::Vec(vs) => vs.iter().flat_map(|v| self.ref_vars(v)).collect(),
             Op::Value(v) => self.to_poly_value(v),
             other => {
                 panic!(
-                    "ref_vars called with unsupported op variant: {:?}",
+                    "ref_vars called with unsupported op variant: {:?} — children should be materialized to Ref",
                     std::mem::discriminant(other)
                 )
             }
@@ -1470,20 +1469,33 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-        let pref_p = PRef::from_node(
+
+        // First: bind Vec of scalars on node 0, then Poly on node 1.
+        let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-
-        // Op::Poly( [c0=1, c1=2, c2=3] ) -> VPoly<1, 2>.
+        builder.ns.register(&pref_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
-        let op_poly: GOp<ArkBls12_381> = Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs)));
+        builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut gresult);
 
+        let pref_p = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op_poly: GOp<ArkBls12_381> = Op::Poly(mk::<ArkBls12_381>(Op::Ref(
+            crate::Ref::new(NodeIndex::new(0)),
+            ATyp::VPoly(1, 2),
+        )));
+        builder.ns.register(&pref_p);
         builder.add_op(pref_p.clone(), op_poly, &mut gresult);
 
         // Three coefficient slots should have been bound.
@@ -1491,8 +1503,8 @@ mod tests {
             let slot = pref_p.clone().with_slot(i).unwrap();
             assert!(gresult.pl.contains(&slot), "slot {} missing from pl", i);
         }
-        // And three basis equations pushed.
-        assert_eq!(gresult.basis.basis.len(), 3);
+        // Six basis equations: 3 from Vec binding + 3 from Poly identity.
+        assert_eq!(gresult.basis.basis.len(), 6);
     }
 
     #[test]
@@ -1507,34 +1519,49 @@ mod tests {
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
-        // First: inject a VPoly<1, 2> value via Op::Poly.
-        let pref_p = PRef::from_node(
+        // First: bind Vec of scalars on node 0, then Poly on node 1.
+        let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 2),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        builder.ns.register(&pref_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
+        builder.add_op(pref_v.clone(), Op::Vec(coefs), &mut gresult);
+
+        // Poly: reads the Vec's slots via Ref.
+        let pref_p = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_p);
         builder.add_op(
             pref_p.clone(),
-            Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))),
+            Op::Poly(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(0)),
+                ATyp::VPoly(1, 2),
+            ))),
             &mut gresult,
         );
 
         // Then: Op::Coef reading the VPoly back into a Uni(2) output
         // (degree 2 = 3 coefficient slots, per docs/poly-encoding.md).
         let pref_c = PRef::from_node(
-            NodeIndex::new(1),
+            NodeIndex::new(2),
             ATyp::Uni(2),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-        let ref_p: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(1, 2));
+        let ref_p: GOp<ArkBls12_381> =
+            Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
         builder.add_op(
             pref_c.clone(),
             Op::Coef(mk::<ArkBls12_381>(ref_p)),
@@ -1543,7 +1570,7 @@ mod tests {
 
         // Each Coef slot should be bound identically to the corresponding
         // VPoly coefficient PRef — that's the round-trip identity. `ref_vars`
-        // retypes per-slot PRefs to ATyp::scalar(), so we expect that form
+        // resolves per-slot PRefs to ATyp::scalar(), so we expect that form
         // on the RHS.
         for i in 0..3 {
             let coef_slot = pref_c.clone().with_slot(i).unwrap();
@@ -1564,27 +1591,43 @@ mod tests {
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-        // Mle<2> has 2^2 = 4 hypercube slots.
-        let pref_p = PRef::from_node(
+
+        // First: bind Vec of scalars on node 0, then Mle on node 1.
+        let pref_v = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
+        builder.ns.register(&pref_v);
         let vals: Vec<_> = (1..=4u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
+        builder.add_op(pref_v.clone(), Op::Vec(vals), &mut gresult);
+
+        let pref_m = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_m);
         builder.add_op(
-            pref_p.clone(),
-            Op::Mle(mk::<ArkBls12_381>(Op::Vec(vals))),
+            pref_m.clone(),
+            Op::Mle(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(0)),
+                ATyp::Mle(2),
+            ))),
             &mut gresult,
         );
 
-        assert_eq!(gresult.basis.basis.len(), 4);
+        // 4 from Vec binding + 4 from Mle identity.
+        assert_eq!(gresult.basis.basis.len(), 8);
         for i in 0..4 {
             assert!(
-                gresult.pl.contains(&pref_p.clone().with_slot(i).unwrap()),
+                gresult.pl.contains(&pref_m.clone().with_slot(i).unwrap()),
                 "mle slot {} missing",
                 i
             );
@@ -1719,48 +1762,71 @@ mod tests {
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
-        // Bind p via Op::Poly of literal scalars -> 2 slot prefs on node 0.
-        let pref_p = PRef::from_node(
+        // Bind p: Vec of scalars on node 0, then Poly on node 1.
+        let pref_vp = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(1, 1),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        builder.ns.register(&pref_vp);
         let coefs: Vec<_> = [3u64, 5]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
             .collect();
+        builder.add_op(pref_vp.clone(), Op::Vec(coefs), &mut gresult);
+        let pref_p = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::VPoly(1, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_p);
         builder.add_op(
             pref_p.clone(),
-            Op::Poly(mk::<ArkBls12_381>(Op::Vec(coefs))),
+            Op::Poly(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(0)),
+                ATyp::VPoly(1, 1),
+            ))),
             &mut gresult,
         );
 
-        // Bind xs similarly on node 1 as Uni(1) (degree 1 = 2 slots).
+        // Bind xs: Vec of scalars on node 2, then Poly on node 3.
+        let pref_vxs = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Uni(1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_vxs);
+        let xs_vals: Vec<_> = [7u64, 11]
+            .iter()
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
+            .collect();
+        builder.add_op(pref_vxs.clone(), Op::Vec(xs_vals), &mut gresult);
         let pref_xs = PRef::from_node(
-            NodeIndex::new(1),
+            NodeIndex::new(3),
             ATyp::Uni(1),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
         builder.ns.register(&pref_xs);
-        let xs: Vec<_> = [7u64, 11]
-            .iter()
-            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
-            .collect();
-        // Treat xs as a plain Uni literal via Op::Poly (binds 2 slots with literal polys).
         builder.add_op(
             pref_xs.clone(),
-            Op::Poly(mk::<ArkBls12_381>(Op::Vec(xs))),
+            Op::Poly(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(2)),
+                ATyp::Uni(1),
+            ))),
             &mut gresult,
         );
 
-        // Now issue eval:  p(xs).
+        // Now issue eval: p(xs).
         let result = PRef::from_node(
-            NodeIndex::new(2),
+            NodeIndex::new(4),
             ATyp::Uni(1),
             0,
             Qualifier::Private,
@@ -1768,10 +1834,10 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                crate::Ref::new(NodeIndex::new(1)),
                 ATyp::VPoly(1, 1),
             )),
-            mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::Uni(1))),
+            mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(3)), ATyp::Uni(1))),
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
@@ -1779,8 +1845,6 @@ mod tests {
         // stores a polynomial equal to a_0 + a_1 * x as a sparse poly in the
         // slot PRefs (constants haven't been inlined). We verify the basis
         // equation reduces correctly by substituting literal values via `vars`.
-        // Specifically: each result slot must be non-zero and refer to the 3
-        // input slots.
         let slot0 = gresult
             .pl
             .get(&result.clone().with_slot(0).unwrap())
@@ -1791,9 +1855,9 @@ mod tests {
             .unwrap();
         assert!(!slot0.is_zero());
         assert!(!slot1.is_zero());
-        // Two new basis equations (for the 2 result slots); plus the prior
-        // Op::Poly bindings (2 for p, 2 for xs).
-        assert_eq!(gresult.basis.basis.len(), 2 + 2 + 2);
+        // 2 Vec bindings * 2 slots each = 4, plus 2 Poly identities * 2 = 4,
+        // plus 2 eval results = 2. Total = 10.
+        assert_eq!(gresult.basis.basis.len(), 10);
     }
 
     #[test]
