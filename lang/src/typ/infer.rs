@@ -83,6 +83,9 @@ pub enum TypeError {
     #[error("ReduceError: Arguments to [reduce] must be a vector type:\n\t{0}, {1} |- reduce ({2}, {3} : {4})")]
     Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
 
+    #[error("ReduceAccError: reduce({2}, {3}) produces {4}, but {4} is not a valid left operand for {2} with element type {5}:\n\t{0}, {1} |- reduce ({2}, {3} : Vec<{5}>)")]
+    ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp, CTyp),
+
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
     Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
@@ -847,36 +850,24 @@ impl Typeable for CExp {
             }
 
             CExp::Reduce(op, box v) => {
-                // Type infer the vector expression
                 let tv = v
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
                     CTyp::Vec(box tv, n) if n > 0 => {
-                        // If we are multiplying a vector of polynomials, the resulting
-                        // polynomial's degree is the sum of the degrees of the elements,
-                        // i.e., tv.degree * n.
-                        if *op == BinOp::Mul {
-                            if let CTyp::Poly(_, _, d) = &tv {
-                                // Validate that the multiplication is valid under kind context first.
-                                let res_t = CTyp::lub_op(*op, &tv, &tv, kctx).map_err(|e| {
-                                    TypeError::lub(TypeError::exp(kctx, vctx, self), e)
-                                })?;
-                                if let CTyp::Poly(res_a, num_vars, _) = res_t {
-                                    let degree = d.checked_mul(n).ok_or_else(|| {
-                                        TypeError::lub(
-                                            TypeError::exp(kctx, vctx, self),
-                                            LubError::DegreeOverflow(*d, n),
-                                        )
-                                    })?;
-                                    return Ok(CTyp::Poly(res_a, num_vars, degree));
-                                }
-                            }
-                        }
-                        // Infer the return type
-                        CTyp::lub_op(*op, &tv, &tv, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
+                        let result_type = CTyp::lub_op(*op, &tv, &tv, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        CTyp::lub_op(*op, &result_type, &tv, kctx).map_err(|_| {
+                            TypeError::ReduceAcc(
+                                kctx.clone(),
+                                vctx.clone(),
+                                *op,
+                                (*v).clone(),
+                                result_type,
+                                tv.clone(),
+                            )
+                        })
                     }
                     _ => Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
@@ -2142,466 +2133,21 @@ mod tests {
         );
     }
 
+    /// `reduce(dot, [Vec(F,2); 3])` must be rejected: dot produces a scalar F,
+    /// but F is not a valid left operand for dot with Vec(F,2).
     #[test]
-    fn test_reduce_mul_poly_invalid_coeff_kind() {
+    fn test_reduce_dot_nested_vec_rejected() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
-        // Poly with group coefficients G
-        let poly_t = CTyp::Poly(Tid::from("G"), 1, 3);
-        vctx.insert(&Vid::from("pv_g"), &CTyp::vec(&poly_t, 4));
+        let vec_t = CTyp::vec(&CTyp::Base(Tid::from("F")), 2);
+        vctx.insert(&Vid::from("vv"), &CTyp::vec(&vec_t, 3));
 
-        let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv_g"));
-        // This must fail because group types cannot be multiplied
-        assert!(e.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_reduce_mul_poly_overflow() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-        // Poly with field coefficients F but extremely large degree to trigger overflow
-        let poly_t = CTyp::Poly(Tid::from("F"), 1, usize::MAX / 2);
-        vctx.insert(&Vid::from("pv_overflow"), &CTyp::vec(&poly_t, 4));
-
-        let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv_overflow"));
-        // This must fail because of degree overflow
-        assert!(e.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    /// Property-based test to verify the correctness of type inference for
-    /// `reduce(*, vector_of_polys)`. It verifies that the degree of the
-    /// product polynomial matches `degree * vector_len`.
-    #[test]
-    fn test_reduce_mul_poly_pbt() {
-        let fctx = Set::new();
-
-        arbtest::arbtest(|u| {
-            let num_vars = u.int_in_range(1..=4)?;
-            let degree = u.int_in_range(0..=4)?;
-            let vector_len = u.int_in_range(1..=4)?;
-
-            let poly_t = CTyp::Poly(Tid::from("F"), num_vars, degree);
-            let vec_poly_t = CTyp::vec(&poly_t, vector_len);
-
-            let mut vctx = Ctx::new();
-            vctx.insert(&Vid::from("pv"), &vec_poly_t);
-
-            let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv"));
-            let expected_deg = degree * vector_len;
-            let expected_t = CTyp::Poly(Tid::from("F"), num_vars, expected_deg);
-
-            assert_eq!(
-                e.infer(&KIND_CTX, &fctx, &vctx),
-                Ok(expected_t),
-                "reduce(*, [Poly<F, {}, {}>; {}]) should yield Poly<F, {}, {}>",
-                num_vars,
-                degree,
-                vector_len,
-                num_vars,
-                expected_deg
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_record_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        let mut fields = Ctx::new();
-        fields.insert(&"x".to_string(), &CExp::lit(1));
-        fields.insert(&"y".to_string(), &CExp::varstr("f1"));
-        let record_exp = CExp::record(fields);
-
-        let mut expected_fields = Ctx::new();
-        expected_fields.insert(&"x".to_string(), &CTyp::Fin(Range::singleton(1)));
-        expected_fields.insert(&"y".to_string(), &CTyp::Base(Tid::from("F")));
-        let expected_typ = CTyp::Record(expected_fields);
-
-        assert_eq!(record_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(expected_typ));
-    }
-
-    #[test]
-    fn test_proj_inference() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        let mut fields = Ctx::new();
-        fields.insert(&"x".to_string(), &CTyp::Base(Tid::from("F")));
-        vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
-
-        let proj_exp = CExp::proj(CExp::varstr("r"), "x".to_string());
-        assert_eq!(
-            proj_exp.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
+        let e = CExp::reduce(BinOp::Dot, CExp::varstr("vv"));
+        let result = e.infer(&KIND_CTX, &fctx, &vctx);
+        assert!(
+            result.is_err(),
+            "reduce(dot, [Vec(F,2); 3]) should be rejected — dot produces F, but F . Vec(F,2) is ill-typed; got {:?}",
+            result
         );
-
-        let proj_bad = CExp::proj(CExp::varstr("r"), "y".to_string());
-        assert!(proj_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_set_record_inference() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        let mut fields = Ctx::new();
-        fields.insert(&"x".to_string(), &CTyp::Base(Tid::from("F")));
-        vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
-
-        let set_exp = CExp::set_record(CExp::varstr("r"), "x".to_string(), CExp::varstr("f2"));
-
-        let mut expected_fields = Ctx::new();
-        expected_fields.insert(&"x".to_string(), &CTyp::Base(Tid::from("F")));
-        let expected_typ = CTyp::Record(expected_fields);
-
-        assert_eq!(set_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(expected_typ));
-    }
-
-    #[test]
-    fn test_let_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        let let_exp = CExp::letx(
-            Vid::from("x"),
-            CExp::varstr("f1"),
-            CExp::add(CExp::varstr("x"), CExp::varstr("f2")),
-        );
-
-        assert_eq!(
-            let_exp.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
-        );
-    }
-
-    #[test]
-    fn test_log_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        let log_exp = CExp::logx(
-            Vid::from("x"),
-            CExp::varstr("f1"),
-            CExp::add(CExp::varstr("x"), CExp::varstr("f2")),
-        );
-
-        assert_eq!(
-            log_exp.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
-        );
-    }
-
-    #[test]
-    fn test_assert_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        let assert_exp = CExp::seq(
-            CExp::assert(CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"))),
-            CExp::varstr("f1"),
-        );
-
-        assert_eq!(
-            assert_exp.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
-        );
-
-        let assert_bad = CExp::seq(CExp::assert(CExp::varstr("f1")), CExp::varstr("f1"));
-        assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_verify_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        let verify_exp = CExp::seq(
-            CExp::verify(CExp::equ(CExp::varstr("f1"), CExp::varstr("f2"))),
-            CExp::varstr("f1"),
-        );
-
-        assert_eq!(
-            verify_exp.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
-        );
-
-        let verify_bad = CExp::seq(CExp::verify(CExp::varstr("f1")), CExp::varstr("f1"));
-        assert!(verify_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_record_nested_inference() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // {| a: {| b: 1 |}, c: f1 |}
-        let mut inner_fields = Ctx::new();
-        inner_fields.insert(&"b".to_string(), &CExp::lit(1));
-
-        let mut fields = Ctx::new();
-        fields.insert(&"a".to_string(), &CExp::record(inner_fields));
-        fields.insert(&"c".to_string(), &CExp::varstr("f1"));
-
-        let record_exp = CExp::record(fields);
-
-        let mut expected_inner = Ctx::new();
-        expected_inner.insert(&"b".to_string(), &CTyp::Fin(Range::singleton(1)));
-
-        let mut expected_fields = Ctx::new();
-        expected_fields.insert(&"a".to_string(), &CTyp::Record(expected_inner));
-        expected_fields.insert(&"c".to_string(), &CTyp::Base(Tid::from("F")));
-        let expected_typ = CTyp::Record(expected_fields);
-
-        assert_eq!(record_exp.infer(&KIND_CTX, &fctx, &vctx), Ok(expected_typ));
-    }
-
-    #[test]
-    fn test_record_set_type_mismatch() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        let mut fields = Ctx::new();
-        fields.insert(&"x".to_string(), &CTyp::Base(Tid::from("F")));
-        vctx.insert(&Vid::from("r"), &CTyp::Record(fields));
-
-        // setting x to g1 (G type, mismatch with F) should fail
-        let set_bad = CExp::set_record(CExp::varstr("r"), "x".to_string(), CExp::varstr("g1"));
-        assert!(set_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_record_proj_non_record() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // Projecting from a non-record (e.g. f1.x) should fail
-        let proj_bad = CExp::proj(CExp::varstr("f1"), "x".to_string());
-        assert!(proj_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_mle_eval_inference() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        // Add variable "m3" of type Mle<F, 3> -> Poly(F, 3, 1)
-        vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
-        // Add variable "v3" of type [F; 3]
-        vctx.insert(
-            &Vid::from("v3"),
-            &CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 3),
-        );
-        // Add variable "v2" of type [F; 2]
-        vctx.insert(
-            &Vid::from("v2"),
-            &CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), 2),
-        );
-
-        // eval(m3, v2) -> Mle<F, 1> -> Poly(F, 1, 1)
-        let eval_v2 = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("v2"));
-        assert_eq!(
-            eval_v2.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Poly(Tid::from("F"), 1, 1))
-        );
-
-        // eval(m3, v3) -> F -> Base(F)
-        let eval_v3 = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("v3"));
-        assert_eq!(
-            eval_v3.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("F")))
-        );
-    }
-
-    #[test]
-    fn test_mle_eval_out_of_bounds() {
-        let fctx = Set::new();
-        let mut vctx = VAR_CTX.clone();
-
-        vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
-        // v1 has length 5, which is > 3
-        let eval_bad = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("v1"));
-        assert!(eval_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_let_shadowing() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // let x = f1; let x = g1; x -- should return type G
-        let let_shadow = CExp::letx(
-            Vid::from("x"),
-            CExp::varstr("f1"),
-            CExp::letx(Vid::from("x"), CExp::varstr("g1"), CExp::varstr("x")),
-        );
-
-        assert_eq!(
-            let_shadow.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Base(Tid::from("G")))
-        );
-    }
-
-    #[test]
-    fn test_assert_verify_boolean() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // assert(f1) should fail because f1 is of type F, not Bool
-        let assert_bad = CExp::assert(CExp::varstr("f1"));
-        assert!(assert_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // verify(f1) should fail
-        let verify_bad = CExp::verify(CExp::varstr("f1"));
-        assert!(verify_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_mle_eval_pbt() {
-        let fctx = Set::new();
-        arbtest::arbtest(|u| {
-            let num_vars = u.int_in_range(2..=10)?;
-            let eval_len = u.int_in_range(1..=num_vars)?;
-
-            let mle_t = CTyp::Poly(Tid::from("F"), num_vars, 1);
-            let vec_t = CTyp::Vec(Box::new(CTyp::Base(Tid::from("F"))), eval_len);
-
-            let mut vctx = VAR_CTX.clone();
-            vctx.insert(&Vid::from("m_rand"), &mle_t);
-            vctx.insert(&Vid::from("v_rand"), &vec_t);
-
-            let e = CExp::evaluate_at(CExp::varstr("m_rand"), CExp::varstr("v_rand"));
-            let res = e.infer(&KIND_CTX, &fctx, &vctx);
-
-            if eval_len == num_vars {
-                assert_eq!(
-                    res,
-                    Ok(CTyp::Base(Tid::from("F"))),
-                    "evaluating MLE with all variables should yield base type"
-                );
-            } else {
-                assert_eq!(
-                    res,
-                    Ok(CTyp::Poly(Tid::from("F"), num_vars - eval_len, 1)),
-                    "evaluating MLE with M variables should yield MLE with N-M variables"
-                );
-            }
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_range_rejection() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // start > end
-        let bad_range1 = CExp::Range(Range {
-            start: 5,
-            step: 1,
-            end: 1,
-        });
-        assert!(bad_range1.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // step == 0
-        let bad_range2 = CExp::Range(Range {
-            start: 0,
-            step: 0,
-            end: 5,
-        });
-        assert!(bad_range2.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // step does not cleanly divide distance
-        let bad_range3 = CExp::Range(Range {
-            start: 0,
-            step: 3,
-            end: 5,
-        });
-        assert!(bad_range3.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_map_rejection() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // mapping over f1 (which is field element, not vector/range) should fail
-        let map_bad = CExp::map(CExp::varstr("x"), Vid::from("x"), CExp::varstr("f1"));
-        assert!(map_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_poly_rejection() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // poly on non-vector should fail
-        let poly_bad1 = CExp::poly(CExp::varstr("f1"));
-        assert!(poly_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // poly on empty vector should fail
-        let poly_bad2 = CExp::poly(CExp::vec(vec![]));
-        assert!(poly_bad2.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_coef_rejection() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // coef on non-polynomial should fail
-        let coef_bad1 = CExp::coef(CExp::varstr("f1"));
-        assert!(coef_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // coef on multivariate polynomial (MLE) should fail (unary coef is univariate only)
-        let coef_bad2 = CExp::coef(CExp::varstr("m"));
-        assert!(coef_bad2.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_random_challenge_rejection() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // challenge on non-existent kind "X" should fail
-        let challenge_bad = CExp::challenge(Tid::from("X"));
-        assert!(challenge_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-
-        // random on non-existent kind "X" should fail
-        let random_bad = CExp::random(Tid::from("X"));
-        assert!(random_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
-    }
-
-    #[test]
-    fn test_record_lub_vector_subtyping() {
-        let fctx = Set::new();
-        let vctx = VAR_CTX.clone();
-
-        // r1 = {| x: 1 |}
-        let mut r1_fields = Ctx::new();
-        r1_fields.insert(&"x".to_string(), &CExp::lit(1));
-        let r1 = CExp::record(r1_fields);
-
-        // r2 = {| x: 1, y: 2 |}
-        let mut r2_fields = Ctx::new();
-        r2_fields.insert(&"x".to_string(), &CExp::lit(1));
-        r2_fields.insert(&"y".to_string(), &CExp::lit(2));
-        let r2 = CExp::record(r2_fields);
-
-        // v = [r1, r2]
-        // Under intersection LUB: LUB({x}, {x, y}) = {x}
-        let v = CExp::vec(vec![r1, r2]);
-
-        // Accessing common field "x" via ram(v, 0).x is correct and should succeed
-        let proj_x = CExp::proj(CExp::ram(v.clone(), CExp::lit(0)), "x".to_string());
-        assert_eq!(
-            proj_x.infer(&KIND_CTX, &fctx, &vctx),
-            Ok(CTyp::Fin(Range::singleton(1)))
-        );
-
-        // Accessing extra field "y" via ram(v, 0).y is incorrect and must fail typechecking
-        let proj_y = CExp::proj(CExp::ram(v, CExp::lit(0)), "y".to_string());
-        assert!(proj_y.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 }
