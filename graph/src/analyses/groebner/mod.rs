@@ -903,52 +903,39 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .np
                     .insert(&pr, &Op::Interpolate(points.clone(), evals.clone()));
             }
-            // Op::Ifft(v): p = ifft(v) where p is a univariate polynomial in
-            // coefficient form and v a length-N vector of its evaluations at
-            // the N-th roots of unity. Constraints (linear over F):
-            //   for each i ∈ [0, N): Σ_j ω^{i·j} · p[j]  =  v[i]
-            // where ω is a primitive N-th root of unity and p[j] is the
-            // j-th coefficient slot of `pr`. If `get_root_of_unity(N)` is
-            // None (N isn't a 2-adic divisor of |F|-1), fall back to opaque.
+            // Op::Ifft(v): p = ifft(v) — inverse DFT. The coefficient form `pr`
+            // is the IDFT of the evaluation form `a`. Each coefficient is:
+            //   p[j] = (1/N) · Σ_i ω^{-i·j} · v[i]
+            // where ω is a primitive N-th root of unity. The type checker
+            // guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
             Op::Ifft(ref a) => {
                 let v_polys = self.ref_vars(a);
                 let n = v_polys.len();
-                if let Some(omega) = C::F::get_root_of_unity(n as u64) {
-                    // Row i: Σ_j ω^{i·j} · pr[j] = v_polys[i]
-                    let pr_slots = pr.slots();
-                    let coeff_vars: Vec<SparsePolynomial<C::F, T>> =
-                        pr_slots.iter().map(|s| SparsePolynomial::var(s)).collect();
-                    for (i, vp) in v_polys.iter().enumerate().take(n) {
-                        let lhs = dft_row(&coeff_vars, omega, i);
-                        result.basis.push(&lhs - vp);
-                    }
-                    // Register each coefficient slot of `pr` in `pl` so
-                    // `find_ref` can resolve `Ref::Var("p", _)` later.
-                    for pf in &pr_slots {
-                        let v = SparsePolynomial::var(pf);
-                        result.pl.insert(pf, &v);
-                    }
-                } else {
-                    result.np.insert(&pr, &Op::Ifft(a.clone()));
+                let omega = C::F::get_root_of_unity(n as u64)
+                    .expect("IFFT size must have a root of unity; type checker guarantees this");
+                let omega_inv = omega.inverse().unwrap();
+                let n_inv = C::F::from(n as u64).inverse().unwrap();
+                let pr_slots = pr.slots();
+                for (j, pf) in pr_slots.iter().enumerate() {
+                    let idft_j = dft_row(&v_polys, omega_inv, j);
+                    let lhs = &idft_j * &SparsePolynomial::lit(&n_inv);
+                    result.pl.insert(pf, &lhs);
+                    result.basis.push(&lhs - &SparsePolynomial::var(pf));
                 }
             }
-            // Op::Fft(p): v = fft(p) — symmetric to Ifft. Here `pr` holds
-            // the N output-vector slots; the coefficients live in `p`. The
-            // same DFT matrix applies:
-            //   for each i ∈ [0, N): v[i] = Σ_j ω^{i·j} · p[j]
+            // Op::Fft(p): v = fft(p) — forward DFT. Each evaluation is:
+            //   v[i] = Σ_j ω^{i·j} · p[j]
+            // The type checker guarantees N is a 2-adic divisor of |F|-1.
             Op::Fft(ref a) => {
                 let coeff_polys = self.ref_vars(a);
                 let n = coeff_polys.len();
-                if let Some(omega) = C::F::get_root_of_unity(n as u64) {
-                    let pr_slots = pr.slots();
-                    for (i, pf) in pr_slots.iter().enumerate() {
-                        let lhs = dft_row(&coeff_polys, omega, i);
-                        // Register v[i]'s polynomial form in pl and push basis eqn.
-                        result.pl.insert(pf, &lhs);
-                        result.basis.push(&lhs - &SparsePolynomial::var(pf));
-                    }
-                } else {
-                    result.np.insert(&pr, &Op::Fft(a.clone()));
+                let omega = C::F::get_root_of_unity(n as u64)
+                    .expect("FFT size must have a root of unity; type checker guarantees this");
+                let pr_slots = pr.slots();
+                for (i, pf) in pr_slots.iter().enumerate() {
+                    let lhs = dft_row(&coeff_polys, omega, i);
+                    result.pl.insert(pf, &lhs);
+                    result.basis.push(&lhs - &SparsePolynomial::var(pf));
                 }
             }
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
