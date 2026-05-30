@@ -1008,108 +1008,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.basis.push(poly - SparsePolynomial::var(&pf));
                 }
             }
-            // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements:
-            //   acc₀ = v[0],  acc_i = op(acc_i-1, v[i]),  result = acc_n-1
-            //
-            // Physical slots from `ref_vars(v)` are chunked by `elem_len`
-            // (the element type's physical_len) into logical elements.
-            // The fold is performed per-slot-position across elements.
-            //
-            // For Add/Sub/Mul/And the result is a pure polynomial expression
-            // of the input slots, so the folded result can be computed
-            // directly.
-            //
-            // For Div, intermediate sentinel PRefs are created for each fold
-            // step and per-slot constraints `acc - elem * var(next) = 0`
-            // are emitted (matching the scalar Div fallback in add_op).
-            //
-            // For Equ, per-slot constraints `acc - elem = 0` and `var(next) = 0`
-            // are emitted (matching the Equ handler in add_op).
-            //
-            // For Rem and Pow, the constraint pattern can't be expressed
-            // purely in polynomial terms, so these stay opaque.
-            //
-            // Concat passes through all physical slots.
-            // Dot is unreachable (type checker rejects reduce(dot, _)).
+            // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
+            // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
-                let v_typ = v.typ();
-                let (elem_t, n) = match &v_typ {
-                    ATyp::Vec(box e, n) => ((*e).clone(), *n),
-                    _ => unreachable!("Reduce operand must be Vec; type checker guarantees this"),
-                };
-
-                if n == 1 {
-                    let Op::Ref(r, _) = v.get() else {
-                        unreachable!(
-                            "Reduce operand must be Ref; got {:?}",
-                            std::mem::discriminant(v.get())
-                        )
-                    };
-                    let v_pref = self.find_ref(r);
-                    let elem_pref = v_pref.with_index(0).unwrap();
-                    self.link_to_witness(&pr, &elem_pref, result);
-                    return;
-                }
-
-                let elem_len = elem_t.physical_len();
-                let all_slots = self.ref_vars(v);
-                let elements: Vec<Vec<SparsePolynomial<C::F, T>>> =
-                    all_slots.chunks(elem_len).map(|c| c.to_vec()).collect();
-
-                match rop {
-                    BinOp::Add | BinOp::And => {
-                        let mut folded = vec![SparsePolynomial::<C::F, T>::zero(); elem_len];
-                        for elem in &elements {
-                            for (j, r) in folded.iter_mut().enumerate() {
-                                *r = &*r + &elem[j];
-                            }
-                        }
-                        for (pf, p) in pr.slots().into_iter().zip(folded) {
-                            result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
-                        }
-                    }
-                    BinOp::Sub => {
-                        let mut folded = elements[0].clone();
-                        for elem in &elements[1..] {
-                            for (j, r) in folded.iter_mut().enumerate() {
-                                *r = &*r - &elem[j];
-                            }
-                        }
-                        for (pf, p) in pr.slots().into_iter().zip(folded) {
-                            result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
-                        }
-                    }
-                    BinOp::Mul => {
-                        let mut folded =
-                            vec![SparsePolynomial::<C::F, T>::lit(&C::F::one()); elem_len];
-                        for elem in &elements {
-                            for (j, r) in folded.iter_mut().enumerate() {
-                                *r = &*r * &elem[j];
-                            }
-                        }
-                        for (pf, p) in pr.slots().into_iter().zip(folded) {
-                            result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
-                        }
-                    }
-                    BinOp::Concat => {
-                        for (pf, p) in pr.slots().into_iter().zip(all_slots) {
-                            result.pl.insert(&pf, &p);
-                            result.basis.push(p - SparsePolynomial::var(&pf));
-                        }
-                    }
-                    BinOp::Div | BinOp::Rem => {
-                        result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
-                    }
-                    BinOp::Equ | BinOp::Pow => {
-                        result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
-                    }
-                    BinOp::Dot => {
-                        unreachable!("reduce(dot, _) is rejected by the type checker");
-                    }
-                }
+                self.reduce_op(pr, rop, v, result);
             }
             // Phase 10: `Op::Value(lit)` — pattern-match on the `Value`
             // variant via `to_poly_value`, then bind each slot of `pr` to
@@ -1183,10 +1085,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
-            // `__zippel::gb::gt` sentinel. The result `pr : GT` is bound to
-            // the exponent-space bilinear form:
+            // `__zippel::gb::gt` sentinel. For each slot position, the
+            // result is bound to the exponent-space bilinear form:
             //
-            //   var(pr) = ref_vars(a) · ref_vars(b) · var(__zippel::gb::gt)
+            //   var(pr[i]) = var(a[i]) · var(b[i]) · var(__zippel::gb::gt)
             //
             // which encodes both the pairing axiom
             // `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
@@ -1194,20 +1096,21 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // sides of a `verify(lhs == rhs)` then cancel under Buchberger
             // because their basis rows are identical F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let e_a = self
-                    .ref_vars(a.get())
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(SparsePolynomial::zero);
-                let e_b = self
-                    .ref_vars(b.get())
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(SparsePolynomial::zero);
+                let a_vars = self.ref_vars(a.get());
+                let b_vars = self.ref_vars(b.get());
+                let pr_slots = pr.slots();
                 let gt = self.gt_pref(result);
-                let e = &e_a * &e_b * SparsePolynomial::var(&gt);
-                result.pl.insert(&pr, &e);
-                result.basis.push(&e - &SparsePolynomial::var(&pr));
+                for (pf, e_a, e_b) in pr_slots
+                    .iter()
+                    .zip(a_vars)
+                    .zip(b_vars)
+                    .map(|((pf, a), b)| (pf, a, b))
+                {
+                    let gt_var = SparsePolynomial::var(&gt);
+                    let e = &e_a * &e_b * gt_var;
+                    result.pl.insert(pf, &e);
+                    result.basis.push(&e - &SparsePolynomial::var(pf));
+                }
             }
             // `Op::Record(fields)` — the record as a whole is opaque in np
             // (cannot be converted to a polynomial ideal). Each field is
@@ -1250,6 +1153,132 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 result
                     .np
                     .insert(&pr, &Op::Proj(inner.clone(), field.clone(), typ.clone()));
+            }
+        }
+    }
+
+    /// Left-fold of vector elements:
+    ///   acc₀ = v[0],  acc_i = rop(acc_{i-1}, v[i]),  result = acc_{n-1}
+    ///
+    /// Physical slots from `ref_vars(v)` are chunked by `elem_len`
+    /// (the element type's `physical_len`) into logical elements.
+    /// The fold is performed per-slot-position across elements.
+    ///
+    /// Operator handling:
+    ///
+    /// - **Add/And/Sub/Mul**: pure polynomial fold — Add/And start from
+    ///   zero, Mul from one, Sub starts from the first element.
+    ///
+    /// - **Concat**: passes through all physical slots.
+    ///
+    /// - **Div**: intermediate sentinel PRefs for each fold step with
+    ///   per-slot constraints `acc - elem * var(target) = 0`.
+    ///
+    /// - **Rem/Equ/Pow**: opaque. Rem is pointwise opaque; chained
+    ///   equality can't be cleanly encoded in the polynomial basis; Pow's
+    ///   left-fold `(a^b)^c` requires `a^(b*c)` which is only valid for
+    ///   constant b, c and produces potentially very-high-degree terms —
+    ///   better handled by the `BinOp::Pow` handler in `add_op` which
+    ///   sees a single exponent directly.
+    ///
+    /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
+    fn reduce_op(&mut self, pr: PRef, rop: BinOp, v: &HOp<C>, result: &mut GroebnerResult<C, T>) {
+        let v_typ = v.typ();
+        let (elem_t, n) = match &v_typ {
+            ATyp::Vec(box e, n) => (e.clone(), *n),
+            _ => unreachable!("Reduce operand must be Vec; type checker guarantees this"),
+        };
+
+        if n == 1 {
+            let Op::Ref(r, _) = v.get() else {
+                unreachable!(
+                    "Reduce operand must be Ref; got {:?}",
+                    std::mem::discriminant(v.get())
+                )
+            };
+            let v_pref = self.find_ref(r);
+            let elem_pref = v_pref.with_index(0).unwrap();
+            self.link_to_witness(&pr, &elem_pref, result);
+            return;
+        }
+
+        let elem_len = elem_t.physical_len();
+        let all_slots = self.ref_vars(v);
+        let elements: Vec<Vec<SparsePolynomial<C::F, T>>> =
+            all_slots.chunks(elem_len).map(|c| c.to_vec()).collect();
+
+        match rop {
+            BinOp::Add | BinOp::And => {
+                let mut folded = vec![SparsePolynomial::<C::F, T>::zero(); elem_len];
+                for elem in &elements {
+                    for (j, r) in folded.iter_mut().enumerate() {
+                        *r = &*r + &elem[j];
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(folded) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Sub => {
+                let mut folded = elements[0].clone();
+                for elem in &elements[1..] {
+                    for (j, r) in folded.iter_mut().enumerate() {
+                        *r = &*r - &elem[j];
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(folded) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Mul => {
+                let mut folded = vec![SparsePolynomial::<C::F, T>::lit(&C::F::one()); elem_len];
+                for elem in &elements {
+                    for (j, r) in folded.iter_mut().enumerate() {
+                        *r = &*r * &elem[j];
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(folded) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Concat => {
+                for (pf, p) in pr.slots().into_iter().zip(all_slots) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Div => {
+                let mut acc_slots: Vec<SparsePolynomial<C::F, T>> = elements[0].clone();
+                for (step, elem) in elements[1..].iter().enumerate() {
+                    let is_last = step == elements.len() - 2;
+                    let target = if is_last {
+                        pr.clone()
+                    } else {
+                        let counter = self.ns.div_wit.len();
+                        let acc_name = format!("__zippel::gb::reduce_div_acc::{}", counter);
+                        self.sentinel_pref(&acc_name, elem_t.clone(), result)
+                    };
+                    let target_slots = target.slots();
+                    for j in 0..elem_len {
+                        let pf = &target_slots[j];
+                        result.basis.push(
+                            acc_slots[j].clone() - elem[j].clone() * SparsePolynomial::var(pf),
+                        );
+                    }
+                    acc_slots = target_slots
+                        .into_iter()
+                        .map(|s| SparsePolynomial::var(&s))
+                        .collect();
+                }
+            }
+            BinOp::Rem | BinOp::Equ | BinOp::Pow => {
+                result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
+            }
+            BinOp::Dot => {
+                unreachable!("reduce(dot, _) is rejected by the type checker");
             }
         }
     }
