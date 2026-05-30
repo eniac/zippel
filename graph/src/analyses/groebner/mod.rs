@@ -533,18 +533,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    /// Shared helper for `Op::Evaluate(p, xs)` — returns `Some(polys)` when the
-    /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by
-    /// `add_op` (when Eval is the top-level op being bound to a PRef).
-    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+    /// Shared helper for `Op::Evaluate(p, xs)` — computes the result
+    /// polynomials for evaluating `p` at `xs`. Panics on unsupported
+    /// (p.typ(), |xs|) combinations; the type checker guarantees these
+    /// are unreachable.
+    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
         let p_typ = p.typ();
         let xs_polys = self.ref_vars(xs);
         let k = xs_polys.len();
         match &p_typ {
-            ATyp::Uni(_) | ATyp::VPoly(1, _) if k >= 1 => {
+            ATyp::Uni(_) | ATyp::VPoly(1, _) => {
+                assert!(
+                    k >= 1,
+                    "Evaluate on Uni/VPoly(1,_) requires at least 1 point; got {}",
+                    k
+                );
                 let p_polys = self.ref_vars(p);
                 let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                let out = (0..k)
+                (0..k)
                     .map(|i| {
                         let xi = &xs_polys[i];
                         let mut acc = SparsePolynomial::<C::F, T>::zero();
@@ -555,10 +561,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         }
                         acc
                     })
-                    .collect();
-                Some(out)
+                    .collect()
             }
             ATyp::VPoly(n, mdeg) if *n >= 2 && k <= *n => {
+                assert!(
+                    k >= 1,
+                    "Evaluate on VPoly requires at least 1 point; got {}",
+                    k
+                );
                 let p_polys = self.ref_vars(p);
                 let all_k = multi_indices(*n, *mdeg);
                 let mono = |k_fixed: &[usize],
@@ -580,11 +590,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     for (idx, ki) in all_k.iter().enumerate() {
                         acc = &acc + &(&p_polys[idx] * &mono(ki, &xs_polys));
                     }
-                    Some(vec![acc])
+                    vec![acc]
                 } else {
                     let remaining_n = n - k;
                     let result_indices = multi_indices(remaining_n, *mdeg);
-                    let out = result_indices
+                    result_indices
                         .iter()
                         .map(|kp| {
                             let mut acc = SparsePolynomial::<C::F, T>::zero();
@@ -596,11 +606,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             }
                             acc
                         })
-                        .collect();
-                    Some(out)
+                        .collect()
                 }
             }
             ATyp::Mle(n) if k <= *n => {
+                assert!(
+                    k >= 1,
+                    "Evaluate on Mle requires at least 1 point; got {}",
+                    k
+                );
                 let p_polys = self.ref_vars(p);
                 let all_b = hypercube(*n);
                 let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
@@ -621,11 +635,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     for (idx, b) in all_b.iter().enumerate() {
                         acc = &acc + &(&p_polys[idx] * &eq_prod(b, &xs_polys));
                     }
-                    Some(vec![acc])
+                    vec![acc]
                 } else {
                     let remaining_n = n - k;
                     let result_b = hypercube(remaining_n);
-                    let out = result_b
+                    result_b
                         .iter()
                         .map(|bp| {
                             let mut acc = SparsePolynomial::<C::F, T>::zero();
@@ -637,11 +651,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             }
                             acc
                         })
-                        .collect();
-                    Some(out)
+                        .collect()
                 }
             }
-            _ => None,
+            _ => unreachable!(
+                "Evaluate: unsupported polynomial type {:?} with {} evaluation points",
+                p_typ, k
+            ),
         }
     }
 
@@ -969,7 +985,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Three shapes are handled (dispatched on p.typ() × |xs slots|):
             //
             //   1. Univariate batched — p: Uni(_) or VPoly(1, _), xs: len k ≥ 1
-            //        result[i] = Σ_j a_j · xs[i]^j                  (Uni(k) output)
+            //        result[i] = Σ_j a_j · xs[i]^j                  (Vec(F, k) output)
             //
             //   2. Multivariate in coefficient basis — p: VPoly(n, m) with n ≥ 2, k ≤ n
             //        full (k == n):  scalar = Σ_{|κ|≤m} a_κ · Π_i xs[i]^{κ_i}
@@ -983,22 +999,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             //        partial (k<n):  Mle<n-k>; eval at b′ =
             //                        Σ_{b_fixed} v_{(b_fixed,b′)} · Π_i eq(b_fixed,i, xs[i])
             //
-            // The input xs may statically have either `Uni(k)` or `Vec(_, k)`;
-            // `ref_vars` normalises both to k scalar polys. Unsupported shapes
-            // (e.g. k > n, or Record operands) fall through to the np catch-all
-            // via `None`.
+            // The type checker guarantees xs is non-empty and p has a supported
+            // polynomial type; unsupported shapes are unreachable.
             Op::Evaluate(ref p, ref xs) => {
-                let eval_result = self.eval_to_poly(p, xs);
-                match eval_result {
-                    Some(polys) => {
-                        for (pf, poly) in pr.slots().into_iter().zip(polys) {
-                            result.pl.insert(&pf, &poly);
-                            result.basis.push(poly - SparsePolynomial::var(&pf));
-                        }
-                    }
-                    None => {
-                        result.np.insert(&pr, &Op::Evaluate(p.clone(), xs.clone()));
-                    }
+                let polys = self.eval_to_poly(p, xs);
+                for (pf, poly) in pr.slots().into_iter().zip(polys) {
+                    result.pl.insert(&pf, &poly);
+                    result.basis.push(poly - SparsePolynomial::var(&pf));
                 }
             }
             // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements:
@@ -2108,63 +2115,6 @@ mod tests {
                 i
             );
         }
-    }
-
-    #[test]
-    fn test_add_op_eval_unsupported_falls_through_to_np() {
-        // Eval at a Record (which ref_vars can't handle) should fall through to np.
-        use crate::PRef;
-        use lang::typ::{Distribution, Qualifier};
-        use petgraph::graph::NodeIndex;
-
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-        let _ = {
-            let p = PRef::from_node(
-                NodeIndex::new(0),
-                ATyp::VPoly(3, 2),
-                0,
-                Qualifier::Private,
-                Distribution::default(),
-            );
-            builder.ns.register(&p);
-            p
-        };
-        // xs with k > n should fall through (k=4 > n=3). Uni(3) = degree 3 = 4 slots.
-        let _ = {
-            let p = PRef::from_node(
-                NodeIndex::new(1),
-                ATyp::Uni(3),
-                0,
-                Qualifier::Private,
-                Distribution::default(),
-            );
-            builder.ns.register(&p);
-            p
-        };
-
-        let result = PRef::from_node(
-            NodeIndex::new(2),
-            ATyp::scalar(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let op: GOp<ArkBls12_381> = Op::Evaluate(
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
-                ATyp::VPoly(3, 2),
-            )),
-            backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
-                ATyp::Uni(3),
-            )),
-        );
-        builder.add_op(result.clone(), op, &mut gresult);
-
-        // Unsupported shape → stored in np, not pl.
-        assert!(gresult.np.contains(&result));
-        assert!(!gresult.pl.contains(&result));
     }
 
     // -----------------------------------------------------------------
