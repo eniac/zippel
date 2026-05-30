@@ -121,6 +121,48 @@ fn dft_row<F: Field, T: Monomial>(
     acc
 }
 
+/// Compute the Lagrange interpolation basis coefficients for `n` distinct
+/// points `x_0, ..., x_{n-1}`. Returns a matrix `L[i][k]` where
+/// `L[i][k]` is the coefficient of `X^k` in the Lagrange basis polynomial
+/// `L_i(X) = Π_{j≠i} (X - x_j) / (x_i - x_j)`.
+fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
+    let n = xs.len();
+    let mut basis: Vec<Vec<F>> = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let xi = xs[i];
+        let mut denom = F::one();
+        for j in 0..n {
+            if j != i {
+                denom *= xi - xs[j];
+            }
+        }
+        let denom_inv = denom.inverse().unwrap();
+
+        let mut poly: Vec<F> = vec![F::one()];
+        for j in 0..n {
+            if j == i {
+                continue;
+            }
+            let neg_xj = -xs[j];
+            let mut new_poly = vec![F::zero(); poly.len() + 1];
+            for (k, c) in poly.iter().enumerate() {
+                new_poly[k] = new_poly[k] + *c * neg_xj;
+                new_poly[k + 1] = new_poly[k + 1] + *c;
+            }
+            poly = new_poly;
+        }
+
+        for c in poly.iter_mut() {
+            *c *= denom_inv;
+        }
+
+        basis.push(poly);
+    }
+
+    basis
+}
+
 /// Namespace shared across Groebner builders that must agree on variable names
 /// and sentinel allocation (e.g., prover and verifier builders for the same protocol).
 ///
@@ -915,9 +957,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 result.np.insert(&pr, &op);
             }
             Op::Interpolate(ref points, ref evals) => {
-                result
-                    .np
-                    .insert(&pr, &Op::Interpolate(points.clone(), evals.clone()));
+                self.interpolate_op(pr, points, evals, result);
             }
             // Op::Ifft(v): p = ifft(v) — inverse DFT. The coefficient form `pr`
             // is the IDFT of the evaluation form `a`. Each coefficient is:
@@ -1154,6 +1194,93 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .np
                     .insert(&pr, &Op::Proj(inner.clone(), field.clone(), typ.clone()));
             }
+        }
+    }
+
+    /// Lagrange interpolation: given `n` distinct points `(x_i, y_i)`,
+    /// the result polynomial `p(X) = Σ_i y_i · L_i(X)` where
+    /// `L_i(X) = Π_{j≠i} (X - x_j) / (x_i - x_j)`.
+    ///
+    /// For each coefficient slot `k` of the result `Uni(n)`:
+    ///   `var(pr[k]) = Σ_i var(y_i) · L[i][k]`
+    ///
+    /// When `points` is `Op::Value`, the constant values are extracted
+    /// directly via `to_poly_value`. When `points` is `Op::Ref`, the
+    /// point slot polynomials are looked up in `result.pl` — since the
+    /// Vec node is processed before Interpolate in topological order,
+    /// constant bindings are already available there.
+    ///
+    /// Falls back to opaque if the point values aren't all constant.
+    fn interpolate_op(
+        &mut self,
+        pr: PRef,
+        points: &HOp<C>,
+        evals: &HOp<C>,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        let evals_polys = self.ref_vars(evals);
+        let n = evals_polys.len();
+
+        let xs: Option<Vec<C::F>> = match points.get() {
+            Op::Value(v) => self
+                .to_poly_value(v)
+                .iter()
+                .map(|p| {
+                    if p.is_constant() {
+                        p.leading_term().map(|(c, _)| c)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Op::Ref(r, _) => {
+                let points_pref = self.find_ref(r);
+                points_pref
+                    .slots()
+                    .iter()
+                    .map(|s| {
+                        result.pl.get(s).and_then(|p| {
+                            if p.is_constant() {
+                                p.leading_term().map(|(c, _)| c)
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect()
+            }
+            other => {
+                unreachable!(
+                    "Interpolate points operand must be Ref or Value; got {:?}",
+                    std::mem::discriminant(other)
+                )
+            }
+        };
+
+        let Some(xs) = xs else {
+            result
+                .np
+                .insert(&pr, &Op::Interpolate(points.clone(), evals.clone()));
+            return;
+        };
+        assert_eq!(
+            n,
+            xs.len(),
+            "Interpolate: points and evals must have same length"
+        );
+
+        let lag = lagrange_basis::<C::F>(&xs);
+        let pr_slots = pr.slots();
+        for (k, pf) in pr_slots.iter().enumerate() {
+            let mut acc = SparsePolynomial::<C::F, T>::zero();
+            for (i, y_i) in evals_polys.iter().enumerate() {
+                if k < lag[i].len() && lag[i][k] != C::F::zero() {
+                    let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
+                    acc = acc + (y_i * &weight);
+                }
+            }
+            result.pl.insert(pf, &acc);
+            result.basis.push(acc - SparsePolynomial::var(pf));
         }
     }
 
@@ -3587,6 +3714,386 @@ mod tests {
         assert!(
             gresult.basis.iter().any(|r| r == &row2),
             "basis should contain row for coefficient 2"
+        );
+    }
+
+    #[test]
+    fn test_lagrange_basis_2_points() {
+        use ark_bls12_381::Fr;
+
+        let xs: Vec<Fr> = [0u64, 1].iter().map(|&x| Fr::from(x)).collect();
+        let lag = lagrange_basis(&xs);
+
+        assert_eq!(lag.len(), 2);
+        assert_eq!(lag[0][0], Fr::one());
+        assert_eq!(lag[0][1], -Fr::one());
+        assert_eq!(lag[1][0], Fr::zero());
+        assert_eq!(lag[1][1], Fr::one());
+    }
+
+    #[test]
+    fn test_lagrange_basis_3_points() {
+        use ark_bls12_381::Fr;
+
+        let xs: Vec<Fr> = [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect();
+        let lag = lagrange_basis(&xs);
+
+        assert_eq!(lag.len(), 3, "3 points → 3 basis polynomials");
+        for l in &lag {
+            assert_eq!(l.len(), 3, "each L_i has degree ≤ 2 → 3 coefficients");
+        }
+
+        let two_inv = Fr::from(2u64).inverse().unwrap();
+        assert_eq!(lag[0][0], Fr::from(3u64));
+        assert_eq!(lag[0][1], Fr::from(5u64) * (-two_inv));
+        assert_eq!(lag[0][2], two_inv);
+
+        for i in 0..3 {
+            for j in 0..3 {
+                let mut val = Fr::zero();
+                let mut xpow = Fr::one();
+                for k in 0..lag[i].len() {
+                    val += lag[i][k] * xpow;
+                    xpow *= xs[j];
+                }
+                if i == j {
+                    assert_eq!(val, Fr::one(), "L_{}({}) should be 1", i, j + 1);
+                } else {
+                    assert_eq!(val, Fr::zero(), "L_{}({}) should be 0", i, j + 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_add_op_interpolate_constant_points() {
+        use crate::PRef;
+        use ark_bls12_381::Fr;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 2);
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(0),
+            evals_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_evals);
+
+        let points: GOp<ArkBls12_381> =
+            Op::Value(Value::VecScalar(vec![Fr::from(0u64), Fr::from(1u64)]));
+        let evals: GOp<ArkBls12_381> =
+            Op::Ref(crate::Ref::new(NodeIndex::new(0)), evals_typ.clone());
+
+        let result_typ = ATyp::uni(2);
+        let pref_result = PRef::from_node(
+            NodeIndex::new(1),
+            result_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_result);
+
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+        builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+
+        let r0 = pref_result.clone().with_slot(0).unwrap();
+        let r1 = pref_result.clone().with_slot(1).unwrap();
+        let r2 = pref_result.clone().with_slot(2).unwrap();
+
+        let y0 = pref_evals
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y1 = pref_evals
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+
+        let expected_c0 = var(&y0);
+        let expected_c1 = -var(&y0) + var(&y1);
+
+        assert_eq!(
+            gresult.pl.get(&r0).cloned(),
+            Some(expected_c0.clone()),
+            "pl[c0] = var(y0)"
+        );
+        assert_eq!(
+            gresult.pl.get(&r1).cloned(),
+            Some(expected_c1.clone()),
+            "pl[c1] = -var(y0) + var(y1)"
+        );
+        assert_eq!(
+            gresult.pl.get(&r2).cloned(),
+            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            "pl[c2] = 0"
+        );
+
+        assert!(
+            gresult
+                .basis
+                .iter()
+                .any(|r| r == &(&expected_c0 - &var(&r0)))
+        );
+        assert!(
+            gresult
+                .basis
+                .iter()
+                .any(|r| r == &(&expected_c1 - &var(&r1)))
+        );
+    }
+
+    #[test]
+    fn test_add_op_interpolate_3_constant_points() {
+        use crate::PRef;
+        use ark_bls12_381::Fr;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let evals_typ = ATyp::Vec(Box::new(ATyp::scalar()), 3);
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(0),
+            evals_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_evals);
+
+        let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
+            [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect(),
+        ));
+        let evals: GOp<ArkBls12_381> =
+            Op::Ref(crate::Ref::new(NodeIndex::new(0)), evals_typ.clone());
+
+        let result_typ = ATyp::uni(3);
+        let pref_result = PRef::from_node(
+            NodeIndex::new(1),
+            result_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_result);
+
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+        builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+
+        let r0 = pref_result.clone().with_slot(0).unwrap();
+        let r1 = pref_result.clone().with_slot(1).unwrap();
+        let r2 = pref_result.clone().with_slot(2).unwrap();
+        let r3 = pref_result.clone().with_slot(3).unwrap();
+
+        let y0 = pref_evals
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y1 = pref_evals
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y2 = pref_evals
+            .clone()
+            .with_index(2)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+
+        let lag = lagrange_basis::<Fr>(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+
+        let expected_c0 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][0]))
+            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][0]))
+                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][0])));
+        let expected_c1 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][1]))
+            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][1]))
+                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][1])));
+        let expected_c2 = &(&var(&y0) * &SparsePolynomial::lit(&lag[0][2]))
+            + &(&(&var(&y1) * &SparsePolynomial::lit(&lag[1][2]))
+                + &(&var(&y2) * &SparsePolynomial::lit(&lag[2][2])));
+
+        assert_eq!(
+            gresult.pl.get(&r0).cloned(),
+            Some(expected_c0.clone()),
+            "pl[c0]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r1).cloned(),
+            Some(expected_c1.clone()),
+            "pl[c1]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r2).cloned(),
+            Some(expected_c2.clone()),
+            "pl[c2]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r3).cloned(),
+            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            "pl[c3] = 0"
+        );
+    }
+
+    #[test]
+    fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
+        use crate::PRef;
+        use ark_bls12_381::Fr;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
+        let pref_points = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_points);
+
+        let coefs: Vec<_> = [0u64, 1]
+            .iter()
+            .map(|&n| mk::<ArkBls12_381>(Op::Value(Value::Index(n as usize))))
+            .collect();
+        builder.add_op(pref_points.clone(), Op::Vec(coefs), &mut gresult);
+
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(1),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_evals);
+
+        let result_typ = ATyp::uni(2);
+        let pref_result = PRef::from_node(
+            NodeIndex::new(2),
+            result_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_result);
+
+        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
+
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+        builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        let var = |p: &PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+
+        let r0 = pref_result.clone().with_slot(0).unwrap();
+        let r1 = pref_result.clone().with_slot(1).unwrap();
+        let r2 = pref_result.clone().with_slot(2).unwrap();
+
+        let y0 = pref_evals
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y1 = pref_evals
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+
+        let expected_c0 = var(&y0);
+        let expected_c1 = -var(&y0) + var(&y1);
+
+        assert_eq!(
+            gresult.pl.get(&r0).cloned(),
+            Some(expected_c0.clone()),
+            "pl[c0]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r1).cloned(),
+            Some(expected_c1.clone()),
+            "pl[c1]"
+        );
+        assert_eq!(
+            gresult.pl.get(&r2).cloned(),
+            Some(SparsePolynomial::<Fr, GrevLexTerm>::zero()),
+            "pl[c2] = 0"
+        );
+    }
+
+    #[test]
+    fn test_add_op_interpolate_variable_points_falls_back_to_opaque() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
+        let pref_points = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(1),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_points);
+        builder.ns.register(&pref_evals);
+
+        let result_typ = ATyp::uni(2);
+        let pref_result = PRef::from_node(
+            NodeIndex::new(2),
+            result_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_result);
+
+        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
+
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+        builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        assert!(
+            gresult.np.contains(&pref_result),
+            "variable points should be opaque"
         );
     }
 }
