@@ -28,7 +28,7 @@ ark-ed25519 = { version = "0.6.0" }
 ark-vesta = { version = "0.6.0" }
 ark-relations = { version = "0.6.0" }
 ark-groth16 = { version = "0.6.0" }
-ark-gb = { path = "vendor/ark-gb" }
+ark-gb = { git = "https://github.com/elefthei/ark-gb.git", rev = "f75e66e49f5797404feef1122c2e1b78b91a6098" }
 spongefish = { version = "0.7.1", features = ["ark-ff", "ark-ec"] }
 
 [package]
@@ -58,9 +58,6 @@ ark-relations = { workspace = true }
 ark-groth16 = { workspace = true }
 ark-ec = { workspace = true }
 petgraph = "0.7.1"
-
-[patch.crates-io]
-ark-gb = { path = "vendor/ark-gb" }
 
 [[bench]]
 name = "graph_execution"
