@@ -428,27 +428,12 @@ impl Lub for CTyp {
                 Range::lub_equ(a, b, &Nothing)
                     .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
             )),
-            // Uni<A> == Uni<B>
-            (CTyp::Poly(a, 1, n), CTyp::Poly(b, 1, m)) => Ok(CTyp::Poly(
+            // Poly<A, na, ma> == Poly<B, nb, mb>: coerce to wider type
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
                 Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                1,
-                *n.max(m),
+                *na.max(nb),
+                *ma.max(mb),
             )),
-            // Mle<A> == Mle<B>
-            (CTyp::Poly(a, n, 1), CTyp::Poly(b, m, 1)) => Ok(CTyp::Poly(
-                Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                *n.max(m),
-                1,
-            )),
-            // General Poly<A, na, ma> == Poly<B, nb, mb>: strict match (VPoly)
-            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if na == nb && ma == mb => {
-                Ok(CTyp::Poly(
-                    Tid::lub_equ(a, b, ctx)
-                        .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                    *na,
-                    *ma,
-                ))
-            }
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => Ok(CTyp::vec(
                 &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
@@ -1222,10 +1207,7 @@ fn lub_typ() {
             &CTyp::Poly(f.clone(), 3, 2),
             &ctx
         ),
-        Err(LubError::equ(
-            &CTyp::Poly(f.clone(), 2, 3),
-            &CTyp::Poly(f.clone(), 3, 2)
-        ))
+        Ok(CTyp::Poly(f.clone(), 3, 3))
     );
 
     // Regression (phase 7): lub_div degree math. Poly<F,1,5> / Poly<F,1,5> = Poly<F,1,0>
