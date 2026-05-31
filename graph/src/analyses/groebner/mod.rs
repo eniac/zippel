@@ -6647,4 +6647,673 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // PolySource::lift_to tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_lift_uni_to_wider_uni() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref);
+        let src = PolySource::from_ref_vars(
+            &builder,
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+        );
+        assert_eq!(src.polys.len(), 3);
+
+        let lifted = src.lift_to(&ATyp::Uni(4));
+        assert_eq!(lifted.polys.len(), 5);
+        assert_eq!(*lifted.typ(), ATyp::Uni(4));
+        for i in 0..3 {
+            assert_eq!(
+                lifted.polys[i],
+                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+            );
+        }
+        for i in 3..5 {
+            assert!(
+                lifted.polys[i].is_zero(),
+                "padded slot {} should be zero",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_lift_mle_to_wider_mle() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref);
+        let src = PolySource::from_ref_vars(
+            &builder,
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
+        );
+        assert_eq!(src.polys.len(), 4);
+
+        let lifted = src.lift_to(&ATyp::Mle(3));
+        assert_eq!(lifted.polys.len(), 8);
+        assert_eq!(*lifted.typ(), ATyp::Mle(3));
+        for i in 0..4 {
+            assert_eq!(
+                lifted.polys[i],
+                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+            );
+        }
+        for i in 4..8 {
+            assert!(
+                lifted.polys[i].is_zero(),
+                "padded slot {} should be zero",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_lift_vpoly_same_arity_prefix() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(2, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref);
+        let src = PolySource::from_ref_vars(
+            &builder,
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
+        );
+        assert_eq!(src.polys.len(), 6);
+
+        let lifted = src.lift_to(&ATyp::VPoly(2, 3));
+        assert_eq!(lifted.polys.len(), 10);
+        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 3));
+        for i in 0..6 {
+            assert_eq!(
+                lifted.polys[i],
+                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+            );
+        }
+        for i in 6..10 {
+            assert!(
+                lifted.polys[i].is_zero(),
+                "padded slot {} should be zero",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_lift_vpoly_cross_arity_embedding() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(2, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref);
+        let src = PolySource::from_ref_vars(
+            &builder,
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
+        );
+
+        let lifted = src.lift_to(&ATyp::VPoly(3, 2));
+        assert_eq!(*lifted.typ(), ATyp::VPoly(3, 2));
+        assert_eq!(lifted.polys.len(), ATyp::VPoly(3, 2).physical_len());
+
+        let dst = multi_indices(3, 2);
+        let src_idx = multi_indices(2, 2);
+        for (j, sk) in src_idx.iter().enumerate() {
+            let mut padded = sk.clone();
+            padded.resize(3, 0);
+            let pos = dst.iter().position(|dk| dk == &padded).unwrap();
+            assert_eq!(
+                lifted.polys[pos],
+                SparsePolynomial::var(&pref.clone().with_slot(j).unwrap()),
+                "src multi-index {:?} → padded {:?} → dst position {} should have src slot {}",
+                sk,
+                padded,
+                pos,
+                j
+            );
+        }
+    }
+
+    #[test]
+    fn test_lift_mle_to_vpoly_lagrange() {
+        use ark_bls12_381::Fr;
+
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::new(
+            vec![
+                SparsePolynomial::lit(&Fr::from(1u64)),
+                SparsePolynomial::lit(&Fr::from(2u64)),
+                SparsePolynomial::lit(&Fr::from(3u64)),
+                SparsePolynomial::lit(&Fr::from(4u64)),
+            ],
+            ATyp::Mle(2),
+        );
+
+        let lifted = src.lift_to(&ATyp::VPoly(2, 2));
+        assert_eq!(*lifted.typ(), ATyp::VPoly(2, 2));
+        assert_eq!(lifted.polys.len(), 6);
+
+        let dst = multi_indices(2, 2);
+        let c: [[i64; 2]; 2] = [[1, -1], [0, 1]];
+        let hcube = hypercube(2);
+        let vals: Vec<i64> = vec![1, 2, 3, 4];
+        for (ir, k) in dst.iter().enumerate() {
+            let mut expected: i64 = 0;
+            for (j, b) in hcube.iter().enumerate() {
+                let mut scalar: i64 = 1;
+                for i in 0..2 {
+                    let ki = if i < k.len() { k[i] } else { 0 };
+                    if ki >= 2 {
+                        scalar = 0;
+                        break;
+                    }
+                    scalar *= c[b[i]][ki];
+                }
+                expected += vals[j] * scalar;
+            }
+            let actual = &lifted.polys[ir];
+            if expected == 0 {
+                assert!(
+                    actual.is_zero(),
+                    "Mle→VPoly coefficient at multi-index {:?} (position {}) should be zero",
+                    k,
+                    ir
+                );
+            } else {
+                let expected_poly: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm> =
+                    if expected >= 0 {
+                        SparsePolynomial::lit(&Fr::from(expected as u64))
+                    } else {
+                        -SparsePolynomial::lit(&Fr::from((-expected) as u64))
+                    };
+                assert_eq!(
+                    *actual, expected_poly,
+                    "Mle→VPoly coefficient at multi-index {:?} (position {}) mismatch",
+                    k, ir
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_lift_uni_to_vpoly_same_arity() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref);
+        let src = PolySource::from_ref_vars(
+            &builder,
+            &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+        );
+        assert_eq!(src.polys.len(), 3);
+
+        let lifted = src.lift_to(&ATyp::VPoly(1, 2));
+        assert_eq!(*lifted.typ(), ATyp::VPoly(1, 2));
+        assert_eq!(lifted.polys.len(), 3);
+        for i in 0..3 {
+            assert_eq!(
+                lifted.polys[i],
+                SparsePolynomial::var(&pref.clone().with_slot(i).unwrap())
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // broadcast_equ: Bool result with bare basis diffs
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_equ_scalar_has_var_constraint_and_diff() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::bool(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Equ,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
+                ATyp::bool(),
+            ),
+            &mut gresult,
+        );
+
+        let a_slot = pref_a.with_slot(0).unwrap();
+        let b_slot = pref_b.with_slot(0).unwrap();
+        let r_slot = pref_r.with_slot(0).unwrap();
+        let diff = &SparsePolynomial::var(&a_slot) - &SparsePolynomial::var(&b_slot);
+        assert!(
+            gresult.basis.iter().any(|p| *p == diff),
+            "basis should contain a-b diff"
+        );
+        assert!(
+            gresult
+                .basis
+                .iter()
+                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+            "basis should contain var(r) constraint for Bool result"
+        );
+    }
+
+    #[test]
+    fn test_equ_uni_bool_result_bare_diffs() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::bool(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Equ,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(2))),
+                ATyp::bool(),
+            ),
+            &mut gresult,
+        );
+
+        let r_slot = pref_r.with_slot(0).unwrap();
+
+        assert!(
+            gresult
+                .basis
+                .iter()
+                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+            "basis should contain var(r) for Bool result"
+        );
+
+        for j in 0..3 {
+            let a_j = pref_a.clone().with_slot(j).unwrap();
+            let b_j = pref_b.clone().with_slot(j).unwrap();
+            let diff = &SparsePolynomial::var(&a_j) - &SparsePolynomial::var(&b_j);
+            assert!(
+                gresult.basis.iter().any(|p| *p == diff),
+                "basis should contain a[{}]-b[{}] diff",
+                j,
+                j
+            );
+        }
+
+        assert!(
+            !gresult.pl.contains(&r_slot),
+            "Bool result slot should NOT be defined via pl"
+        );
+    }
+
+    #[test]
+    fn test_equ_uni_different_degrees_lifts_both() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(4),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::bool(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Equ,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Uni(4))),
+                ATyp::bool(),
+            ),
+            &mut gresult,
+        );
+
+        let r_slot = pref_r.with_slot(0).unwrap();
+        assert!(
+            gresult
+                .basis
+                .iter()
+                .any(|p| *p == SparsePolynomial::var(&r_slot)),
+            "basis should contain var(r) for Bool result"
+        );
+
+        let lub_len = ATyp::Uni(4).physical_len();
+        assert_eq!(lub_len, 5);
+        for j in 0..lub_len {
+            let a_j = if j < 3 {
+                SparsePolynomial::var(&pref_a.clone().with_slot(j).unwrap())
+            } else {
+                SparsePolynomial::zero()
+            };
+            let b_j = SparsePolynomial::var(&pref_b.clone().with_slot(j).unwrap());
+            let diff = a_j - b_j;
+            assert!(
+                gresult.basis.iter().any(|p| *p == diff),
+                "basis should contain lifted diff at slot {}",
+                j
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // concat_op: extracted function
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_concat_vec_vec_elements() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let vec2 = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec3 = ATyp::Vec(Box::new(s.clone()), 3);
+        let vec5 = ATyp::Vec(Box::new(s.clone()), 5);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec3.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec5.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Concat,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec2)),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec3)),
+                vec5,
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..5 {
+            let pr_i = pref_r.with_index(i).unwrap();
+            let pr_slot = pr_i.with_slot(0).unwrap();
+            assert!(
+                gresult.pl.contains(&pr_slot),
+                "concat result element {} slot 0 should be in pl",
+                i
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // reduce_op with PolySource: direct fold for Add/Sub
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_reduce_add_poly_vec_direct_fold() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let poly_t = ATyp::Uni(2);
+        let vec_t = ATyp::Vec(Box::new(poly_t.clone()), 2);
+
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            poly_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+
+        builder.add_op(
+            result.clone(),
+            Op::Reduce(
+                BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
+            ),
+            &mut gresult,
+        );
+
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        for j in 0..3 {
+            let v0_j = pref_v.clone().with_index(0).unwrap().with_slot(j).unwrap();
+            let v1_j = pref_v.clone().with_index(1).unwrap().with_slot(j).unwrap();
+            let r_j = result.clone().with_slot(j).unwrap();
+            let expected = &var(&v0_j) + &var(&v1_j);
+            let stored = gresult.pl.get(&r_j).unwrap();
+            assert_eq!(*stored, expected, "reduce add poly slot {} mismatch", j);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Op::Ref with lift_to
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_ref_lift_to_wider_type() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let pref_src = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_src);
+
+        let pref_dst = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(4),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_dst);
+
+        builder.add_op(
+            pref_dst.clone(),
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            &mut gresult,
+        );
+
+        assert_eq!(pref_dst.slots().len(), 5, "Uni(4) should have 5 slots");
+        for j in 0..3 {
+            let dst_j = pref_dst.clone().with_slot(j).unwrap();
+            let src_j = pref_src.clone().with_slot(j).unwrap();
+            let stored = gresult.pl.get(&dst_j).unwrap();
+            assert_eq!(
+                *stored,
+                SparsePolynomial::var(&src_j),
+                "ref lift slot {} should map to src slot {}",
+                j,
+                j
+            );
+        }
+        for j in 3..5 {
+            let dst_j = pref_dst.clone().with_slot(j).unwrap();
+            let stored = gresult.pl.get(&dst_j).unwrap();
+            assert!(
+                stored.is_zero(),
+                "ref lift padded slot {} should be zero",
+                j
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // broadcast_scalar_to
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_broadcast_scalar_to_vpoly() {
+        let scalar_poly =
+            SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&PRef::from_node(
+                petgraph::graph::NodeIndex::new(0),
+                ATyp::scalar(),
+                0,
+                lang::typ::Qualifier::Private,
+                lang::typ::Distribution::default(),
+            ));
+        let src =
+            PolySource::<ArkBls12_381, GrevLexTerm>::new(vec![scalar_poly.clone()], ATyp::scalar());
+        let broadcast = src.broadcast_scalar_to(&ATyp::VPoly(2, 2));
+        assert_eq!(broadcast.polys.len(), 6);
+        for (i, p) in broadcast.polys.iter().enumerate() {
+            assert_eq!(*p, scalar_poly, "broadcast slot {} should be the scalar", i);
+        }
+    }
 }
