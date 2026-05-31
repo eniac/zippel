@@ -25,14 +25,18 @@
 use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::BatchMulPreprocessing;
 use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{FftField, Field, One, PrimeField, Zero};
+// `ark_ff::UniformRand` (a re-export) is used over `ark_std::UniformRand`
+// because benchmarks/Cargo.toml still pulls in ark-std 0.5 from crates.io
+// transitively, but `<E as Pairing>::G1` (via the git-patched ark_ec) only
+// satisfies the 0.6-shaped UniformRand. ark_ff is direct git 0.6 here, so
+// its re-export points at the right trait version.
+use ark_ff::{FftField, Field, One, PrimeField, UniformRand, Zero};
 use ark_poly::{
     DenseUVPolynomial, EvaluationDomain, Evaluations, Radix2EvaluationDomain,
     univariate::DensePolynomial,
 };
 use ark_serialize::CanonicalSerialize;
-use ark_std::UniformRand;
-use rand::RngCore;
+use ark_std::rand::Rng;
 use std::marker::PhantomData;
 use std::ops::Neg;
 
@@ -206,7 +210,7 @@ pub fn compute_chall<E: Pairing>(
 // We take those three directly to avoid the gr1cs dep.
 // =============================================================================
 
-pub fn keygen<E: Pairing, R: RngCore>(
+pub fn keygen<E: Pairing, R: Rng + ?Sized>(
     a_mat: &SparseMatrix<E::ScalarField>,
     b_mat: &SparseMatrix<E::ScalarField>,
     num_variables: usize,
