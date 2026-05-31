@@ -17,10 +17,11 @@ use crate::{GOp, HOp, Op, Ref};
 use lang::ast::BinOp;
 use lang::id::Vid;
 
-use ark_ff::{FftField, Field, One, Zero};
+use ark_ff::{FftField, Field, One, PrimeField, Zero};
 use backend::op::HasOpFactory;
 use backend::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
-use lang::typ::{Distribution, Qualifier};
+use lang::typ::lub::Lub;
+use lang::typ::{Distribution, Nothing, Qualifier};
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::collections::HashMap;
@@ -173,19 +174,11 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
 /// `GroebnerBuilder` borrows the namespace via `&mut` — it does not own it.
 #[derive(Clone)]
 pub struct GroebnerNamespace<C: ArkConfig> {
-    /// All PRefs known to the namespace: protocol parameters + every node
-    /// from the TransClos. Each has index=0 and the correct full type from
-    /// the DAG, providing an authoritative mapping from `Ref` to `PRef`
-    /// for `find_ref`.
     pub prefs: HashMap<Ref, PRef>,
     pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
-    /// Monotonically decreasing counter for sentinel PRef NodeIndex allocation.
-    /// Starts at usize::MAX and decrements; so sentinel indices never collide
-    /// with real DAG node indices (which grow up from 0).
     sentinel_counter: usize,
-    /// Cached GT sentinel — allocated once via sentinel_pref on first call to
-    /// gt_pref(), then reused.
     gt_sentinel: Option<PRef>,
+    name_counters: HashMap<String, usize>,
 }
 
 impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
@@ -195,6 +188,7 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
             div_wit: Ctx::new(),
             sentinel_counter: usize::MAX,
             gt_sentinel: None,
+            name_counters: HashMap::new(),
         }
     }
 
@@ -205,14 +199,19 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
     }
 
     /// Allocate a fresh sentinel PRef with a stable unique NodeIndex.
-    /// The counter starts at `usize::MAX` and decrements for each call,
-    /// so sentinel indices never collide with real DAG node indices (which
-    /// grow up from 0).
     pub fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
         let vid = Vid::from(name);
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
         PRef::from_var(vid, idx, typ, 0, Qualifier::Public, Distribution::default())
+    }
+
+    /// Return a unique name for the given key by appending a per-key counter.
+    pub fn next_name(&mut self, key: &str) -> String {
+        let counter = self.name_counters.entry(key.to_string()).or_insert(0);
+        let name = format!("__zippel::gb::{}::{}", key, counter);
+        *counter += 1;
+        name
     }
 
     /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
@@ -556,9 +555,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let mq = ma - mb;
                 let mr = mb - 1;
 
-                let counter = self.ns.div_wit.len();
-                let q_name = format!("__zippel::gb::div_q::{}", counter);
-                let r_name = format!("__zippel::gb::div_r::{}", counter);
+                let q_name = self.ns.next_name("div_q");
+                let r_name = self.ns.next_name("div_r");
                 let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), result);
                 let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), result);
 
@@ -1101,6 +1099,267 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    fn dot_op(
+        &mut self,
+        pr: &PRef,
+        a_polys: &[SparsePolynomial<C::F, T>],
+        b_polys: &[SparsePolynomial<C::F, T>],
+        a_typ: &ATyp,
+        b_typ: &ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        match (a_typ, b_typ) {
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                let r_elem_len = pr.typ.physical_len();
+                let mut acc: Vec<SparsePolynomial<C::F, T>> =
+                    vec![SparsePolynomial::zero(); r_elem_len];
+                for i in 0..*na {
+                    let acc_name = self.ns.next_name("dot_acc");
+                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), result);
+                    self.mul_op(
+                        &acc_pref,
+                        &a_polys[i * a_elem_len..(i + 1) * a_elem_len],
+                        &b_polys[i * b_elem_len..(i + 1) * b_elem_len],
+                        a_inner,
+                        b_inner,
+                        &pr.typ,
+                        result,
+                    );
+                    let acc_vars: Vec<SparsePolynomial<C::F, T>> = acc_pref
+                        .slots()
+                        .into_iter()
+                        .map(|s| SparsePolynomial::var(&s))
+                        .collect();
+                    for (j, a) in acc.iter_mut().enumerate() {
+                        if j < acc_vars.len() {
+                            *a = &*a + &acc_vars[j];
+                        }
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(acc) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            (ATyp::Base(_), ATyp::Base(_)) => {
+                let pr_slots = pr.slots();
+                assert_eq!(
+                    pr_slots.len(),
+                    1,
+                    "Dot: Base·Base result must be single slot"
+                );
+                let sum: SparsePolynomial<C::F, T> =
+                    a_polys.iter().zip(b_polys).map(|(a, b)| a * b).sum();
+                result.pl.insert(&pr_slots[0], &sum);
+                result.basis.push(sum - SparsePolynomial::var(&pr_slots[0]));
+            }
+            _ => {
+                unreachable!("Dot: unsupported type combination {} · {}", a_typ, b_typ);
+            }
+        }
+    }
+
+    fn pair_op(
+        &mut self,
+        pr: &PRef,
+        a_polys: &[SparsePolynomial<C::F, T>],
+        b_polys: &[SparsePolynomial<C::F, T>],
+        a_typ: &ATyp,
+        b_typ: &ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        let gt = self.gt_pref(result);
+        match (a_typ, b_typ, &pr.typ) {
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb), ATyp::Vec(r_inner, _)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                let r_elem_len = r_inner.physical_len();
+                let gt_var = SparsePolynomial::var(&gt);
+                for i in 0..*na {
+                    let a_start = i * a_elem_len;
+                    let b_start = i * b_elem_len;
+                    let t_i = pr.with_index(i).unwrap();
+                    let t_slots = t_i.slots();
+                    for j in 0..r_elem_len.max(a_elem_len).max(b_elem_len) {
+                        let e_a = if j < a_elem_len {
+                            &a_polys[a_start + j]
+                        } else {
+                            &SparsePolynomial::<C::F, T>::zero()
+                        };
+                        let e_b = if j < b_elem_len {
+                            &b_polys[b_start + j]
+                        } else {
+                            &SparsePolynomial::<C::F, T>::zero()
+                        };
+                        if j < t_slots.len() {
+                            let pf = &t_slots[j];
+                            let e = e_a * e_b * gt_var.clone();
+                            result.pl.insert(pf, &e);
+                            result.basis.push(&e - &SparsePolynomial::var(pf));
+                        }
+                    }
+                }
+            }
+            (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
+                let pr_slots = pr.slots();
+                let gt_var = SparsePolynomial::var(&gt);
+                for (pf, e_a, e_b) in pr_slots
+                    .iter()
+                    .zip(a_polys)
+                    .zip(b_polys)
+                    .map(|((pf, a), b)| (pf, a, b))
+                {
+                    let e = e_a * e_b * gt_var.clone();
+                    result.pl.insert(pf, &e);
+                    result.basis.push(&e - &SparsePolynomial::var(pf));
+                }
+            }
+            _ => {
+                unreachable!(
+                    "Pair: unsupported type combination {} × {} → {}",
+                    a_typ, b_typ, pr.typ
+                );
+            }
+        }
+    }
+
+    fn pow_op(&mut self, pr: &PRef, a: &HOp<C>, b: &HOp<C>, result: &mut GroebnerResult<C, T>) {
+        let a_typ = a.typ();
+        let b_typ = b.typ();
+        let a_polys = self.ref_vars(a);
+        match (&a_typ, &b_typ, &pr.typ) {
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb), ATyp::Vec(r_inner, _)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let elem_exps = self.resolve_const_exps_vec(b, *na);
+                for i in 0..*na {
+                    let t_i = pr.with_index(i).unwrap();
+                    let elem_a = &a_polys[i * a_elem_len..(i + 1) * a_elem_len];
+                    if let Some(k) = elem_exps[i] {
+                        self.pow_const(&t_i, elem_a, a_inner, r_inner, k, result);
+                    } else {
+                        result.np.insert(
+                            &t_i,
+                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
+                        );
+                    }
+                }
+            }
+            (ATyp::Vec(a_inner, na), _, ATyp::Vec(r_inner, _)) => {
+                let k = self.resolve_const_exp_scalar(b);
+                let a_elem_len = a_inner.physical_len();
+                for i in 0..*na {
+                    let t_i = pr.with_index(i).unwrap();
+                    let elem_a = &a_polys[i * a_elem_len..(i + 1) * a_elem_len];
+                    if let Some(k) = k {
+                        self.pow_const(&t_i, elem_a, a_inner, r_inner, k, result);
+                    } else {
+                        result.np.insert(
+                            &t_i,
+                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
+                        );
+                    }
+                }
+            }
+            (_, ATyp::Vec(_, nb), ATyp::Vec(_, _)) => {
+                let elem_exps = self.resolve_const_exps_vec(b, *nb);
+                for i in 0..*nb {
+                    let t_i = pr.with_index(i).unwrap();
+                    if let Some(k) = elem_exps[i] {
+                        self.pow_const(&t_i, &a_polys, &a_typ, &t_i.typ, k, result);
+                    } else {
+                        result.np.insert(
+                            &t_i,
+                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
+                        );
+                    }
+                }
+            }
+            _ => {
+                if let Some(k) = self.resolve_const_exp_scalar(b) {
+                    self.pow_const(pr, &a_polys, &a_typ, &pr.typ, k, result);
+                } else {
+                    result.np.insert(
+                        pr,
+                        &Op::Bin(BinOp::Pow, a.clone(), b.clone(), pr.typ.clone()),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Try to resolve a scalar operand to a compile-time constant index.
+    fn resolve_const_exp_scalar(&self, b: &HOp<C>) -> Option<usize> {
+        match b.get() {
+            Op::Value(Value::Index(i)) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// Try to resolve each element of a Vec operand to a compile-time constant index.
+    fn resolve_const_exps_vec(&self, b: &HOp<C>, n: usize) -> Vec<Option<usize>> {
+        match b.get() {
+            Op::Value(Value::VecIndex(vs)) => vs.iter().map(|i| Some(*i)).collect(),
+            Op::Vec(vs) => vs
+                .iter()
+                .map(|v| match v.get() {
+                    Op::Value(Value::Index(i)) => Some(*i),
+                    _ => None,
+                })
+                .collect(),
+            Op::Value(Value::Index(i)) => {
+                vec![Some(*i); n]
+            }
+            _ => vec![None; n],
+        }
+    }
+    fn pow_const(
+        &mut self,
+        target: &PRef,
+        base_polys: &[SparsePolynomial<C::F, T>],
+        base_typ: &ATyp,
+        _result_typ: &ATyp,
+        k: usize,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        if k == 0 {
+            let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+            for pf in target.slots() {
+                result.pl.insert(&pf, &one);
+                result.basis.push(one.clone() - SparsePolynomial::var(&pf));
+            }
+            return;
+        }
+        if k == 1 {
+            for (pf, p) in target.slots().into_iter().zip(base_polys.iter().cloned()) {
+                result.pl.insert(&pf, &p);
+                result.basis.push(p - SparsePolynomial::var(&pf));
+            }
+            return;
+        }
+        let mut acc_polys: Vec<SparsePolynomial<C::F, T>> = base_polys.to_vec();
+        let mut acc_typ = base_typ.clone();
+        for _step in 1..k {
+            let next_name = self.ns.next_name("pow_acc");
+            let next_typ = ATyp::lub_mul(&acc_typ, base_typ, &Nothing).expect("pow_const: lub_mul");
+            let next_pref = self.sentinel_pref(&next_name, next_typ.clone(), result);
+            self.mul_op(
+                &next_pref, &acc_polys, base_polys, &acc_typ, base_typ, &next_typ, result,
+            );
+            acc_polys = next_pref
+                .slots()
+                .into_iter()
+                .map(|s| SparsePolynomial::var(&s))
+                .collect();
+            acc_typ = next_typ;
+        }
+        for (pf, p) in target.slots().into_iter().zip(acc_polys) {
+            result.pl.insert(&pf, &p);
+            result.basis.push(p - SparsePolynomial::var(&pf));
+        }
+    }
+
     /// Slot-wise division constraint: for each slot j,
     ///   `a[j] - b[j] * var(target[j]) = 0`
     fn slot_wise_div(
@@ -1364,15 +1623,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let b_polys = self.ref_vars(b);
                 self.mul_op(&pr, &a_polys, &b_polys, &a_typ, &b_typ, &pr.typ, result);
             }
-            Op::Bin(BinOp::Dot, a, b, _) => {
-                let sum = self
-                    .ref_vars(&a)
-                    .into_iter()
-                    .zip(self.ref_vars(&b))
-                    .map(|(a, b)| a * b)
-                    .sum();
-                result.pl.insert(&pr, &sum);
-                result.basis.push(sum - SparsePolynomial::var(&pr))
+            Op::Bin(BinOp::Dot, ref a, ref b, _) => {
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let a_polys = self.ref_vars(a);
+                let b_polys = self.ref_vars(b);
+                self.dot_op(&pr, &a_polys, &b_polys, &a_typ, &b_typ, result);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
                 let a_typ = a.typ();
@@ -1602,21 +1858,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // sides of a `verify(lhs == rhs)` then cancel under Buchberger
             // because their basis rows are identical F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let a_vars = self.ref_vars(a.get());
-                let b_vars = self.ref_vars(b.get());
-                let pr_slots = pr.slots();
-                let gt = self.gt_pref(result);
-                for (pf, e_a, e_b) in pr_slots
-                    .iter()
-                    .zip(a_vars)
-                    .zip(b_vars)
-                    .map(|((pf, a), b)| (pf, a, b))
-                {
-                    let gt_var = SparsePolynomial::var(&gt);
-                    let e = &e_a * &e_b * gt_var;
-                    result.pl.insert(pf, &e);
-                    result.basis.push(&e - &SparsePolynomial::var(pf));
-                }
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let a_polys = self.ref_vars(a.get());
+                let b_polys = self.ref_vars(b.get());
+                self.pair_op(&pr, &a_polys, &b_polys, &a_typ, &b_typ, result);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
             // Physical slots are laid out in Ctx iteration order: each
@@ -1723,10 +1969,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
-                result.np.insert(
-                    &pr,
-                    &Op::Bin(BinOp::Pow, a.clone(), b.clone(), pr.typ.clone()),
-                );
+                self.pow_op(&pr, a, b, result);
             }
             Op::Marginalize(ref inner) => {
                 result.np.insert(&pr, &Op::Marginalize(inner.clone()));
@@ -1931,8 +2174,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 if is_poly {
                     let mut acc: Vec<SparsePolynomial<C::F, T>> = elements[0].clone();
                     for elem in &elements[1..] {
-                        let counter = self.ns.div_wit.len();
-                        let acc_name = format!("__zippel::gb::reduce_mul_acc::{}", counter);
+                        let acc_name = self.ns.next_name("reduce_mul_acc");
                         let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
                         self.mul_op(&acc_pref, &acc, elem, &elem_t, &elem_t, &elem_t, result);
                         acc = acc_pref
@@ -1972,12 +2214,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let target = if is_last {
                         pr.clone()
                     } else {
-                        let counter = self.ns.div_wit.len();
-                        let acc_name = if is_rem {
-                            format!("__zippel::gb::reduce_rem_acc::{}", counter)
+                        let acc_name = self.ns.next_name(if is_rem {
+                            "reduce_rem_acc"
                         } else {
-                            format!("__zippel::gb::reduce_div_acc::{}", counter)
-                        };
+                            "reduce_div_acc"
+                        });
                         self.sentinel_pref(&acc_name, elem_t.clone(), result)
                     };
                     if is_poly {
@@ -5875,5 +6116,509 @@ mod tests {
             !gresult.basis.is_empty(),
             "Vec(Uni(2),2) == Vec(Uni(4),2) should produce basis constraints (zero-padded per element)"
         );
+    }
+
+    #[test]
+    fn test_dot_vec_scalar() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 3);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Dot,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_s.clone())),
+                s.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert!(
+            gresult.pl.contains(&pref_r),
+            "Dot Vec(Scalar,3)·Vec(Scalar,3) result should be in pl"
+        );
+        assert!(
+            !gresult.basis.is_empty(),
+            "Dot Vec(Scalar,3)·Vec(Scalar,3) should produce basis rows"
+        );
+    }
+
+    #[test]
+    fn test_dot_vec_uni() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let uni4 = ATyp::Uni(4);
+        let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
+        let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
+        let dot_result = ATyp::Uni(6);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_uni4.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            dot_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Dot,
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(0)),
+                    vec_uni2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(1)),
+                    vec_uni4.clone(),
+                )),
+                dot_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..7 {
+            let slot = pref_r.with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&slot),
+                "Dot Vec(Uni(2),2)·Vec(Uni(4),2) result slot {} missing from pl",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_pair_vec() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let g1 = ATyp::g1();
+        let g2 = ATyp::g2();
+        let gt = ATyp::gt();
+        let vec_g1 = ATyp::Vec(Box::new(g1.clone()), 2);
+        let vec_g2 = ATyp::Vec(Box::new(g2.clone()), 2);
+        let vec_gt = ATyp::Vec(Box::new(gt.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_g1.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_g2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec_gt.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Pair(
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_g1.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_g2.clone())),
+                vec_gt.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..2 {
+            let elem = pref_r.with_index(i).unwrap();
+            assert!(
+                gresult.pl.contains(&elem),
+                "Pair Vec(G1,2)×Vec(G2,2) result element {} missing from pl",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_pow_vec_element_wise() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(s.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_fin.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..2 {
+            let elem = pref_r.with_index(i).unwrap();
+            assert!(
+                gresult.np.contains(&elem),
+                "Pow Vec(Scalar,2)^Vec(Fin,2) result element {} should be opaque",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_pow_uni_const_exp() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let result_uni4 = ATyp::Uni(4);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(1),
+            result_uni4.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), uni2.clone())),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(2))),
+                result_uni4.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..5 {
+            let slot = pref_r.with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&slot),
+                "Pow Uni(2)^2 result slot {} missing from pl",
+                i
+            );
+        }
+        assert!(
+            !gresult.np.contains(&pref_r),
+            "Pow Uni(2)^2 with constant exponent should not be opaque"
+        );
+    }
+
+    #[test]
+    fn test_pow_vec_uni_const_exp() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let result_uni4 = ATyp::Uni(4);
+        let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(result_uni4.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(1),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(0)),
+                    vec_uni2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Value(Value::Index(2))),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..2 {
+            let elem = pref_r.with_index(i).unwrap();
+            for j in 0..5 {
+                let slot = elem.with_slot(j).unwrap();
+                assert!(
+                    gresult.pl.contains(&slot),
+                    "Pow Vec(Uni(2),2)^2 element {} slot {} missing from pl",
+                    i,
+                    j
+                );
+            }
+        }
+        assert!(
+            !gresult.np.contains(&pref_r),
+            "Pow Vec(Uni(2),2)^2 with constant exponent should not be opaque"
+        );
+    }
+
+    #[test]
+    fn test_pow_vec_vecindex_per_element() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(s.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(1),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 3]))),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..2 {
+            let elem = pref_r.with_index(i).unwrap();
+            assert!(
+                gresult.pl.contains(&elem),
+                "Pow Vec(Scalar,2)^VecIndex([2,3]) result element {} missing from pl",
+                i
+            );
+        }
+        assert!(
+            !gresult.np.contains(&pref_r),
+            "Pow Vec(Scalar,2)^VecIndex([2,3]) should not be opaque"
+        );
+    }
+
+    #[test]
+    fn test_pow_vec_mixed_const_and_opaque() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(s.clone()), 2);
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_fin.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        for i in 0..2 {
+            let elem = pref_r.with_index(i).unwrap();
+            assert!(
+                gresult.np.contains(&elem),
+                "Pow Vec(Scalar,2)^Vec(Fin,2) with non-const exponent element {} should be opaque",
+                i
+            );
+        }
     }
 }
