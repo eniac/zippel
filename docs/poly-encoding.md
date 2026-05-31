@@ -15,10 +15,42 @@ polynomial *degree*, never the coefficient count.
 |---|---|---|---|
 | `Poly<F, 1, m>` | `CTyp::Poly(F, 1, m)` | `ATyp::Uni(m)` | `m + 1` |
 | `Poly<F, n, 1>` (n ≥ 2) | `CTyp::Poly(F, n, 1)` | `ATyp::Mle(n)` | `2^n` |
-| `Poly<F, n, m>` (general) | `CTyp::Poly(F, n, m)` | `ATyp::VPoly(n, m)` | `C(m + n, n)` |
+| `Poly<F, n, d>` (n ≥ 2, d ≥ 2) | `CTyp::Poly(F, n, d)` | `ATyp::VPoly(n, n·d)` | `C(n·d + n, n)` |
 
 where `C(·, ·)` is the binomial coefficient (count of multi-indices
 `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`).
+
+### CTyp → ATyp degree conversion
+
+`CTyp::Poly` uses "max degree **per variable**" (`d`), while `ATyp::VPoly`
+uses "max **total** degree" (`m`). The conversion is conservative:
+
+- `Uni(m)` and `Mle(n)` are exact (no discrepancy).
+- General case: `CTyp::Poly(F, n, d)` → `VPoly(n, n·d)`. The total degree
+  bound `n·d` comes from the worst case where all `n` variables simultaneously
+  have their maximum per-variable degree `d`. This over-approximates the
+  true monomial space, but is always sound.
+
+### `Mle(n)` effective total degree
+
+Although `CTyp::Poly(F, n, 1)` uses per-variable degree 1, a multilinear
+polynomial has total degree `n` (the monomial `x₁·x₂·…·xₙ` has total degree
+`n`). Consequently, `ATyp::lub_mul` treats `Mle(n)` as having total degree
+`n`:
+
+- `Mle(n) × Mle(n)` → `VPoly(n, 2n)` (total degrees add)
+- `Uni(d) × Mle(n)` → `VPoly(n, d+n)` (Uni(d) has total degree d)
+- `VPoly(n,m) × Mle(v)` → `VPoly(max(n,v), m+v)`
+
+Similarly for `lub_add`/`lub_sub`, `Mle(n)` has total degree `n` (not 1):
+
+- `Mle(n₁) + Mle(n₂)` (n₁≠n₂) → `VPoly(max, max)` (max of total degrees)
+- `VPoly(n,m) + Mle(v)` → `VPoly(max(n,v), max(m,v))`
+
+This is why the CTyp→ATyp cross-consistency test uses containment (CTyp
+path ≥ ATyp path) rather than equality: when variable counts differ, the
+conservative `n·d` total-degree bound can exceed the direct `ATyp::lub_mul`
+result.
 
 Aliases defined by the lang: `Uni<F, m> ≡ Poly<F, 1, m>`,
 `Mle<F, n> ≡ Poly<F, n, 1>`.

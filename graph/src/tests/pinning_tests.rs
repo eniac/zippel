@@ -660,7 +660,7 @@ fn pin_coef() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::vpoly(1, 4);
+    let poly_typ = ATyp::Uni(4);
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -727,7 +727,7 @@ fn pin_fft() {
 
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
-    let poly_typ = ATyp::vpoly(1, 3);
+    let poly_typ = ATyp::Uni(3);
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_t("a", poly_typ.clone())]);
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
@@ -1011,9 +1011,9 @@ fn pin_bin_rem() {
     let mut expected = UDag::<B>::new();
     let a = Vid::new("a");
     let b = Vid::new("b");
-    let at_a = ATyp::vpoly(1, 3);
-    let at_b = ATyp::vpoly(1, 2);
-    let at_res = ATyp::vpoly(1, 1);
+    let at_a = ATyp::Uni(3);
+    let at_b = ATyp::Uni(2);
+    let at_res = ATyp::Uni(1);
 
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
@@ -1167,7 +1167,7 @@ fn pin_eval() {
     let mut expected = UDag::<B>::new();
     let p = Vid::new("p");
     let x = Vid::new("x");
-    let at_p = ATyp::vpoly(1, 4);
+    let at_p = ATyp::Uni(4);
     let at_x = ATyp::vec_scalar(2);
 
     let (_inp, _inp_args) = expected_inp(
@@ -1379,7 +1379,6 @@ fn pin_proj_var_record() {
     let mut record_fields = Ctx::<String, ATyp>::new();
     record_fields.insert(&"x".to_string(), &s);
     record_fields.insert(&"y".to_string(), &s);
-    let record_typ = ATyp::Record(record_fields);
 
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
     let _arg_a = _inp_args[0];
@@ -1420,12 +1419,12 @@ fn pin_app_univariate_poly() {
     let (_inp, _inp_args) = expected_inp(
         &mut expected,
         "f",
-        &[pub_t("p", ATyp::vpoly(1, 2)), pub_t("x", s.clone())],
+        &[pub_t("p", ATyp::Uni(2)), pub_t("x", s.clone())],
     );
     let arg_p = _inp_args[0];
     let arg_x = _inp_args[1];
 
-    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::vpoly(1, 2));
+    let var_p = GOp::<B>::var(&Vid::new("p"), arg_p, ATyp::Uni(2));
     let var_x = GOp::<B>::var(&Vid::new("x"), arg_x, s.clone());
 
     // p(x) lowers directly to evaluate(p, x).
