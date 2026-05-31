@@ -266,7 +266,6 @@ pub trait ArkGroupOps<G: CurveGroup> {
     }
     #[inline]
     fn vec_dot(g: &[G::MulBase], f: &[G::Scalar]) -> G {
-        // TODO: What does Err<usize> mean here?
         G::msm(g, f).unwrap()
     }
     #[inline]
@@ -348,14 +347,15 @@ pub trait ArkPairingOps<P: Pairing> {
             .collect()
     }
 
+    /// Σᵢ e(g1ᵢ, g2ᵢ) via a single `multi_miller_loop + final_exponentiation`.
+    /// One final exp instead of N. Replaces the previous per-pair `pairing()`
+    /// fold, which paid N final exps to compute a sum that ends up equal to
+    /// `multi_pairing` by definition (`Σᵢ e(...)` is exactly what the latter
+    /// returns). The verifier's pairing check goes through this path via the
+    /// `dot(VecG1, VecG2) -> GT` arm in `value_dot`.
     #[inline]
-    fn billinear_vec_dot(g1: &Vec<P::G1>, g2: &Vec<P::G2>) -> PairingOutput<P> {
-        g1.par_iter()
-            .zip(g2.par_iter())
-            .fold_with(PairingOutput::zero(), |acc, (g1, g2)| {
-                P::pairing(*g1, *g2) + acc
-            })
-            .reduce(PairingOutput::zero, |acc, gt| gt + acc)
+    fn billinear_vec_dot(g1: &[P::G1], g2: &[P::G2]) -> PairingOutput<P> {
+        P::multi_pairing(g1.iter().copied(), g2.iter().copied())
     }
 }
 

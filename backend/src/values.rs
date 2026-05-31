@@ -1601,6 +1601,30 @@ impl<C: ArkConfig> Value<C> {
                         }),
                 );
             }
+            // `dot(VecG1, VecG2) -> GT` is Σᵢ e(g1ᵢ, g2ᵢ) — exactly
+            // `multi_pairing`. Routing it through `billinear_vec_dot` collapses
+            // N final exponentiations into one (and one Miller loop over all
+            // pairs), which is the standard pairing-batching trick used by
+            // every native SNARK verifier (e.g. ark-poly-commit::kzg10::check,
+            // garuda-pari verify). The type checker already accepts this
+            // signature (types.rs:328); only the runtime arm was missing.
+            (Value::VecG1(a), Value::VecG2(b)) | (Value::VecG2(b), Value::VecG1(a)) => {
+                *other = Value::GT(C::POps::billinear_vec_dot(a, b))
+            }
+            (Value::VecG1Affine(a), Value::VecG2Affine(b))
+            | (Value::VecG2Affine(b), Value::VecG1Affine(a)) => {
+                let ap: Vec<C::G1> = a.par_iter().map(|x| (*x).into()).collect();
+                let bp: Vec<C::G2> = b.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(&ap, &bp))
+            }
+            (Value::VecG1(a), Value::VecG2Affine(b)) | (Value::VecG2Affine(b), Value::VecG1(a)) => {
+                let bp: Vec<C::G2> = b.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(a, &bp))
+            }
+            (Value::VecG1Affine(a), Value::VecG2(b)) | (Value::VecG2(b), Value::VecG1Affine(a)) => {
+                let ap: Vec<C::G1> = a.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(&ap, b))
+            }
             (Value::Vec(a), _) => a
                 .par_iter()
                 .zip(other.into_vec_mut().par_iter_mut())

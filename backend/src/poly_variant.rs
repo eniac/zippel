@@ -538,24 +538,34 @@ impl<F: Field> PolyVariant<F> {
 
     // TODO: Update the rest of this file
     /// Multiply two polynomials - always returns a VirtualPolynomial for any multiplication
-    pub fn poly_mul(&self, other: &Self) -> Result<Self, PolyError<F>> {
+    ///
+    /// Uses arkworks' `Mul` impl on `&DensePolynomial`, which dispatches
+    /// to FFT-based multiplication (evaluate over a smooth domain → pointwise
+    /// → interpolate). That's O(n log n); the previous `naive_mul` path was
+    /// O(n²) and dominated zippel-side prover time at large K. The
+    /// `F: FftField` bound is already satisfied wherever this is called
+    /// from (Value<C> uses C::F: PrimeField, and PrimeField: FftField).
+    pub fn poly_mul(&self, other: &Self) -> Result<Self, PolyError<F>>
+    where
+        F: ark_ff::FftField,
+    {
         match (self, other) {
             // Univariate * Univariate
             (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) => {
-                Ok(PolyVariant::DenseUni(p1.naive_mul(p2)))
+                Ok(PolyVariant::DenseUni(p1 * p2))
             }
             (PolyVariant::SparseUni(p1), PolyVariant::SparseUni(p2)) => {
                 let dense1: DensePolynomial<F> = p1.clone().into();
                 let dense2: DensePolynomial<F> = p2.clone().into();
-                Ok(PolyVariant::DenseUni(dense1.naive_mul(&dense2)))
+                Ok(PolyVariant::DenseUni(&dense1 * &dense2))
             }
             (PolyVariant::DenseUni(p1), PolyVariant::SparseUni(p2)) => {
                 let dense2: DensePolynomial<F> = p2.clone().into();
-                Ok(PolyVariant::DenseUni(p1.naive_mul(&dense2)))
+                Ok(PolyVariant::DenseUni(p1 * &dense2))
             }
             (PolyVariant::SparseUni(p1), PolyVariant::DenseUni(p2)) => {
                 let dense1: DensePolynomial<F> = p1.clone().into();
-                Ok(PolyVariant::DenseUni(dense1.naive_mul(p2)))
+                Ok(PolyVariant::DenseUni(&dense1 * p2))
             }
 
             // MLE * _ - not directly supported, should use VirtualPolynomial

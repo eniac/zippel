@@ -1,0 +1,121 @@
+[package]
+name = "benchmarks"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Zippel side (uses arkworks from git main, via backend's transitive deps).
+zippel = { path = ".." }
+backend = { path = "../backend" }
+share = { path = "../share" }
+lang = { path = "../lang" }
+
+# Native sumcheck baseline: Espresso's hyperplonk. Pulls in arkworks 0.4
+# transitively; that coexists with zippel's arkworks-main thanks to Cargo
+# allowing multiple semver-incompatible versions in one build.
+arithmetic = { git = "https://github.com/EspressoSystems/hyperplonk" }
+subroutines = { git = "https://github.com/EspressoSystems/hyperplonk" }
+transcript = { git = "https://github.com/EspressoSystems/hyperplonk" }
+
+# Zippel-side arkworks (git main — must match backend's version exactly,
+# otherwise `DenseMultilinearExtension` from this crate is a different
+# type than the one backend's PolyVariant accepts).
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = "0.5"
+
+# Native Schnorr baseline: ark-crypto-primitives + matching arkworks 0.5
+# from crates.io. Renamed with np- ("native protocol") prefix so they
+# don't shadow the git-main versions above. ark-crypto-primitives' git
+# main pins arkworks commits that don't unify with backend's pin, so we
+# stick to crates.io for the whole native-side set.
+np-ark-crypto-primitives = { package = "ark-crypto-primitives", version = "0.5", features = ["signature"] }
+np-ark-bls12-381 = { package = "ark-bls12-381", version = "0.5" }
+np-ark-ec = { package = "ark-ec", version = "0.5" }
+blake2 = "0.10"
+
+# Native IPA baseline: ark-poly-commit's IPA polynomial commitment, on
+# the same curve zippel uses (Secp256k1). Pulls a fourth arkworks set
+# (crates.io 0.5) — keeps coexisting with backend's git-main and
+# hyperplonk's v0.4 thanks to the np- rename pattern.
+np-ark-poly-commit = { package = "ark-poly-commit", version = "0.5" }
+np-ark-secp256k1 = { package = "ark-secp256k1", version = "0.5" }
+np-ark-poly = { package = "ark-poly", version = "0.5" }
+np-ark-ff = { package = "ark-ff", version = "0.5" }
+np-ark-serialize = { package = "ark-serialize", version = "0.5" }
+
+# Hyperplonk-side arkworks (v0.4 from crates.io, renamed so they don't
+# shadow the git-main versions above).
+hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4" }
+hp-ark-ff = { package = "ark-ff", version = "0.4" }
+hp-ark-poly = { package = "ark-poly", version = "0.4" }
+hp-ark-std = { package = "ark-std", version = "0.4" }
+
+
+# Native Bulletproofs IPA baseline: a vendored port of alex-ozdemir's
+# Bp2aryStep recursive folding step (github.com/alex-ozdemir/bulletproofs,
+# src/reductions/bp_2ary_step.rs) — the textbook two-base-vector IPA
+# Protocol 2 from BCC/BBB+18. The upstream crate is arkworks-0.3 and has
+# path deps to an unpublished r1cs-std fork, so it can't be added as a
+# git dep; we ported the same algorithm to arkworks 0.4 inline in
+# benchmarks/src/ipa.rs. Uses arkworks 0.4, sharing the hp-ark-* set.
+bp-ark-secp256k1 = { package = "ark-secp256k1", version = "0.4" }
+bp-ark-ec = { package = "ark-ec", version = "0.4", features = ["parallel"] }
+bp-ark-serialize = { package = "ark-serialize", version = "0.4" }
+merlin = "3"
+rayon = "1"
+
+rand = { version = "0.8", features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bin]]
+name = "sumcheck"
+path = "src/bin/sumcheck.rs"
+
+[[bin]]
+name = "schnorr"
+path = "src/bin/schnorr.rs"
+
+[[bin]]
+name = "ipa"
+path = "src/bin/ipa.rs"
+
+[[bin]]
+name = "kzg"
+path = "src/bin/kzg.rs"
+
+[[bin]]
+name = "pari"
+path = "src/bin/pari.rs"
+
+[[bin]]
+name = "bench_all"
+path = "src/bin/bench_all.rs"
+
+[[bin]]
+name = "sumcheck_verify_profile"
+path = "src/bin/sumcheck_verify_profile.rs"
+
+[[bench]]
+name = "sumcheck"
+harness = false
+
+[[bench]]
+name = "schnorr"
+harness = false
+
+[[bench]]
+name = "ipa"
+harness = false
+
+[[bench]]
+name = "kzg"
+harness = false

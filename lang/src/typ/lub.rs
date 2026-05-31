@@ -375,10 +375,20 @@ impl Lub for Tid {
         Err(LubError::pow(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
     }
 
-    /// Least-upper-bound for dot product is the same as multiplication (for kinds)
+    /// Least-upper-bound for dot product is multiplication (for kinds) with one
+    /// extra: `dot(VecG1, VecG2) -> GT` is allowed and resolves the same way as
+    /// `pair(G1, G2)` does. The runtime arm in `value_dot` routes this to
+    /// `multi_pairing`, which is how every native SNARK verifier batches its
+    /// pairing check (one final exponentiation across all summands).
     fn lub_dot(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {
         let ka = ctx.get(a).ok_or(LubError::kind_not_found(a))?;
         let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
+
+        if let (Kind::Group, Kind::Group) = (ka, kb) {
+            if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(a, b)) {
+                return Ok(pid.clone());
+            }
+        }
 
         Self::lub_mul(a, b, ctx).map_err(|e| {
             LubError::next(
@@ -882,7 +892,17 @@ impl Lub for CTyp {
             // Vec<A> . Vec<B> = C
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
-                    // Type [a] and [b] should be multiplied
+                    // Special-case `dot(VecG1, VecG2) -> GT`: at the element
+                    // level this is the pairing kind rule (`Tid::lub_pair`),
+                    // not multiplication. The runtime arm in `value_dot`
+                    // routes this through `multi_pairing`, which folds N
+                    // pairings into one final exponentiation — the standard
+                    // batching trick every native SNARK verifier uses.
+                    if let (CTyp::Base(ea), CTyp::Base(eb)) = (a, b) {
+                        if let Ok(t) = Tid::lub_pair(ea, eb, ctx) {
+                            return Ok(CTyp::Base(t));
+                        }
+                    }
                     Ok(CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
                 } else {

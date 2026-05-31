@@ -34,7 +34,7 @@ pub struct VirtualPolynomial<F: Field> {
     pub num_variables: Option<usize>,
 }
 
-impl<F: Field> VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     /// Create a new empty virtual polynomial
     pub fn new() -> Self {
         VirtualPolynomial {
@@ -486,7 +486,7 @@ impl<F: Field> VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> CanonicalSerialize for VirtualPolynomial<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -556,13 +556,13 @@ impl<F: Field> CanonicalSerialize for VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Default for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Default for VirtualPolynomial<F> {
     fn default() -> Self {
         VirtualPolynomial::new()
     }
 }
 
-impl<F: Field> Add for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Add for VirtualPolynomial<F> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -572,7 +572,7 @@ impl<F: Field> Add for VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Sub for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Sub for VirtualPolynomial<F> {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
@@ -583,7 +583,7 @@ impl<F: Field> Sub for VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Add for &VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Add for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn add(self, other: Self) -> Self::Output {
@@ -593,7 +593,7 @@ impl<F: Field> Add for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Sub for &VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Sub for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn sub(self, other: Self) -> Self::Output {
@@ -604,7 +604,7 @@ impl<F: Field> Sub for &VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Mul for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Mul for VirtualPolynomial<F> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -614,7 +614,7 @@ impl<F: Field> Mul for VirtualPolynomial<F> {
     }
 }
 
-impl<F: Field> Mul for &VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> Mul for &VirtualPolynomial<F> {
     type Output = VirtualPolynomial<F>;
 
     fn mul(self, other: Self) -> Self::Output {
@@ -674,7 +674,7 @@ impl<F: PrimeField> PartialEq for VirtualPolynomial<F> {
 
 impl<F: PrimeField> Eq for VirtualPolynomial<F> {}
 
-impl<F: Field> PartialOrd for VirtualPolynomial<F>
+impl<F: ark_ff::PrimeField> PartialOrd for VirtualPolynomial<F>
 where
     F: ark_ff::PrimeField,
 {
@@ -683,7 +683,7 @@ where
     }
 }
 
-impl<F: Field> Ord for VirtualPolynomial<F>
+impl<F: ark_ff::PrimeField> Ord for VirtualPolynomial<F>
 where
     F: ark_ff::PrimeField,
 {
@@ -721,7 +721,7 @@ where
     }
 }
 
-impl<F: Field> fmt::Display for VirtualPolynomial<F> {
+impl<F: ark_ff::PrimeField> fmt::Display for VirtualPolynomial<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.products.is_empty() {
             return write!(f, "0");

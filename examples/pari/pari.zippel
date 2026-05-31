@@ -1,0 +1,214 @@
+// PARI: Faster and Smaller SNARK via Equifficient Polynomial Commitments
+// (Dellepere, Mishra, Shirzad — Sec USENIX 2026)
+//
+// PARI is a SNARK for Square R1CS (SR1CS): given matrices A, B in F^{m x k}
+// and an instance/witness split z = (x, w), prove that
+//   Az ∘ Az = Bz                  (Hadamard product over m constraints).
+//
+// This file implements PARI's prover and verifier per Fig. 6 of the paper,
+// with the same matrix layout as the reference impl
+// (alireza-shirzad/garuda-pari) so that the succinct-verifier Lagrange
+// shortcut applies.
+//
+// Layout assumption (upstream "instance outliner"):
+//   - Constraints 0..K-N: A's instance columns are zero (so x̂_A vanishes
+//     on those K-N domain points), B's instance columns are zero
+//     everywhere (so x̂_B ≡ 0 on K).
+//   - Constraints K-N..K (the last N): A row = e_i (e.g. A[K-N+i][i]=1)
+//     so that x̂_A(ω^{K-N+i}) = x[i].
+// Under this layout, x̂_A is determined by the N public inputs alone, and
+// the verifier can compute x̂_A(r) via the closed-form Lagrange shortcut:
+//   x̂_A(r) = (v_K(r) / K) · Σ_{i=0..N} omegas[i] · x[i] / (r - omegas[i])
+// where omegas[i] = ω^{K-N+i}.
+//
+// Prover-side simplification: instead of feeding A, B as sparse matrices
+// (no zippel support), the prover precomputes and feeds:
+//     z_a_evals := A·z       (length K, private)
+//     z_b_evals := B·z       (length K, private)
+//     w_a_evals := A·(0∥w)   (length K, private; = z_a_evals − x̂_A on K)
+//     w_b_evals := B·(0∥w)   (length K, private; = z_b_evals under layout)
+//
+// Parameters:
+//   M    : log_2(K) where K is the constraint-domain size.
+//   K    : number of constraints (= 2^M). K is a smooth subgroup.
+//   N    : number of public input variables (z[0]=1 plus user inputs).
+//   KMN  : k - N where k = total number of variables. The witness w lives in F^KMN.
+//
+// Soundness in AGM (per the paper); not zero-knowledge in this version
+// (omits the hiding/zk-masking that adds dummy random constraints).
+
+proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
+            M: Size, K: 2^M, N: Size, KMN: Size>(
+    // --- Witness side (prover-only) ---
+    private z_a_evals: [F; K],                   // A · z, on K
+    private z_b_evals: [F; K],                   // B · z, on K
+    private w_a_evals: [F; K],                   // A · (0∥w), on K
+    private w_b_evals: [F; K],                   // B · (0∥w), on K
+    private w:         [F; KMN],                 // witness portion of z (size k-N)
+
+    // --- Instance side (verifier-known, length N) ---
+    public  x:         [F; N],                   // public inputs (z[0]=1, then user inputs)
+    public  omegas:    [F; N],                   // omegas[i] = ω^{K-N+i}
+
+    // --- Setup keys (from Generator G in Fig. 6) ---
+    // SRS bases are marked `private` so they only flow to the prover
+    // and don't enter the FS transcript. The native verifier doesn't
+    // hash the SRS either: it binds the setup via the succinct
+    // verifier key. Marking these `public` (or worse, leaving them in
+    // the FS absorption) would make the zippel verifier do O(K) hash
+    // work per call, defeating the verifier-time speedup we get from
+    // the Lagrange shortcut below.
+
+    // Witness commitment basis: Σ[i] = (α a_i(τ) + β b_i(τ))/δ_2 · G,
+    //   for i = n+1, …, k.
+    private sigma_w:       [G1; KMN],
+
+    // Quotient commitment basis: Σ_q[i] = τ^i / δ_2 · G, for i = 0, …, K-1.
+    private sigma_q:       [G1; K],
+
+    // Opening proof bases (no δ_1 — matches the reference impl
+    // arkworks-rs/garuda-pari, which omits δ_1 entirely; δ_1 only
+    // appears in the ZK variant for hiding masks).
+    //   Σ_A[i]    = α τ^i · G
+    //   Σ_B[i]    = β τ^i · G
+    //   Σ_q'[i]   =   τ^i · G                       for i = 0, …, K-1.
+    private sigma_a:       [G1; K],
+    private sigma_b:       [G1; K],
+    private sigma_q_prime: [G1; K],
+
+    // --- Verifier keys ---
+    public  alpha_g:  G1,
+    public  beta_g:   G1,
+    public  g_g1:     G1,
+    public  delta2_h: G2,        // δ_2 · H
+    public  tau_h:    G2,        // τ · H
+    public  h_g2:     G2,        // H
+
+    // --- Constants supplied as inputs (avoids field-literal coercion) ---
+    // v_K(X) = X^K - 1 coefficients (length K+1). Only the prover needs
+    // it (to build v_K(X) for the quotient division); the verifier just
+    // evaluates v_K(r) = r^K − 1 directly, so we keep this `private` to
+    // skip O(K) FS absorption.
+    private v_k_coeffs: [F; K+1],
+    // The field element 1, used to negate via subtraction and to construct
+    // (X - r) as a polynomial.
+    public  f_one:      F,
+    // 1/K (mod the scalar field), precomputed by the verifier once at setup.
+    public  k_inv:      F
+) where
+    // SR1CS satisfaction: (Az) ∘ (Az) = (Bz) element-wise on the
+    // constraint domain K. With Az and Bz given as inputs this is the
+    // natural prover precondition; the protocol body then attests to it
+    // succinctly.
+    reduce(&&, [z_a_evals[i] * z_a_evals[i] == z_b_evals[i] for i in 0..K])
+{
+    // === Constant scalars derived from f_one ===
+    let f_zero    = f_one - f_one;
+    let f_neg_one = f_zero - f_one;
+
+    // === Prover: T_AB — batched commitment to ŵ_A and ŵ_B ===
+    // T_AB := Σ_{i=n+1..k} w_i · Σ[i] (paper line 6).
+    let t_ab = dot(w, sigma_w);
+
+    // === Prover: quotient polynomial q(X) = (ẑ_A(X)^2 - ẑ_B(X)) / v_K(X) ===
+    // Interpolate ẑ_A and ẑ_B from their evaluations on K (FFT path: unary
+    // interpolate uses the standard K-th roots of unity grid).
+    let z_a_poly = interpolate(z_a_evals);
+    let z_b_poly = interpolate(z_b_evals);
+
+    // v_K(X) = X^K - 1, supplied as a coefficient vector.
+    let v_k_poly = poly(v_k_coeffs);
+
+    let z_a_sq   = z_a_poly * z_a_poly;
+    let num_poly = z_a_sq - z_b_poly;
+    let q_poly   = num_poly / v_k_poly;
+    // q has degree K-2 → K-1 coefficients. Truncate sigma_q to match
+    // (KZG idiom: don't pad coeffs with zero, slice the SRS instead).
+    let q_coeffs = coef(q_poly);
+    let sigma_q_trunc = sigma_q[0..K-1];
+
+    // T_Q := Σ_{i=0..K-2} q_i · Σ_q[i] (paper line 7 with implicit top
+    // coefficient = 0 elided from the MSM).
+    let t_q = dot(q_coeffs, sigma_q_trunc);
+
+    // T := -(T_AB + T_Q) (paper line 8). G1 element.
+    let t_value = (t_ab + t_q) * f_neg_one;
+    t_proof <- t_value;
+
+    // === Fiat-Shamir challenge ===
+    r <- challenge<F>;
+
+    // === Prover: ŵ_A, ŵ_B from precomputed w_*_evals ===
+    let w_a_poly  = interpolate(w_a_evals);
+    let w_b_poly  = interpolate(w_b_evals);
+
+    let v_a_vec = eval(w_a_poly, [r]);
+    let v_b_vec = eval(w_b_poly, [r]);
+    let v_a_p   = v_a_vec[0];
+    let v_b_p   = v_b_vec[0];
+
+    // === Prover: opening proof U ===
+    let r_neg     = f_zero - r;
+    let x_minus_r = poly([r_neg, f_one]);
+
+    let w_a_witness = (w_a_poly - v_a_p) / x_minus_r;
+    let w_b_witness = (w_b_poly - v_b_p) / x_minus_r;
+
+    let q_at_r_vec  = eval(q_poly, [r]);
+    let q_at_r      = q_at_r_vec[0];
+    let w_q_witness = (q_poly - q_at_r) / x_minus_r;
+
+    // Witness quotients: w_a, w_b have degree K-2 (K-1 coeffs);
+    // w_q has degree K-3 (K-2 coeffs). Slice the SRS bases to match.
+    let w_a_coeffs = coef(w_a_witness);
+    let w_b_coeffs = coef(w_b_witness);
+    let w_q_coeffs = coef(w_q_witness);
+
+    let sigma_a_trunc       = sigma_a[0..K-1];
+    let sigma_b_trunc       = sigma_b[0..K-1];
+    let sigma_q_prime_trunc = sigma_q_prime[0..K-2];
+
+    let u_a = dot(w_a_coeffs, sigma_a_trunc);
+    let u_b = dot(w_b_coeffs, sigma_b_trunc);
+    let u_q = dot(w_q_coeffs, sigma_q_prime_trunc);
+
+    let u_value = u_a + u_b + u_q;
+
+    va_proof <- v_a_p;
+    vb_proof <- v_b_p;
+    u_proof  <- u_value;
+
+    // === Verifier: x̂_A(r) via Lagrange shortcut, x̂_B(r) = 0 ===
+    // x̂_A(r) = (v_K(r) / K) · Σ_{i=0..N} omegas[i] · x[i] / (r - omegas[i])
+    // (closed-form Lagrange basis on roots-of-unity, restricted to the N
+    // nonzero positions [K-N, K).) O(N) field ops on the verifier instead
+    // of O(K log K) IFFT.
+    let v_k_at_r     = (r ^ K) - f_one;
+    let lagrange_sum = reduce(+, [omegas[i] * x[i] / (r - omegas[i]) for i in 0..N]);
+    let x_a_at_r     = v_k_at_r * k_inv * lagrange_sum;
+    let x_b_at_r     = f_zero;
+
+    // === Verifier: v_q := ((v_a + x̂_A(r))^2 - (v_b + x̂_B(r))) / v_K(r) ===
+    let lhs_a = va_proof + x_a_at_r;
+    let lhs_b = vb_proof + x_b_at_r;
+    let v_q   = (lhs_a * lhs_a - lhs_b) / v_k_at_r;
+
+    // === Verifier: pairing check ===
+    // e(T, δ_2 H) · e(U, τ H) · e(V·G − r·U, H) = 1_GT
+    // where V = α v_a + β v_b + v_q. Rewrite as
+    //   e(T, δ_2 H) + e(U, τ H) == e(r·U − V·G, H) in additive G_T.
+    //
+    // Batching: native verifiers run this via `multi_pairing` (one Miller
+    // loop + one final exponentiation over all pairs). The LHS is folded
+    // into a single `dot([T, U], [δ_2 H, τ H])` which dispatches to
+    // `multi_pairing` in the backend (values.rs `value_dot` arm for
+    // `VecG1 . VecG2 -> GT`), so the verifier pays 2 final exponentiations
+    // instead of 3 — about a 500-700 µs saving on BLS12-381.
+    let inner     = alpha_g * va_proof + beta_g * vb_proof + g_g1 * v_q - u_proof * r;
+    let neg_inner = inner * f_neg_one;
+
+    let lhs = dot([t_proof, u_proof], [delta2_h, tau_h]);
+    let rhs = pair(neg_inner, h_g2);
+
+    verify(lhs == rhs)
+}
