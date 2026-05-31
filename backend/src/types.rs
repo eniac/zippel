@@ -476,10 +476,23 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Uni(n1), ATyp::Uni(n2)) if n1 == n2 => Ok(ATyp::uni(*n1)),
-            (ATyp::Mle(n1), ATyp::Mle(n2)) if n1 == n2 => Ok(ATyp::mle(*n1)),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
+            (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::mle(*n1.max(n2))),
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if m1 == m2 && n1 == n2 => {
                 Ok(ATyp::vpoly(*m1, *n1))
+            }
+            (ATyp::Record(fields_a), ATyp::Record(fields_b)) => {
+                if fields_a.len() != fields_b.len() {
+                    return Err(LubError::equ(&a, &b));
+                }
+                let mut result_fields = Ctx::new();
+                for (name, typ_a) in fields_a.iter() {
+                    let typ_b = fields_b.get(&name).ok_or_else(|| LubError::equ(&a, &b))?;
+                    let lub_typ = ATyp::lub_equ(typ_a, typ_b, &Nothing)
+                        .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
+                    result_fields.insert(name, &lub_typ);
+                }
+                Ok(ATyp::Record(result_fields))
             }
             (a, b) => Err(LubError::equ(&a, &b)),
         }
@@ -514,6 +527,12 @@ impl Lub for ATyp {
             (ATyp::VPoly(m, n), ATyp::Mle(v)) | (ATyp::Mle(v), ATyp::VPoly(m, n)) => {
                 Ok(ATyp::vpoly(*m.max(v), (*n).max(*v)))
             }
+            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
+            (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::VPoly(m, n)) => Ok(ATyp::vpoly(*m, *n)),
             (a, b) => Err(LubError::add(&a, &b)),
         }
     }
@@ -545,6 +564,12 @@ impl Lub for ATyp {
             (ATyp::VPoly(m, n), ATyp::Mle(v)) | (ATyp::Mle(v), ATyp::VPoly(m, n)) => {
                 Ok(ATyp::vpoly(*m.max(v), (*n).max(*v)))
             }
+            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
+            (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::VPoly(m, n)) => Ok(ATyp::vpoly(*m, *n)),
             (a, b) => Err(LubError::sub(&a, &b)),
         }
     }
@@ -611,7 +636,26 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_div(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
-            (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(n1.saturating_sub(*n2))),
+            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 && *n2 > 0 => Ok(ATyp::uni(*n1 - *n2)),
+            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if *n1 >= *n2 && *n2 > 0 => {
+                Ok(ATyp::vpoly(*m1.max(m2), *n1 - *n2))
+            }
+            (ATyp::VPoly(m, n), ATyp::Uni(d)) if *n >= *d && *d > 0 => Ok(ATyp::vpoly(*m, *n - *d)),
+            (ATyp::Uni(d), ATyp::VPoly(m, n)) if *d >= *n && *n > 0 => Ok(ATyp::vpoly(*m, *d - *n)),
+            (ATyp::VPoly(m1, n), ATyp::Mle(m2)) if *n >= *m2 && *m2 > 0 => {
+                Ok(ATyp::vpoly(*m1.max(m2), *n - *m2))
+            }
+            (ATyp::Mle(m1), ATyp::VPoly(m2, n)) if *m1 >= *n && *n > 0 => {
+                Ok(ATyp::vpoly(*m1.max(m2), *m1 - *n))
+            }
+            (ATyp::Uni(n), ATyp::Mle(m)) if *n >= *m && *m > 0 => Ok(ATyp::vpoly(*m, *n - *m)),
+            (ATyp::Mle(m), ATyp::Uni(n)) if *m >= *n && *n > 0 => Ok(ATyp::vpoly(*m, *m - *n)),
+            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
+            (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar))
+            | (ATyp::Base(ABase::Scalar), ATyp::VPoly(m, n)) => Ok(ATyp::vpoly(*m, *n)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_div(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
@@ -636,8 +680,18 @@ impl Lub for ATyp {
                 &ATyp::lub_rem(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
                 *n,
             )),
-            // Uni<A> % Uni<B> = Uni<B-1>
-            (ATyp::Uni(_), ATyp::Uni(n2)) => Ok(ATyp::uni(n2.saturating_sub(1))),
+            // Uni<A> % Uni<B> = Uni<B-1> (requires B > 0)
+            (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(*n2 - 1)),
+            // VPoly(m1,n1) % VPoly(m2,n2) = VPoly(max(m1,m2), n2-1)
+            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if *n2 >= 1 => {
+                Ok(ATyp::vpoly(*m1.max(m2), *n2 - 1))
+            }
+            // VPoly % Uni(d) = VPoly(m, d-1)
+            (ATyp::VPoly(m, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(*m, *d - 1)),
+            (ATyp::Uni(_), ATyp::VPoly(m, n)) if *n >= 1 => Ok(ATyp::vpoly(*m, *n - 1)),
+            // VPoly % Mle(v) = VPoly(max(m,v), v-1)
+            (ATyp::VPoly(m, _), ATyp::Mle(v)) if *v >= 1 => Ok(ATyp::vpoly(*m.max(v), *v - 1)),
+            (ATyp::Mle(_), ATyp::VPoly(m, n)) if *n >= 1 => Ok(ATyp::vpoly(*m, *n - 1)),
             // Vec<A> % C = Vec<A>
             (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
                 let t = ATyp::lub_rem(t1, b, ctx)
@@ -681,7 +735,6 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?;
                 Ok(t)
             }
-            (ATyp::Uni(n1), ATyp::Uni(n2)) if n1 == n2 => Ok(ATyp::scalar()),
             (_, _) => Err(LubError::dot(&x, &y)),
         }
     }
@@ -693,10 +746,16 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1 + *n2))
             }
-            // Phase B: polynomial ↔ Vec is now a type error (matches the
-            // CTyp-level removal in `lang/src/typ/lub.rs`). Use
-            // `coef(poly)` to extract a coefficient vector before
-            // concatenating with another Vec.
+            (ATyp::Vec(box t1, n1), b) => {
+                let t = ATyp::lub_equ(t1, b, &Nothing)
+                    .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n1 + 1))
+            }
+            (a, ATyp::Vec(box t2, n2)) => {
+                let t = ATyp::lub_equ(a, t2, &Nothing)
+                    .map_err(|e| LubError::next(LubError::concat(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n2 + 1))
+            }
             (a, b) => Err(LubError::concat(&a, &b)),
         }
     }
@@ -711,8 +770,10 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, _), b) | (b, ATyp::Vec(box t1, _)) => {
-                ATyp::lub_and(t1, b, ctx).map_err(|e| LubError::next(LubError::and(&a, &b), e))
+            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+                let t = ATyp::lub_and(t1, b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n1))
             }
             (a, b) => Err(LubError::and(&a, &b)),
         }
@@ -1289,19 +1350,6 @@ mod tests {
 
     /// `dot(Uni(n), Uni(n)) == Scalar` — explicit Uni–Uni arm.
     #[test]
-    fn pbt_lub_dot_uni_uni_is_scalar() {
-        arbtest::arbtest(|u| {
-            let n: usize = u.int_in_range(0..=8)?;
-            let result = ATyp::lub_dot(&ATyp::uni(n), &ATyp::uni(n), &Nothing).unwrap();
-            assert_eq!(
-                result,
-                ATyp::scalar(),
-                "dot(Uni({n}), Uni({n})) should be Scalar"
-            );
-            Ok(())
-        });
-    }
-
     /// `dot(Vec<Scalar, n>, Vec<Scalar, m>)` with `n != m` has no covering arm,
     /// so it must error.
     #[test]
