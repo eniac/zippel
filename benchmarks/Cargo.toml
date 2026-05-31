@@ -100,10 +100,6 @@ path = "src/bin/pari.rs"
 name = "bench_all"
 path = "src/bin/bench_all.rs"
 
-[[bin]]
-name = "sumcheck_verify_profile"
-path = "src/bin/sumcheck_verify_profile.rs"
-
 [[bench]]
 name = "sumcheck"
 harness = false

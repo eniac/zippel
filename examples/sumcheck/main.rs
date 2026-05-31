@@ -29,7 +29,12 @@ fn main() {
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &10);
+    // Bind both Size parameters so the recursive helper's `V: 2..NUM_VARS_CONST`
+    // range and the polynomial array length both follow `num_vars`. The previous
+    // `sizes.insert("S", 10)` was a no-op — there's no `S` in the protocol —
+    // which left the protocol pinned to its defaults regardless of `num_vars`.
+    sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
+    sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(num_vars, max_degree);

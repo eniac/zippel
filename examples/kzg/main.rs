@@ -18,7 +18,7 @@ fn main() {
     let public_inputs = inputs
         .clone()
         .into_iter()
-        .filter(|(vid, _)| vid.0 != "poly_coeffs")
+        .filter(|(vid, _)| vid.0 != "poly_coeffs" && vid.0 != "srs_g1")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();

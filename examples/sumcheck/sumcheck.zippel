@@ -8,7 +8,7 @@
 // absorbs the full polynomial into the FS transcript at the start (which
 // was the dominant O(2^NV) cost in verify) — making verify O(log N)
 // instead of O(N).
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST, MAX_DEGREE_CONST: 10>(
     private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - V],

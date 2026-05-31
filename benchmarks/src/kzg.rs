@@ -17,29 +17,20 @@ use crate::Timing;
 
 pub const DEFAULT_N: usize = 4;
 
-fn render_zippel_source(n: usize) -> String {
-    let template = include_str!("../../examples/kzg/kzg.zippel");
-    // KZG's `srs_g1` is used only by the prover (commit + opening MSMs);
-    // the verifier graph never references it. Declaring it `private`
-    // sidesteps zippel's runtime requirement that all `public` args be
-    // passed to the verifier even when no verifier node consumes them.
-    // Cryptographically the SRS is not secret — this is a benchmarking
-    // workaround, not a sound protocol modification.
-    template
-        .replace("N: 2>", &format!("N: {n}>"))
-        .replace("public srs_g1:", "private srs_g1:")
-}
-
 /// Diagnostic variant: same KZG protocol body, but the `where` clause
 /// SRS-structure check (N-1 pairings) is dropped. The native KZG10
 /// baseline trusts its setup and doesn't re-verify it per call; this
 /// version makes the comparison apples-to-apples on the verifier side.
-fn render_zippel_source_no_srs_check(n: usize) -> String {
-    format!(
-        r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: {n}>
-        (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, public srs_g1: [G1; N],
+///
+/// Mirrors examples/kzg/kzg.zippel's `private srs_g1` decision so that
+/// the only meaningful difference is the `where` clause (which is what
+/// the diagnostic is supposed to isolate). N is the type-parameter
+/// default; the caller still rebinds it via `sizes.insert("N", n)`.
+fn render_zippel_source_no_srs_check() -> &'static str {
+    r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
+        (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-        where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result {{
+        where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result {
 
         let poly_x = poly(poly_coeffs);
         commitment <- dot(poly_coeffs, srs_g1);
@@ -53,9 +44,8 @@ fn render_zippel_source_no_srs_check(n: usize) -> String {
         let pairing_lhs = pair(proof, (srs_g2_s) - (gen_g2 * eval_point));
         let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
         verify(pairing_lhs == pairing_rhs)
-}}
+}
 "#
-    )
 }
 
 pub mod zippel_side {
@@ -67,6 +57,7 @@ pub mod zippel_side {
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::io::Write;
+    use std::path::PathBuf;
     use std::time::Instant;
     use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
@@ -74,7 +65,10 @@ pub mod zippel_side {
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         n: usize,
-        _source_file: NamedTempFile,
+        // Only `Some` for the diagnostic `--no-srs-check` variant — the
+        // normal path compiles examples/kzg/kzg.zippel directly with N
+        // bound via `sizes.insert`, no per-call source rewriting.
+        _source_file: Option<NamedTempFile>,
     }
 
     impl Setup {
@@ -86,24 +80,27 @@ pub mod zippel_side {
         /// where-clause SRS structure check. Diagnostic toggle to isolate
         /// where the zippel-vs-native verifier gap comes from.
         pub fn new_with(n: usize, drop_srs_check: bool) -> Self {
-            let source = if drop_srs_check {
-                render_zippel_source_no_srs_check(n)
+            let (args, _source_file) = if drop_srs_check {
+                let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
+                file.write_all(render_zippel_source_no_srs_check().as_bytes())
+                    .expect("write tempfile");
+                (ZippelArgs::new(file.path().to_path_buf()), Some(file))
             } else {
-                render_zippel_source(n)
+                (
+                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")),
+                    None,
+                )
             };
-            let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
-            file.write_all(source.as_bytes()).expect("write tempfile");
 
-            let args = ZippelArgs::new(file.path().to_path_buf());
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("S"), &2);
+            sizes.insert(&Tid::new("N"), &n);
             handler.compile(&sizes);
 
             Setup {
                 handler,
                 n,
-                _source_file: file,
+                _source_file,
             }
         }
 

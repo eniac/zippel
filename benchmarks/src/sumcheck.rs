@@ -5,27 +5,15 @@
 //! base(x)^max_degree where base is a random dense MLE — and report
 //! pure prover and verifier wall-time (no input construction, no compile).
 //!
-//! The bundled `.zippel` source pins NUM_VARS_CONST and MAX_DEGREE_CONST
-//! to 10 (both as type defaults and as the literal `2..10` range bound on
-//! the recursive helper). To sweep sizes on the zippel side we
-//! string-substitute those literals at runtime and feed the result to a
-//! tempfile that `ZippelArgs` loads.
+//! Sizes are bound via `sizes.insert("NUM_VARS_CONST", n)` /
+//! `sizes.insert("MAX_DEGREE_CONST", d)` at compile time. The .zippel's
+//! recursive helper uses `V: 2..NUM_VARS_CONST` so V's upper bound
+//! follows NUM_VARS_CONST automatically.
 
 use crate::Timing;
 
 pub const DEFAULT_NUM_VARS: usize = 10;
 pub const DEFAULT_MAX_DEGREE: usize = 10;
-
-pub fn render_zippel_source(num_vars: usize, max_degree: usize) -> String {
-    let template = include_str!("../../examples/sumcheck/sumcheck.zippel");
-    template
-        .replace("NUM_VARS_CONST: 10", &format!("NUM_VARS_CONST: {num_vars}"))
-        .replace("V: 2..10", &format!("V: 2..{num_vars}"))
-        .replace(
-            "MAX_DEGREE_CONST: 10",
-            &format!("MAX_DEGREE_CONST: {max_degree}"),
-        )
-}
 
 pub mod zippel_side {
     use super::*;
@@ -36,37 +24,29 @@ pub mod zippel_side {
     use backend::{ArkBls12_381, ArkConfig, Value, VirtualPolynomial};
     use lang::id::{Tid, Vid};
     use share::Ctx;
-    use std::io::Write;
+    use std::path::PathBuf;
     use std::time::Instant;
-    use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
-        // Kept alive so the tempfile path remains valid for as long as the
-        // handler might need it.
-        _source_file: NamedTempFile,
     }
 
     impl Setup {
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
-            let source = render_zippel_source(num_vars, max_degree);
-            let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
-            file.write_all(source.as_bytes()).expect("write tempfile");
-
-            let args = ZippelArgs::new(file.path().to_path_buf());
+            let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("S"), &10);
+            sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
+            sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
             handler.compile(&sizes);
 
             Setup {
                 handler,
                 num_vars,
                 max_degree,
-                _source_file: file,
             }
         }
 
