@@ -431,13 +431,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///
     /// - `VPoly(n, m)` → `(n, m)`
     /// - `Uni(m)` → `(1, m)` (univariate ≡ VPoly(1, m))
-    /// - `Mle(n)` → `(n, 1)` (multilinear, total degree ≤ n)
-    /// - Returns `None` for non-polynomial types (Base, Vec, Bool).
+    /// - Returns `None` for non-polynomial types (Base, Vec, Bool) and MLE.
     fn poly_shape(t: &ATyp) -> Option<(usize, usize)> {
         match t {
             ATyp::VPoly(n, m) => Some((*n, *m)),
             ATyp::Uni(m) => Some((1, *m)),
-            ATyp::Mle(n) => Some((*n, 1)),
             _ => None,
         }
     }
@@ -641,7 +639,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             return;
         }
 
-        if Self::poly_shape(a_typ).is_some() || Self::poly_shape(b_typ).is_some() {
+        let a_is_poly = Self::poly_shape(a_typ).is_some();
+        let b_is_poly = Self::poly_shape(b_typ).is_some();
+        let a_is_mle = matches!(a_typ, ATyp::Mle(_));
+        let b_is_mle = matches!(b_typ, ATyp::Mle(_));
+
+        // When a and b both are poly types
+        if (a_is_poly || a_is_mle) && (b_is_poly || b_is_mle) {
             let polys = match (a_typ, b_typ, r_typ) {
                 (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
                     if na == nb && na == nr && *mr >= 2 =>
@@ -737,6 +741,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 result.basis.push(poly - SparsePolynomial::var(&pf));
             }
         } else {
+            // when only one or none of a or b are poly types
+            //
+            // FIX: missing vector x scalar handling
             let target_slots = target.slots();
             for ((ap, bp), pf) in a_polys.iter().zip(b_polys).zip(&target_slots) {
                 result.pl.insert(pf, &(ap * bp));
@@ -1257,24 +1264,22 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.basis.push(&e - &SparsePolynomial::var(pf));
                 }
             }
-            // `Op::Record(fields)` — the record as a whole is opaque in np
-            // (cannot be converted to a polynomial ideal). Each field is
-            // recursively processed by delegating to `add_op` with a fresh
-            // PRef whose `reference` re-uses `pr`'s (so subsequent field
-            // projections — which lower to `Op::Ref(Ref::Var(r, n), field_typ)`
-            // — can find a matching entry via `find_ref`'s namespace lookup).
-            //
-            // A full field-offset-aware slot layout for records is deferred.
+            // `Op::Record(fields)` — field-slot-aware layout.
+            // Physical slots are laid out in Ctx iteration order: each
+            // field occupies `field_typ.physical_len()` consecutive slots.
+            // For each field, emit basis rows linking record slots to
+            // the field's polynomial values.
             Op::Record(ref fields) => {
-                result.np.insert(&pr, &Op::Record(fields.clone()));
-                for (_, sub) in fields.iter() {
-                    let sub_op = sub.get().clone();
-                    let sub_pr = PRef {
-                        typ: sub_op.typ(),
-                        index: 0,
-                        ..pr.clone()
-                    };
-                    self.add_op(sub_pr, sub_op, result);
+                let pr_slots = pr.slots();
+                let mut slot_offset = 0usize;
+                for (_, field_op) in fields.iter() {
+                    let field_polys = self.ref_vars(field_op.get());
+                    for (j, p) in field_polys.into_iter().enumerate() {
+                        let pf = &pr_slots[slot_offset + j];
+                        result.pl.insert(pf, &p);
+                        result.basis.push(p - SparsePolynomial::var(pf));
+                    }
+                    slot_offset += field_op.typ().physical_len();
                 }
             }
             // Concat/Pow/Marginalize/Proj: opaque in np — cannot be
@@ -1294,10 +1299,35 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Marginalize(ref inner) => {
                 result.np.insert(&pr, &Op::Marginalize(inner.clone()));
             }
-            Op::Proj(ref inner, ref field, ref typ) => {
-                result
-                    .np
-                    .insert(&pr, &Op::Proj(inner.clone(), field.clone(), typ.clone()));
+            // `Op::Proj(inner, field, typ)` — extract a field from a Record.
+            // The field's physical slots sit at an offset within the Record's
+            // slot layout: offset = sum of physical_len() of preceding fields
+            // (in Ctx iteration order). Emit basis rows linking proj result
+            // slots to the corresponding inner Record slots.
+            Op::Proj(ref inner, ref field, ref _typ) => {
+                let inner_typ = inner.typ();
+                let inner_polys = self.ref_vars(inner);
+                let ATyp::Record(fields) = &inner_typ else {
+                    unreachable!(
+                        "Proj inner must be Record; type checker guarantees this, got {:?}",
+                        inner_typ
+                    );
+                };
+                let mut offset = 0usize;
+                for (fname, ftyp) in fields.iter() {
+                    let f_len = ftyp.physical_len();
+                    if fname == field {
+                        let pr_slots = pr.slots();
+                        for (j, pf) in pr_slots.iter().enumerate() {
+                            result.pl.insert(pf, &inner_polys[offset + j]);
+                            result
+                                .basis
+                                .push(inner_polys[offset + j].clone() - SparsePolynomial::var(pf));
+                        }
+                        break;
+                    }
+                    offset += f_len;
+                }
             }
         }
     }
@@ -4527,5 +4557,424 @@ mod tests {
             !gresult.basis.is_empty(),
             "Reduce Div on VPoly should emit identity rows via handle_div_rem"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Record: field-slot-aware layout
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_record_scalar_fields_bind_slots() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        // Ctx iterates in key order (alphabetical): "x" < "y"
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"x".to_string(), &s);
+        rec_fields.insert(&"y".to_string(), &s);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
+        fields.insert(
+            &"x".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+        );
+        fields.insert(
+            &"y".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+        );
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            rec_typ,
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
+
+        // Ctx iteration order: "x" (slot 0), "y" (slot 1)
+        let slot_x = pref_r.clone().with_slot(0).unwrap();
+        let slot_y = pref_r.clone().with_slot(1).unwrap();
+
+        assert!(
+            gresult.pl.contains(&slot_x),
+            "record slot 0 (x) missing from pl"
+        );
+        assert!(
+            gresult.pl.contains(&slot_y),
+            "record slot 1 (y) missing from pl"
+        );
+
+        let poly_x = gresult.pl.get(&slot_x).unwrap();
+        let poly_y = gresult.pl.get(&slot_y).unwrap();
+        assert!(
+            poly_x.contains(&pref_a),
+            "slot 0 poly should reference field x"
+        );
+        assert!(
+            poly_y.contains(&pref_b),
+            "slot 1 poly should reference field y"
+        );
+    }
+
+    #[test]
+    fn test_record_mixed_type_fields_bind_slots() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let uni_typ = ATyp::Uni(2);
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"a".to_string(), &s);
+        rec_fields.insert(&"p".to_string(), &uni_typ);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        let pref_scalar = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_scalar);
+
+        let pref_poly = PRef::from_node(
+            NodeIndex::new(1),
+            uni_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_poly);
+
+        let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
+        fields.insert(
+            &"a".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+        );
+        fields.insert(
+            &"p".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
+        );
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            rec_typ,
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
+
+        assert_eq!(
+            pref_r.typ.physical_len(),
+            4,
+            "1 scalar + 3 Uni(2) coeffs = 4"
+        );
+
+        let slot_a = pref_r.clone().with_slot(0).unwrap();
+        assert_eq!(slot_a.typ, s, "slot 0 should be scalar (field a)");
+        assert!(
+            gresult.pl.contains(&slot_a),
+            "record slot 0 (a) missing from pl"
+        );
+
+        for i in 0..3 {
+            let slot_pi = pref_r.clone().with_slot(1 + i).unwrap();
+            assert_eq!(
+                slot_pi.typ, s,
+                "slots 1-3 should be scalar (field p coefficients)"
+            );
+            assert!(
+                gresult.pl.contains(&slot_pi),
+                "record slot {} (p coeff {}) missing from pl",
+                1 + i,
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_record_basis_count_matches_physical_len() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let v2 = ATyp::Vec(Box::new(s.clone()), 3);
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"x".to_string(), &s);
+        rec_fields.insert(&"v".to_string(), &v2);
+        let rec_typ = ATyp::Record(rec_fields);
+        let phys_len = rec_typ.physical_len();
+        assert_eq!(phys_len, 4, "1 scalar + 3 Vec scalars = 4");
+
+        let pref_x = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_x);
+
+        let pref_v = PRef::from_node(
+            NodeIndex::new(1),
+            v2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_v);
+
+        let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
+        fields.insert(
+            &"x".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+        );
+        fields.insert(
+            &"v".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), v2.clone())),
+        );
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            rec_typ,
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
+
+        assert_eq!(
+            gresult.basis.len(),
+            phys_len,
+            "basis should have one row per physical slot"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Proj: extract field from a Record
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_proj_scalar_field_from_record() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        // Alphabetical: "x" < "y", so "x" is slot 0, "y" is slot 1
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"x".to_string(), &s);
+        rec_fields.insert(&"y".to_string(), &s);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        let pref_rec = PRef::from_node(
+            NodeIndex::new(0),
+            rec_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_rec);
+
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+
+        let pref_proj = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_proj);
+
+        builder.add_op(
+            pref_proj.clone(),
+            Op::Proj(mk::<ArkBls12_381>(inner_op), "x".to_string(), s.clone()),
+            &mut gresult,
+        );
+
+        assert!(
+            gresult.pl.contains(&pref_proj),
+            "proj result missing from pl"
+        );
+
+        let proj_poly = gresult.pl.get(&pref_proj).unwrap();
+        let slot_0 = pref_rec.clone().with_slot(0).unwrap();
+        assert!(
+            proj_poly.contains(&slot_0),
+            "proj poly should reference record slot 0 (field x)"
+        );
+    }
+
+    #[test]
+    fn test_proj_second_field_offset_correct() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        // Use "a" and "b" so alphabetical order is "a" then "b"
+        // "a" : Scalar (1 slot at offset 0)
+        // "b" : Vec<Scalar,3> (3 slots at offset 1)
+        let v3 = ATyp::Vec(Box::new(s.clone()), 3);
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"a".to_string(), &s);
+        rec_fields.insert(&"b".to_string(), &v3);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        let pref_rec = PRef::from_node(
+            NodeIndex::new(0),
+            rec_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_rec);
+
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+
+        let pref_proj = PRef::from_node(
+            NodeIndex::new(1),
+            v3.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_proj);
+
+        builder.add_op(
+            pref_proj.clone(),
+            Op::Proj(mk::<ArkBls12_381>(inner_op), "b".to_string(), v3.clone()),
+            &mut gresult,
+        );
+
+        assert_eq!(pref_proj.typ.physical_len(), 3, "Vec<F, 3> has 3 slots");
+        for i in 0..3 {
+            let proj_slot = pref_proj.clone().with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&proj_slot),
+                "proj slot {} missing from pl",
+                i
+            );
+
+            let proj_poly = gresult.pl.get(&proj_slot).unwrap();
+            let rec_slot = pref_rec.clone().with_slot(1 + i).unwrap();
+            assert!(
+                proj_poly.contains(&rec_slot),
+                "proj slot {} poly should reference record slot {} (field b at offset 1)",
+                i,
+                1 + i
+            );
+        }
+    }
+
+    #[test]
+    fn test_proj_first_field_of_multi_field_record() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let uni2 = ATyp::Uni(2);
+        // "a" < "b" alphabetically
+        // "a": Uni(2) → 3 slots at offset 0
+        // "b": Scalar → 1 slot at offset 3
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"a".to_string(), &uni2);
+        rec_fields.insert(&"b".to_string(), &s);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        let pref_rec = PRef::from_node(
+            NodeIndex::new(0),
+            rec_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_rec);
+
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+
+        let pref_proj = PRef::from_node(
+            NodeIndex::new(1),
+            uni2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_proj);
+
+        builder.add_op(
+            pref_proj.clone(),
+            Op::Proj(mk::<ArkBls12_381>(inner_op), "a".to_string(), uni2.clone()),
+            &mut gresult,
+        );
+
+        assert_eq!(pref_proj.typ.physical_len(), 3, "Uni(2) has 3 coefficients");
+        for i in 0..3 {
+            let proj_slot = pref_proj.clone().with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&proj_slot),
+                "proj slot {} missing from pl",
+                i
+            );
+
+            let proj_poly = gresult.pl.get(&proj_slot).unwrap();
+            let rec_slot = pref_rec.clone().with_slot(i).unwrap();
+            assert!(
+                proj_poly.contains(&rec_slot),
+                "proj slot {} poly should reference record slot {} (field a at offset 0)",
+                i,
+                i
+            );
+        }
     }
 }
