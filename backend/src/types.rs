@@ -478,9 +478,7 @@ impl Lub for ATyp {
             }
             (ATyp::Uni(n1), ATyp::Uni(n2)) => Ok(ATyp::uni(*n1.max(n2))),
             (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::mle(*n1.max(n2))),
-            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if m1 == m2 && n1 == n2 => {
-                Ok(ATyp::vpoly(*m1, *n1))
-            }
+            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(*m1.max(m2), *n1.max(n2))),
             (ATyp::Record(fields_a), ATyp::Record(fields_b)) => {
                 if fields_a.len() != fields_b.len() {
                     return Err(LubError::equ(&a, &b));
@@ -854,9 +852,9 @@ mod tests {
     }
 
     #[test]
-    fn vpoly_equ_different_fails() {
+    fn vpoly_equ_different_coerces_to_wider() {
         let result = ATyp::lub_equ(&ATyp::vpoly(2, 3), &ATyp::vpoly(4, 5), &Nothing);
-        assert!(result.is_err());
+        assert_eq!(result.unwrap(), ATyp::vpoly(4, 5));
     }
 
     #[test]
