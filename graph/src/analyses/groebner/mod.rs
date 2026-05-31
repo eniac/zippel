@@ -19,7 +19,7 @@ use lang::id::Vid;
 
 use ark_ff::{FftField, Field, One, Zero};
 use backend::op::HasOpFactory;
-use backend::{ATyp, ArkConfig, ArkScalarOps, Value};
+use backend::{ABase, ATyp, ArkConfig, ArkScalarOps, Value};
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 use share::{BoxAllocator, Ctx, DocAllocator, DocBuilder, Pretty, Set};
@@ -461,150 +461,432 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         cache_key: Option<(HOp<C>, HOp<C>)>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        if let (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb)) = (a_typ, b_typ) {
-            assert_eq!(na, nb, "Div/Rem Vec length mismatch: {} vs {}", na, nb);
-            let a_elem_len = a_inner.physical_len();
-            let b_elem_len = b_inner.physical_len();
-            for i in 0..*na {
-                let t_i = target.with_index(i).unwrap();
-                let a_start = i * a_elem_len;
-                let b_start = i * b_elem_len;
-                self.div_rem_op(
-                    &t_i,
-                    &a_polys[a_start..a_start + a_elem_len],
-                    &b_polys[b_start..b_start + b_elem_len],
-                    a_inner,
-                    b_inner,
-                    is_rem,
-                    None,
-                    result,
-                );
+        match (a_typ, b_typ) {
+            // Vec × Vec: element-wise recursion
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                for i in 0..*na {
+                    let t_i = target.with_index(i).unwrap();
+                    let a_start = i * a_elem_len;
+                    let b_start = i * b_elem_len;
+                    self.div_rem_op(
+                        &t_i,
+                        &a_polys[a_start..a_start + a_elem_len],
+                        &b_polys[b_start..b_start + b_elem_len],
+                        a_inner,
+                        b_inner,
+                        is_rem,
+                        None,
+                        result,
+                    );
+                }
             }
-            return;
-        }
 
-        let a_is_poly = Self::poly_shape(a_typ).is_some();
-        let b_is_poly = Self::poly_shape(b_typ).is_some();
-        let a_is_mle = matches!(a_typ, ATyp::Mle(_));
-        let b_is_mle = matches!(b_typ, ATyp::Mle(_));
+            // Vec ÷ Scalar: broadcast divisor to each element
+            (ATyp::Vec(a_inner, na), ATyp::Base(ABase::Scalar)) => {
+                let a_elem_len = a_inner.physical_len();
+                for i in 0..*na {
+                    let t_i = target.with_index(i).unwrap();
+                    let a_start = i * a_elem_len;
+                    self.div_rem_op(
+                        &t_i,
+                        &a_polys[a_start..a_start + a_elem_len],
+                        b_polys,
+                        a_inner,
+                        b_typ,
+                        is_rem,
+                        None,
+                        result,
+                    );
+                }
+            }
 
-        if a_is_mle || b_is_mle {
-            unreachable!(
-                "{}: MLE division is not supported ({} {} {}) — only VPoly/Uni dividend and divisor are supported",
-                if is_rem { "Rem" } else { "Div" },
-                a_typ,
-                if is_rem { "%" } else { "/" },
-                b_typ,
-            );
-        }
-
-        if a_is_poly && b_is_poly {
-            if let Some(ref key) = cache_key
-                && let Some((q_wit, r_wit)) = self.ns.div_wit.get(key).cloned()
+            // Poly ÷ Scalar: scale each constraint by the scalar
+            (_, ATyp::Base(ABase::Scalar))
+                if Self::poly_shape(a_typ).is_some() || matches!(a_typ, ATyp::Mle(_)) =>
             {
-                let wit = if is_rem { &r_wit } else { &q_wit };
-                self.link_to_witness(target, wit, result);
-                return;
-            }
-
-            let (na, ma) = Self::poly_shape(a_typ).unwrap();
-            let (nb, mb) = Self::poly_shape(b_typ).unwrap();
-            if na != nb {
                 unreachable!(
-                    "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
+                    "{}: polynomial ÷ scalar — type checker should produce a Mul-by-inverse, not Div",
                     if is_rem { "Rem" } else { "Div" },
-                    na,
-                    nb,
-                );
-            }
-            if ma < mb || mb == 0 {
-                unreachable!(
-                    "{}: dividend degree < divisor degree ({} < {}) or divisor is constant",
-                    if is_rem { "Rem" } else { "Div" },
-                    ma,
-                    mb,
                 );
             }
 
-            let nr = na;
-            let mq = ma - mb;
-            let mr = mb - 1;
+            // MLE division: not supported
+            _ if matches!(a_typ, ATyp::Mle(_)) || matches!(b_typ, ATyp::Mle(_)) => {
+                unreachable!(
+                    "{}: MLE division is not supported ({} {} {}) — only VPoly/Uni dividend and divisor are supported",
+                    if is_rem { "Rem" } else { "Div" },
+                    a_typ,
+                    if is_rem { "%" } else { "/" },
+                    b_typ,
+                );
+            }
 
-            let counter = self.ns.div_wit.len();
-            let q_name = format!("__zippel::gb::div_q::{}", counter);
-            let r_name = format!("__zippel::gb::div_r::{}", counter);
-            let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), result);
-            let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), result);
+            // Poly ÷ Poly
+            _ if Self::poly_shape(a_typ).is_some() && Self::poly_shape(b_typ).is_some() => {
+                if let Some(ref key) = cache_key
+                    && let Some((q_wit, r_wit)) = self.ns.div_wit.get(key).cloned()
+                {
+                    let wit = if is_rem { &r_wit } else { &q_wit };
+                    self.link_to_witness(target, wit, result);
+                    return;
+                }
 
-            let a_idx = multi_indices(na, ma);
-            let b_idx = multi_indices(nb, mb);
-            let q_idx = multi_indices(nr, mq);
-            let r_idx = multi_indices(nr, mr);
+                let (na, ma) = Self::poly_shape(a_typ).unwrap();
+                let (nb, mb) = Self::poly_shape(b_typ).unwrap();
+                if na != nb {
+                    unreachable!(
+                        "{}: VPoly num_vars mismatch — dividend has n={} but divisor has n={}",
+                        if is_rem { "Rem" } else { "Div" },
+                        na,
+                        nb,
+                    );
+                }
+                if ma < mb || mb == 0 {
+                    unreachable!(
+                        "{}: dividend degree < divisor degree ({} < {}) or divisor is constant",
+                        if is_rem { "Rem" } else { "Div" },
+                        ma,
+                        mb,
+                    );
+                }
 
-            debug_assert_eq!(
-                a_polys.len(),
-                a_idx.len(),
-                "a_polys slot count mismatch: {} vs a_idx {}",
-                a_polys.len(),
-                a_idx.len()
-            );
-            debug_assert_eq!(
-                b_polys.len(),
-                b_idx.len(),
-                "b_polys slot count mismatch: {} vs b_idx {}",
-                b_polys.len(),
-                b_idx.len()
-            );
+                let nr = na;
+                let mq = ma - mb;
+                let mr = mb - 1;
 
-            for (ka_pos, k) in a_idx.iter().enumerate() {
-                let mut rhs = SparsePolynomial::<C::F, T>::zero();
-                for (i_pos, ki) in b_idx.iter().enumerate() {
-                    for (j_pos, kj) in q_idx.iter().enumerate() {
-                        let sum: Vec<usize> =
-                            ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
-                        if sum == *k {
-                            let qf = q_wit.clone().with_slot(j_pos).unwrap();
-                            rhs = &rhs + &(&b_polys[i_pos] * &SparsePolynomial::var(&qf));
+                let counter = self.ns.div_wit.len();
+                let q_name = format!("__zippel::gb::div_q::{}", counter);
+                let r_name = format!("__zippel::gb::div_r::{}", counter);
+                let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), result);
+                let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), result);
+
+                let a_idx = multi_indices(na, ma);
+                let b_idx = multi_indices(nb, mb);
+                let q_idx = multi_indices(nr, mq);
+                let r_idx = multi_indices(nr, mr);
+
+                debug_assert_eq!(
+                    a_polys.len(),
+                    a_idx.len(),
+                    "a_polys slot count mismatch: {} vs a_idx {}",
+                    a_polys.len(),
+                    a_idx.len()
+                );
+                debug_assert_eq!(
+                    b_polys.len(),
+                    b_idx.len(),
+                    "b_polys slot count mismatch: {} vs b_idx {}",
+                    b_polys.len(),
+                    b_idx.len()
+                );
+
+                for (ka_pos, k) in a_idx.iter().enumerate() {
+                    let mut rhs = SparsePolynomial::<C::F, T>::zero();
+                    for (i_pos, ki) in b_idx.iter().enumerate() {
+                        for (j_pos, kj) in q_idx.iter().enumerate() {
+                            let sum: Vec<usize> =
+                                ki.iter().zip(kj.iter()).map(|(x, y)| x + y).collect();
+                            if sum == *k {
+                                let qf = q_wit.clone().with_slot(j_pos).unwrap();
+                                rhs = &rhs + &(&b_polys[i_pos] * &SparsePolynomial::var(&qf));
+                            }
                         }
                     }
+                    if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
+                        let rf = r_wit.clone().with_slot(r_pos).unwrap();
+                        rhs = &rhs + &SparsePolynomial::var(&rf);
+                    }
+                    result.basis.push(&a_polys[ka_pos] - &rhs);
                 }
-                if let Some(r_pos) = r_idx.iter().position(|rk| rk == k) {
-                    let rf = r_wit.clone().with_slot(r_pos).unwrap();
-                    rhs = &rhs + &SparsePolynomial::var(&rf);
+
+                let wit = if is_rem { &r_wit } else { &q_wit };
+                self.link_to_witness(target, wit, result);
+
+                if let Some(key) = cache_key {
+                    self.ns.div_wit.insert(&key, &(q_wit, r_wit));
                 }
-                result.basis.push(&a_polys[ka_pos] - &rhs);
             }
 
-            let wit = if is_rem { &r_wit } else { &q_wit };
-            self.link_to_witness(target, wit, result);
-
-            if let Some(key) = cache_key {
-                self.ns.div_wit.insert(&key, &(q_wit, r_wit));
+            // Non-poly ÷ Non-poly (slot-wise field division, no remainder)
+            _ if Self::poly_shape(a_typ).is_none() && Self::poly_shape(b_typ).is_none() => {
+                if is_rem {
+                    unreachable!(
+                        "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
+                        a_typ, b_typ,
+                    );
+                }
+                self.slot_wise_div(target, a_polys, b_polys, result);
             }
-            return;
-        }
 
-        if !a_is_poly && !b_is_poly {
-            if is_rem {
+            // Mixed poly/non-poly: unreachable
+            _ => {
                 unreachable!(
-                    "Rem: non-polynomial remainder is undefined for {} % {} — type checker should prevent this",
-                    a_typ, b_typ,
+                    "{}: mixed poly/non-poly division ({} {} {}) is not supported",
+                    if is_rem { "Rem" } else { "Div" },
+                    a_typ,
+                    if is_rem { "%" } else { "/" },
+                    b_typ,
                 );
             }
-            self.slot_wise_div(target, a_polys, b_polys, result);
-        } else {
-            unreachable!(
-                "{}: mixed poly/non-poly division ({} {} {}) is not supported",
-                if is_rem { "Rem" } else { "Div" },
-                a_typ,
-                if is_rem { "%" } else { "/" },
-                b_typ,
-            );
         }
     }
 
     /// Mul handler with Vec recursion.
     ///
+    /// Lift polys from `src_typ` to `dst_typ` by zero-padding.
+    ///
+    /// When the Concat result element type differs from an input element type
+    /// (e.g. `Uni(3)` → `Uni(5)`), the source polys need zero-padding to
+    /// fill the wider result type's slots. For non-poly types whose
+    /// `physical_len` matches, this is a no-op.
+    fn lift_polys(
+        src_polys: &[SparsePolynomial<C::F, T>],
+        src_typ: &ATyp,
+        dst_typ: &ATyp,
+    ) -> Vec<SparsePolynomial<C::F, T>> {
+        let src_len = src_typ.physical_len();
+        let dst_len = dst_typ.physical_len();
+        assert!(
+            src_len <= dst_len,
+            "lift_polys: cannot lift from wider type {} ({} slots) to narrower type {} ({} slots)",
+            src_typ,
+            src_len,
+            dst_typ,
+            dst_len
+        );
+        let mut out = Vec::with_capacity(dst_len);
+        for j in 0..dst_len {
+            out.push(if j < src_polys.len() {
+                src_polys[j].clone()
+            } else {
+                SparsePolynomial::zero()
+            });
+        }
+        out
+    }
+
+    /// Slot-wise binary operation with type-aware broadcasting.
+    ///
+    /// Handles all type combinations that the lub functions permit:
+    /// - `Scalar op Scalar` → single slot
+    /// - `Vec(T,n) op Vec(T,n)` → element-wise recursion
+    /// - `Vec(T,n) op Scalar` / `Scalar op Vec(T,n)` → broadcast scalar to each element
+    /// - `Poly op Scalar` / `Scalar op Poly` → broadcast scalar to each coefficient
+    /// - `Uni(n1) op Uni(n2)` → zero-pad shorter operand to match result degree
+    /// - Same-type poly op → straightforward slot-wise
+    fn broadcast_equ(
+        &mut self,
+        pr: &PRef,
+        a_polys: &[SparsePolynomial<C::F, T>],
+        b_polys: &[SparsePolynomial<C::F, T>],
+        a_typ: &ATyp,
+        b_typ: &ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        match (a_typ, b_typ) {
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                for i in 0..*na {
+                    self.broadcast_equ(
+                        pr,
+                        &a_polys[i * a_elem_len..(i + 1) * a_elem_len],
+                        &b_polys[i * b_elem_len..(i + 1) * b_elem_len],
+                        a_inner,
+                        b_inner,
+                        result,
+                    );
+                }
+            }
+            // Base == Base, Uni == Uni, Mle == Mle, VPoly == VPoly:
+            // emit a-b=0 per slot, zero-padding shorter operand
+            (ATyp::Base(_), ATyp::Base(_))
+            | (ATyp::Uni(_), ATyp::Uni(_))
+            | (ATyp::Mle(_), ATyp::Mle(_))
+            | (ATyp::VPoly(_, _), ATyp::VPoly(_, _)) => {
+                let pr_slots = pr.slots();
+                let len = a_polys.len().max(b_polys.len());
+                for j in 0..len {
+                    let lhs = if j < a_polys.len() {
+                        a_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let rhs = if j < b_polys.len() {
+                        b_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let diff = &lhs - &rhs;
+                    if j < pr_slots.len() {
+                        let pf = &pr_slots[j];
+                        result.pl.insert(pf, &diff);
+                        result.basis.push(diff.clone());
+                        result.basis.push(SparsePolynomial::var(pf));
+                    } else {
+                        result.basis.push(diff);
+                    }
+                }
+            }
+            _ => {
+                unreachable!(
+                    "broadcast_equ: unsupported type combination {} == {}",
+                    a_typ, b_typ
+                )
+            }
+        }
+    }
+
+    fn broadcast_binop(
+        &mut self,
+        pr: &PRef,
+        a_polys: &[SparsePolynomial<C::F, T>],
+        b_polys: &[SparsePolynomial<C::F, T>],
+        a_typ: &ATyp,
+        b_typ: &ATyp,
+        r_typ: &ATyp,
+        op: BinOp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        match (a_typ, b_typ, r_typ) {
+            // Vec × Vec: element-wise recursion
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb), ATyp::Vec(r_inner, nr))
+                if na == nb && nb == nr =>
+            {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                for i in 0..*na {
+                    let offset_a = i * a_elem_len;
+                    let offset_b = i * b_elem_len;
+                    self.broadcast_binop(
+                        &pr.with_index(i).unwrap(),
+                        &a_polys[offset_a..offset_a + a_elem_len],
+                        &b_polys[offset_b..offset_b + b_elem_len],
+                        a_inner,
+                        b_inner,
+                        r_inner,
+                        op,
+                        result,
+                    );
+                }
+            }
+
+            // Poly × Scalar: broadcast scalar to each coefficient
+            (_, ATyp::Base(ABase::Scalar), _) if a_typ.physical_len() > 1 => {
+                let pr_slots = pr.slots();
+                for (j, pf) in pr_slots.iter().enumerate() {
+                    let lhs = if j < a_polys.len() {
+                        a_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let combined = self.apply_binop(op, &lhs, &b_polys[0]);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Scalar × Poly: broadcast scalar to each coefficient
+            (ATyp::Base(ABase::Scalar), _, _) if b_typ.physical_len() > 1 => {
+                let pr_slots = pr.slots();
+                for (j, pf) in pr_slots.iter().enumerate() {
+                    let rhs = if j < b_polys.len() {
+                        b_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let combined = self.apply_binop(op, &a_polys[0], &rhs);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Uni(n1) op Uni(n2) where n1 != n2: result is Uni(max(n1,n2)),
+            // shorter operand zero-padded to match result slots
+            (ATyp::Uni(_n1), ATyp::Uni(_n2), ATyp::Uni(_nr)) => {
+                let pr_slots = pr.slots();
+                for (j, pf) in pr_slots.iter().enumerate() {
+                    let lhs = if j < a_polys.len() {
+                        a_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let rhs = if j < b_polys.len() {
+                        b_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let combined = self.apply_binop(op, &lhs, &rhs);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Mle(n1) op Mle(n2) where n1 == n2: same slot count
+            (ATyp::Mle(n1), ATyp::Mle(n2), ATyp::Mle(nr)) if n1 == n2 && n2 == nr => {
+                let pr_slots = pr.slots();
+                for ((a, b), pf) in a_polys.iter().zip(b_polys).zip(&pr_slots) {
+                    let combined = self.apply_binop(op, a, b);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Mixed poly types (VPoly result with different-arity operands):
+            // zero-pad shorter operand to match result slot count
+            (_, _, _) if Self::poly_shape(r_typ).is_some() || matches!(r_typ, ATyp::Mle(_)) => {
+                let pr_slots = pr.slots();
+                for (j, pf) in pr_slots.iter().enumerate() {
+                    let lhs = if j < a_polys.len() {
+                        a_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let rhs = if j < b_polys.len() {
+                        b_polys[j].clone()
+                    } else {
+                        SparsePolynomial::zero()
+                    };
+                    let combined = self.apply_binop(op, &lhs, &rhs);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Base op Base: slot-wise
+            (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
+                let pr_slots = pr.slots();
+                for ((a, b), pf) in a_polys.iter().zip(b_polys).zip(&pr_slots) {
+                    let combined = self.apply_binop(op, a, b);
+                    result.pl.insert(pf, &combined);
+                    result.basis.push(combined - SparsePolynomial::var(pf));
+                }
+            }
+
+            _ => {
+                unreachable!(
+                    "broadcast_binop: unsupported type combination {} op {} → {}",
+                    a_typ, b_typ, r_typ
+                )
+            }
+        }
+    }
+
+    fn apply_binop(
+        &self,
+        op: BinOp,
+        a: &SparsePolynomial<C::F, T>,
+        b: &SparsePolynomial<C::F, T>,
+    ) -> SparsePolynomial<C::F, T> {
+        match op {
+            BinOp::Add | BinOp::And => a + b,
+            BinOp::Sub => a - b,
+            other => unreachable!("apply_binop called with {:?}", other),
+        }
+    }
+
     /// For `Vec<T>` × `Vec<T>`, iterates over logical indices and recurses
     /// per element. At the leaf level (non-Vec), dispatches to polynomial
     /// convolution (VPoly/Uni/Mle) or slot-wise multiplication (base types).
@@ -618,138 +900,203 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         r_typ: &ATyp,
         result: &mut GroebnerResult<C, T>,
     ) {
-        if let (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb)) = (a_typ, b_typ) {
-            assert_eq!(na, nb, "Mul Vec length mismatch: {} vs {}", na, nb);
-            let r_inner = match r_typ {
-                ATyp::Vec(ri, _) => ri.as_ref(),
-                _ => unreachable!("Mul Vec×Vec result should be Vec, got {}", r_typ),
-            };
-            let a_elem_len = a_inner.physical_len();
-            let b_elem_len = b_inner.physical_len();
-            for i in 0..*na {
-                let t_i = target.with_index(i).unwrap();
-                let a_start = i * a_elem_len;
-                let b_start = i * b_elem_len;
-                let a_element = &a_polys[a_start..a_start + a_elem_len];
-                let b_element = &b_polys[b_start..b_start + b_elem_len];
-                self.mul_op(
-                    &t_i, a_element, b_element, a_inner, b_inner, r_inner, result,
-                );
+        match (a_typ, b_typ, r_typ) {
+            // Vec × Vec: element-wise recursion
+            (ATyp::Vec(a_inner, na), ATyp::Vec(b_inner, nb), ATyp::Vec(r_inner, _)) if na == nb => {
+                let a_elem_len = a_inner.physical_len();
+                let b_elem_len = b_inner.physical_len();
+                for i in 0..*na {
+                    let t_i = target.with_index(i).unwrap();
+                    let a_start = i * a_elem_len;
+                    let b_start = i * b_elem_len;
+                    self.mul_op(
+                        &t_i,
+                        &a_polys[a_start..a_start + a_elem_len],
+                        &b_polys[b_start..b_start + b_elem_len],
+                        a_inner,
+                        b_inner,
+                        r_inner,
+                        result,
+                    );
+                }
             }
-            return;
-        }
 
-        let a_is_poly = Self::poly_shape(a_typ).is_some();
-        let b_is_poly = Self::poly_shape(b_typ).is_some();
-        let a_is_mle = matches!(a_typ, ATyp::Mle(_));
-        let b_is_mle = matches!(b_typ, ATyp::Mle(_));
+            // Vec × non-Vec: broadcast RHS to each Vec element
+            (ATyp::Vec(a_inner, na), _, ATyp::Vec(r_inner, _)) => {
+                let a_elem_len = a_inner.physical_len();
+                for i in 0..*na {
+                    let t_i = target.with_index(i).unwrap();
+                    let a_start = i * a_elem_len;
+                    self.mul_op(
+                        &t_i,
+                        &a_polys[a_start..a_start + a_elem_len],
+                        b_polys,
+                        a_inner,
+                        b_typ,
+                        r_inner,
+                        result,
+                    );
+                }
+            }
 
-        // When a and b both are poly types
-        if (a_is_poly || a_is_mle) && (b_is_poly || b_is_mle) {
-            let polys = match (a_typ, b_typ, r_typ) {
-                (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
-                    if na == nb && na == nr && *mr >= 2 =>
-                {
-                    let n = *na;
-                    let all_b = hypercube(n);
-                    let r_idx = multi_indices(n, *mr);
-                    let single_var_coeff = |ba: usize, bb: usize, k: usize| -> i64 {
-                        if k >= 3 {
-                            return 0;
-                        }
-                        const C: [[[i64; 3]; 2]; 2] =
-                            [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
-                        C[ba][bb][k]
-                    };
-                    let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
-                        if v >= 0 {
-                            SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
-                        } else {
-                            -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
-                        }
-                    };
-                    let mut out: Vec<SparsePolynomial<C::F, T>> =
-                        vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
-                    for (ia, ba) in all_b.iter().enumerate() {
-                        for (ib, bb) in all_b.iter().enumerate() {
-                            let uv = &a_polys[ia] * &b_polys[ib];
-                            for (ir, k) in r_idx.iter().enumerate() {
-                                let mut scalar: i64 = 1;
-                                for i in 0..n {
-                                    let c = single_var_coeff(ba[i], bb[i], k[i]);
-                                    if c == 0 {
-                                        scalar = 0;
-                                        break;
-                                    }
-                                    scalar *= c;
+            // non-Vec × Vec: broadcast LHS to each Vec element
+            (_, ATyp::Vec(b_inner, nb), ATyp::Vec(r_inner, _)) => {
+                let b_elem_len = b_inner.physical_len();
+                for i in 0..*nb {
+                    let t_i = target.with_index(i).unwrap();
+                    let b_start = i * b_elem_len;
+                    self.mul_op(
+                        &t_i,
+                        a_polys,
+                        &b_polys[b_start..b_start + b_elem_len],
+                        a_typ,
+                        b_inner,
+                        r_inner,
+                        result,
+                    );
+                }
+            }
+
+            // Poly × Scalar: scale each coefficient
+            (_, ATyp::Base(ABase::Scalar), _)
+                if Self::poly_shape(a_typ).is_some() || matches!(a_typ, ATyp::Mle(_)) =>
+            {
+                let target_slots = target.slots();
+                for (ap, pf) in a_polys.iter().zip(&target_slots) {
+                    let prod = ap * &b_polys[0];
+                    result.pl.insert(pf, &prod);
+                    result.basis.push(prod - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Scalar × Poly: scale each coefficient
+            (ATyp::Base(ABase::Scalar), _, _)
+                if Self::poly_shape(b_typ).is_some() || matches!(b_typ, ATyp::Mle(_)) =>
+            {
+                let target_slots = target.slots();
+                for (bp, pf) in b_polys.iter().zip(&target_slots) {
+                    let prod = &a_polys[0] * bp;
+                    result.pl.insert(pf, &prod);
+                    result.basis.push(prod - SparsePolynomial::var(pf));
+                }
+            }
+
+            // Mle × Mle → VPoly: Lagrange-basis convolution
+            (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
+                if na == nb && na == nr && *mr >= 2 =>
+            {
+                let n = *na;
+                let all_b = hypercube(n);
+                let r_idx = multi_indices(n, *mr);
+                let single_var_coeff = |ba: usize, bb: usize, k: usize| -> i64 {
+                    if k >= 3 {
+                        return 0;
+                    }
+                    const C: [[[i64; 3]; 2]; 2] =
+                        [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
+                    C[ba][bb][k]
+                };
+                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                    if v >= 0 {
+                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                    } else {
+                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                    }
+                };
+                let mut out: Vec<SparsePolynomial<C::F, T>> =
+                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                for (ia, ba) in all_b.iter().enumerate() {
+                    for (ib, bb) in all_b.iter().enumerate() {
+                        let uv = &a_polys[ia] * &b_polys[ib];
+                        for (ir, k) in r_idx.iter().enumerate() {
+                            let mut scalar: i64 = 1;
+                            for i in 0..n {
+                                let c = single_var_coeff(ba[i], bb[i], k[i]);
+                                if c == 0 {
+                                    scalar = 0;
+                                    break;
                                 }
-                                if scalar == 0 {
-                                    continue;
-                                }
-                                out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
+                                scalar *= c;
                             }
+                            if scalar == 0 {
+                                continue;
+                            }
+                            out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
                         }
                     }
-                    out
                 }
-                _ => {
-                    let a_norm = match a_typ {
-                        ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                        other => other.clone(),
-                    };
-                    let b_norm = match b_typ {
-                        ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                        other => other.clone(),
-                    };
-                    let r_norm = match r_typ {
-                        ATyp::Uni(m) => ATyp::VPoly(1, *m),
-                        other => other.clone(),
-                    };
-                    match (&a_norm, &b_norm, &r_norm) {
-                        (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr))
-                            if na == nb && na == nr =>
-                        {
-                            let a_idx = multi_indices(*na, *ma);
-                            let b_idx = multi_indices(*nb, *mb);
-                            let r_idx = multi_indices(*nr, *mr);
-                            let mut out: Vec<SparsePolynomial<C::F, T>> =
-                                vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
-                            for (ia, ka) in a_idx.iter().enumerate() {
-                                for (ib, kb) in b_idx.iter().enumerate() {
-                                    let k: Vec<usize> =
-                                        ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
-                                    let ir = r_idx
-                                        .iter()
-                                        .position(|rk| rk == &k)
-                                        .expect("multi-index missing in result");
-                                    out[ir] = &out[ir] + &(&a_polys[ia] * &b_polys[ib]);
-                                }
+                for (pf, poly) in target.slots().into_iter().zip(out) {
+                    result.pl.insert(&pf, &poly);
+                    result.basis.push(poly - SparsePolynomial::var(&pf));
+                }
+            }
+
+            // VPoly × VPoly → VPoly: multi-index convolution
+            // Also handles Uni×Uni→Uni (normalized to VPoly(1,n))
+            _ if (Self::poly_shape(a_typ).is_some() || matches!(a_typ, ATyp::Mle(_)))
+                && (Self::poly_shape(b_typ).is_some() || matches!(b_typ, ATyp::Mle(_))) =>
+            {
+                let a_norm = match a_typ {
+                    ATyp::Uni(m) => ATyp::VPoly(1, *m),
+                    other => other.clone(),
+                };
+                let b_norm = match b_typ {
+                    ATyp::Uni(m) => ATyp::VPoly(1, *m),
+                    other => other.clone(),
+                };
+                let r_norm = match r_typ {
+                    ATyp::Uni(m) => ATyp::VPoly(1, *m),
+                    other => other.clone(),
+                };
+                match (&a_norm, &b_norm, &r_norm) {
+                    (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr))
+                        if na == nb && na == nr =>
+                    {
+                        let a_idx = multi_indices(*na, *ma);
+                        let b_idx = multi_indices(*nb, *mb);
+                        let r_idx = multi_indices(*nr, *mr);
+                        let mut out: Vec<SparsePolynomial<C::F, T>> =
+                            vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                        for (ia, ka) in a_idx.iter().enumerate() {
+                            for (ib, kb) in b_idx.iter().enumerate() {
+                                let k: Vec<usize> =
+                                    ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
+                                let ir = r_idx
+                                    .iter()
+                                    .position(|rk| rk == &k)
+                                    .expect("multi-index missing in result");
+                                out[ir] = &out[ir] + &(&a_polys[ia] * &b_polys[ib]);
                             }
-                            out
                         }
-                        _ => {
-                            unreachable!(
-                                "Mul: unsupported polynomial type combination {}×{} → {}",
-                                a_typ, b_typ, r_typ
-                            )
+                        for (pf, poly) in target.slots().into_iter().zip(out) {
+                            result.pl.insert(&pf, &poly);
+                            result.basis.push(poly - SparsePolynomial::var(&pf));
                         }
                     }
+                    _ => {
+                        unreachable!(
+                            "Mul: unsupported polynomial type combination {}×{} → {}",
+                            a_typ, b_typ, r_typ
+                        )
+                    }
                 }
-            };
-            for (pf, poly) in target.slots().into_iter().zip(polys) {
-                result.pl.insert(&pf, &poly);
-                result.basis.push(poly - SparsePolynomial::var(&pf));
             }
-        } else {
-            // when only one or none of a or b are poly types
-            //
-            // FIX: missing vector x scalar handling
-            let target_slots = target.slots();
-            for ((ap, bp), pf) in a_polys.iter().zip(b_polys).zip(&target_slots) {
-                result.pl.insert(pf, &(ap * bp));
-                result
-                    .basis
-                    .push(ap.clone() * bp.clone() - SparsePolynomial::var(pf));
+
+            // Base × Base: slot-wise multiplication
+            (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
+                let target_slots = target.slots();
+                for ((ap, bp), pf) in a_polys.iter().zip(b_polys).zip(&target_slots) {
+                    let prod = ap * bp;
+                    result.pl.insert(pf, &prod);
+                    result.basis.push(prod - SparsePolynomial::var(pf));
+                }
+            }
+
+            _ => {
+                unreachable!(
+                    "Mul: unsupported type combination {}×{} → {}",
+                    a_typ, b_typ, r_typ
+                )
             }
         }
     }
@@ -979,28 +1326,36 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             Op::Bin(BinOp::Add | BinOp::And, a, b, _) => {
-                let pr_slots = pr.slots();
-                for ((a, b), pf) in self
-                    .ref_vars(&a)
-                    .into_iter()
-                    .zip(self.ref_vars(&b))
-                    .zip(&pr_slots)
-                {
-                    result.pl.insert(pf, &(&a + &b));
-                    result.basis.push(a + b - SparsePolynomial::var(pf));
-                }
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let a_polys = self.ref_vars(&a);
+                let b_polys = self.ref_vars(&b);
+                self.broadcast_binop(
+                    &pr,
+                    &a_polys,
+                    &b_polys,
+                    &a_typ,
+                    &b_typ,
+                    &pr.typ,
+                    BinOp::Add,
+                    result,
+                );
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                let pr_slots = pr.slots();
-                for ((a, b), pf) in self
-                    .ref_vars(&a)
-                    .into_iter()
-                    .zip(self.ref_vars(&b))
-                    .zip(&pr_slots)
-                {
-                    result.pl.insert(pf, &(&a - &b));
-                    result.basis.push(a - b - SparsePolynomial::var(pf));
-                }
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let a_polys = self.ref_vars(&a);
+                let b_polys = self.ref_vars(&b);
+                self.broadcast_binop(
+                    &pr,
+                    &a_polys,
+                    &b_polys,
+                    &a_typ,
+                    &b_typ,
+                    &pr.typ,
+                    BinOp::Sub,
+                    result,
+                );
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
                 let a_typ = a.typ();
@@ -1051,14 +1406,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result,
                 );
             }
-            Op::Bin(BinOp::Equ, a, b, _) => self
-                .ref_vars(&a)
-                .into_iter()
-                .zip(self.ref_vars(&b))
-                .for_each(|(a, b)| {
-                    result.pl.insert(&pr, &(&a - &b));
-                    result.basis.push(a - b);
-                }),
+            Op::Bin(BinOp::Equ, a, b, _) => {
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                let a_polys = self.ref_vars(&a);
+                let b_polys = self.ref_vars(&b);
+                self.broadcast_equ(&pr, &a_polys, &b_polys, &a_typ, &b_typ, result);
+            }
             Op::Check(a) => self.add_op(pr, a.get().clone(), result),
             Op::Challenge(t, b) => {
                 let op = Op::Challenge(t, b);
@@ -1285,10 +1639,88 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Concat/Pow/Marginalize/Proj: opaque in np — cannot be
             // converted to polynomial ideal constraints.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
-                result.np.insert(
-                    &pr,
-                    &Op::Bin(BinOp::Concat, a.clone(), b.clone(), pr.typ.clone()),
-                );
+                let a_polys = self.ref_vars(a);
+                let b_polys = self.ref_vars(b);
+                let a_typ = a.typ();
+                let b_typ = b.typ();
+                match (&pr.typ, &a_typ, &b_typ) {
+                    (ATyp::Vec(r_elem, _), ATyp::Vec(a_elem, na), ATyp::Vec(b_elem, nb)) => {
+                        let a_elem_len = a_elem.physical_len();
+                        let b_elem_len = b_elem.physical_len();
+                        for i in 0..*na {
+                            let t_i = pr.with_index(i).unwrap();
+                            let lifted = Self::lift_polys(
+                                &a_polys[i * a_elem_len..(i + 1) * a_elem_len],
+                                a_elem,
+                                r_elem,
+                            );
+                            for (pf, p) in t_i.slots().into_iter().zip(lifted) {
+                                result.pl.insert(&pf, &p);
+                                result.basis.push(p - SparsePolynomial::var(&pf));
+                            }
+                        }
+                        for i in 0..*nb {
+                            let t_i = pr.with_index(na + i).unwrap();
+                            let lifted = Self::lift_polys(
+                                &b_polys[i * b_elem_len..(i + 1) * b_elem_len],
+                                b_elem,
+                                r_elem,
+                            );
+                            for (pf, p) in t_i.slots().into_iter().zip(lifted) {
+                                result.pl.insert(&pf, &p);
+                                result.basis.push(p - SparsePolynomial::var(&pf));
+                            }
+                        }
+                    }
+                    (ATyp::Vec(r_elem, nr), ATyp::Vec(a_elem, na), b_non_vec) => {
+                        let a_elem_len = a_elem.physical_len();
+                        for i in 0..*na {
+                            let t_i = pr.with_index(i).unwrap();
+                            let lifted = Self::lift_polys(
+                                &a_polys[i * a_elem_len..(i + 1) * a_elem_len],
+                                a_elem,
+                                r_elem,
+                            );
+                            for (pf, p) in t_i.slots().into_iter().zip(lifted) {
+                                result.pl.insert(&pf, &p);
+                                result.basis.push(p - SparsePolynomial::var(&pf));
+                            }
+                        }
+                        let t_last = pr.with_index(*na).unwrap();
+                        let lifted = Self::lift_polys(&b_polys, b_non_vec, r_elem);
+                        for (pf, p) in t_last.slots().into_iter().zip(lifted) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    (ATyp::Vec(r_elem, nr), a_non_vec, ATyp::Vec(b_elem, nb)) => {
+                        let t_first = pr.with_index(0).unwrap();
+                        let lifted = Self::lift_polys(&a_polys, a_non_vec, r_elem);
+                        for (pf, p) in t_first.slots().into_iter().zip(lifted) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                        let b_elem_len = b_elem.physical_len();
+                        for i in 0..*nb {
+                            let t_i = pr.with_index(1 + i).unwrap();
+                            let lifted = Self::lift_polys(
+                                &b_polys[i * b_elem_len..(i + 1) * b_elem_len],
+                                b_elem,
+                                r_elem,
+                            );
+                            for (pf, p) in t_i.slots().into_iter().zip(lifted) {
+                                result.pl.insert(&pf, &p);
+                                result.basis.push(p - SparsePolynomial::var(&pf));
+                            }
+                        }
+                    }
+                    _ => {
+                        result.np.insert(
+                            &pr,
+                            &Op::Bin(BinOp::Concat, a.clone(), b.clone(), pr.typ.clone()),
+                        );
+                    }
+                }
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
                 result.np.insert(
@@ -4976,5 +5408,472 @@ mod tests {
                 i
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Regression: broadcast type handling for slot-wise binops
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn test_add_uni_different_degrees() {
+        use crate::PRef;
+        use ark_bls12_381::Fr;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let uni4 = ATyp::Uni(4);
+        let uni4_result = ATyp::Uni(4);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        let coefs_a: Vec<_> = (1..=3u64)
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
+            .collect();
+        builder.add_op(pref_a.clone(), Op::Vec(coefs_a), &mut gresult);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            uni4.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+        let coefs_b: Vec<_> = (1..=5u64)
+            .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
+            .collect();
+        builder.add_op(pref_b.clone(), Op::Vec(coefs_b), &mut gresult);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            uni4_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), uni2)),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni4)),
+                uni4_result,
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(pref_r.typ.physical_len(), 5, "Uni(4) has 5 coefficients");
+        for i in 0..5 {
+            let slot = pref_r.clone().with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&slot),
+                "Uni(2)+Uni(4) result slot {} missing from pl",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mul_scalar_poly_broadcast() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let uni2 = ATyp::Uni(2);
+
+        let pref_s = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_s);
+
+        let pref_p = PRef::from_node(
+            NodeIndex::new(1),
+            uni2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_p);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            uni2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Mul,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni2.clone())),
+                uni2.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            gresult.basis.len(),
+            3,
+            "Scalar * Uni(2) should produce 3 basis rows (one per coefficient)"
+        );
+        for i in 0..3 {
+            let slot = pref_r.clone().with_slot(i).unwrap();
+            assert!(
+                gresult.pl.contains(&slot),
+                "Scalar*Uni(2) result slot {} missing from pl",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mul_vec_scalar_broadcast() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let v3 = ATyp::Vec(Box::new(s.clone()), 3);
+
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            v3.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_v);
+
+        let pref_s = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_s);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            v3.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Mul,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), v3.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+                v3.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            gresult.basis.len(),
+            3,
+            "Vec<Scalar,3> * Scalar should produce 3 basis rows"
+        );
+    }
+
+    #[test]
+    fn test_add_scalar_poly_broadcast() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let uni2 = ATyp::Uni(2);
+
+        let pref_s = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_s);
+
+        let pref_p = PRef::from_node(
+            NodeIndex::new(1),
+            uni2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_p);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            uni2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni2.clone())),
+                uni2.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            gresult.basis.len(),
+            3,
+            "Scalar + Uni(2) should produce 3 basis rows"
+        );
+    }
+
+    #[test]
+    fn test_concat_vec_uni_different_degrees() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let uni4 = ATyp::Uni(4);
+        let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
+        let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(uni4.clone()), 4);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_uni4.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Concat,
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(0)),
+                    vec_uni2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(1)),
+                    vec_uni4.clone(),
+                )),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            pref_r.typ.physical_len(),
+            20,
+            "Vec(Uni(4), 4) has 4*5=20 slots"
+        );
+        for i in 0..4 {
+            let elem = pref_r.with_index(i).unwrap();
+            for j in 0..5 {
+                let slot = elem.with_slot(j).unwrap();
+                assert!(
+                    gresult.pl.contains(&slot),
+                    "Concat result element {} slot {} missing from pl",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_concat_vec_scalar_element() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_result = ATyp::Vec(Box::new(s.clone()), 3);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            vec_result.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Concat,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+                vec_result.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(pref_r.typ.physical_len(), 3, "Vec(Scalar, 3) has 3 slots");
+        for i in 0..3 {
+            let elem = pref_r.with_index(i).unwrap();
+            assert!(
+                gresult.pl.contains(&elem),
+                "Concat Vec++Scalar result element {} missing from pl",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_equ_vec_uni_different_degrees() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let uni2 = ATyp::Uni(2);
+        let uni4 = ATyp::Uni(4);
+        let vec_uni2 = ATyp::Vec(Box::new(uni2.clone()), 2);
+        let vec_uni4 = ATyp::Vec(Box::new(uni4.clone()), 2);
+        let bool_typ = ATyp::bool();
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_uni2.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_uni4.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            bool_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Equ,
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(0)),
+                    vec_uni2.clone(),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(1)),
+                    vec_uni4.clone(),
+                )),
+                bool_typ.clone(),
+            ),
+            &mut gresult,
+        );
+
+        assert!(
+            !gresult.basis.is_empty(),
+            "Vec(Uni(2),2) == Vec(Uni(4),2) should produce basis constraints (zero-padded per element)"
+        );
     }
 }

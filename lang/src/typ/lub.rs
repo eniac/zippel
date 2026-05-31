@@ -444,12 +444,15 @@ impl Lub for CTyp {
                 *n.max(m),
                 1,
             )),
-            // General Poly<A, n, m> == Poly<B, n', m'>: unify to the larger shape in each dim.
-            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => Ok(CTyp::Poly(
-                Tid::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
-                *na.max(nb),
-                *ma.max(mb),
-            )),
+            // General Poly<A, na, ma> == Poly<B, nb, mb>: strict match (VPoly)
+            (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) if na == nb && ma == mb => {
+                Ok(CTyp::Poly(
+                    Tid::lub_equ(a, b, ctx)
+                        .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
+                    *na,
+                    *ma,
+                ))
+            }
             // [A; N] == [B; M]
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => Ok(CTyp::vec(
                 &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
@@ -457,13 +460,15 @@ impl Lub for CTyp {
             )),
             // Record types: width and depth subtyping, permutation
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
+                if fields_a.len() != fields_b.len() {
+                    return Err(LubError::equ(&x, &y));
+                }
                 let mut result_fields = share::Ctx::new();
-                for (field_name, typ_a) in fields_a.iter() {
-                    if let Some(typ_b) = fields_b.get(field_name) {
-                        let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
-                            .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
-                        result_fields.insert(field_name, &lub_typ);
-                    }
+                for (name, typ_a) in fields_a.iter() {
+                    let typ_b = fields_b.get(&name).ok_or_else(|| LubError::equ(&x, &y))?;
+                    let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                        .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
+                    result_fields.insert(name, &lub_typ);
                 }
                 Ok(CTyp::Record(result_fields))
             }
@@ -765,8 +770,8 @@ impl Lub for CTyp {
                     Err(LubError::div(&x, &y))
                 }
             }
-            // Vec<A> / c = Vec<A>
-            (CTyp::Vec(box a, n), b) => Ok(CTyp::vec(
+            // Vec<A> / c or c / Vec<A> = Vec<lub_div(A, c)>
+            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => Ok(CTyp::vec(
                 &CTyp::lub_div(a, b, ctx).map_err(|e| LubError::next(LubError::div(&x, &y), e))?,
                 *n,
             )),
@@ -819,8 +824,8 @@ impl Lub for CTyp {
                     Err(LubError::rem(&x, &y))
                 }
             }
-            // Vec<A> / c = Vec<A>
-            (CTyp::Vec(box b, n), a) => Ok(CTyp::vec(
+            // Vec<B> % A or A % Vec<B> = Vec<lub_rem(A, B)>
+            (CTyp::Vec(box b, n), a) | (a, CTyp::Vec(box b, n)) => Ok(CTyp::vec(
                 &CTyp::lub_rem(a, b, ctx).map_err(|e| LubError::next(LubError::rem(&x, &y), e))?,
                 *n,
             )),
@@ -858,8 +863,8 @@ impl Lub for CTyp {
                     Err(LubError::pow(&x, &y))
                 }
             }
-            // Vec<B> ^ A = Vec<A^B>
-            (CTyp::Vec(box a, n), b) => Ok(CTyp::vec(
+            // Vec<B> ^ A or A ^ Vec<B> = Vec<lub_pow(B, A)>
+            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => Ok(CTyp::vec(
                 &CTyp::lub_pow(a, b, ctx).map_err(|e| LubError::next(LubError::pow(&x, &y), e))?,
                 *n,
             )),
@@ -932,15 +937,17 @@ impl Lub for CTyp {
         match (x, y) {
             // Bool && Bool = Bool
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
-            // Vec<Bool> && Bool = Bool (forall)
-            (CTyp::Bool, CTyp::Vec(box a, _)) | (CTyp::Vec(box a, _), CTyp::Bool) => {
-                Ok(CTyp::lub_and(a, &CTyp::bool(), ctx)
-                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?)
+            // Vec<A> && Vec<B> = Vec<lub_and(A, B)> (element-wise)
+            (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
+                let t = CTyp::lub_and(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
+                Ok(CTyp::vec(&t, *n))
             }
-            // Vec<Bool> && Vec<Bool> = Bool (forall)
-            (CTyp::Vec(box a, _), CTyp::Vec(box b, _)) => {
-                Ok(CTyp::lub_and(a, b, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?)
+            // Vec<A> && B or B && Vec<A> = Vec<lub_and(A, B)> (broadcast)
+            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
+                let t = CTyp::lub_and(a, b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
+                Ok(CTyp::vec(&t, *n))
             }
             (_, _) => Err(LubError::and(&x, &y)),
         }
@@ -1155,11 +1162,11 @@ fn lub_typ() {
             &CTyp::vec(&CTyp::Bool, 10),
             &ctx
         ),
-        Ok(CTyp::Bool)
+        Ok(CTyp::vec(&CTyp::Bool, 10))
     );
     assert_eq!(
         CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx),
-        Ok(CTyp::Bool)
+        Ok(CTyp::vec(&CTyp::Bool, 10))
     );
 
     // Regression (phase 7): Poly * Poly degree math.
@@ -1219,7 +1226,10 @@ fn lub_typ() {
             &CTyp::Poly(f.clone(), 3, 2),
             &ctx
         ),
-        Ok(CTyp::Poly(f.clone(), 3, 3))
+        Err(LubError::equ(
+            &CTyp::Poly(f.clone(), 2, 3),
+            &CTyp::Poly(f.clone(), 3, 2)
+        ))
     );
 
     // Regression (phase 7): lub_div degree math. Poly<F,1,5> / Poly<F,1,5> = Poly<F,1,0>
