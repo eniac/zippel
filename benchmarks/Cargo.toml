@@ -23,6 +23,9 @@ transcript = { git = "https://github.com/EspressoSystems/hyperplonk" }
 # type than the one backend's PolyVariant accepts).
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-std = "0.5"
 
 # Native Schnorr baseline: ark-crypto-primitives + matching arkworks 0.5
@@ -52,6 +55,20 @@ hp-ark-ff = { package = "ark-ff", version = "0.4" }
 hp-ark-poly = { package = "ark-poly", version = "0.4" }
 hp-ark-std = { package = "ark-std", version = "0.4" }
 
+
+# Native Bulletproofs IPA baseline: a vendored port of alex-ozdemir's
+# Bp2aryStep recursive folding step (github.com/alex-ozdemir/bulletproofs,
+# src/reductions/bp_2ary_step.rs) — the textbook two-base-vector IPA
+# Protocol 2 from BCC/BBB+18. The upstream crate is arkworks-0.3 and has
+# path deps to an unpublished r1cs-std fork, so it can't be added as a
+# git dep; we ported the same algorithm to arkworks 0.4 inline in
+# benchmarks/src/ipa.rs. Uses arkworks 0.4, sharing the hp-ark-* set.
+bp-ark-secp256k1 = { package = "ark-secp256k1", version = "0.4" }
+bp-ark-ec = { package = "ark-ec", version = "0.4", features = ["parallel"] }
+bp-ark-serialize = { package = "ark-serialize", version = "0.4" }
+merlin = "3"
+rayon = "1"
+
 rand = { version = "0.8", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
@@ -74,6 +91,18 @@ path = "src/bin/ipa.rs"
 [[bin]]
 name = "kzg"
 path = "src/bin/kzg.rs"
+
+[[bin]]
+name = "pari"
+path = "src/bin/pari.rs"
+
+[[bin]]
+name = "bench_all"
+path = "src/bin/bench_all.rs"
+
+[[bin]]
+name = "sumcheck_verify_profile"
+path = "src/bin/sumcheck_verify_profile.rs"
 
 [[bench]]
 name = "sumcheck"

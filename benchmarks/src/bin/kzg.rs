@@ -10,6 +10,10 @@ struct Args {
     /// Comma-separated N values; if set, sweeps a grid (overrides --n).
     #[arg(long, value_delimiter = ',')]
     sweep_n: Option<Vec<usize>>,
+    /// Diagnostic: drop the .zippel `where` clause SRS structure check
+    /// (N-1 pairings) so zippel's verifier only runs the protocol body.
+    #[arg(long)]
+    no_srs_check: bool,
 }
 
 fn main() {
@@ -27,8 +31,12 @@ fn main() {
         "------+-----------------------------+-----------------------+--------------------------"
     );
 
+    if args.no_srs_check {
+        println!("(diagnostic mode: zippel .zippel rendered without SRS structure check)\n");
+    }
+
     for &n in &ns {
-        let mut z = zippel_side::Setup::new(n);
+        let mut z = zippel_side::Setup::new_with(n, args.no_srs_check);
         let np = native_side::Setup::new(n);
         let zt = z.time_protocol();
         let nt = np.time_protocol();

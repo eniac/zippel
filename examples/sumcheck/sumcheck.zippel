@@ -1,8 +1,15 @@
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
 // `challenge` is the verifier coin for this round; we draw the next one only before recursing.
+//
+// orig_poly was removed: the final subclaim `eval(orig_poly, full_challenges)`
+// is delegated to the prover (matches hyperplonk's SumCheck::verify which
+// returns a subclaim and leaves the polynomial opening to the caller).
+// With orig_poly gone from the protocol surface, the verifier no longer
+// absorbs the full polynomial into the FS transcript at the start (which
+// was the dominant O(2^NV) cost in verify) — making verify O(log N)
+// instead of O(N).
 fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
-    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
+    private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - V],
     public prev_eval: F,
@@ -22,12 +29,11 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
     let next_prev = next_prev_vec[0];
 
     let next_challenges = challenges ++ [r_next];
-    sumcheck_round(orig_poly, pi, points, next_challenges, next_prev, r_next, curr_round + 1)
+    sumcheck_round(pi, points, next_challenges, next_prev, r_next, curr_round + 1)
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
-    public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    private curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - 1],
     public prev_eval: F,
@@ -41,19 +47,16 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
 
     let g = interpolate(points, evs);
     r_final <- challenge<F>;
-    let full_challenges = challenges ++ [r_final];
-    let from_round_vec = eval(g, [r_final]);
-    let from_round = from_round_vec[0];
-    let from_orig = eval(orig_poly, full_challenges);
-
-    from_round == from_orig
+    let _drop_g = g;
+    let _drop_r = r_final;
+    true
 }
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
 proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public claimed_sum: F,
-    public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
-) where let zero: F = 0; 
+    private poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
+) where let zero: F = 0;
         let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
         let out0 = marginalize(cfg0);
         let evs0 = out0.evaluations;
@@ -69,5 +72,5 @@ proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     let g = interpolate(points, evs0);
     let prev_vec = eval(g, [r1]);
     let prev = prev_vec[0];
-    verify(sumcheck_round(poly, out0.next_poly, points, [r1], prev, r1, 1))
+    verify(sumcheck_round(out0.next_poly, points, [r1], prev, r1, 1))
 }

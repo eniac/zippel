@@ -16,7 +16,7 @@ use crate::Timing;
 pub const DEFAULT_NUM_VARS: usize = 10;
 pub const DEFAULT_MAX_DEGREE: usize = 10;
 
-fn render_zippel_source(num_vars: usize, max_degree: usize) -> String {
+pub fn render_zippel_source(num_vars: usize, max_degree: usize) -> String {
     let template = include_str!("../../examples/sumcheck/sumcheck.zippel");
     template
         .replace("NUM_VARS_CONST: 10", &format!("NUM_VARS_CONST: {num_vars}"))
@@ -165,15 +165,18 @@ pub mod native_side {
             let aux = poly.aux_info.clone();
             let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
             let t = Instant::now();
-            let subclaim = <PolyIOP<Fr> as SumCheck<Fr>>::verify(
-                claimed_sum,
-                &proof,
-                &aux,
-                &mut transcript,
-            )
-            .expect("hyperplonk verify failed");
+            let subclaim =
+                <PolyIOP<Fr> as SumCheck<Fr>>::verify(claimed_sum, &proof, &aux, &mut transcript)
+                    .expect("hyperplonk verify failed");
             let verify = t.elapsed();
 
+            // Subclaim opening (the final O(2^NV) poly eval) is
+            // deliberately outside the timer — in a real SNARK it would
+            // be a polynomial commitment opening, not a direct eval.
+            // sumcheck.zippel matches by having the prover send the
+            // evaluation (from_orig <- eval(...)) so the zippel verifier
+            // also doesn't time the eval. Both sides now time pure IOP
+            // work. The assert below still validates correctness.
             let lhs = poly.evaluate(&subclaim.point).expect("evaluate");
             assert_eq!(
                 lhs, subclaim.expected_evaluation,

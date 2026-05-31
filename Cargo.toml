@@ -45,6 +45,10 @@ name = "kzg"
 path = "examples/kzg/main.rs"
 
 [[example]]
+name = "pari"
+path = "examples/pari/main.rs"
+
+[[example]]
 name = "ipa"
 path = "examples/ipa/main.rs"
 

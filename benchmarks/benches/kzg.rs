@@ -40,15 +40,19 @@ fn bench_kzg(c: &mut Criterion) {
                 total
             })
         });
-        group.bench_with_input(BenchmarkId::new("polycommit_verify", &param), &(), |b, _| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    total += np.time_protocol().verify;
-                }
-                total
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::new("polycommit_verify", &param),
+            &(),
+            |b, _| {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for _ in 0..iters {
+                        total += np.time_protocol().verify;
+                    }
+                    total
+                })
+            },
+        );
     }
 
     group.finish();

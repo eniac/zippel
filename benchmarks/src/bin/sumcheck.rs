@@ -26,12 +26,28 @@ fn main() {
     println!("=== Sumcheck: zippel vs. hyperplonk-native ===");
     println!("polynomial: base(x)^d where base is a random dense MLE");
     println!();
-    println!(
-        " nv  deg | zippel prove  zippel verify | hp prove   hp verify  | prove ratio  verify ratio"
-    );
-    println!(
-        "---------+-----------------------------+-----------------------+--------------------------"
-    );
+    let header = if mds.len() == 1 {
+        format!("max_degree = {} (fixed); num_vars varied", mds[0])
+    } else {
+        "sweeping both num_vars and max_degree".to_string()
+    };
+    println!("{header}");
+    println!();
+    if mds.len() == 1 {
+        println!(
+            " nv  | zippel prove  zippel verify | hp prove    hp verify  | prove ratio  verify ratio"
+        );
+        println!(
+            "-----+-----------------------------+------------------------+--------------------------"
+        );
+    } else {
+        println!(
+            " nv  deg | zippel prove  zippel verify | hp prove    hp verify  | prove ratio  verify ratio"
+        );
+        println!(
+            "---------+-----------------------------+------------------------+--------------------------"
+        );
+    }
 
     for &nv in &nvs {
         for &md in &mds {
@@ -39,15 +55,27 @@ fn main() {
             let n = native_side::Setup::new(nv, md);
             let zt = z.time_protocol();
             let nt = n.time_protocol();
-            println!(
-                " {nv:>2}  {md:>3} | {:>11.2?}  {:>13.2?} | {:>9.2?} {:>10.2?} | {:>10.2}x  {:>11.2}x",
-                zt.prove,
-                zt.verify,
-                nt.prove,
-                nt.verify,
-                zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
-                zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
-            );
+            if mds.len() == 1 {
+                println!(
+                    " {nv:>2}  | {:>11.2?}  {:>13.2?} | {:>9.2?} {:>11.2?} | {:>10.2}x  {:>11.2}x",
+                    zt.prove,
+                    zt.verify,
+                    nt.prove,
+                    nt.verify,
+                    zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
+                    zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+                );
+            } else {
+                println!(
+                    " {nv:>2}  {md:>3} | {:>11.2?}  {:>13.2?} | {:>9.2?} {:>11.2?} | {:>10.2}x  {:>11.2}x",
+                    zt.prove,
+                    zt.verify,
+                    nt.prove,
+                    nt.verify,
+                    zt.prove.as_secs_f64() / nt.prove.as_secs_f64(),
+                    zt.verify.as_secs_f64() / nt.verify.as_secs_f64(),
+                );
+            }
         }
     }
 }

@@ -17,8 +17,14 @@ fn main() {
 
     println!();
     println!("                  prove           verify");
-    println!("zippel        {:>10.2?}      {:>10.2?}", zt.prove, zt.verify);
-    println!("ark-cp        {:>10.2?}      {:>10.2?}", nt.prove, nt.verify);
+    println!(
+        "zippel        {:>10.2?}      {:>10.2?}",
+        zt.prove, zt.verify
+    );
+    println!(
+        "ark-cp        {:>10.2?}      {:>10.2?}",
+        nt.prove, nt.verify
+    );
     println!();
     println!(
         "ratio (zippel / ark-cp)       prove: {:.2}x    verify: {:.2}x",

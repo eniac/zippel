@@ -15,5 +15,7 @@ pub struct Timing {
 
 pub mod ipa;
 pub mod kzg;
+pub mod pari;
+pub mod pari_native;
 pub mod schnorr;
 pub mod sumcheck;

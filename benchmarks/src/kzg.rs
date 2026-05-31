@@ -19,11 +19,48 @@ pub const DEFAULT_N: usize = 4;
 
 fn render_zippel_source(n: usize) -> String {
     let template = include_str!("../../examples/kzg/kzg.zippel");
-    template.replace("N: 2>", &format!("N: {n}>"))
+    // KZG's `srs_g1` is used only by the prover (commit + opening MSMs);
+    // the verifier graph never references it. Declaring it `private`
+    // sidesteps zippel's runtime requirement that all `public` args be
+    // passed to the verifier even when no verifier node consumes them.
+    // Cryptographically the SRS is not secret — this is a benchmarking
+    // workaround, not a sound protocol modification.
+    template
+        .replace("N: 2>", &format!("N: {n}>"))
+        .replace("public srs_g1:", "private srs_g1:")
+}
+
+/// Diagnostic variant: same KZG protocol body, but the `where` clause
+/// SRS-structure check (N-1 pairings) is dropped. The native KZG10
+/// baseline trusts its setup and doesn't re-verify it per call; this
+/// version makes the comparison apples-to-apples on the verifier side.
+fn render_zippel_source_no_srs_check(n: usize) -> String {
+    format!(
+        r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: {n}>
+        (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, public srs_g1: [G1; N],
+        public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
+        where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result {{
+
+        let poly_x = poly(poly_coeffs);
+        commitment <- dot(poly_coeffs, srs_g1);
+
+        let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
+
+        let quotient_coeffs = coef(quotient_poly);
+        let srs_g1_truncated = srs_g1[0..N-1];
+        proof <- dot(quotient_coeffs, srs_g1_truncated);
+
+        let pairing_lhs = pair(proof, (srs_g2_s) - (gen_g2 * eval_point));
+        let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
+        verify(pairing_lhs == pairing_rhs)
+}}
+"#
+    )
 }
 
 pub mod zippel_side {
     use super::*;
+    use ark_ec::CurveGroup;
     use ark_ff::Field;
     use ark_std::UniformRand;
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
@@ -42,7 +79,18 @@ pub mod zippel_side {
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            let source = render_zippel_source(n);
+            Self::new_with(n, false)
+        }
+
+        /// `drop_srs_check`: if true, use a `.zippel` source without the
+        /// where-clause SRS structure check. Diagnostic toggle to isolate
+        /// where the zippel-vs-native verifier gap comes from.
+        pub fn new_with(n: usize, drop_srs_check: bool) -> Self {
+            let source = if drop_srs_check {
+                render_zippel_source_no_srs_check(n)
+            } else {
+                render_zippel_source(n)
+            };
             let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
             file.write_all(source.as_bytes()).expect("write tempfile");
 
@@ -76,10 +124,18 @@ pub mod zippel_side {
             let z = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
             let tau_input = F::rand(&mut rng);
 
-            let ss_g = Value::VecG1((0..n).map(|_| g_input).collect());
-            let ss_index =
-                Value::VecScalar((0..n).map(|i| tau_input.pow([i as u64])).collect());
-            let ss = ss_g * ss_index;
+            // Build the SRS in projective once, then batch-normalize to
+            // affine via Montgomery's trick (one inversion + 3(N-1) muls).
+            // Native KZG10 produces its SRS in affine form via the same
+            // np_ark_ec batch path; feeding zippel a projective vector would
+            // trigger an N-inversion fallback at the MSM call site
+            // (backend/src/values.rs:1552-1559). Match the input shape so
+            // the comparison isn't penalizing zippel for input format.
+            let srs_proj: Vec<G1> = (0..n)
+                .map(|i| g_input * tau_input.pow([i as u64]))
+                .collect();
+            let srs_affine = <G1 as CurveGroup>::normalize_batch(&srs_proj);
+            let ss = Value::VecG1Affine(srs_affine);
 
             let z_val: Value<ArkBls12_381> =
                 Value::Vec((0..n).map(|i| z.clone() ^ Value::Index(i)).collect());
@@ -129,7 +185,8 @@ pub mod native_side {
     use std::borrow::Cow;
     use std::time::Instant;
 
-    type Kzg = KZG10<Bls12_381, DensePolynomial<<Bls12_381 as np_ark_ec::pairing::Pairing>::ScalarField>>;
+    type Kzg =
+        KZG10<Bls12_381, DensePolynomial<<Bls12_381 as np_ark_ec::pairing::Pairing>::ScalarField>>;
     type Fr = <Bls12_381 as np_ark_ec::pairing::Pairing>::ScalarField;
 
     pub struct Setup {
@@ -200,8 +257,7 @@ pub mod native_side {
             let t = Instant::now();
             let (comm, rand) =
                 Kzg::commit(&self.powers.as_powers(), &poly, None, None).expect("kzg commit");
-            let proof =
-                Kzg::open(&self.powers.as_powers(), &poly, point, &rand).expect("kzg open");
+            let proof = Kzg::open(&self.powers.as_powers(), &poly, point, &rand).expect("kzg open");
             let prove = t.elapsed();
 
             let t = Instant::now();
