@@ -1,0 +1,7 @@
+a+b+c+d
+b2+2bd+d2
+bc2+c2d-bd2-d3
+bcd2+c2d2-bd3+cd3-d4-1
+bd4+d5-b-d
+c3d2+c2d3-c-d
+c2d4+bc-bd+cd-2d2

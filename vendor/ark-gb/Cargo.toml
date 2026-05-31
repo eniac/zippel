@@ -1,0 +1,67 @@
+[package]
+name = "ark-gb"
+version = "0.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Groebner basis engine over arkworks fields (fork of BrentBaccala/rustgb)"
+repository = "https://github.com/elefthei/ark-gb"
+
+[lib]
+# Pure Rust library; the upstream `cdylib` (for Singular FFI) has been
+# dropped in this fork.
+crate-type = ["rlib"]
+
+[dependencies]
+ark-ff = { version = "0.6.0", default-features = false }
+
+[features]
+# Default features. The Monagan-Pearce heap reducer is enabled by
+# default because empirical timings (see ADR-008 / commit log) show
+# it beats the geobucket on every measured workload, with up to
+# 1.76× speedup on katsura_6. Disable with `--no-default-features`
+# (or omit `heap_reducer` from the explicit feature list) to fall
+# back to the ADR-002 geobucket reducer.
+default = ["heap_reducer"]
+
+# Switches `bba::reduce_lobject` to the heap-based Monagan-Pearce
+# reducer (ADR-008). On by default. Both reducers are always
+# compiled; the flag only chooses which one bba uses internally.
+# Cross-validation tests in `bba` always exercise both regardless
+# of flag state.
+heap_reducer = []
+
+# Switch the `Poly` type from the default flat-array backend
+# (`poly_vec`) to the singly-linked-list backend (`poly_list`).
+# Off by default — ADR-001's staging-5101449 profile evidence
+# still favours flat arrays. Enable with
+# `cargo build --features linked_list_poly` to A/B test the
+# linked-list shape against the flat-array shape, or to exercise
+# the second backend through the same test suite. See ADR-014
+# for the rationale behind keeping both backends available.
+linked_list_poly = []
+
+# Thread-local free-list-backed Node allocator for the
+# linked_list_poly backend. Requires linked_list_poly. When off,
+# Node allocations forward to Box::new / Box::from_raw. See
+# ADR-016 for the rationale and measured impact.
+linked_list_poly_pool = []
+
+[dev-dependencies]
+proptest = "1"
+ark-bls12-381 = { version = "0.6.0", default-features = false, features = ["scalar_field"] }
+ark-std = { version = "0.6.0", default-features = false }
+criterion = "0.5"
+
+# Sanitisers are available only with `-Z sanitizer=thread` on nightly.
+# No build configuration needed in Cargo.toml.
+
+[[bench]]
+name = "groebner"
+harness = false
+
+[[bench]]
+name = "matrix"
+harness = false
+
+[profile.release]
+debug = true   # keep symbols for profiling

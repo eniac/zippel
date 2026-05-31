@@ -4,23 +4,23 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ed-on-cp6-782 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-mnt4-753 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-pallas = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-secp256k1 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-curve25519 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ed25519 = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-vesta = { git = "https://github.com/arkworks-rs/algebra.git" }
-ark-ff =  { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-ark-poly =  { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-ark-std = { version = "0.5.0", features = ["parallel"] }
-spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
+ark-ec = { workspace = true }
+ark-serialize = { workspace = true }
+ark-bls12-377 = { workspace = true }
+ark-bls12-381 = { workspace = true }
+ark-ed-on-cp6-782 = { workspace = true }
+ark-bn254 = { workspace = true }
+ark-mnt4-298 = { workspace = true }
+ark-mnt4-753 = { workspace = true }
+ark-pallas = { workspace = true }
+ark-secp256k1 = { workspace = true }
+ark-curve25519 = { workspace = true }
+ark-ed25519 = { workspace = true }
+ark-vesta = { workspace = true }
+ark-ff = { workspace = true }
+ark-poly = { workspace = true }
+ark-std = { workspace = true }
+spongefish = { workspace = true }
 rayon = "1.10.0"
 rand = { version = "0.8", features = ["std"] }
 num-bigint = "0.4.6"
@@ -34,7 +34,6 @@ hashconsing = "1.6"
 lazy_static = "1.5"
 
 [dev-dependencies]
-ark-std = "0.5.0"
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
 

@@ -2,12 +2,20 @@ pub mod error;
 
 use crate::{GOp, Op, Ref};
 use backend::values::marginalize as backend_marginalize;
-use backend::{ArkConfig, Value};
+use backend::{ArkConfig, ArkScalarOps, Value};
 use error::EvalError;
 use lang::ast::BinOp;
 use rand::RngCore;
 use share::Ctx;
 use std::collections::HashMap;
+
+const FIELD_POLY: &str = "poly";
+const FIELD_CHALLENGE: &str = "challenge";
+const FIELD_ROUND: &str = "round";
+const FIELD_NUM_VARIABLES: &str = "num_variables";
+const FIELD_MAX_DEGREE: &str = "max_degree";
+const FIELD_EVALUATIONS: &str = "evaluations";
+const FIELD_NEXT_POLY: &str = "next_poly";
 
 /// Evaluate a `GOp` against a reference environment.
 ///
@@ -124,86 +132,66 @@ where
     C: ArkConfig,
     R: RngCore,
 {
-    let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
-        Op::Record(fields) => {
-            let poly_op = fields
-                .get(&"poly".to_string())
-                .expect("marginalize: missing field 'poly'");
-            let challenge_op = fields
-                .get(&"challenge".to_string())
-                .expect("marginalize: missing field 'challenge'");
-            let round_op = fields.get(&"round".to_string());
-            let num_variables_op = fields.get(&"num_variables".to_string());
-            let max_degree_op = fields.get(&"max_degree".to_string());
-
-            let poly_val = eval_op(poly_op, env, rng)?;
-            let challenge_val = eval_op(challenge_op, env, rng)?;
-            let round_val = match round_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
-                None => None,
-            };
-            let num_variables_val = match num_variables_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
-                None => None,
-            };
-            let max_degree_val = match max_degree_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
-                None => None,
-            };
-            (
-                poly_val,
-                challenge_val,
-                round_val,
-                num_variables_val,
-                max_degree_val,
-            )
-        }
-        _ => {
-            let cfg_val = eval_op(a, env, rng)?;
-            let Value::Record(record) = cfg_val else {
-                unreachable!()
-            };
-            let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
-            let challenge_val = record.get(&"challenge".to_string()).cloned().unwrap();
-            let round_val = record.get(&"round".to_string()).cloned();
-            let num_variables_val = record.get(&"num_variables".to_string()).cloned();
-            let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-            (
-                poly_val,
-                challenge_val,
-                round_val,
-                num_variables_val,
-                max_degree_val,
-            )
-        }
+    let cfg = eval_op(a, env, rng)?;
+    let Value::Record(fields) = cfg else {
+        return Err(type_mismatch("marginalize config record", &cfg));
     };
 
-    let poly = poly_val.into_poly().clone();
-    let challenge = Some(challenge_val.into_scalar());
-    let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
-
-    let num_variables = if let Some(v) = num_variables_val {
-        v.into_index()
-    } else {
-        let current_poly_vars = poly.num_vars().unwrap_or(1);
-        if round == 0 {
-            current_poly_vars
-        } else {
-            current_poly_vars + (round - 1)
-        }
+    let poly = match required_marginalize_field(&fields, FIELD_POLY)? {
+        Value::Poly(p) => p.clone(),
+        got => return Err(type_mismatch(FIELD_POLY, got)),
     };
-
-    let max_degree = max_degree_val
-        .map(|v| v.into_index())
-        .unwrap_or_else(|| poly.degree());
+    let challenge = match required_marginalize_field(&fields, FIELD_CHALLENGE)? {
+        Value::Scalar(f) => Some(*f),
+        Value::Index(i) => Some(C::FOps::from_usize(*i)),
+        got => return Err(type_mismatch("scalar challenge", got)),
+    };
+    let round = marginalize_index_field(&fields, FIELD_ROUND)?;
+    let num_variables = marginalize_index_field(&fields, FIELD_NUM_VARIABLES)?;
+    let max_degree = marginalize_index_field(&fields, FIELD_MAX_DEGREE)?;
 
     let (evals, next_poly) =
         backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
 
     let mut out_fields: Ctx<String, Value<C>> = Ctx::new();
-    out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
-    out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
+    out_fields.insert(&FIELD_EVALUATIONS.to_string(), &Value::VecScalar(evals));
+    out_fields.insert(&FIELD_NEXT_POLY.to_string(), &Value::Poly(next_poly));
     Ok(Value::Record(out_fields))
+}
+
+fn required_marginalize_field<'a, C>(
+    fields: &'a Ctx<String, Value<C>>,
+    name: &str,
+) -> Result<&'a Value<C>, EvalError>
+where
+    C: ArkConfig,
+{
+    fields
+        .get(&name.to_string())
+        .ok_or_else(|| EvalError::ValueError(format!("marginalize: missing field '{name}'")))
+}
+
+fn marginalize_index_field<C>(
+    fields: &Ctx<String, Value<C>>,
+    name: &str,
+) -> Result<usize, EvalError>
+where
+    C: ArkConfig,
+{
+    match required_marginalize_field(fields, name)? {
+        Value::Index(i) => Ok(*i),
+        got => Err(type_mismatch(format!("index field '{name}'"), got)),
+    }
+}
+
+fn type_mismatch<C>(expected: impl Into<String>, got: &Value<C>) -> EvalError
+where
+    C: ArkConfig,
+{
+    EvalError::TypeMismatch {
+        expected: expected.into(),
+        got: format!("{got}"),
+    }
 }
 
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
@@ -268,5 +256,74 @@ mod tests {
         let mut rng = ThreadRng::default();
         let result = eval_op(&op, &env, &mut rng).unwrap();
         assert_eq!(result, TestValue::Scalar(Fr::from(42)));
+    }
+
+    #[test]
+    fn referenced_config_marginalize_returns_evaluations_and_next_poly() {
+        use backend::ATyp;
+        use lang::typ::CRange;
+        use petgraph::graph::NodeIndex;
+
+        let Value::Poly(poly) = Value::<ArkBn254>::VecIndex(vec![1, 2, 3]).value_poly() else {
+            panic!("expected poly fixture");
+        };
+        let challenge = Fr::from(0);
+        let round = 0usize;
+        let num_variables = 1usize;
+        let max_degree = 2usize;
+
+        let mut cfg_fields = Ctx::new();
+        cfg_fields.insert(&FIELD_POLY.to_string(), &Value::Poly(poly.clone()));
+        cfg_fields.insert(&FIELD_CHALLENGE.to_string(), &Value::Scalar(challenge));
+        cfg_fields.insert(&FIELD_ROUND.to_string(), &Value::Index(round));
+        cfg_fields.insert(
+            &FIELD_NUM_VARIABLES.to_string(),
+            &Value::Index(num_variables),
+        );
+        cfg_fields.insert(&FIELD_MAX_DEGREE.to_string(), &Value::Index(max_degree));
+
+        let config_ref = Ref(NodeIndex::new(0));
+        let mut typ_fields = Ctx::new();
+        typ_fields.insert(&FIELD_POLY.to_string(), &ATyp::vpoly(1, 2));
+        typ_fields.insert(&FIELD_CHALLENGE.to_string(), &ATyp::scalar());
+        typ_fields.insert(
+            &FIELD_ROUND.to_string(),
+            &ATyp::fin(CRange::singleton(round)),
+        );
+        typ_fields.insert(
+            &FIELD_NUM_VARIABLES.to_string(),
+            &ATyp::fin(CRange::singleton(num_variables)),
+        );
+        typ_fields.insert(
+            &FIELD_MAX_DEGREE.to_string(),
+            &ATyp::fin(CRange::singleton(max_degree)),
+        );
+        let record_typ = ATyp::Record(typ_fields);
+        let op = mk::<ArkBn254>(Op::Marginalize(mk(Op::Ref(config_ref, record_typ))));
+
+        let mut env = HashMap::new();
+        env.insert(config_ref, Value::Record(cfg_fields));
+        let mut rng = ThreadRng::default();
+
+        let result = eval_op(&op, &env, &mut rng).expect("referenced config evaluates");
+        let (expected_evals, expected_next_poly) = backend_marginalize::<ArkBn254>(
+            &poly,
+            num_variables,
+            max_degree,
+            round,
+            Some(challenge),
+        );
+
+        let Value::Record(fields) = result else {
+            panic!("expected Value::Record from marginalize");
+        };
+        assert_eq!(
+            fields.get(&FIELD_EVALUATIONS.to_string()),
+            Some(&Value::VecScalar(expected_evals))
+        );
+        assert_eq!(
+            fields.get(&FIELD_NEXT_POLY.to_string()),
+            Some(&Value::Poly(expected_next_poly))
+        );
     }
 }

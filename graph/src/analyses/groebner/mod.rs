@@ -777,6 +777,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 let p_polys = self.to_poly(poly);
                 let p_idx = multi_indices(n, d);
+                let p_slot_by_multi_index: std::collections::HashMap<Vec<usize>, usize> = p_idx
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, multi_index)| (multi_index.clone(), slot))
+                    .collect();
                 let q_n = Self::marginalize_next_variable_count(n, round);
                 let q_idx = multi_indices(q_n, max_degree);
                 let challenge_poly = if round == 0 {
@@ -786,15 +791,17 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 };
 
                 let mut q_polys = vec![SparsePolynomial::<C::F, T>::zero(); q_idx.len()];
-                for (iq, lambda) in q_idx.iter().enumerate() {
-                    if round == 0 {
+                if round == 0 {
+                    for (iq, lambda) in q_idx.iter().enumerate() {
                         if lambda.iter().sum::<usize>() <= d
-                            && let Some(ip) = p_idx.iter().position(|alpha| alpha == lambda)
+                            && let Some(&ip) = p_slot_by_multi_index.get(lambda)
                         {
                             q_polys[iq] = p_polys[ip].clone();
                         }
-                    } else {
-                        let r = challenge_poly.as_ref().expect("round > 0 has challenge");
+                    }
+                } else {
+                    let r = challenge_poly.as_ref().expect("round > 0 has challenge");
+                    for (iq, lambda) in q_idx.iter().enumerate() {
                         let lambda_sum: usize = lambda.iter().sum();
                         if lambda_sum > d {
                             continue;
@@ -803,8 +810,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             let mut alpha = Vec::with_capacity(n);
                             alpha.push(e);
                             alpha.extend(lambda.iter().copied());
-                            if let Some(ip) = p_idx.iter().position(|candidate| candidate == &alpha)
-                            {
+                            if let Some(&ip) = p_slot_by_multi_index.get(&alpha) {
                                 let term = &p_polys[ip] * &Self::pow_poly(r.clone(), e);
                                 q_polys[iq] = &q_polys[iq] + &term;
                             }

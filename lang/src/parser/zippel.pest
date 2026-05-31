@@ -19,8 +19,8 @@ and_op = @{ "&&" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" | "type" }
-id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
+keyword = {"let" | "fn" | "proto" | "type" | "marginalize" }
+id = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 
 /// Ranges appear in types and expressions
@@ -95,10 +95,7 @@ exp_term  = _{
     dot_exp       = { "dot" ~ "(" ~ exp ~ "," ~ exp ~ ")" }            // Dot product (use dot(a,b) instead of a . b)
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
-    marginalize_exp = { "marginalize" ~ (marginalize_static_call | marginalize_positional_call | marginalize_legacy_call) } // Sum-check round marginalization helper
-    marginalize_static_call = { "<" ~ size_ty ~ "," ~ size_ty ~ "," ~ size_ty ~ ">" ~ "(" ~ exp ~ "," ~ exp ~ ")" } // marginalize<round, num_variables, max_degree>(poly, challenge)
-    marginalize_positional_call = { "(" ~ exp ~ "," ~ exp ~ "," ~ exp ~ "," ~ exp ~ "," ~ exp ~ ")" } // marginalize(poly, challenge, round, num_variables, max_degree)
-    marginalize_legacy_call = { "(" ~ exp ~ ")" }                 // legacy record form: marginalize(cfg)
+    marginalize_exp = { "marginalize" ~ "<" ~ size_ty ~ "," ~ size_ty ~ "," ~ size_ty ~ ">" ~ "(" ~ exp ~ "," ~ exp ~ ")" } // marginalize<round, num_variables, max_degree>(poly, challenge)
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension

@@ -1,8 +1,5 @@
 fn marginalize_test<F: Field>(
     public poly: Poly<F, 2, 2>,
-    public num_variables: Fin<2>,
-    public max_degree: Fin<2>,
-    public round: Fin<3>,
     public challenge: F
 ) -> { evaluations: [F; 3], next_poly: Poly<F, 2, 2> } {
     marginalize<0, 2, 2>(poly, challenge)
@@ -28,7 +25,7 @@ fn marginalize_test<F: Field>(
 //   e(1) = 10
 //   e(2) = 9
 proto marginalize_proto<F: Field>
-    (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
+    (public poly: Poly<F, 2, 2>, public challenge: F)
     where true {
 
     let out = marginalize<0, 2, 2>(poly, challenge);
@@ -40,9 +37,6 @@ proto marginalize_proto<F: Field>
 
 fn marginalize_test_univariate<F: Field>(
     public poly: Poly<F, 1, 2>,
-    public num_variables: Fin<1>,
-    public max_degree: Fin<2>,
-    public round: Fin<3>,
     public y: F,
     public challenge: F
 ) -> { evaluations: [F; 3], next_poly: Poly<F, 1, 2> } {
@@ -56,7 +50,7 @@ fn marginalize_test_univariate<F: Field>(
 //
 // match the known values for t = 0,1,2.
 proto marginalize_univariate_proto<F: Field>
-    (public poly: Poly<F, 1, 2>, public num_variables: Fin<1>, public max_degree: Fin<2>, public round: Fin<3>, public y: F, public challenge: F)
+    (public poly: Poly<F, 1, 2>, public y: F, public challenge: F)
     where true {
 
     let out = marginalize<0, 1, 2>(poly, challenge);

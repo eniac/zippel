@@ -98,23 +98,14 @@ fn create_inputs() -> Ctx<Vid, Value<ArkField17>> {
         _ => panic!("Expected polynomials for MLEs"),
     };
 
-    // Two variables (x, y) in the sum-check sense, degree 2 in x,
-    // and we care about e(0), e(1), e(2) where e(t) = Σ_{y∈{0,1}} poly(t, y).
-    let num_variables: Value<ArkField17> = Value::Index(2);
-    let max_degree: Value<ArkField17> = Value::Index(2);
-
-    // Round 0: no variable fixed yet; we marginalize over first variable t and sum over y.
-    // This yields e(t) = 4t² + 4t + 2, so e(0)=2, e(1)=10, e(2)=9 (matching marginalize_proto).
-    let round: Value<ArkField17> = Value::Index(0);
-
+    // Round 0: no variable is fixed yet; `marginalize<0, 2, 2>` marginalizes
+    // over first variable t and sums over y. This yields e(t) = 4t² + 4t + 2,
+    // so e(0)=2, e(1)=10, e(2)=9 (matching marginalize_proto).
     // Challenge is only used when round > 0; for round 0 we still need to supply it.
     let challenge: Value<ArkField17> = Value::random(&mut rng, &ATyp::scalar());
 
     Ctx::from_iter([
         (Vid("poly".to_string()), poly),
-        (Vid("num_variables".to_string()), num_variables),
-        (Vid("max_degree".to_string()), max_degree),
-        (Vid("round".to_string()), round),
         (Vid("challenge".to_string()), challenge),
     ])
 }

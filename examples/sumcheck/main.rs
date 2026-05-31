@@ -9,8 +9,9 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-const NUM_VARS: usize = 10;
-const MAX_DEGREE: usize = 10;
+const NUM_VARS: usize = 3;
+const MAX_DEGREE: usize = 2;
+const STATIC_ANALYSIS_FAILURE_EXIT_CODE: i32 = 3;
 const DROP_EVAL_POINT_TEST: bool = false;
 
 fn main() {
@@ -29,7 +30,7 @@ fn main() {
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &10);
+    sizes.insert(&Tid::new("S"), &num_vars);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(num_vars, max_degree);
@@ -76,20 +77,51 @@ fn main() {
         analysis_handler.minimal_analysis()
     });
     let analysis_elapsed = analysis_start.elapsed();
-    match analysis_result {
+    let static_analysis_exit_code = match analysis_result {
         Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
+            let completeness_passed = report_static_analysis_check(
+                "Completeness:   ✓",
+                "Completeness:   ✗",
+                &analysis.completeness,
+            );
+            let zk_passed = report_static_analysis_check(
+                "ZK:             ✓",
+                "ZK:             ✗",
+                &analysis.zk,
+            );
+
+            if completeness_passed && zk_passed {
+                0
+            } else {
+                STATIC_ANALYSIS_FAILURE_EXIT_CODE
             }
         }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    }
+        Err(_) => {
+            println!("Analysis:       ✗ panicked");
+            STATIC_ANALYSIS_FAILURE_EXIT_CODE
+        }
+    };
     println!("Analysis time:  {analysis_elapsed:.2?}");
+    if static_analysis_exit_code != 0 {
+        std::process::exit(static_analysis_exit_code);
+    }
+}
+
+fn report_static_analysis_check<E: std::fmt::Display>(
+    success_message: &str,
+    failure_prefix: &str,
+    result: &Result<(), E>,
+) -> bool {
+    match result {
+        Ok(()) => {
+            println!("{success_message}");
+            true
+        }
+        Err(e) => {
+            println!("{failure_prefix} {e}");
+            false
+        }
+    }
 }
 
 fn drop_one_eval_point_from_proof(proof: &mut [Value<ArkBls12_381>]) -> bool {

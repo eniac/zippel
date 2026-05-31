@@ -159,9 +159,8 @@ pub enum Exp<N> {
     Mle(Box<Exp<N>>),
 
     ///     One round of sum-check style marginalization over a Boolean hypercube.
-    ///     Preferred syntax keeps static configuration in angle brackets:
+    ///     Static configuration is supplied in angle brackets:
     ///     `marginalize<round, num_variables, max_degree>(poly, challenge)`.
-    ///     The legacy record form `marginalize({| ... |})` is still accepted.
     ///     **Zippel Code:**
     ///     ```zippel
     ///     let out = marginalize<0, 3, 2>(p, r);
@@ -934,11 +933,36 @@ where
                 p.pretty(allocator),
                 allocator.text(")"),
             ]),
-            Exp::Marginalize(p) => allocator.concat([
-                allocator.text("marginalize("),
-                p.pretty(allocator),
-                allocator.text(")"),
-            ]),
+            Exp::Marginalize(box Exp::Record(fields)) => {
+                let poly = fields.get(&"poly".to_string()).cloned();
+                let challenge = fields.get(&"challenge".to_string()).cloned();
+                let round = fields.get(&"round".to_string()).cloned();
+                let num_variables = fields.get(&"num_variables".to_string()).cloned();
+                let max_degree = fields.get(&"max_degree".to_string()).cloned();
+                match (poly, challenge, round, num_variables, max_degree) {
+                    (
+                        Some(poly),
+                        Some(challenge),
+                        Some(round),
+                        Some(num_variables),
+                        Some(max_degree),
+                    ) => allocator.concat([
+                        allocator.text("marginalize<"),
+                        round.pretty(allocator),
+                        allocator.text(", "),
+                        num_variables.pretty(allocator),
+                        allocator.text(", "),
+                        max_degree.pretty(allocator),
+                        allocator.text(">("),
+                        poly.pretty(allocator),
+                        allocator.text(", "),
+                        challenge.pretty(allocator),
+                        allocator.text(")"),
+                    ]),
+                    _ => allocator.text("<invalid marginalize>"),
+                }
+            }
+            Exp::Marginalize(_) => allocator.text("<invalid marginalize>"),
             Exp::Vec(ts) => allocator.concat([
                 allocator.text("["),
                 allocator.intersperse(ts.into_iter().map(|x| x.pretty(allocator)), ", "),
@@ -1312,63 +1336,29 @@ impl<'pest> FromPest<'pest> for UExp {
                     }
                 }
                 Rule::marginalize_exp => {
-                    let call = pair.into_inner().next().ok_or(ConversionError::NoMatch)?;
-                    match call.as_rule() {
-                        Rule::marginalize_static_call => {
-                            let mut inner = call.into_inner();
-                            let round = Exp::lit(Size::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?);
-                            let num_variables = Exp::lit(Size::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?);
-                            let max_degree = Exp::lit(Size::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?);
-                            let poly = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            let challenge = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            Ok(Exp::marginalize_args(
-                                poly,
-                                challenge,
-                                round,
-                                num_variables,
-                                max_degree,
-                            ))
-                        }
-                        Rule::marginalize_positional_call => {
-                            let mut inner = call.into_inner();
-                            let poly = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            let challenge = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            let round = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            let num_variables = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            let max_degree = Exp::from_pest(&mut Pairs::single(
-                                inner.next().ok_or(ConversionError::NoMatch)?,
-                            ))?;
-                            Ok(Exp::marginalize_args(
-                                poly,
-                                challenge,
-                                round,
-                                num_variables,
-                                max_degree,
-                            ))
-                        }
-                        Rule::marginalize_legacy_call => {
-                            Ok(Exp::marginalize(Exp::from_pest(&mut call.into_inner())?))
-                        }
-                        _ => Err(ConversionError::NoMatch),
-                    }
+                    let mut inner = pair.into_inner();
+                    let round = Exp::lit(Size::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?);
+                    let num_variables = Exp::lit(Size::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?);
+                    let max_degree = Exp::lit(Size::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?);
+                    let poly = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    let challenge = Exp::from_pest(&mut Pairs::single(
+                        inner.next().ok_or(ConversionError::NoMatch)?,
+                    ))?;
+                    Ok(Exp::marginalize_args(
+                        poly,
+                        challenge,
+                        round,
+                        num_variables,
+                        max_degree,
+                    ))
                 }
                 Rule::poly_exp => Ok(Exp::poly(Exp::from_pest(&mut pair.into_inner())?)),
                 Rule::coef_exp => Ok(Exp::coef(Exp::from_pest(&mut pair.into_inner())?)),
@@ -1683,20 +1673,26 @@ fn parser_marginalize_static_args() {
 }
 
 #[test]
-fn parser_marginalize_positional_args() {
-    let ex = "marginalize(poly, challenge, 0, N, 2)";
-    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-
-    let mut fields = Ctx::new();
-    fields.insert(&"poly".to_string(), &Exp::varstr("poly"));
-    fields.insert(&"challenge".to_string(), &Exp::varstr("challenge"));
-    fields.insert(&"round".to_string(), &Exp::from(0));
-    fields.insert(&"num_variables".to_string(), &Exp::lit(Size::from("N")));
-    fields.insert(&"max_degree".to_string(), &Exp::from(2));
-
-    assert_eq!(
-        UExp::from_pest(&mut pairs),
-        Ok(Exp::marginalize(Exp::record(fields)))
+fn parser_marginalize_rejects_positional_and_record_rule_forms() {
+    assert!(ZippelParser::parse(
+        Rule::marginalize_exp,
+        "marginalize(poly, challenge, 0, N, 2)"
+    )
+    .is_err());
+    assert!(
+        ZippelParser::parse(
+            Rule::marginalize_exp,
+            "marginalize({| poly: poly, challenge: challenge, round: 0, num_variables: N, max_degree: 2 |})"
+        )
+        .is_err()
+    );
+    assert!(ZippelParser::parse(Rule::exp, "marginalize(poly, challenge, 0, N, 2)").is_err());
+    assert!(
+        ZippelParser::parse(
+            Rule::exp,
+            "marginalize({| poly: poly, challenge: challenge, round: 0, num_variables: N, max_degree: 2 |})"
+        )
+        .is_err()
     );
 }
 

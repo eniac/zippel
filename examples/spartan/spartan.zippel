@@ -24,8 +24,8 @@
 //
 //   - Bump num_constraints to 2^s with s > 2. In this file: replace
 //     every `0..4` loop bound with `0..m`, every `[F; 16]` with
-//     `[F; m*m]`, set `num_variables: 2` → s in both marginalize configs,
-//     unroll one additional sum-check round in *each* of sum-check #1
+//     `[F; m*m]`, change the second angle parameter from `2` to `s` in
+//     both marginalize calls, unroll one additional sum-check round in *each* of sum-check #1
 //     and sum-check #2 per extra s-step, and extend the Lagrange bases
 //     (lx_** and ly_** plus partial_a/b/c) from 4 to 2^s entries. Also
 //     bump NUM_CONSTRAINTS in main.rs and re-pick (WITNESS_LEN, IO_LEN)

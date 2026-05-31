@@ -4,6 +4,28 @@ exclude = [ "sumcheck_compare" ]
 default-members = [ ".", "lang", "runtime", "share" , "graph", "backend"]
 resolver = "2"
 
+[workspace.dependencies]
+ark-std = { version = "0.6.0", features = ["parallel"] }
+ark-ff = { version = "0.6.0", features = ["parallel"] }
+ark-ec = { version = "0.6.0", features = ["parallel"] }
+ark-poly = { version = "0.6.0", features = ["parallel"] }
+ark-serialize = { version = "0.6.0", features = ["parallel"] }
+ark-bls12-377 = { version = "0.6.0" }
+ark-bls12-381 = { version = "0.6.0" }
+ark-ed-on-cp6-782 = { version = "0.6.0" }
+ark-bn254 = { version = "0.6.0" }
+ark-mnt4-298 = { version = "0.6.0" }
+ark-mnt4-753 = { version = "0.6.0" }
+ark-pallas = { version = "0.6.0" }
+ark-secp256k1 = { version = "0.6.0" }
+ark-curve25519 = { version = "0.6.0" }
+ark-ed25519 = { version = "0.6.0" }
+ark-vesta = { version = "0.6.0" }
+ark-relations = { version = "0.6.0" }
+ark-groth16 = { version = "0.6.0" }
+ark-gb = { path = "vendor/ark-gb" }
+spongefish = { version = "0.7.1", features = ["ark-ff", "ark-ec"] }
+
 [package]
 name = "zippel"
 version = "0.1.0"
@@ -17,17 +39,23 @@ graph = { path = "./graph" }
 runtime = { path = "./runtime" }
 env_logger = "0.11.8"
 log = "0.4.27"
-ark-std = { version = "0.5.0", features = ["parallel"] }
-ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
-ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-std = { workspace = true }
+ark-ff = { workspace = true }
+ark-poly = { workspace = true }
 rand = { version = "0.8", features = ["std"] }
-spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
+spongefish = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.10"
 criterion = "0.5"
-ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { workspace = true }
+ark-relations = { workspace = true }
+ark-groth16 = { workspace = true }
+ark-ec = { workspace = true }
 petgraph = "0.7.1"
+
+[patch.crates-io]
+ark-gb = { path = "vendor/ark-gb" }
 
 [[bench]]
 name = "graph_execution"
@@ -35,6 +63,10 @@ harness = false
 
 [[bench]]
 name = "groebner"
+harness = false
+
+[[bench]]
+name = "groth16"
 harness = false
 
 [[example]]
@@ -220,3 +252,19 @@ path = "examples/hyperplonk/main.rs"
 [[example]]
 name = "bccgp"
 path = "examples/bccgp/main.rs"
+
+[[example]]
+name = "coin_proof"
+path = "examples/coin_proof/main.rs"
+
+[[example]]
+name = "membership"
+path = "examples/membership/main.rs"
+
+[[example]]
+name = "zeromorph_kzg"
+path = "examples/zeromorph_kzg/main.rs"
+
+[[example]]
+name = "groth16"
+path = "examples/groth16/main.rs"
