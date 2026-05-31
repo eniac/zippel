@@ -52,7 +52,7 @@ fn sumcheck_round<F: Field, S: Size, NUM_VARS_CONST: S, MAX_DEGREE_CONST: 2>(
 proto sumcheck<F: Field, NUM_VARS_CONST: 3, MAX_DEGREE_CONST: 2>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
-) where let zero: F = 0; 
+) where let zero: F = 0;
         let out0 = marginalize<0, NUM_VARS_CONST, MAX_DEGREE_CONST>(poly, zero);
         let evs0 = out0.evaluations;
         claimed_sum == evs0[0] + evs0[1] {

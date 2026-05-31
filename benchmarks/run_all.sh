@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Run every benchmark (schnorr, sumcheck, ipa, kzg, pari) across a set of
+# thread counts and emit a single CSV.
+#
+# Threads are swept by re-running the binary with different RAYON_NUM_THREADS:
+# in-process pool reconfiguration via rayon::ThreadPool::install hangs on
+# arkworks' parallel path for our protocols.
+#
+# Usage:
+#   benchmarks/run_all.sh                    # default: threads=1,4 → bench_results.csv
+#   THREADS="1,2,4,8" benchmarks/run_all.sh  # sweep more thread counts
+#   OUT=results.csv benchmarks/run_all.sh
+#   QUICK=1 benchmarks/run_all.sh            # small grid for iteration
+#   SYSTEMS=kzg,pari benchmarks/run_all.sh   # filter systems
+
+set -euo pipefail
+
+THREADS="${THREADS:-1,4}"
+OUT="${OUT:-bench_results.csv}"
+QUICK="${QUICK:-0}"
+SYSTEMS="${SYSTEMS:-}"
+
+# Locate the workspace root (the dir containing this script's parent).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "${SCRIPT_DIR}")"
+cd "${ROOT}"
+
+echo ">>> building bench_all (release)" >&2
+cargo build --release -p benchmarks --bin bench_all >&2
+
+BIN="${ROOT}/target/release/bench_all"
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "${TMPDIR}"' EXIT
+
+CHILD_ARGS=()
+[[ "${QUICK}" == "1" ]] && CHILD_ARGS+=(--quick)
+[[ -n "${SYSTEMS}" ]] && CHILD_ARGS+=(--systems "${SYSTEMS}")
+
+IFS=',' read -r -a THREAD_LIST <<< "${THREADS}"
+
+# First run writes the header; subsequent runs append with --no-header.
+HEADER_DONE=0
+: > "${OUT}"
+for T in "${THREAD_LIST[@]}"; do
+    PART="${TMPDIR}/part_${T}.csv"
+    EXTRA=()
+    if [[ "${HEADER_DONE}" == "1" ]]; then
+        EXTRA+=(--no-header)
+    fi
+    echo ">>> threads=${T}" >&2
+    RAYON_NUM_THREADS="${T}" "${BIN}" \
+        --out "${PART}" \
+        --threads-label "${T}" \
+        ${CHILD_ARGS[@]+"${CHILD_ARGS[@]}"} \
+        ${EXTRA[@]+"${EXTRA[@]}"}
+    cat "${PART}" >> "${OUT}"
+    HEADER_DONE=1
+done
+
+ROWS=$(($(wc -l < "${OUT}") - 1))
+echo ">>> done — ${ROWS} rows in ${OUT}" >&2

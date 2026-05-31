@@ -1552,6 +1552,13 @@ impl<C: ArkConfig> Value<C> {
                 *other = Value::VecG1Affine(vg);
                 Self::value_dot(self, other);
             }
+            // For all `VecG{1,2} <-> VecScalar/VecIndex` dot paths we
+            // normalize the projective basis to affine via Montgomery's
+            // batch trick (one inversion for the whole batch) before
+            // dispatching to the affine MSM. The previous per-element
+            // `(*a).into()` collect did N inversions and dominated
+            // prover wall-clock at large K (≈90% of MSM time at
+            // K=4096 on BLS12-381).
             (Value::VecG2(b), Value::VecIndex(_)) => {
                 let vg = <C::G2 as ark_ec::CurveGroup>::normalize_batch(b);
                 Self::value_dot(&Value::VecG2Affine(vg), other);
@@ -1600,6 +1607,30 @@ impl<C: ArkConfig> Value<C> {
                             a
                         }),
                 );
+            }
+            // `dot(VecG1, VecG2) -> GT` is Σᵢ e(g1ᵢ, g2ᵢ) — exactly
+            // `multi_pairing`. Routing it through `billinear_vec_dot` collapses
+            // N final exponentiations into one (and one Miller loop over all
+            // pairs), which is the standard pairing-batching trick used by
+            // every native SNARK verifier (e.g. ark-poly-commit::kzg10::check,
+            // garuda-pari verify). The type checker already accepts this
+            // signature (types.rs:328); only the runtime arm was missing.
+            (Value::VecG1(a), Value::VecG2(b)) | (Value::VecG2(b), Value::VecG1(a)) => {
+                *other = Value::GT(C::POps::billinear_vec_dot(a, b))
+            }
+            (Value::VecG1Affine(a), Value::VecG2Affine(b))
+            | (Value::VecG2Affine(b), Value::VecG1Affine(a)) => {
+                let ap: Vec<C::G1> = a.par_iter().map(|x| (*x).into()).collect();
+                let bp: Vec<C::G2> = b.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(&ap, &bp))
+            }
+            (Value::VecG1(a), Value::VecG2Affine(b)) | (Value::VecG2Affine(b), Value::VecG1(a)) => {
+                let bp: Vec<C::G2> = b.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(a, &bp))
+            }
+            (Value::VecG1Affine(a), Value::VecG2(b)) | (Value::VecG2(b), Value::VecG1Affine(a)) => {
+                let ap: Vec<C::G1> = a.par_iter().map(|x| (*x).into()).collect();
+                *other = Value::GT(C::POps::billinear_vec_dot(&ap, b))
             }
             (Value::Vec(a), _) => a
                 .par_iter()

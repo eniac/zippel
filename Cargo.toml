@@ -1,7 +1,12 @@
 [workspace]
-members = [ "lang", "runtime", "share" , "graph", "backend"]
-exclude = [ "sumcheck_compare" ]
-default-members = [ ".", "lang", "runtime", "share" , "graph", "backend"]
+members = ["lang", "runtime", "share", "graph", "backend"]
+# `benchmarks` is excluded because main's `[patch.crates-io]` (added for
+# the Groth16 work) collapses its `np-ark-*` crates.io aliases onto the
+# same git crates as the direct `ark-*` deps — Cargo rejects that as a
+# double-named dep. The benchmarks crate still builds standalone with
+# `cargo build -p benchmarks` from its own directory.
+exclude = ["sumcheck_compare", "benchmarks"]
+default-members = [".", "lang", "runtime", "share", "graph", "backend"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -76,6 +81,10 @@ path = "examples/mle_example/main.rs"
 [[example]]
 name = "kzg"
 path = "examples/kzg/main.rs"
+
+[[example]]
+name = "pari"
+path = "examples/pari/main.rs"
 
 [[example]]
 name = "ipa"

@@ -5,3 +5,5 @@ target
 *.lic
 gurobi.log
 target-small
+# Local Python venv for benchmarks/plot_ratios.sh
+benchmarks/.venv/

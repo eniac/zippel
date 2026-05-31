@@ -36,4 +36,3 @@ lazy_static = "1.5"
 [dev-dependencies]
 arbitrary = { version = "1.4.1", features = ["derive"] }
 arbtest = "0.3.2"
-
