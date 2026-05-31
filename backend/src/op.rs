@@ -192,6 +192,31 @@ impl<C: ArkConfig, R> Op<C, R> {
         }
     }
 
+    fn singleton_fin_value(typ: &ATyp) -> Option<usize> {
+        match typ {
+            ATyp::Base(ABase::Fin(r)) if r.step == 1 && r.end == r.start.saturating_add(1) => {
+                Some(r.start)
+            }
+            _ => None,
+        }
+    }
+
+    fn marginalize_current_variable_count(num_variables: usize, round: usize) -> usize {
+        if round == 0 {
+            num_variables
+        } else {
+            num_variables - (round - 1)
+        }
+    }
+
+    fn marginalize_next_variable_count(current_variables: usize, round: usize) -> usize {
+        if round == 0 {
+            current_variables
+        } else {
+            current_variables - 1
+        }
+    }
+
     /// Type inference for operations
     pub fn typ(&self) -> ATyp {
         match &self {
@@ -337,24 +362,50 @@ impl<C: ArkConfig, R> Op<C, R> {
                         t,
                     ),
                 };
-                let out_degree = fields
-                    .get(&"max_degree".to_string())
-                    .and_then(|t| match t {
-                        ATyp::Base(ABase::Fin(r))
-                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
-                        {
-                            Some(r.start)
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(d);
-                let next_n = n.saturating_sub(1);
+                let singleton_fin = |name: &str| -> usize {
+                    fields
+                        .get(&name.to_string())
+                        .and_then(Self::singleton_fin_value)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Op::Marginalize: '{}' must be a statically known singleton Fin",
+                                name
+                            )
+                        })
+                };
+                let round = singleton_fin("round");
+                let num_variables = singleton_fin("num_variables");
+                let out_degree = singleton_fin("max_degree");
+                if num_variables == 0 {
+                    panic!("Op::Marginalize: 'num_variables' must be > 0");
+                }
+                if out_degree < d {
+                    panic!("Op::Marginalize: 'max_degree' must be at least the polynomial degree");
+                }
+                if round > num_variables {
+                    panic!(
+                        "Op::Marginalize: round out of range: round={}, num_variables={}",
+                        round, num_variables
+                    );
+                }
+                let expected_current_vars =
+                    Self::marginalize_current_variable_count(num_variables, round);
+                if n != expected_current_vars {
+                    panic!(
+                        "Op::Marginalize: 'poly' variable count does not match marginalize config"
+                    );
+                }
+                let next_n = Self::marginalize_next_variable_count(n, round);
+                let next_typ = match poly_typ {
+                    ATyp::Mle(_) => ATyp::mle(next_n),
+                    _ => ATyp::vpoly(next_n, out_degree),
+                };
                 let mut out_fields = Ctx::new();
                 out_fields.insert(
                     &"evaluations".to_string(),
                     &ATyp::vec_scalar(out_degree + 1),
                 );
-                out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
+                out_fields.insert(&"next_poly".to_string(), &next_typ);
                 ATyp::Record(out_fields)
             }
             Op::Proj(_, _, typ) => typ.clone(),

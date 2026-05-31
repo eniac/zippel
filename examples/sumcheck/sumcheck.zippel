@@ -1,17 +1,16 @@
-// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
+// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,2>`.
 // `challenge` is the verifier coin for this round; we draw the next one only before recursing.
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 3..11, MAX_DEGREE_CONST: 10>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
     public curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - V],
+    public challenges: [F; NUM_VARS_CONST - V + 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
-    let pi = out.next_poly;
+    let out = marginalize<NUM_VARS_CONST - V + 1, NUM_VARS_CONST, MAX_DEGREE_CONST>(curr_poly, challenge);
+    let next_poly = out.next_poly;
 
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
@@ -22,20 +21,19 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..10, MAX_DEGREE_CONST: 10>(
     let next_prev = next_prev_vec[0];
 
     let next_challenges = challenges ++ [r_next];
-    sumcheck_round(orig_poly, pi, points, next_challenges, next_prev, r_next, curr_round + 1)
+    sumcheck_round(orig_poly, next_poly, points, next_challenges, next_prev, r_next, curr_round + 1)
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public orig_poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>,
-    public curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    public curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<NUM_VARS_CONST - 1, NUM_VARS_CONST, MAX_DEGREE_CONST>(curr_poly, challenge);
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
 
@@ -54,13 +52,11 @@ proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let zero: F = 0; 
-        let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
-        let out0 = marginalize(cfg0);
+        let out0 = marginalize<0, NUM_VARS_CONST, MAX_DEGREE_CONST>(poly, zero);
         let evs0 = out0.evaluations;
         claimed_sum == evs0[0] + evs0[1] {
     let zero: F = 0;
-    let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
+    let out0 = marginalize<0, NUM_VARS_CONST, MAX_DEGREE_CONST>(poly, zero);
     evs0 <- out0.evaluations;
     verify(claimed_sum == evs0[0] + evs0[1]);
 

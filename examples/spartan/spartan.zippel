@@ -84,8 +84,7 @@ proto spartan<F: Field>(
 
     // ======== Sum-check #1 (claimed sum = 0; s = 2 rounds; degree 3) ========
 
-    let cfg1_0 = {| poly: g_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
-    let out1_0 = marginalize(cfg1_0);
+    let out1_0 = marginalize<0, 2, 3>(g_poly, zero);
     evs1_0 <- out1_0.evaluations;
     verify(zero == evs1_0[0] + evs1_0[1]);
 
@@ -95,8 +94,7 @@ proto spartan<F: Field>(
     let prev1_vec = eval(g1_r1, [rx0]);
     let prev1 = prev1_vec[0];
 
-    let cfg1_1 = {| poly: out1_0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
-    let out1_1 = marginalize(cfg1_1);
+    let out1_1 = marginalize<1, 2, 3>(out1_0.next_poly, rx0);
     evs1_1 <- out1_1.evaluations;
     verify(prev1 == evs1_1[0] + evs1_1[1]);
 
@@ -167,8 +165,7 @@ proto spartan<F: Field>(
 
     // ======== Sum-check #2 (claimed sum = T_2; s = 2 rounds; degree 2) ========
 
-    let cfg2_0 = {| poly: m_poly, num_variables: 2, max_degree: 2, round: 0, challenge: zero |};
-    let out2_0 = marginalize(cfg2_0);
+    let out2_0 = marginalize<0, 2, 2>(m_poly, zero);
     evs2_0 <- out2_0.evaluations;
     verify(t2 == evs2_0[0] + evs2_0[1]);
 
@@ -178,8 +175,7 @@ proto spartan<F: Field>(
     let prev2_vec = eval(g2_r1, [ry0]);
     let prev2 = prev2_vec[0];
 
-    let cfg2_1 = {| poly: out2_0.next_poly, num_variables: 2, max_degree: 2, round: 1, challenge: ry0 |};
-    let out2_1 = marginalize(cfg2_1);
+    let out2_1 = marginalize<1, 2, 2>(out2_0.next_poly, ry0);
     evs2_1 <- out2_1.evaluations;
     verify(prev2 == evs2_1[0] + evs2_1[1]);
 

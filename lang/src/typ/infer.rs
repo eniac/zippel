@@ -19,6 +19,29 @@ pub trait Typeable {
     ) -> Result<CTyp, TypeError>;
 }
 
+fn singleton_fin_value(typ: &CTyp) -> Option<usize> {
+    match typ {
+        CTyp::Fin(r) if r.step == 1 && r.end == r.start + 1 => Some(r.start),
+        _ => None,
+    }
+}
+
+fn marginalize_current_variable_count(num_variables: usize, round: usize) -> usize {
+    if round == 0 {
+        num_variables
+    } else {
+        num_variables - (round - 1)
+    }
+}
+
+fn marginalize_next_variable_count(current_variables: usize, round: usize) -> usize {
+    if round == 0 {
+        current_variables
+    } else {
+        current_variables.saturating_sub(1)
+    }
+}
+
 #[derive(Error, PartialEq, Debug)]
 pub enum TypeError {
     #[error("TypeError: In declaration {0}:\n\n{1}")]
@@ -591,34 +614,26 @@ impl Typeable for CExp {
                     return Err(TypeError::exp(kctx, vctx, self));
                 }
 
-                let round_typ = fields
-                    .get(&"round".to_string())
-                    .ok_or_else(|| TypeError::field_not_found(kctx, vctx, rec, "round", fields))?;
-                if !matches!(round_typ, CTyp::Fin(_)) {
-                    return Err(TypeError::exp(kctx, vctx, self));
-                }
-
-                let num_variables_typ =
-                    fields.get(&"num_variables".to_string()).ok_or_else(|| {
-                        TypeError::field_not_found(kctx, vctx, rec, "num_variables", fields)
-                    })?;
-                if !matches!(num_variables_typ, CTyp::Fin(_)) {
-                    return Err(TypeError::exp(kctx, vctx, self));
-                }
-
-                let max_degree_typ = fields.get(&"max_degree".to_string()).ok_or_else(|| {
-                    TypeError::field_not_found(kctx, vctx, rec, "max_degree", fields)
-                })?;
-                if !matches!(max_degree_typ, CTyp::Fin(_)) {
-                    return Err(TypeError::exp(kctx, vctx, self));
-                }
-
-                // Runtime consumes max_degree as an index. When this is a singleton Fin,
-                // preserve that precise degree in the inferred output type.
-                let out_degree = match max_degree_typ {
-                    CTyp::Fin(r) if r.step == 1 && r.end == r.start + 1 => r.start,
-                    _ => d,
+                let singleton_fin = |name: &str| -> Result<usize, TypeError> {
+                    let typ = fields
+                        .get(&name.to_string())
+                        .ok_or_else(|| TypeError::field_not_found(kctx, vctx, rec, name, fields))?;
+                    singleton_fin_value(typ).ok_or_else(|| TypeError::exp(kctx, vctx, self))
                 };
+                let round = singleton_fin("round")?;
+                let num_variables = singleton_fin("num_variables")?;
+                let out_degree = singleton_fin("max_degree")?;
+                if num_variables == 0 || out_degree < d {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+                if round > num_variables {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
+                let expected_current_vars =
+                    marginalize_current_variable_count(num_variables, round);
+                if n != expected_current_vars {
+                    return Err(TypeError::exp(kctx, vctx, self));
+                }
 
                 let mut out_fields = Ctx::new();
                 let f_typ = CTyp::Base(field_tid.clone());
@@ -626,7 +641,7 @@ impl Typeable for CExp {
                     &"evaluations".to_string(),
                     &CTyp::vec(&f_typ, out_degree + 1),
                 );
-                let next_n = n.saturating_sub(1);
+                let next_n = marginalize_next_variable_count(n, round);
                 out_fields.insert(
                     &"next_poly".to_string(),
                     &CTyp::Poly(field_tid.clone(), next_n, out_degree),
@@ -1282,6 +1297,133 @@ mod tests {
         assert_eq!(
             lit.infer(&KIND_CTX, &fctx, &vctx),
             Ok(CTyp::Fin(Range::singleton(5)))
+        );
+    }
+
+    fn marginalize_fields(
+        poly: &str,
+        round: CExp,
+        num_variables: CExp,
+        max_degree: CExp,
+    ) -> Ctx<String, CExp> {
+        let mut fields = Ctx::new();
+        fields.insert(&"poly".to_string(), &CExp::varstr(poly));
+        fields.insert(&"challenge".to_string(), &CExp::varstr("f1"));
+        fields.insert(&"round".to_string(), &round);
+        fields.insert(&"num_variables".to_string(), &num_variables);
+        fields.insert(&"max_degree".to_string(), &max_degree);
+        fields
+    }
+
+    fn infer_marginalize(
+        fields: Ctx<String, CExp>,
+        vctx: &Ctx<Vid, CTyp>,
+    ) -> Result<CTyp, TypeError> {
+        CExp::marginalize(CExp::record(fields)).infer(&KIND_CTX, &Set::new(), vctx)
+    }
+
+    fn assert_marginalize_output(typ: CTyp, expected_next_poly: CTyp, evaluations_len: usize) {
+        let CTyp::Record(out_fields) = typ else {
+            panic!("expected marginalize to infer a record");
+        };
+
+        assert_eq!(
+            out_fields.get(&"next_poly".to_string()),
+            Some(&expected_next_poly)
+        );
+        assert_eq!(
+            out_fields.get(&"evaluations".to_string()),
+            Some(&CTyp::vec(&CTyp::Base(Tid::from("F")), evaluations_len))
+        );
+    }
+
+    #[test]
+    fn test_marginalize_round_zero_preserves_next_poly_variable_count() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp"), &CTyp::Poly(Tid::from("F"), 3, 2));
+
+        let typ = infer_marginalize(
+            marginalize_fields("vp", CExp::lit(0), CExp::lit(3), CExp::lit(2)),
+            &vctx,
+        )
+        .expect("marginalize should infer");
+
+        assert_marginalize_output(typ, CTyp::Poly(Tid::from("F"), 3, 2), 3);
+    }
+
+    #[test]
+    fn test_marginalize_positive_round_drops_next_poly_variable_count() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp"), &CTyp::Poly(Tid::from("F"), 3, 2));
+
+        let typ = infer_marginalize(
+            marginalize_fields("vp", CExp::lit(1), CExp::lit(3), CExp::lit(2)),
+            &vctx,
+        )
+        .expect("marginalize should infer");
+
+        assert_marginalize_output(typ, CTyp::Poly(Tid::from("F"), 2, 2), 3);
+    }
+
+    #[test]
+    fn test_marginalize_rejects_non_singleton_config_fields() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp"), &CTyp::Poly(Tid::from("F"), 3, 2));
+        vctx.insert(&Vid::from("dynamic"), &CTyp::Fin(Range::new(0, 3)));
+
+        for dynamic_field in ["round", "num_variables", "max_degree"] {
+            let mut fields = marginalize_fields("vp", CExp::lit(0), CExp::lit(3), CExp::lit(2));
+            fields.insert(&dynamic_field.to_string(), &CExp::varstr("dynamic"));
+
+            assert!(
+                infer_marginalize(fields, &vctx).is_err(),
+                "marginalize should reject non-singleton {dynamic_field}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_marginalize_rejects_dynamic_round() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp"), &CTyp::Poly(Tid::from("F"), 3, 2));
+        vctx.insert(&Vid::from("dynamic_round"), &CTyp::Fin(Range::new(0, 3)));
+
+        let fields = marginalize_fields(
+            "vp",
+            CExp::varstr("dynamic_round"),
+            CExp::lit(3),
+            CExp::lit(2),
+        );
+
+        assert!(
+            infer_marginalize(fields, &vctx).is_err(),
+            "marginalize should reject non-singleton round"
+        );
+    }
+
+    #[test]
+    fn test_marginalize_rejects_round_greater_than_num_variables() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp0"), &CTyp::Poly(Tid::from("F"), 0, 1));
+
+        let fields = marginalize_fields("vp0", CExp::lit(4), CExp::lit(2), CExp::lit(1));
+
+        assert!(
+            infer_marginalize(fields, &vctx).is_err(),
+            "marginalize should reject singleton rounds greater than num_variables"
+        );
+    }
+
+    #[test]
+    fn test_marginalize_rejects_mismatched_current_variable_count() {
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("vp"), &CTyp::Poly(Tid::from("F"), 3, 2));
+
+        let fields = marginalize_fields("vp", CExp::lit(1), CExp::lit(2), CExp::lit(2));
+
+        assert!(
+            infer_marginalize(fields, &vctx).is_err(),
+            "marginalize should reject configs whose current variable count does not match poly"
         );
     }
 

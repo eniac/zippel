@@ -6,9 +6,11 @@
 #[cfg(test)]
 mod op_construction_tests {
     use crate::tests::test_helpers::*;
-    use crate::{GOp, Op};
+    use crate::{GOp, Op, mk};
     use backend::{ATyp, Value};
     use lang::typ::CRange;
+    use petgraph::graph::NodeIndex;
+    use share::Ctx;
 
     type C = TestConfig;
 
@@ -338,6 +340,91 @@ mod op_construction_tests {
             Op::Value(Value::Index(42)) => (),
             _ => panic!("Expected Index value"),
         }
+    }
+
+    fn assert_marginalize_output_fields(
+        typ: ATyp,
+        expected_next_poly: ATyp,
+        expected_evaluations_len: usize,
+    ) {
+        let ATyp::Record(fields) = typ else {
+            panic!("expected marginalize type to be a record");
+        };
+
+        assert_eq!(
+            fields.get(&"next_poly".to_string()),
+            Some(&expected_next_poly)
+        );
+        assert_eq!(
+            fields.get(&"evaluations".to_string()),
+            Some(&ATyp::vec_scalar(expected_evaluations_len))
+        );
+    }
+
+    fn marginalize_config_from_ops(
+        poly: GOp<C>,
+        challenge: GOp<C>,
+        round: GOp<C>,
+        num_variables: GOp<C>,
+        max_degree: GOp<C>,
+    ) -> GOp<C> {
+        let mut fields = Ctx::new();
+        fields.insert(&"poly".to_string(), &mk(poly));
+        fields.insert(&"challenge".to_string(), &mk(challenge));
+        fields.insert(&"round".to_string(), &mk(round));
+        fields.insert(&"num_variables".to_string(), &mk(num_variables));
+        fields.insert(&"max_degree".to_string(), &mk(max_degree));
+        Op::Record(fields)
+    }
+
+    fn marginalize_config(round: usize) -> GOp<C> {
+        marginalize_config_from_ops(
+            GOp::<C>::underscore(NodeIndex::new(0), ATyp::vpoly(3, 2)),
+            GOp::<C>::underscore(NodeIndex::new(1), ATyp::scalar()),
+            GOp::<C>::index(round),
+            GOp::<C>::index(3),
+            GOp::<C>::index(2),
+        )
+    }
+
+    #[test]
+    fn test_marginalize_typ_round_zero_preserves_next_poly_variable_count() {
+        let typ = GOp::<C>::Marginalize(mk(marginalize_config(0))).typ();
+        assert_marginalize_output_fields(typ, ATyp::vpoly(3, 2), 3);
+    }
+
+    #[test]
+    fn test_marginalize_typ_positive_round_drops_next_poly_variable_count() {
+        let typ = GOp::<C>::Marginalize(mk(marginalize_config(1))).typ();
+        assert_marginalize_output_fields(typ, ATyp::vpoly(2, 2), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: 'round' must be a statically known singleton Fin")]
+    fn test_marginalize_typ_rejects_dynamic_round() {
+        let config = marginalize_config_from_ops(
+            GOp::<C>::underscore(NodeIndex::new(0), ATyp::vpoly(3, 2)),
+            GOp::<C>::underscore(NodeIndex::new(1), ATyp::scalar()),
+            GOp::<C>::underscore(NodeIndex::new(2), ATyp::fin(CRange::new(0, 3))),
+            GOp::<C>::index(3),
+            GOp::<C>::index(2),
+        );
+
+        let _ = GOp::<C>::Marginalize(mk(config)).typ();
+    }
+
+    #[test]
+    #[should_panic(expected = "round out of range")]
+    fn test_marginalize_typ_rejects_round_greater_than_num_variables() {
+        let config = marginalize_config_from_ops(
+            GOp::<C>::underscore(NodeIndex::new(0), ATyp::vpoly(0, 1)),
+            GOp::<C>::underscore(NodeIndex::new(1), ATyp::scalar()),
+            GOp::<C>::index(4),
+            GOp::<C>::index(2),
+            GOp::<C>::index(1),
+        );
+
+        let _ = GOp::<C>::Marginalize(mk(config)).typ();
     }
 
     #[test]

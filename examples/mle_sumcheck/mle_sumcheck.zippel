@@ -2,16 +2,15 @@
 // A simplified sumcheck protocol specifically for multilinear polynomials.
 
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse
-fn sumcheck_round<F: Field, NUM_VARS: 10, V: 2..10>(
+fn sumcheck_round<F: Field, NUM_VARS: 10, V: 3..11>(
     public orig_poly: Poly<F, NUM_VARS, 1>,
     public curr_poly: Poly<F, V, 1>,
-    public challenges: [F; NUM_VARS - V],
+    public challenges: [F; NUM_VARS - V + 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<NUM_VARS - V + 1, NUM_VARS, 1>(curr_poly, challenge);
     
     // Prover sends evaluations over the boolean hypercube (g(0), g(1))
     evs <- out.evaluations;
@@ -34,14 +33,13 @@ fn sumcheck_round<F: Field, NUM_VARS: 10, V: 2..10>(
 // Final round: check g(0)+g(1) = previous g(r), then evaluate original polynomial
 fn sumcheck_round<F: Field, NUM_VARS: 10>(
     public orig_poly: Poly<F, NUM_VARS, 1>,
-    public curr_poly: Poly<F, 1, 1>,
+    public curr_poly: Poly<F, 2, 1>,
     public challenges: [F; NUM_VARS - 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<NUM_VARS - 1, NUM_VARS, 1>(curr_poly, challenge);
     
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
@@ -66,14 +64,12 @@ proto sumcheck<F: Field, NUM_VARS: 10>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS, 1>
 ) where let zero: F = 0;
-        let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
-        let out0 = marginalize(cfg0);
+        let out0 = marginalize<0, NUM_VARS, 1>(poly, zero);
         let evs0 = out0.evaluations;
         claimed_sum == evs0[0] + evs0[1] {
         
     let zero: F = 0;
-    let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
+    let out0 = marginalize<0, NUM_VARS, 1>(poly, zero);
     
     // Prover sends the first evaluations
     evs0 <- out0.evaluations;

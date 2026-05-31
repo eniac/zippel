@@ -36,7 +36,7 @@ use std::fmt;
 //
 //   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
 //   * Mle<N>      → 2^N slots, one per hypercube point b ∈ {0,1}^N.
-//   * Uni(n)      → n slots (coefficient vector).
+//   * Uni(m)      → m + 1 slots (coefficient vector).
 //   * Vec(_, n)   → n slots.
 // ---------------------------------------------------------------------------
 
@@ -91,7 +91,6 @@ fn num_coeffs(typ: &ATyp) -> usize {
 
 /// Inverse of the enumeration: position of multi-index / hypercube point `k`
 /// in the canonical slot order for the given type.
-#[cfg(test)]
 fn index_of(typ: &ATyp, k: &[usize]) -> usize {
     match typ {
         ATyp::VPoly(n, m) => multi_indices(*n, *m)
@@ -135,6 +134,42 @@ fn dft_row<F: Field, T: Monomial>(
     acc
 }
 
+type PolyVec<C, T> = Vec<SparsePolynomial<<C as ArkConfig>::F, T>>;
+type RecordFieldBindings<C, T> = std::collections::HashMap<(Ref, String), (ATyp, PolyVec<C, T>)>;
+type MarginalizeEncoding<C, T> = (PolyVec<C, T>, Option<PolyVec<C, T>>);
+
+const MARGINALIZE_POLY_FIELD: &str = "poly";
+const MARGINALIZE_CHALLENGE_FIELD: &str = "challenge";
+const MARGINALIZE_ROUND_FIELD: &str = "round";
+const MARGINALIZE_NUM_VARIABLES_FIELD: &str = "num_variables";
+const MARGINALIZE_MAX_DEGREE_FIELD: &str = "max_degree";
+const MARGINALIZE_EVALUATIONS_FIELD: &str = "evaluations";
+const MARGINALIZE_NEXT_POLY_FIELD: &str = "next_poly";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarginalizeEncodeError {
+    InvalidConfig,
+    ZeroNumVariables,
+    RoundOutOfRange { round: usize, num_variables: usize },
+}
+
+impl fmt::Display for MarginalizeEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidConfig => write!(f, "invalid or unsupported marginalize config"),
+            Self::ZeroNumVariables => write!(f, "num_variables must be > 0"),
+            Self::RoundOutOfRange {
+                round,
+                num_variables,
+            } => write!(
+                f,
+                "round out of range: round={}, num_variables={}",
+                round, num_variables
+            ),
+        }
+    }
+}
+
 /// This is used to construct a Groebner basis from the ideals corresponding to
 /// each one of groups G1, G2, GT and the scalar ring F.
 /// Construct a Groebner basis from a graph, by first taking the transitive
@@ -166,6 +201,11 @@ pub struct GroebnerBuilder<C: ArkConfig, T: Monomial> {
     /// markers that bind the same protocol parameter under different
     /// `Ref` indices. Looked up by `find_ref` and populated by `add_tc`.
     pub ref_aliases: std::collections::HashMap<Ref, PRef>,
+    /// Field-sensitive polynomial bindings for record-producing operations.
+    /// Used by direct encodings such as `Op::Marginalize` so a later
+    /// `Op::Proj(record, field, typ)` can resolve `evaluations` separately
+    /// from `next_poly` even though both fields share the same record node.
+    pub record_fields: RecordFieldBindings<C, T>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> Default for GroebnerBuilder<C, T> {
@@ -183,6 +223,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             args: Set::new(),
             div_wit: Ctx::new(),
             ref_aliases: std::collections::HashMap::new(),
+            record_fields: std::collections::HashMap::new(),
         }
     }
 
@@ -295,6 +336,25 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             .iter()
             .map(|(k, (q, r))| (k.clone(), (f(q), f(r))))
             .collect();
+
+        self.record_fields = self
+            .record_fields
+            .iter()
+            .map(|((reference, field), (typ, polys))| {
+                let key_pref = PRef::from_ref(
+                    *reference,
+                    typ.clone(),
+                    Qualifier::Private,
+                    Distribution::Nonuniform,
+                );
+                let new_ref = f(&key_pref).reference;
+                let new_polys = polys
+                    .iter()
+                    .map(|p| p.clone().flat_map_vars(&|v| SparsePolynomial::var(&f(&v))))
+                    .collect();
+                ((new_ref, field.clone()), (typ.clone(), new_polys))
+            })
+            .collect();
     }
 
     /// Merge another builder's basis, polynomial definitions, and non-polynomial
@@ -321,6 +381,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             if !self.div_wit.contains(k) {
                 self.div_wit.insert(k, v);
             }
+        }
+        for (k, v) in other.record_fields.iter() {
+            self.record_fields.insert(k.clone(), v.clone());
         }
     }
 
@@ -513,7 +576,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    fn to_poly_value(&mut self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn to_poly_value(&mut self, v: &Value<C>) -> PolyVec<C, T> {
         match v {
             Value::Scalar(s) => vec![SparsePolynomial::lit(s)],
             Value::Bool(b) => vec![SparsePolynomial::lit(&if *b {
@@ -559,7 +622,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         op: BinOp,
         elems: Vec<SparsePolynomial<C::F, T>>,
-    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+    ) -> Option<PolyVec<C, T>> {
         match op {
             BinOp::Add => {
                 let mut acc = SparsePolynomial::<C::F, T>::zero();
@@ -590,11 +653,357 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    fn literal_index(op: &GOp<C>) -> Option<usize> {
+        match op {
+            Op::Value(Value::Index(i)) => Some(*i),
+            _ => None,
+        }
+    }
+
+    fn marginalize_config_field<'a>(
+        fields: &'a Ctx<String, HOp<C>>,
+        name: &str,
+    ) -> Result<&'a HOp<C>, MarginalizeEncodeError> {
+        fields
+            .get(&name.to_string())
+            .ok_or(MarginalizeEncodeError::InvalidConfig)
+    }
+
+    fn marginalize_literal_config_index(
+        fields: &Ctx<String, HOp<C>>,
+        name: &str,
+    ) -> Result<usize, MarginalizeEncodeError> {
+        Self::literal_index(Self::marginalize_config_field(fields, name)?.get())
+            .ok_or(MarginalizeEncodeError::InvalidConfig)
+    }
+
+    fn pow_poly(mut p: SparsePolynomial<C::F, T>, exp: usize) -> SparsePolynomial<C::F, T> {
+        if exp == 0 {
+            SparsePolynomial::lit(&C::F::one())
+        } else {
+            p.pow(exp);
+            p
+        }
+    }
+
+    fn validate_marginalize_round(
+        num_variables: usize,
+        round: usize,
+    ) -> Result<(), MarginalizeEncodeError> {
+        if num_variables == 0 {
+            return Err(MarginalizeEncodeError::ZeroNumVariables);
+        }
+        if round > num_variables {
+            return Err(MarginalizeEncodeError::RoundOutOfRange {
+                round,
+                num_variables,
+            });
+        }
+        Ok(())
+    }
+
+    fn marginalize_current_variable_count(num_variables: usize, round: usize) -> usize {
+        if round == 0 {
+            num_variables
+        } else {
+            num_variables - (round - 1)
+        }
+    }
+
+    fn marginalize_next_variable_count(current_variables: usize, round: usize) -> usize {
+        if round == 0 {
+            current_variables
+        } else {
+            current_variables - 1
+        }
+    }
+
+    fn prefixed_bit(bit: usize, tail: &[usize]) -> Vec<usize> {
+        let mut bits = Vec::with_capacity(tail.len() + 1);
+        bits.push(bit);
+        bits.extend(tail.iter().copied());
+        bits
+    }
+
+    fn project_field_to_polys(
+        &mut self,
+        record: &GOp<C>,
+        field: &str,
+        typ: &ATyp,
+    ) -> Option<PolyVec<C, T>> {
+        match record {
+            Op::Ref(r, _) => self
+                .record_fields
+                .get(&(*r, field.to_string()))
+                .and_then(|(field_typ, polys)| (field_typ == typ).then(|| polys.clone())),
+            Op::Record(fields) => fields
+                .get(&field.to_string())
+                .map(|op| self.to_poly(op.get())),
+            _ => None,
+        }
+    }
+
+    fn bind_record_field(&mut self, record_ref: Ref, field: &str, typ: ATyp, polys: PolyVec<C, T>) {
+        self.record_fields
+            .insert((record_ref, field.to_string()), (typ, polys));
+    }
+
+    fn positive_round_challenge_poly(
+        &mut self,
+        challenge: &GOp<C>,
+    ) -> Result<SparsePolynomial<C::F, T>, MarginalizeEncodeError> {
+        let mut polys = self.to_poly(challenge);
+        match polys.pop() {
+            Some(poly) if polys.is_empty() => Ok(poly),
+            _ => Err(MarginalizeEncodeError::InvalidConfig),
+        }
+    }
+
+    fn marginalize_to_polys(
+        &mut self,
+        poly: &GOp<C>,
+        challenge: &GOp<C>,
+        round: usize,
+        num_variables: usize,
+        max_degree: usize,
+    ) -> Result<MarginalizeEncoding<C, T>, MarginalizeEncodeError> {
+        let p_typ = poly.typ();
+        match p_typ {
+            ATyp::VPoly(n, d) => {
+                let expected_current_vars =
+                    Self::marginalize_current_variable_count(num_variables, round);
+                if n != expected_current_vars || max_degree < d {
+                    return Err(MarginalizeEncodeError::InvalidConfig);
+                }
+                let p_polys = self.to_poly(poly);
+                let p_idx = multi_indices(n, d);
+                let q_n = Self::marginalize_next_variable_count(n, round);
+                let q_idx = multi_indices(q_n, max_degree);
+                let challenge_poly = if round == 0 {
+                    None
+                } else {
+                    Some(self.positive_round_challenge_poly(challenge)?)
+                };
+
+                let mut q_polys = vec![SparsePolynomial::<C::F, T>::zero(); q_idx.len()];
+                for (iq, lambda) in q_idx.iter().enumerate() {
+                    if round == 0 {
+                        if lambda.iter().sum::<usize>() <= d
+                            && let Some(ip) = p_idx.iter().position(|alpha| alpha == lambda)
+                        {
+                            q_polys[iq] = p_polys[ip].clone();
+                        }
+                    } else {
+                        let r = challenge_poly.as_ref().expect("round > 0 has challenge");
+                        let lambda_sum: usize = lambda.iter().sum();
+                        if lambda_sum > d {
+                            continue;
+                        }
+                        for e in 0..=d - lambda_sum {
+                            let mut alpha = Vec::with_capacity(n);
+                            alpha.push(e);
+                            alpha.extend(lambda.iter().copied());
+                            if let Some(ip) = p_idx.iter().position(|candidate| candidate == &alpha)
+                            {
+                                let term = &p_polys[ip] * &Self::pow_poly(r.clone(), e);
+                                q_polys[iq] = &q_polys[iq] + &term;
+                            }
+                        }
+                    }
+                }
+                let evaluations = Self::vpoly_marginal_evaluations(&q_polys, q_n, max_degree);
+                Ok((evaluations, Some(q_polys)))
+            }
+            ATyp::Uni(d) => {
+                let expected_current_vars =
+                    Self::marginalize_current_variable_count(num_variables, round);
+                if expected_current_vars != 1 || max_degree < d {
+                    return Err(MarginalizeEncodeError::InvalidConfig);
+                }
+                let p_polys = self.to_poly(poly);
+                let eval_uni = |x: SparsePolynomial<C::F, T>| {
+                    let mut acc = SparsePolynomial::<C::F, T>::zero();
+                    let mut x_pow = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                    for coeff in p_polys.iter().take(d + 1) {
+                        acc = &acc + &(coeff * &x_pow);
+                        x_pow = &x_pow * &x;
+                    }
+                    acc
+                };
+                if round == 0 {
+                    let mut evaluations = Vec::with_capacity(max_degree + 1);
+                    for t_idx in 0..=max_degree {
+                        let t = C::FOps::from_usize(t_idx);
+                        evaluations.push(eval_uni(SparsePolynomial::lit(&t)));
+                    }
+                    let mut next_poly = p_polys;
+                    next_poly.resize(max_degree + 1, SparsePolynomial::<C::F, T>::zero());
+                    Ok((evaluations, Some(next_poly)))
+                } else {
+                    let challenge_poly = self.positive_round_challenge_poly(challenge)?;
+                    let constant = eval_uni(challenge_poly);
+                    let evaluations = vec![constant.clone(); max_degree + 1];
+                    Ok((evaluations, Some(vec![constant])))
+                }
+            }
+            ATyp::Mle(n) => {
+                let expected_current_vars =
+                    Self::marginalize_current_variable_count(num_variables, round);
+                if n != expected_current_vars {
+                    return Err(MarginalizeEncodeError::InvalidConfig);
+                }
+                let p_polys = self.to_poly(poly);
+                let q_n = Self::marginalize_next_variable_count(n, round);
+                let q_b = hypercube(q_n);
+                let challenge_poly = if round == 0 {
+                    None
+                } else {
+                    Some(self.positive_round_challenge_poly(challenge)?)
+                };
+                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let mut q_polys = Vec::with_capacity(q_b.len());
+                for tail in q_b.iter() {
+                    if round == 0 {
+                        let ip = index_of(&ATyp::Mle(n), tail);
+                        q_polys.push(p_polys[ip].clone());
+                    } else {
+                        let r = challenge_poly.as_ref().expect("round > 0 has challenge");
+                        let b0 = Self::prefixed_bit(0, tail);
+                        let b1 = Self::prefixed_bit(1, tail);
+                        let v0 = &p_polys[index_of(&ATyp::Mle(n), &b0)];
+                        let v1 = &p_polys[index_of(&ATyp::Mle(n), &b1)];
+                        q_polys.push(&(&one - r) * v0 + (r * v1));
+                    }
+                }
+                let evaluations = Self::mle_marginal_evaluations(&q_polys, q_n, max_degree);
+                Ok((evaluations, Some(q_polys)))
+            }
+            _ => Err(MarginalizeEncodeError::InvalidConfig),
+        }
+    }
+
+    fn vpoly_marginal_evaluations(
+        q_polys: &[SparsePolynomial<C::F, T>],
+        q_n: usize,
+        max_degree: usize,
+    ) -> PolyVec<C, T> {
+        if q_n == 0 {
+            return vec![q_polys[0].clone(); max_degree + 1];
+        }
+        let q_idx = multi_indices(q_n, max_degree);
+        (0..=max_degree)
+            .map(|t_idx| {
+                let t = C::FOps::from_usize(t_idx);
+                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                for (i, alpha) in q_idx.iter().enumerate() {
+                    let mut t_pow = C::F::one();
+                    for _ in 0..alpha[0] {
+                        t_pow *= t;
+                    }
+                    let support = alpha[1..].iter().filter(|&&e| e > 0).count();
+                    let bool_factor = 1usize << (q_n.saturating_sub(1) - support);
+                    let scalar = C::FOps::from_usize(bool_factor) * t_pow;
+                    let term = &q_polys[i] * &SparsePolynomial::lit(&scalar);
+                    acc = &acc + &term;
+                }
+                acc
+            })
+            .collect()
+    }
+
+    fn mle_marginal_evaluations(
+        q_polys: &[SparsePolynomial<C::F, T>],
+        q_n: usize,
+        max_degree: usize,
+    ) -> PolyVec<C, T> {
+        if q_n == 0 {
+            return vec![q_polys[0].clone(); max_degree + 1];
+        }
+        let suffixes = hypercube(q_n - 1);
+        let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+        (0..=max_degree)
+            .map(|t_idx| {
+                let t = SparsePolynomial::lit(&C::FOps::from_usize(t_idx));
+                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                for suffix in suffixes.iter() {
+                    let b0 = Self::prefixed_bit(0, suffix);
+                    let b1 = Self::prefixed_bit(1, suffix);
+                    let q0 = &q_polys[index_of(&ATyp::Mle(q_n), &b0)];
+                    let q1 = &q_polys[index_of(&ATyp::Mle(q_n), &b1)];
+                    let term = &(&one - &t) * q0 + (&t * q1);
+                    acc = &acc + &term;
+                }
+                acc
+            })
+            .collect()
+    }
+
+    fn encode_marginalize(
+        &mut self,
+        pr: &PRef,
+        cfg: &HOp<C>,
+    ) -> Result<(), MarginalizeEncodeError> {
+        let Op::Record(fields) = cfg.get() else {
+            return Err(MarginalizeEncodeError::InvalidConfig);
+        };
+        let poly = Self::marginalize_config_field(fields, MARGINALIZE_POLY_FIELD)?;
+        let challenge = Self::marginalize_config_field(fields, MARGINALIZE_CHALLENGE_FIELD)?;
+        let round = Self::marginalize_literal_config_index(fields, MARGINALIZE_ROUND_FIELD)?;
+        let num_variables =
+            Self::marginalize_literal_config_index(fields, MARGINALIZE_NUM_VARIABLES_FIELD)?;
+        let max_degree =
+            Self::marginalize_literal_config_index(fields, MARGINALIZE_MAX_DEGREE_FIELD)?;
+        Self::validate_marginalize_round(num_variables, round)?;
+        let ATyp::Record(out_fields) = &pr.typ else {
+            return Err(MarginalizeEncodeError::InvalidConfig);
+        };
+        let eval_typ = out_fields
+            .get(&MARGINALIZE_EVALUATIONS_FIELD.to_string())
+            .ok_or(MarginalizeEncodeError::InvalidConfig)?
+            .clone();
+        let next_typ = out_fields
+            .get(&MARGINALIZE_NEXT_POLY_FIELD.to_string())
+            .cloned();
+        let (evaluations, next_poly) = self.marginalize_to_polys(
+            poly.get(),
+            challenge.get(),
+            round,
+            num_variables,
+            max_degree,
+        )?;
+        if evaluations.len() != num_coeffs(&eval_typ) {
+            return Err(MarginalizeEncodeError::InvalidConfig);
+        }
+        let next_binding = match (next_typ, next_poly) {
+            (Some(next_typ), Some(next_poly)) if next_poly.len() == num_coeffs(&next_typ) => {
+                Some((next_typ, next_poly))
+            }
+            (Some(_), _) => return Err(MarginalizeEncodeError::InvalidConfig),
+            (None, _) => None,
+        };
+        self.bind_record_field(
+            pr.reference,
+            MARGINALIZE_EVALUATIONS_FIELD,
+            eval_typ,
+            evaluations,
+        );
+        if let Some((next_typ, next_poly)) = next_binding {
+            self.bind_record_field(
+                pr.reference,
+                MARGINALIZE_NEXT_POLY_FIELD,
+                next_typ,
+                next_poly,
+            );
+        }
+        self.np.insert(pr, &Op::Marginalize(cfg.clone()));
+        Ok(())
+    }
+
     /// Shared helper for `Op::Evaluate(p, xs)` — returns `Some(polys)` when the
     /// (p.typ(), |xs|) dispatch is supported, `None` otherwise. Used by both
     /// `to_poly` (when Eval appears nested inside another op) and `add_op`
     /// (when Eval is the top-level op being bound to a PRef).
-    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Option<PolyVec<C, T>> {
         let p_typ = p.typ();
         let xs_polys = self.to_poly(xs);
         let k = xs_polys.len();
@@ -706,7 +1115,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// This function converts an operation to a vector of sparse polynomial expressions,
     /// exploding vectors where possible.
     #[allow(clippy::wrong_self_convention)]
-    fn to_poly(&mut self, op: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn to_poly(&mut self, op: &GOp<C>) -> PolyVec<C, T> {
         match op {
             Op::Ref(v, typ) => {
                 let pf = self.find_ref(v);
@@ -793,6 +1202,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.reduce_unfold(*rop, elems).unwrap_or_default()
             }
             Op::Evaluate(p, xs) => self.eval_to_poly(p, xs).unwrap_or_default(),
+            Op::Proj(record, field, typ) => self
+                .project_field_to_polys(record.get(), field, typ)
+                .unwrap_or_default(),
             // Phase 12: `Op::Pair(a, b, _)` — bilinear pairing.
             //
             // In exponent space, if we model every group element as
@@ -922,6 +1334,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let op_for_div = op.clone(); // needed for Div arm which references the whole op
         match op {
             Op::Ref(r, typ) => {
+                if matches!(typ, ATyp::Record(_)) {
+                    let aliased_fields = self
+                        .record_fields
+                        .iter()
+                        .filter(|((record_ref, _), _)| *record_ref == r)
+                        .map(|((_, field), (field_typ, polys))| {
+                            (field.clone(), field_typ.clone(), polys.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    for (field, field_typ, polys) in aliased_fields {
+                        self.bind_record_field(pr.reference, &field, field_typ, polys);
+                    }
+                }
+
                 let ref_poly = self.to_poly(&Op::Ref(r, typ));
                 for (i, p) in ref_poly.into_iter().enumerate() {
                     let pf = pr.clone().with_index(i);
@@ -954,95 +1380,94 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let a_typ = a.typ();
                 let b_typ = b.typ();
                 let is_poly = |t: &ATyp| matches!(t, ATyp::VPoly(_, _) | ATyp::Mle(_));
-                let result: Option<Vec<SparsePolynomial<C::F, T>>> =
-                    if is_poly(&a_typ) || is_poly(&b_typ) {
-                        match (&a_typ, &b_typ, &pr.typ) {
-                            // VPoly × VPoly of same num_vars → convolution into the
-                            // result type's multi-index basis. Terms whose total
-                            // degree exceeds the result's max_degree are dropped
-                            // (they must be zero for the expression to be well-typed).
-                            (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr))
-                                if na == nb && na == nr =>
-                            {
-                                let a_polys = self.to_poly(a);
-                                let b_polys = self.to_poly(b);
-                                let a_idx = multi_indices(*na, *ma);
-                                let b_idx = multi_indices(*nb, *mb);
-                                let r_idx = multi_indices(*nr, *mr);
-                                let mut out: Vec<SparsePolynomial<C::F, T>> =
-                                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
-                                for (ia, ka) in a_idx.iter().enumerate() {
-                                    for (ib, kb) in b_idx.iter().enumerate() {
-                                        let k: Vec<usize> =
-                                            ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
-                                        if k.iter().sum::<usize>() > *mr {
+                let result: Option<PolyVec<C, T>> = if is_poly(&a_typ) || is_poly(&b_typ) {
+                    match (&a_typ, &b_typ, &pr.typ) {
+                        // VPoly × VPoly of same num_vars → convolution into the
+                        // result type's multi-index basis. Terms whose total
+                        // degree exceeds the result's max_degree are dropped
+                        // (they must be zero for the expression to be well-typed).
+                        (ATyp::VPoly(na, ma), ATyp::VPoly(nb, mb), ATyp::VPoly(nr, mr))
+                            if na == nb && na == nr =>
+                        {
+                            let a_polys = self.to_poly(a);
+                            let b_polys = self.to_poly(b);
+                            let a_idx = multi_indices(*na, *ma);
+                            let b_idx = multi_indices(*nb, *mb);
+                            let r_idx = multi_indices(*nr, *mr);
+                            let mut out: Vec<SparsePolynomial<C::F, T>> =
+                                vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                            for (ia, ka) in a_idx.iter().enumerate() {
+                                for (ib, kb) in b_idx.iter().enumerate() {
+                                    let k: Vec<usize> =
+                                        ka.iter().zip(kb.iter()).map(|(x, y)| x + y).collect();
+                                    if k.iter().sum::<usize>() > *mr {
+                                        continue;
+                                    }
+                                    // Find slot; must exist for total degree ≤ mr.
+                                    let ir = r_idx
+                                        .iter()
+                                        .position(|rk| rk == &k)
+                                        .expect("multi-index missing in result");
+                                    out[ir] = &out[ir] + &(&a_polys[ia] * &b_polys[ib]);
+                                }
+                            }
+                            Some(out)
+                        }
+                        // Mle(n) × Mle(n) → VPoly(n, 2). Basis change using the
+                        // per-variable coefficient table of eq(b_i, x) · eq(b'_i, x):
+                        //   (0,0): 1 - 2x + x²     → [1, -2, 1]
+                        //   (0,1): x - x²          → [0,  1,-1]
+                        //   (1,0): x - x²          → [0,  1,-1]
+                        //   (1,1): x²              → [0,  0, 1]
+                        (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
+                            if na == nb && na == nr && *mr >= 2 =>
+                        {
+                            let n = *na;
+                            let a_polys = self.to_poly(a);
+                            let b_polys = self.to_poly(b);
+                            let all_b = hypercube(n);
+                            let r_idx = multi_indices(n, *mr);
+                            // Per-variable coefficient table: coeff[ba][bb][k] for k ∈ {0,1,2}.
+                            let coeff: [[[i64; 3]; 2]; 2] =
+                                [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
+                            let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                                if v >= 0 {
+                                    SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                                } else {
+                                    -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                                }
+                            };
+                            let mut out: Vec<SparsePolynomial<C::F, T>> =
+                                vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                            for (ia, ba) in all_b.iter().enumerate() {
+                                for (ib, bb) in all_b.iter().enumerate() {
+                                    let uv = &a_polys[ia] * &b_polys[ib];
+                                    // Each (ba, bb) contributes to every result multi-index
+                                    // κ with the scalar Π_i coeff[ba_i][bb_i][κ_i].
+                                    for (ir, k) in r_idx.iter().enumerate() {
+                                        let mut scalar: i64 = 1;
+                                        for i in 0..n {
+                                            let c = coeff[ba[i]][bb[i]][k[i]];
+                                            if c == 0 {
+                                                scalar = 0;
+                                                break;
+                                            }
+                                            scalar *= c;
+                                        }
+                                        if scalar == 0 {
                                             continue;
                                         }
-                                        // Find slot; must exist for total degree ≤ mr.
-                                        let ir = r_idx
-                                            .iter()
-                                            .position(|rk| rk == &k)
-                                            .expect("multi-index missing in result");
-                                        out[ir] = &out[ir] + &(&a_polys[ia] * &b_polys[ib]);
+                                        out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
                                     }
                                 }
-                                Some(out)
                             }
-                            // Mle(n) × Mle(n) → VPoly(n, 2). Basis change using the
-                            // per-variable coefficient table of eq(b_i, x) · eq(b'_i, x):
-                            //   (0,0): 1 - 2x + x²     → [1, -2, 1]
-                            //   (0,1): x - x²          → [0,  1,-1]
-                            //   (1,0): x - x²          → [0,  1,-1]
-                            //   (1,1): x²              → [0,  0, 1]
-                            (ATyp::Mle(na), ATyp::Mle(nb), ATyp::VPoly(nr, mr))
-                                if na == nb && na == nr && *mr >= 2 =>
-                            {
-                                let n = *na;
-                                let a_polys = self.to_poly(a);
-                                let b_polys = self.to_poly(b);
-                                let all_b = hypercube(n);
-                                let r_idx = multi_indices(n, *mr);
-                                // Per-variable coefficient table: coeff[ba][bb][k] for k ∈ {0,1,2}.
-                                let coeff: [[[i64; 3]; 2]; 2] =
-                                    [[[1, -2, 1], [0, 1, -1]], [[0, 1, -1], [0, 0, 1]]];
-                                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
-                                    if v >= 0 {
-                                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
-                                    } else {
-                                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
-                                    }
-                                };
-                                let mut out: Vec<SparsePolynomial<C::F, T>> =
-                                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
-                                for (ia, ba) in all_b.iter().enumerate() {
-                                    for (ib, bb) in all_b.iter().enumerate() {
-                                        let uv = &a_polys[ia] * &b_polys[ib];
-                                        // Each (ba, bb) contributes to every result multi-index
-                                        // κ with the scalar Π_i coeff[ba_i][bb_i][κ_i].
-                                        for (ir, k) in r_idx.iter().enumerate() {
-                                            let mut scalar: i64 = 1;
-                                            for i in 0..n {
-                                                let c = coeff[ba[i]][bb[i]][k[i]];
-                                                if c == 0 {
-                                                    scalar = 0;
-                                                    break;
-                                                }
-                                                scalar *= c;
-                                            }
-                                            if scalar == 0 {
-                                                continue;
-                                            }
-                                            out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
-                                        }
-                                    }
-                                }
-                                Some(out)
-                            }
-                            _ => None,
+                            Some(out)
                         }
-                    } else {
-                        None
-                    };
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 match result {
                     Some(polys) => {
                         for (i, poly) in polys.into_iter().enumerate() {
@@ -1140,6 +1565,26 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Random(t, b) => {
                 let op = Op::Random(t, b);
                 self.np.insert(&pr, &op);
+            }
+            Op::Marginalize(ref cfg) => {
+                if let Err(err) = self.encode_marginalize(&pr, cfg) {
+                    panic!("Op::Marginalize: {err}");
+                }
+            }
+            Op::Proj(ref record, ref field, ref typ) => {
+                match self.project_field_to_polys(record.get(), field, typ) {
+                    Some(polys) => {
+                        for (i, poly) in polys.into_iter().enumerate() {
+                            let pf = pr.clone().with_index(i);
+                            self.pl.insert(&pf, &poly);
+                            self.basis.push(poly - SparsePolynomial::var(&pf));
+                        }
+                    }
+                    None => {
+                        self.np
+                            .insert(&pr, &Op::Proj(record.clone(), field.clone(), typ.clone()));
+                    }
+                }
             }
             // Op::Interpolate (preserved from main): treat as opaque.
             Op::Interpolate(points, evals) => {
@@ -1297,7 +1742,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // Currently it supports Scalar / Bool / Index / Vec and
                 // the Vec* flavours; everything else (G1/G2/GT/Poly/Record)
                 // falls through to np.
-                let polys_opt: Option<Vec<SparsePolynomial<C::F, T>>> = match v {
+                let polys_opt: Option<PolyVec<C, T>> = match v {
                     Value::Scalar(_)
                     | Value::Bool(_)
                     | Value::Index(_)
@@ -1990,6 +2435,106 @@ mod tests {
         pref
     }
 
+    fn scalar_slot(pref: &crate::PRef, i: usize) -> crate::PRef {
+        let mut slot = pref.with_index(i);
+        slot.typ = ATyp::scalar();
+        slot
+    }
+
+    fn sp_var(pref: &crate::PRef) -> SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm> {
+        SparsePolynomial::var(pref)
+    }
+
+    fn sp_lit(n: usize) -> SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm> {
+        SparsePolynomial::lit(&<ArkBls12_381 as ArkConfig>::FOps::from_usize(n))
+    }
+
+    fn ref_op(node: usize, typ: ATyp) -> GOp<ArkBls12_381> {
+        use crate::Ref;
+        use petgraph::graph::NodeIndex;
+
+        Op::Ref(Ref::new(NodeIndex::new(node)), typ)
+    }
+
+    fn index_value(index: usize) -> GOp<ArkBls12_381> {
+        Op::Value(Value::Index(index))
+    }
+
+    fn marginalize_cfg_from_ops(
+        poly: GOp<ArkBls12_381>,
+        challenge: GOp<ArkBls12_381>,
+        round: GOp<ArkBls12_381>,
+        num_variables: GOp<ArkBls12_381>,
+        max_degree: GOp<ArkBls12_381>,
+    ) -> GOp<ArkBls12_381> {
+        let mut fields = Ctx::new();
+        fields.insert(
+            &MARGINALIZE_POLY_FIELD.to_string(),
+            &mk::<ArkBls12_381>(poly),
+        );
+        fields.insert(
+            &MARGINALIZE_CHALLENGE_FIELD.to_string(),
+            &mk::<ArkBls12_381>(challenge),
+        );
+        fields.insert(
+            &MARGINALIZE_ROUND_FIELD.to_string(),
+            &mk::<ArkBls12_381>(round),
+        );
+        fields.insert(
+            &MARGINALIZE_NUM_VARIABLES_FIELD.to_string(),
+            &mk::<ArkBls12_381>(num_variables),
+        );
+        fields.insert(
+            &MARGINALIZE_MAX_DEGREE_FIELD.to_string(),
+            &mk::<ArkBls12_381>(max_degree),
+        );
+        Op::Record(fields)
+    }
+
+    fn marginalize_cfg(
+        poly: GOp<ArkBls12_381>,
+        challenge: GOp<ArkBls12_381>,
+        round: usize,
+        num_variables: usize,
+        max_degree: usize,
+    ) -> GOp<ArkBls12_381> {
+        marginalize_cfg_from_ops(
+            poly,
+            challenge,
+            index_value(round),
+            index_value(num_variables),
+            index_value(max_degree),
+        )
+    }
+
+    fn marginalize_output_record_typ_for_test(
+        evaluations_len: usize,
+        next_poly_typ: Option<ATyp>,
+    ) -> ATyp {
+        let mut out_fields = Ctx::new();
+        out_fields.insert(
+            &MARGINALIZE_EVALUATIONS_FIELD.to_string(),
+            &ATyp::vec_scalar(evaluations_len),
+        );
+        if let Some(next_poly_typ) = next_poly_typ {
+            out_fields.insert(&MARGINALIZE_NEXT_POLY_FIELD.to_string(), &next_poly_typ);
+        }
+        ATyp::Record(out_fields)
+    }
+
+    fn pref_with_typ_for_test(node: usize, typ: ATyp) -> crate::PRef {
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        crate::PRef::from_node(
+            NodeIndex::new(node),
+            typ,
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        )
+    }
+
     #[test]
     fn test_add_op_eval_univariate_batched() {
         use crate::{PRef, Ref};
@@ -2299,6 +2844,787 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_add_op_marginalize_vpoly_round0_projection_evaluations() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let projection_op = Op::Proj(
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+            "evaluations".to_string(),
+            ATyp::vec_scalar(2),
+        );
+        builder.add_op(projection_pref.clone(), projection_op);
+
+        // For slot order [a00, a01, a10], P(x,y)=a00+a01*y+a10*x.
+        // E_0 = P(0,0)+P(0,1) = 2*a00 + a01.
+        // E_1 = P(1,0)+P(1,1) = 2*a00 + a01 + 2*a10.
+        let a00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 0])));
+        let a01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 1])));
+        let a10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[1, 0])));
+
+        let expected0 = &sp_lit(2) * &a00 + a01.clone();
+        let expected1 = &sp_lit(2) * &a00 + a01 + (&sp_lit(2) * &a10);
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&expected0)
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&expected1)
+        );
+    }
+
+    #[test]
+    fn test_add_op_marginalize_vpoly_round1_projection_next_poly() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let pref_r = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            1,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vpoly(1, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let projection_op = Op::Proj(
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+            "next_poly".to_string(),
+            ATyp::vpoly(1, 1),
+        );
+        builder.add_op(projection_pref.clone(), projection_op);
+
+        let a00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 0])));
+        let a01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 1])));
+        let a10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[1, 0])));
+        let r = sp_var(&pref_r);
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&(a00 + (&a10 * &r)))
+        );
+        assert_eq!(builder.pl.get(&projection_pref.with_index(1)), Some(&a01));
+    }
+
+    #[test]
+    fn test_add_op_marginalize_mle_round0_projection_evaluations() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "evaluations".to_string(),
+                ATyp::vec_scalar(2),
+            ),
+        );
+
+        let v00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[0, 0])));
+        let v10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[1, 0])));
+        let v01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[0, 1])));
+        let v11 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[1, 1])));
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&(v00 + v01))
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&(v10 + v11))
+        );
+    }
+
+    #[test]
+    fn test_add_op_marginalize_uni_projection_evaluations() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::Uni(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            1,
+            2,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vec_scalar(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "evaluations".to_string(),
+                ATyp::vec_scalar(3),
+            ),
+        );
+
+        let a0 = sp_var(&scalar_slot(&pref_p, 0));
+        let a1 = sp_var(&scalar_slot(&pref_p, 1));
+        let a2 = sp_var(&scalar_slot(&pref_p, 2));
+
+        assert_eq!(builder.pl.get(&projection_pref.with_index(0)), Some(&a0));
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&(a0.clone() + a1.clone() + a2.clone()))
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(2)),
+            Some(&(a0 + (&sp_lit(2) * &a1) + (&sp_lit(4) * &a2)))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: round out of range")]
+    fn test_add_op_marginalize_vpoly_rejects_round_greater_than_num_variables() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+        let cfg = marginalize_cfg(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::scalar()),
+            4,
+            2,
+            1,
+        );
+        let op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+        builder.add_op(pref, op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: round out of range")]
+    fn test_add_op_marginalize_mle_rejects_round_greater_than_num_variables() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+        let cfg = marginalize_cfg(ref_op(0, ATyp::Mle(2)), ref_op(1, ATyp::scalar()), 4, 2, 1);
+        let op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::mle(1))),
+        );
+        builder.add_op(pref, op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_dynamic_round_panics() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+        let dynamic_fin = ATyp::fin(lang::typ::CRange::new(0, 3));
+        let _pref_round = register_ref(&mut builder, 4, dynamic_fin.clone());
+
+        let cfg = marginalize_cfg_from_ops(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::scalar()),
+            ref_op(4, dynamic_fin),
+            index_value(2),
+            index_value(1),
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+
+        builder.add_op(marginalize_pref, marginalize_op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_vpoly_round1_rejects_vector_challenge() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::vec_scalar(2));
+        let cfg = marginalize_cfg(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::vec_scalar(2)),
+            1,
+            2,
+            1,
+        );
+        let op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+        builder.add_op(pref, op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_uni_round1_rejects_vector_challenge() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::Uni(1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::vec_scalar(2));
+        let cfg = marginalize_cfg(
+            ref_op(0, ATyp::Uni(1)),
+            ref_op(1, ATyp::vec_scalar(2)),
+            1,
+            1,
+            1,
+        );
+        let op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+        builder.add_op(pref, op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_mle_round1_rejects_vector_challenge() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::vec_scalar(2));
+        let cfg = marginalize_cfg(
+            ref_op(0, ATyp::Mle(2)),
+            ref_op(1, ATyp::vec_scalar(2)),
+            1,
+            2,
+            1,
+        );
+        let op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+        builder.add_op(pref, op);
+    }
+
+    #[test]
+    fn test_add_op_marginalize_vpoly_round1_projection_evaluations() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let pref_r = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            1,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "evaluations".to_string(),
+                ATyp::vec_scalar(2),
+            ),
+        );
+
+        let a00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 0])));
+        let a01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 1])));
+        let a10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[1, 0])));
+        let r = sp_var(&pref_r);
+
+        let expected0 = a00.clone() + (&a10 * &r);
+        let expected1 = a00 + (&a10 * &r) + a01;
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&expected0)
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&expected1)
+        );
+    }
+
+    #[test]
+    fn test_add_op_marginalize_vpoly_round0_projection_next_poly() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vpoly(2, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "next_poly".to_string(),
+                ATyp::vpoly(2, 1),
+            ),
+        );
+
+        let a00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 0])));
+        let a01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[0, 1])));
+        let a10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::VPoly(2, 1), &[1, 0])));
+
+        assert_eq!(builder.pl.get(&projection_pref.with_index(0)), Some(&a00));
+        assert_eq!(builder.pl.get(&projection_pref.with_index(1)), Some(&a01));
+        assert_eq!(builder.pl.get(&projection_pref.with_index(2)), Some(&a10));
+    }
+
+    #[test]
+    fn test_add_op_marginalize_mle_round1_projection_evaluations() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let pref_r = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            1,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "evaluations".to_string(),
+                ATyp::vec_scalar(2),
+            ),
+        );
+
+        let v00 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[0, 0])));
+        let v10 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[1, 0])));
+        let v01 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[0, 1])));
+        let v11 = sp_var(&scalar_slot(&pref_p, index_of(&ATyp::Mle(2), &[1, 1])));
+        let r = sp_var(&pref_r);
+        let one = sp_lit(1);
+
+        let expected0 = &(&one - &r) * &v00 + (&r * &v10);
+        let expected1 = &(&one - &r) * &v01 + (&r * &v11);
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&expected0)
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&expected1)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_dynamic_num_variables_panics() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+        let dynamic_fin = ATyp::fin(lang::typ::CRange::new(0, 3));
+        let _pref_num_variables = register_ref(&mut builder, 4, dynamic_fin.clone());
+
+        let cfg = marginalize_cfg_from_ops(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::scalar()),
+            index_value(0),
+            ref_op(4, dynamic_fin),
+            index_value(1),
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+
+        builder.add_op(marginalize_pref, marginalize_op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_dynamic_max_degree_panics() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+        let dynamic_fin = ATyp::fin(lang::typ::CRange::new(0, 3));
+        let _pref_max_degree = register_ref(&mut builder, 4, dynamic_fin.clone());
+
+        let cfg = marginalize_cfg_from_ops(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::scalar()),
+            index_value(0),
+            index_value(2),
+            ref_op(4, dynamic_fin),
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+
+        builder.add_op(marginalize_pref, marginalize_op);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Marginalize: invalid or unsupported marginalize config")]
+    fn test_add_op_marginalize_invalid_current_variable_count_panics() {
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let _pref_p = register_ref(&mut builder, 0, ATyp::VPoly(2, 1));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            ref_op(0, ATyp::VPoly(2, 1)),
+            ref_op(1, ATyp::scalar()),
+            1,
+            1,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_pref = pref_with_typ_for_test(
+            2,
+            marginalize_output_record_typ_for_test(2, Some(ATyp::vpoly(1, 1))),
+        );
+
+        builder.add_op(marginalize_pref, marginalize_op);
+    }
+
+    #[test]
+    fn test_add_op_marginalize_mle_round0_projection_next_poly() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::Mle(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            2,
+            1,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "next_poly".to_string(),
+                ATyp::mle(2),
+            ),
+        );
+
+        for point in [[0, 0], [1, 0], [0, 1], [1, 1]] {
+            let i = index_of(&ATyp::Mle(2), &point);
+            assert_eq!(
+                builder.pl.get(&projection_pref.with_index(i)),
+                Some(&sp_var(&scalar_slot(&pref_p, i)))
+            );
+        }
+    }
+
+    #[test]
+    fn test_source_logged_marginalize_mle_next_poly_projection_resolves() {
+        use crate::{Node, PRef, UDags};
+        use lang::ast::UModule;
+        use lang::typ::{Distribution, Qualifier};
+        use share::Ctx;
+
+        let src = r#"
+            proto p<F: Field>(public r: F) where true {
+                let m = mle([i for i in 0..4]);
+                out <- marginalize<0, 2, 1>(m, r);
+                let np = out.next_poly;
+                verify(true)
+            }
+        "#;
+        let module = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = UDags::<ArkBls12_381>::from_module(module).unwrap();
+        let dag = &gs[0];
+        let projection_nodes = dag
+            .node_indices()
+            .filter(|&idx| {
+                matches!(
+                    &dag[idx],
+                    Node::Op(op, _) | Node::Transcr(op, _)
+                        if matches!(&**op, Op::Proj(_, field, typ) if field == "next_poly" && typ == &ATyp::mle(2))
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(projection_nodes.len(), 1);
+
+        let dq = dag.map_annotations(&|_op, _ann| (Qualifier::Private, Distribution::default()));
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        builder.add_input(&dq);
+
+        let opaque_next_poly_projection = builder
+            .np
+            .iter()
+            .any(|(_, op)| matches!(op, Op::Proj(_, field, _) if field == "next_poly"));
+        assert!(
+            !opaque_next_poly_projection,
+            "logged next_poly projection should resolve through record_fields, not remain opaque"
+        );
+
+        let projection_pref = PRef::from_ref(
+            Ref(projection_nodes[0]),
+            ATyp::mle(2),
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        for i in 0..ATyp::mle(2).size() {
+            assert!(
+                builder.pl.contains(&projection_pref.with_index(i)),
+                "projected next_poly MLE slot {i} missing from Groebner polynomial context"
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_op_marginalize_uni_round0_projection_next_poly() {
+        use crate::{PRef, Ref};
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_p = register_ref(&mut builder, 0, ATyp::Uni(2));
+        let _pref_challenge = register_ref(&mut builder, 1, ATyp::scalar());
+
+        let cfg = marginalize_cfg(
+            Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
+            Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar()),
+            0,
+            1,
+            2,
+        );
+        let marginalize_op = Op::Marginalize(mk::<ArkBls12_381>(cfg));
+        let marginalize_typ = marginalize_op.typ();
+        let marginalize_pref = PRef::from_node(
+            NodeIndex::new(2),
+            marginalize_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(marginalize_pref, marginalize_op);
+
+        let projection_pref = PRef::from_node(
+            NodeIndex::new(3),
+            ATyp::vpoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            projection_pref.clone(),
+            Op::Proj(
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(2)), marginalize_typ)),
+                "next_poly".to_string(),
+                ATyp::vpoly(1, 2),
+            ),
+        );
+
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(0)),
+            Some(&sp_var(&scalar_slot(&pref_p, 0)))
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(1)),
+            Some(&sp_var(&scalar_slot(&pref_p, 1)))
+        );
+        assert_eq!(
+            builder.pl.get(&projection_pref.with_index(2)),
+            Some(&sp_var(&scalar_slot(&pref_p, 2)))
+        );
     }
 
     #[test]

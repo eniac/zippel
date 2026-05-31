@@ -307,6 +307,38 @@ impl<C: ArkConfig, A> Dag<C, A> {
         Ref(node)
     }
 
+    fn record_field_typ(record_typ: &ATyp, field: &str) -> Option<ATyp> {
+        match record_typ {
+            ATyp::Record(fields) => fields.get(&field.to_string()).cloned(),
+            _ => None,
+        }
+    }
+
+    fn actual_record_field_typ_for_ref(&self, r: Ref, field: &str) -> Option<ATyp> {
+        let mut visited = HashSet::new();
+        self.actual_record_field_typ_for_ref_inner(r, field, &mut visited)
+    }
+
+    fn actual_record_field_typ_for_ref_inner(
+        &self,
+        r: Ref,
+        field: &str,
+        visited: &mut HashSet<NodeIndex>,
+    ) -> Option<ATyp> {
+        let node = r.node();
+        if !visited.insert(node) || self[node].is_arg() {
+            return None;
+        }
+
+        let op = self[node].op()?;
+        match op.get() {
+            Op::Ref(inner, cached_typ) => self
+                .actual_record_field_typ_for_ref_inner(*inner, field, visited)
+                .or_else(|| Self::record_field_typ(cached_typ, field)),
+            _ => Self::record_field_typ(&op.typ(), field),
+        }
+    }
+
     pub fn node_indices(&self) -> NodeIndices {
         self.graph.node_indices()
     }
@@ -1497,7 +1529,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(
                         nmle,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                        self[nmle].op().map(|op| op.typ()).ok_or_else(|| {
                             TypeError::next(
                                 TypeError::exp(kctx, &vctx, &exp),
                                 TypeError::ark(kctx, &vctx, &exp, &typ),
@@ -1515,7 +1547,7 @@ impl<C: HasOpFactory> UDag<C> {
 
                     return Ok(GOp::underscore(
                         nmarg,
-                        ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                        self[nmarg].op().map(|op| op.typ()).ok_or_else(|| {
                             TypeError::next(
                                 TypeError::exp(kctx, &vctx, &exp),
                                 TypeError::ark(kctx, &vctx, &exp, &typ),
@@ -1974,25 +2006,32 @@ impl<C: HasOpFactory> UDag<C> {
                                                 })
                                                 .map(|op| (**op).clone())
                                         }
-                                        Op::Ref(r, _op_typ) => {
-                                            // Record produced by a node (e.g. marginalize); add Proj node
-                                            let field_typ_atyp =
-                                                ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
-                                                    || {
-                                                        GraphError::from(TypeError::ark(
-                                                            kctx,
-                                                            &vctx,
-                                                            &CExp::Var(id_clone.clone()),
-                                                            field_typ_ctyp,
-                                                        ))
-                                                    },
-                                                )?;
-                                            // If the record source is an Arg node we don't need
-                                            // to materialise a Proj node — the field is selected
-                                            // directly off the typed reference.
+                                        Op::Ref(r, op_typ) => {
+                                            let actual_record_field_typ = self
+                                                .actual_record_field_typ_for_ref(*r, &field_name);
+                                            let cached_record_field_typ =
+                                                Self::record_field_typ(op_typ, &field_name);
+                                            let field_typ_atyp = actual_record_field_typ
+                                                .or(cached_record_field_typ)
+                                                .or_else(|| ATyp::from_ctyp(field_typ_ctyp, kctx))
+                                                .ok_or_else(|| {
+                                                    GraphError::from(TypeError::ark(
+                                                        kctx,
+                                                        &vctx,
+                                                        &CExp::Var(id_clone.clone()),
+                                                        field_typ_ctyp,
+                                                    ))
+                                                })?;
+
+                                            // Arg nodes have no inspectable backend operation, so preserve the
+                                            // direct Ref fast path using cached/source-converted type information.
                                             if self[r.node()].is_arg() {
                                                 return Ok(Op::Ref(Ref(r.node()), field_typ_atyp));
                                             }
+
+                                            // Materialized projections prefer the actual producing node's backend
+                                            // field type, following graph Ref wrappers (including transcript refs),
+                                            // then fall back to cached Ref metadata and source CTyp conversion.
                                             let proj_node = self.add_node(Node::proj(
                                                 record_op,
                                                 &field_name,

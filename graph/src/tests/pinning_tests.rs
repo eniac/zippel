@@ -90,6 +90,18 @@ fn pub_t(name: &str, typ: ATyp) -> ArgSpec {
     )
 }
 
+fn projection_types_for_field(g: &UDag<B>, field_name: &str) -> Vec<ATyp> {
+    g.node_indices()
+        .filter_map(|idx| match &g[idx] {
+            Node::Op(op, _) | Node::Transcr(op, _) => match &**op {
+                backend::op::Op::Proj(_, field, typ) if field == field_name => Some(typ.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 // ============================================================================
 // Group 1: Declaration Types
 // ============================================================================
@@ -755,6 +767,48 @@ fn pin_mle() {
     expected.add_edges(DepType::Data, mle_node, var_a);
 
     assert!(gs[0] == expected);
+}
+
+/// Regression: source-level `marginalize(mle(evs)).next_poly` lowers the
+/// materialized projection with the backend marginalize op's precise MLE field
+/// type, not the source `CTyp::Poly` fallback (`ATyp::VPoly`).
+#[test]
+fn pin_marginalize_mle_next_poly_projection_type() {
+    let src = r#"
+        fn f<F: Field>(public r: F) -> Mle<F, 2> {
+            let m = mle([i for i in 0..4]);
+            let out = marginalize<0, 2, 1>(m, r);
+            out.next_poly
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    assert_eq!(
+        projection_types_for_field(&gs[0], "next_poly"),
+        vec![ATyp::mle(2)]
+    );
+}
+
+/// Regression: the same MLE `next_poly` projection must stay precisely typed
+/// when the marginalize output is logged with `<-`. Logged refs are transcript
+/// wrapper nodes (`Node::Transcr(Op::Ref(...))`), so projection lowering must
+/// resolve through the wrapper instead of trusting stale cached Ref metadata.
+#[test]
+fn pin_logged_marginalize_mle_next_poly_projection_type() {
+    let src = r#"
+        proto p<F: Field>(public r: F) where true {
+            let m = mle([i for i in 0..4]);
+            out <- marginalize<0, 2, 1>(m, r);
+            let np = out.next_poly;
+            verify(true)
+        }
+    "#;
+    let gs = parse_and_build(src);
+
+    assert_eq!(
+        projection_types_for_field(&gs[0], "next_poly"),
+        vec![ATyp::mle(2)]
+    );
 }
 
 // ============================================================================

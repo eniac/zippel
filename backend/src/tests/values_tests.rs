@@ -1,13 +1,58 @@
 use crate::config::ArkBls12_381;
-use crate::{ABase, ATyp, ArkConfig, PolyVariant, Value};
+use crate::values::marginalize;
+use crate::{ABase, ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use ark_bls12_381::Fr;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::Zero;
+use ark_poly::{
+    DenseMultilinearExtension, DenseUVPolynomial,
+    multivariate::{SparsePolynomial as MultiSparsePolynomial, SparseTerm, Term},
+    univariate::DensePolynomial,
+};
 use ark_std::test_rng;
 use lang::typ::CRange;
 use share::assert_deq;
 
 type TestConfig = ArkBls12_381;
+
+fn dense_mle_poly(num_vars: usize, evaluations: Vec<Fr>) -> VirtualPolynomial<Fr> {
+    let mle = DenseMultilinearExtension::from_evaluations_vec(num_vars, evaluations);
+    VirtualPolynomial::from_poly(PolyVariant::DenseMle(mle))
+}
+
+fn dense_uni_poly(coefficients: Vec<Fr>) -> VirtualPolynomial<Fr> {
+    VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+        DensePolynomial::from_coefficients_vec(coefficients),
+    ))
+}
+
+fn one_variable_vpoly(coefficients: Vec<Fr>) -> VirtualPolynomial<Fr> {
+    let terms = coefficients
+        .into_iter()
+        .enumerate()
+        .filter(|(_, coeff)| !coeff.is_zero())
+        .map(|(degree, coeff)| {
+            let term = if degree == 0 {
+                SparseTerm::new(vec![])
+            } else {
+                SparseTerm::new(vec![(0, degree)])
+            };
+            (coeff, term)
+        })
+        .collect();
+    VirtualPolynomial::from_poly(PolyVariant::SparseMultivariate(MultiSparsePolynomial {
+        num_vars: 1,
+        terms,
+    }))
+}
+
+fn fr(value: u64) -> Fr {
+    Fr::from(value)
+}
+
+fn frs(values: &[u64]) -> Vec<Fr> {
+    values.iter().copied().map(fr).collect()
+}
 
 // Tests moved from values.rs
 #[test]
@@ -1295,4 +1340,62 @@ mod test_into_scalar {
         let vp_empty = VirtualPolynomial::<Fr>::new();
         assert_eq!(vp_empty.into_scalar(), Some(Fr::zero()));
     }
+}
+
+#[test]
+fn test_marginalize_round_zero_preserves_next_poly_variable_count() {
+    let poly = dense_mle_poly(3, frs(&[1, 2, 3, 4, 5, 6, 7, 8]));
+
+    let (_evaluations, next_poly) = marginalize::<TestConfig>(&poly, 3, 8, 0, Some(fr(3)));
+
+    assert_eq!(next_poly.num_vars(), Some(3));
+}
+
+#[test]
+fn test_marginalize_positive_round_mle_fast_path_scans_suffix_after_t() {
+    let poly = dense_mle_poly(2, frs(&[1, 3, 10, 14]));
+
+    let (evaluations, next_poly) = marginalize::<TestConfig>(&poly, 10, 1, 9, Some(fr(5)));
+
+    assert_eq!(evaluations, frs(&[11, 30]));
+    assert_eq!(next_poly.num_vars(), Some(1));
+}
+
+#[test]
+fn test_marginalize_positive_round_mle_fast_path_scans_expected_suffix_count() {
+    let poly = dense_mle_poly(3, frs(&[1, 2, 10, 12, 100, 104, 1000, 1008]));
+
+    let (evaluations, next_poly) = marginalize::<TestConfig>(&poly, 10, 1, 8, Some(fr(3)));
+
+    assert_eq!(evaluations, frs(&[116, 1040]));
+    assert_eq!(next_poly.num_vars(), Some(2));
+}
+
+#[test]
+fn test_marginalize_positive_final_round_repeats_constant_next_poly() {
+    let poly = dense_mle_poly(1, frs(&[7, 11]));
+
+    let (evaluations, _) = marginalize::<TestConfig>(&poly, 10, 2, 10, Some(fr(4)));
+
+    assert_eq!(evaluations, frs(&[23, 23, 23]));
+}
+
+#[test]
+fn test_marginalize_positive_final_round_dense_uni_scalarizes_at_challenge() {
+    let poly = dense_uni_poly(frs(&[1, 2]));
+
+    let (evaluations, next_poly) = marginalize::<TestConfig>(&poly, 1, 2, 1, Some(fr(3)));
+
+    assert_eq!(evaluations, frs(&[7, 7, 7]));
+    assert_eq!(next_poly.into_scalar(), Some(fr(7)));
+}
+
+#[test]
+fn test_marginalize_positive_final_round_one_variable_vpoly_scalarizes_at_challenge() {
+    let poly = one_variable_vpoly(frs(&[1, 2]));
+
+    let (evaluations, next_poly) = marginalize::<TestConfig>(&poly, 1, 2, 1, Some(fr(3)));
+
+    assert_eq!(evaluations, frs(&[7, 7, 7]));
+    assert_eq!(next_poly.into_scalar(), Some(fr(7)));
 }

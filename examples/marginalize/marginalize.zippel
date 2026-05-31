@@ -4,20 +4,20 @@ fn marginalize_test<F: Field>(
     public max_degree: Fin<2>,
     public round: Fin<3>,
     public challenge: F
-) -> { evaluations: [F; 3], next_poly: Poly<F, 1, 2> } {
-    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
-    marginalize(cfg)
+) -> { evaluations: [F; 3], next_poly: Poly<F, 2, 2> } {
+    marginalize<0, 2, 2>(poly, challenge)
 }
 
-// Simple protocol that calls `marginalize` on a fixed polynomial that is the
-// product of two MLEs in variables (x, y):
+// Source-level semantic reference for the direct Groebner marginalize encoding.
+// This protocol calls `marginalize` on a fixed polynomial that is the product
+// of two MLEs in variables (x, y):
 //
 //   f(x, y) = x + y
 //   g(x, y) = 2x + 2y
 //   poly(x, y) = f(x, y) * g(x, y) = (x + y) * (2x + 2y)
 //
 // The backend marginalize implementation treats the first variable as the
-// "round" variable t and sums over the remaining Boolean variable y ∈ {0,1},
+// round variable t and sums over the remaining Boolean variable y ∈ {0,1},
 // so for each t we get:
 //
 //   e(t) = Σ_{y∈{0,1}} poly(t, y)
@@ -31,15 +31,11 @@ proto marginalize_proto<F: Field>
     (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
     where true {
 
-fn marginalize_from_prefix_mle<F: Field, FIXED: 2..6, TAIL: 1..2>(
-    public p: Mle<F, FIXED + 1 + TAIL>,
-    public fixed_prefix: [F; FIXED]
-) -> Poly<F, 1, 1> {
-    let zero = fixed_prefix[0] - fixed_prefix[0];
-    let one = zero + 1;
+    let out = marginalize<0, 2, 2>(poly, challenge);
+    evs <- out.evaluations;
 
     let expected = [2, 10, 9];
-    verify(out.evaluations == expected)
+    verify(evs == expected)
 }
 
 fn marginalize_test_univariate<F: Field>(
@@ -49,9 +45,8 @@ fn marginalize_test_univariate<F: Field>(
     public round: Fin<3>,
     public y: F,
     public challenge: F
-) -> { evaluations: [F; 3], next_poly: Poly<F, 0, 2> } {
-    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
-    marginalize(cfg)
+) -> { evaluations: [F; 3], next_poly: Poly<F, 1, 2> } {
+    marginalize<0, 1, 2>(poly, challenge)
 }
 
 // Simple protocol that calls `marginalize` on a fixed *univariate* polynomial
@@ -60,16 +55,11 @@ fn marginalize_test_univariate<F: Field>(
 //   g(t) = poly(t) = t^2 + t + y
 //
 // match the known values for t = 0,1,2.
-//
-// NOTE: this is a separate, univariate test and is *not* the main
-// `marginalize_proto` entry used by the Rust example, which operates
-// on a bivariate polynomial built from two MLEs.
 proto marginalize_univariate_proto<F: Field>
     (public poly: Poly<F, 1, 2>, public num_variables: Fin<1>, public max_degree: Fin<2>, public round: Fin<3>, public y: F, public challenge: F)
     where true {
 
-    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<0, 1, 2>(poly, challenge);
 
     // Rust side fixes `poly` to poly(x) = x^2 + x + y over F17, so:
     //   g(0) = y

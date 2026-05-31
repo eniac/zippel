@@ -37,7 +37,7 @@ fn draw_taus<F: Field, K: 2..16>(public placeholder: [F; K]) -> [F; K] {
 
 // ===== Phase 1 — Gate identity ZeroCheck (max_degree = 4) =====
 fn gate_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 1, 4>,
+    public curr_poly:        Poly<F, 2, 4>,
     public points:           [F; 5],
     public prev_challenges:  [F; S - 1],
     public prev_eval:        F,
@@ -53,8 +53,7 @@ fn gate_round<F: Field, S: Size, N: 2^S>(
     public q_c_evs:          [F; N],
     public eq_tau_evs:       [F; N]
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 4, round: curr_round, challenge: round_challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<S - 1, S, 4>(curr_poly, round_challenge);
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
 
@@ -84,10 +83,10 @@ fn gate_round<F: Field, S: Size, N: 2^S>(
         + qc_at_r;
     final_eval == gate_at_r * eq_at_r
 }
-fn gate_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+fn gate_round<F: Field, S: Size, V: 3..S+1, N: 2^S>(
     public curr_poly:        Poly<F, V, 4>,
     public points:           [F; 5],
-    public prev_challenges:  [F; S - V],
+    public prev_challenges:  [F; S - V + 1],
     public prev_eval:        F,
     public round_challenge:  F,
     public curr_round:       Fin<S>,
@@ -101,9 +100,8 @@ fn gate_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
     public q_c_evs:          [F; N],
     public eq_tau_evs:       [F; N]
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 4, round: curr_round, challenge: round_challenge |};
-    let out = marginalize(cfg);
-    let pi  = out.next_poly;
+    let out = marginalize<S - V + 1, S, 4>(curr_poly, round_challenge);
+    let next_poly = out.next_poly;
 
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
@@ -115,14 +113,14 @@ fn gate_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
 
     let new_challenges = prev_challenges ++ [r_next];
 
-    gate_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+    gate_round(next_poly, points, new_challenges, next_prev, r_next, curr_round + 1,
                a_evs, b_evs, c_evs, q_l_evs, q_r_evs, q_o_evs, q_m_evs, q_c_evs,
                eq_tau_evs)
 }
 
 // ===== Phase 2 — Permutation PIOP (max_degree = 3) =====
 fn perm_round<F: Field, S: Size, N: 2^S>(
-    public curr_poly:        Poly<F, 1, 3>,
+    public curr_poly:        Poly<F, 2, 3>,
     public points:           [F; 4],
     public prev_challenges:  [F; S - 1],
     public prev_eval:        F,
@@ -134,8 +132,7 @@ fn perm_round<F: Field, S: Size, N: 2^S>(
     public eq_sau_evs:       [F; N],
     public alpha:            F
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
-    let out = marginalize(cfg);
+    let out = marginalize<S - 1, S, 3>(curr_poly, round_challenge);
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
 
@@ -166,10 +163,10 @@ fn perm_round<F: Field, S: Size, N: 2^S>(
 
     final_eval == (f_rel_at_r + alpha * g_rel_at_r) * eq_at_r
 }
-fn perm_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
+fn perm_round<F: Field, S: Size, V: 3..S+1, N: 2^S>(
     public curr_poly:        Poly<F, V, 3>,
     public points:           [F; 4],
-    public prev_challenges:  [F; S - V],
+    public prev_challenges:  [F; S - V + 1],
     public prev_eval:        F,
     public round_challenge:  F,
     public curr_round:       Fin<S>,
@@ -179,9 +176,8 @@ fn perm_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
     public eq_sau_evs:       [F; N],
     public alpha:            F
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: S, max_degree: 3, round: curr_round, challenge: round_challenge |};
-    let out = marginalize(cfg);
-    let pi  = out.next_poly;
+    let out = marginalize<S - V + 1, S, 3>(curr_poly, round_challenge);
+    let next_poly = out.next_poly;
 
     evs <- out.evaluations;
     verify(prev_eval == evs[0] + evs[1]);
@@ -193,7 +189,7 @@ fn perm_round<F: Field, S: Size, V: 2..S+1, N: 2^S>(
 
     let new_challenges = prev_challenges ++ [r_next];
 
-    perm_round(pi, points, new_challenges, next_prev, r_next, curr_round + 1,
+    perm_round(next_poly, points, new_challenges, next_prev, r_next, curr_round + 1,
                sent_v, f_shift_evs, g_shift_evs, eq_sau_evs, alpha)
 }
 
@@ -238,8 +234,7 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     let h_gate = f_gate * eq_tau;
 
     let pts4 = [i * one for i in 0..5];
-    let cfg0_p1 = {| poly: h_gate, num_variables: S, max_degree: 4, round: 0, challenge: zero |};
-    let out0_p1 = marginalize(cfg0_p1);
+    let out0_p1 = marginalize<0, S, 4>(h_gate, zero);
     evs0_p1 <- out0_p1.evaluations;
     verify(zero == evs0_p1[0] + evs0_p1[1]);
 
@@ -293,8 +288,7 @@ proto hyperplonk<F: Field, S: Size, N: 2^S>(
     let p_poly = h_check * eq_sau;
 
     let pts3 = [i * one for i in 0..4];
-    let cfg0_p2 = {| poly: p_poly, num_variables: S, max_degree: 3, round: 0, challenge: zero |};
-    let out0_p2 = marginalize(cfg0_p2);
+    let out0_p2 = marginalize<0, S, 3>(p_poly, zero);
     evs0_p2 <- out0_p2.evaluations;
     verify(zero == evs0_p2[0] + evs0_p2[1]);
 

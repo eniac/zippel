@@ -2832,6 +2832,81 @@ pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
     g.evaluate_uv(&x)
 }
 
+fn marginalize_current_variable_count(num_variables: usize, round: usize) -> usize {
+    if round == 0 {
+        num_variables
+    } else {
+        num_variables - (round - 1)
+    }
+}
+
+fn marginalize_next_variable_count(num_variables: usize, round: usize) -> usize {
+    if round == 0 {
+        num_variables
+    } else {
+        num_variables - round
+    }
+}
+
+fn collect_mle_tables<F: PrimeField>(
+    poly: &VirtualPolynomial<F>,
+    expected_mle_vars: usize,
+) -> Option<Vec<&[F]>> {
+    if poly.flattened_polys.is_empty() {
+        return None;
+    }
+
+    let tables = poly
+        .flattened_polys
+        .iter()
+        .map(|p| p.as_mle_evaluations())
+        .collect::<Option<Vec<_>>>()?;
+
+    tables
+        .iter()
+        .all(|table| table.len() == (1usize << expected_mle_vars))
+        .then_some(tables)
+}
+
+fn final_round_scalar<C: ArkConfig>(
+    poly: &VirtualPolynomial<C::F>,
+    challenge: Option<C::F>,
+) -> C::F {
+    if let Some(scalar) = poly.clone().into_scalar() {
+        return scalar;
+    }
+
+    let r = challenge
+        .expect("marginalize: final-round non-constant residual polynomial requires a challenge");
+    let mut result = C::F::zero();
+    for (coefficient, products) in &poly.products {
+        let mut term = *coefficient;
+        for &idx in products {
+            let factor = poly.flattened_polys[idx].as_ref();
+            if let Some(scalar) = factor.clone().into_scalar() {
+                term *= scalar;
+                continue;
+            }
+
+            let factor_vars = factor.num_vars();
+            if factor_vars != 1 {
+                panic!(
+                    "marginalize: final-round residual polynomial expected scalar or one-variable factor, got {} variables",
+                    factor_vars
+                );
+            }
+            term *= factor.evaluate_mv(&[r]).unwrap_or_else(|err| {
+                panic!(
+                    "marginalize: final-round residual polynomial evaluation failed at challenge {:?}: {:?}",
+                    r, err
+                )
+            });
+        }
+        result += term;
+    }
+    result
+}
+
 pub fn marginalize<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     num_variables: usize,
@@ -2840,17 +2915,18 @@ pub fn marginalize<C: ArkConfig>(
     challenge: Option<C::F>,
 ) -> (Vec<C::F>, VirtualPolynomial<C::F>) {
     #![allow(clippy::needless_range_loop)]
-    // if self.round >= self.poly.aux_info.num_variables
     if num_variables == 0 {
         panic!("marginalize: num_variables must be > 0");
     }
+    if round > num_variables {
+        panic!(
+            "marginalize: round out of range: round={}, num_variables={}",
+            round, num_variables
+        );
+    }
 
     if let Some(n) = poly.num_vars() {
-        let expected_current_vars = if round == 0 {
-            num_variables
-        } else {
-            num_variables.saturating_sub(round - 1)
-        };
+        let expected_current_vars = marginalize_current_variable_count(num_variables, round);
         if n != expected_current_vars {
             panic!(
                 "marginalize: num_variables mismatch: polynomial has {}, expected {} (num_variables={}, round={})",
@@ -2870,7 +2946,7 @@ pub fn marginalize<C: ArkConfig>(
     //    g(r_1, ..., r_{m-1}, x_m ... x_n)
     //
     // eval g over r_m, and mutate g to g(r_1, ... r_m, x_{m+1}... x_n)
-    let next_poly = if round == 0 {
+    let mut next_poly = if round == 0 {
         poly.clone()
     } else if let Some(r) = challenge {
         poly.fix_first_mle_variables_factorwise(&[r])
@@ -2885,38 +2961,22 @@ pub fn marginalize<C: ArkConfig>(
         poly.clone()
     };
 
-    // Step 2: generate sum for the partial evaluated polynomial:
-    // f(r_1, ... r_m, x_{m+1}... x_n); we sum over the hypercube for the remaining
-    let num_remaining_vars = num_variables.saturating_sub(round + 1);
-    let total: usize = 1usize << num_remaining_vars;
-    let expected_mle_vars = num_variables.saturating_sub(round);
+    // Step 2: evaluate the next round polynomial at t and sum over the Boolean suffix.
+    // At round 0 no challenge has been fixed yet, so next_poly still has all variables.
+    let next_poly_variables = marginalize_next_variable_count(num_variables, round);
+    let suffix_variables_after_t = next_poly_variables.saturating_sub(1);
+    let suffix_hypercube_size: usize = 1usize << suffix_variables_after_t;
+    let expected_mle_vars = next_poly_variables;
 
-    let all_mle = next_poly
-        .flattened_polys
-        .iter()
-        .all(|p| p.as_mle_evaluations().is_some());
-    let mle_tables: Option<Vec<&[C::F]>> = if all_mle && !next_poly.flattened_polys.is_empty() {
-        let tables: Vec<&[C::F]> = next_poly
-            .flattened_polys
-            .iter()
-            .filter_map(|p| p.as_mle_evaluations())
-            .collect();
-        if tables.len() == next_poly.flattened_polys.len()
-            && tables
-                .iter()
-                .all(|t| t.len() == (1usize << expected_mle_vars))
-        {
-            Some(tables)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let mle_tables = collect_mle_tables(&next_poly, expected_mle_vars);
 
     let mut evaluations = vec![C::F::zero(); max_degree + 1];
 
-    if let Some(tables) = mle_tables {
+    if next_poly_variables == 0 {
+        let constant = final_round_scalar::<C>(&next_poly, challenge);
+        evaluations.fill(constant);
+        next_poly = VirtualPolynomial::from_scalar(constant);
+    } else if let Some(tables) = mle_tables {
         let mut products_sum = vec![C::F::zero(); max_degree + 1];
 
         for (coefficient, products) in &next_poly.products {
@@ -2924,7 +2984,7 @@ pub fn marginalize<C: ArkConfig>(
             let product_tables: Vec<&[C::F]> = products.iter().map(|&idx| tables[idx]).collect();
             let k = product_tables.len();
 
-            let partials: Vec<Vec<C::F>> = (0..total)
+            let partials: Vec<Vec<C::F>> = (0..suffix_hypercube_size)
                 .into_par_iter()
                 .map(|b| {
                     let v0: Vec<C::F> = product_tables.iter().map(|tab| tab[2 * b]).collect();
@@ -2965,15 +3025,15 @@ pub fn marginalize<C: ArkConfig>(
             evaluations[t_idx] = val;
         }
     } else {
-        let point_len = num_variables - round;
+        let point_len = next_poly_variables;
         for t_idx in 0..=max_degree {
             let t = C::FOps::from_usize(t_idx);
-            let sum: C::F = (0..total)
+            let sum: C::F = (0..suffix_hypercube_size)
                 .into_par_iter()
                 .map(|b| {
                     let mut point: Vec<C::F> = Vec::with_capacity(point_len);
                     point.push(t);
-                    for j in 0..num_remaining_vars {
+                    for j in 0..suffix_variables_after_t {
                         let bit = (b >> j) & 1;
                         point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
                     }

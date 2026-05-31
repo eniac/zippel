@@ -117,6 +117,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 mk::<C>(self.trans_clos_op(dag, p.get().clone())),
                 mk::<C>(self.trans_clos_op(dag, xs.get().clone())),
             ),
+            Op::Marginalize(v) => {
+                Op::Marginalize(mk::<C>(self.trans_clos_op(dag, v.get().clone())))
+            }
+            Op::Proj(v, field, typ) => Op::Proj(
+                mk::<C>(self.trans_clos_op(dag, v.get().clone())),
+                field,
+                typ,
+            ),
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
             Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone()))),
