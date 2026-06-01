@@ -439,7 +439,7 @@ impl Lub for CTyp {
                 &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
                 *n,
             )),
-            // Record types: width and depth subtyping, permutation
+            // Record types: strict field match (same names, same count, per-field lub_equ)
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
                 if fields_a.len() != fields_b.len() {
                     return Err(LubError::equ(&x, &y));
@@ -916,19 +916,21 @@ impl Lub for CTyp {
     #[allow(clippy::only_used_in_recursion)]
     fn lub_and(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
-            // Bool && Bool = Bool
             (CTyp::Bool, CTyp::Bool) => Ok(CTyp::Bool),
-            // Vec<A> && Vec<B> = Vec<lub_and(A, B)> (element-wise)
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) if n == m => {
                 let t = CTyp::lub_and(a, b, ctx)
                     .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
                 Ok(CTyp::vec(&t, *n))
             }
-            // Vec<A> && B or B && Vec<A> = Vec<lub_and(A, B)> (broadcast)
-            (CTyp::Vec(box a, n), b) | (b, CTyp::Vec(box a, n)) => {
-                let t = CTyp::lub_and(a, b, ctx)
+            (CTyp::Vec(box a, n), CTyp::Bool) => {
+                let t = CTyp::lub_and(a, y, ctx)
                     .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
                 Ok(CTyp::vec(&t, *n))
+            }
+            (CTyp::Bool, CTyp::Vec(box b, m)) => {
+                let t = CTyp::lub_and(x, b, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
+                Ok(CTyp::vec(&t, *m))
             }
             (_, _) => Err(LubError::and(&x, &y)),
         }
@@ -1147,6 +1149,10 @@ fn lub_typ() {
     );
     assert_eq!(
         CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx),
+        Ok(CTyp::vec(&CTyp::Bool, 10))
+    );
+    assert_eq!(
+        CTyp::lub_and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::Bool, &ctx),
         Ok(CTyp::vec(&CTyp::Bool, 10))
     );
 

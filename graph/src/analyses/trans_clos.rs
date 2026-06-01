@@ -126,7 +126,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     ///
     /// Walks backwards from verifier assertion (`Check`) nodes, stopping at
     /// transcript source nodes (Challenge/Random) which are opaque inputs
-    /// to the verifier. Prefs are the **public** input args only.
+    /// to the verifier. Prefs include public input args and transcript sources.
     ///
     /// Transcript source nodes are pre-populated in the index so that
     /// `trans_clos_op` does not recurse past them into prover-only nodes.

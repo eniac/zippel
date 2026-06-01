@@ -287,14 +287,16 @@ impl<C: ArkConfig, R> Op<C, R> {
                 other => other,
             },
             Op::Reduce(op, v) => {
-                let (elem, _) = v.typ().into_vec();
-                let result_type = ATyp::lub_op(*op, &elem, &elem, &Nothing)
-                    .expect("Reduce: type error in binary op");
-                ATyp::lub_op(*op, &result_type, &elem, &Nothing)
-                    .unwrap_or_else(|_| panic!(
-                        "Reduce: accumulator type {:?} is incompatible as left operand for {:?} with element type {:?}",
-                        result_type, op, elem
-                    ))
+                let (elem, n) = v.typ().into_vec();
+                let mut acc = elem.clone();
+                for _ in 1..n {
+                    acc = ATyp::lub_op(*op, &acc, &elem, &Nothing)
+                        .unwrap_or_else(|_| panic!(
+                            "Reduce: accumulator type {:?} is incompatible as left operand for {:?} with element type {:?}",
+                            acc, op, elem
+                        ));
+                }
+                acc
             }
             Op::Interpolate(points, evals) => match (points.typ(), evals.typ()) {
                 (

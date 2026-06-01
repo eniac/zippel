@@ -804,14 +804,8 @@ impl Typeable for CExp {
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Types [ta] and [tb] must be equal and boolean
-                let t = CTyp::lub_and(&ta, &tb, kctx)
-                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                if t == CTyp::Bool {
-                    Ok(CTyp::bool())
-                } else {
-                    Err(TypeError::bool(kctx, vctx, self))
-                }
+                CTyp::lub_and(&ta, &tb, kctx)
+                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
             }
 
             // Range expression
@@ -855,19 +849,13 @@ impl Typeable for CExp {
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
                 match tv {
-                    CTyp::Vec(box tv, n) if n > 0 => {
-                        let result_type = CTyp::lub_op(*op, &tv, &tv, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        CTyp::lub_op(*op, &result_type, &tv, kctx).map_err(|_| {
-                            TypeError::ReduceAcc(
-                                kctx.clone(),
-                                vctx.clone(),
-                                *op,
-                                (*v).clone(),
-                                result_type,
-                                tv.clone(),
-                            )
-                        })
+                    CTyp::Vec(box elem, n) if n > 0 => {
+                        let mut acc = elem.clone();
+                        for _ in 1..n {
+                            acc = CTyp::lub_op(*op, &acc, &elem, kctx)
+                                .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        }
+                        Ok(acc)
                     }
                     _ => Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
