@@ -707,20 +707,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///
     /// `VPoly(n, m)` stores `(n, m)` directly, where `m` is the max **total**
     /// degree. When constructed from `CTyp::Poly(_, n, d)` via `from_ctyp`,
-    /// `m = n * d` (conservative: each of n variables at max per-variable
-    /// degree d simultaneously gives total degree n·d).
-    ///
-    /// - `VPoly(n, m)` → `(n, m)`
-    /// - `Uni(m)` → `(1, m)` (univariate ≡ VPoly(1, m))
-    /// - Returns `None` for non-polynomial types (Base, Vec, Bool) and MLE.
-    fn poly_shape(t: &ATyp) -> Option<(usize, usize)> {
-        match t {
-            ATyp::VPoly(n, m) => Some((*n, *m)),
-            ATyp::Uni(m) => Some((1, *m)),
-            _ => None,
-        }
-    }
-
     /// Unified Div/Rem handler for both `add_op` and `reduce_op`.
     ///
     /// Dispatches based on operand types:
@@ -1173,7 +1159,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
-                let ATyp::VPoly(nr, mr) = r_typ else {
+                let ATyp::VPoly(_nr, mr) = r_typ else {
                     unreachable!("Mul Mle×Mle result must be VPoly");
                 };
                 let n = *na;

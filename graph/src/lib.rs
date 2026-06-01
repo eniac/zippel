@@ -1097,16 +1097,6 @@ impl<C: HasOpFactory> UDags<C> {
 
 /// Constructors for graphs
 impl<C: HasOpFactory> UDag<C> {
-    /// Materialize a non-trivial op as a DAG node.
-    ///
-    /// If `op` is `Op::Ref` or `Op::Value`, return it as-is.
-    /// Otherwise, create a `Node::Op` for it, add data edges from
-    /// the new node to any `Op::Ref` children, and return `Op::Ref`
-    /// pointing to the new node.
-    ///
-    /// This guarantees that `add_exp` always returns either `Op::Ref`
-    /// or `Op::Value`, ensuring that compound ops never appear as
-    /// inline children of other nodes in the transitive closure.
     /// Materialize an operation into the DAG.
     ///
     /// If `op` is already `Op::Ref` or `Op::Value`, it is returned as-is.

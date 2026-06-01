@@ -83,7 +83,7 @@ pub enum TypeError {
     #[error("ReduceError: Arguments to [reduce] must be a vector type:\n\t{0}, {1} |- reduce ({2}, {3} : {4})")]
     Reduce(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp),
 
-    #[error("ReduceAccError: reduce({2}, {3}) produces {4}, but {4} is not a valid left operand for {2} with element type {5}:\n\t{0}, {1} |- reduce ({2}, {3} : Vec<{5}>)")]
+    #[error("ReduceAccError: reduce({2}, {3}) has element type {4}, but {2}({4}, {4}) = {5}, which differs from {4}; reduce requires the operator to have a fixed point at the element type:\n\t{0}, {1} |- reduce ({2}, {3} : Vec<{4}>)")]
     ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp, CTyp),
 
     #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
@@ -850,12 +850,23 @@ impl Typeable for CExp {
 
                 match tv {
                     CTyp::Vec(box elem, n) if n > 0 => {
-                        let mut acc = elem.clone();
-                        for _ in 1..n {
-                            acc = CTyp::lub_op(*op, &acc, &elem, kctx)
-                                .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        let result = CTyp::lub_op(*op, &elem, &elem, kctx)
+                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                        if result == elem {
+                            Ok(elem.clone())
+                        } else {
+                            Err(TypeError::next(
+                                TypeError::exp(kctx, vctx, self),
+                                TypeError::ReduceAcc(
+                                    kctx.clone(),
+                                    vctx.clone(),
+                                    *op,
+                                    self.clone(),
+                                    elem.clone(),
+                                    result,
+                                ),
+                            ))
                         }
-                        Ok(acc)
                     }
                     _ => Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
