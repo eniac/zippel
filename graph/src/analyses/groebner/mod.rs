@@ -2018,26 +2018,27 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Proj(ref inner, ref field, ref _typ) => {
                 let inner_typ = inner.typ();
                 let inner_polys = self.ref_vars(inner);
-                let ATyp::Record(fields) = &inner_typ else {
-                    unreachable!(
-                        "Proj inner must be Record; type checker guarantees this, got {:?}",
-                        inner_typ
-                    );
-                };
-                let mut offset = 0usize;
-                for (fname, ftyp) in fields.iter() {
-                    let f_len = ftyp.physical_len();
-                    if fname == field {
-                        let pr_slots = pr.slots();
-                        for (j, pf) in pr_slots.iter().enumerate() {
-                            result.pl.insert(pf, &inner_polys[offset + j]);
-                            result
-                                .basis
-                                .push(inner_polys[offset + j].clone() - SparsePolynomial::var(pf));
+                match &inner_typ {
+                    ATyp::Record(fields) => {
+                        let mut offset = 0usize;
+                        for (fname, ftyp) in fields.iter() {
+                            let f_len = ftyp.physical_len();
+                            if fname == field {
+                                let pr_slots = pr.slots();
+                                for (j, pf) in pr_slots.iter().enumerate() {
+                                    result.pl.insert(pf, &inner_polys[offset + j]);
+                                    result.basis.push(
+                                        inner_polys[offset + j].clone() - SparsePolynomial::var(pf),
+                                    );
+                                }
+                                break;
+                            }
+                            offset += f_len;
                         }
-                        break;
                     }
-                    offset += f_len;
+                    _ => {
+                        result.np.insert(&pr, &op);
+                    }
                 }
             }
         }
