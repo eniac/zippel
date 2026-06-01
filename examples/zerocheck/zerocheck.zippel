@@ -2,7 +2,7 @@ proto univariate_zero_check<F: Field, S: Size, N: S>(
     public p: Uni<F, N>,
     public v: Uni<F, N>
 ) where p == p {
-    let q = p / v;
+    q <- p / v;
     r <- challenge<F>;
     let left_hand = eval(p, [r]);
     let right_hand = eval(q, [r]) * eval(v, [r]);
