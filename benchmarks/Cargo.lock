@@ -205,6 +205,7 @@ dependencies = [
  "fnv",
  "hashbrown 0.14.5",
  "merlin",
+ "rayon",
  "sha2 0.10.9",
 ]
 
@@ -505,6 +506,22 @@ version = "0.0.1"
 source = "git+https://github.com/elefthei/ark-gb.git#75eec201ec2c654374e9858df3a429535ab6ebe6"
 dependencies = [
  "ark-ff 0.6.0 (git+https://github.com/arkworks-rs/algebra.git)",
+]
+
+[[package]]
+name = "ark-groth16"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88f1d0f3a534bb54188b8dcc104307db6c56cdae574ddc3212aec0625740fc7e"
+dependencies = [
+ "ark-crypto-primitives",
+ "ark-ec 0.5.0",
+ "ark-ff 0.5.0",
+ "ark-poly 0.5.0",
+ "ark-relations",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "rayon",
 ]
 
 [[package]]
@@ -888,10 +905,12 @@ dependencies = [
  "ark-ff 0.4.2",
  "ark-ff 0.5.0",
  "ark-ff 0.6.0 (git+https://github.com/arkworks-rs/algebra.git)",
+ "ark-groth16",
  "ark-poly 0.4.2",
  "ark-poly 0.5.0",
  "ark-poly 0.6.0 (git+https://github.com/arkworks-rs/algebra.git)",
  "ark-poly-commit",
+ "ark-relations",
  "ark-secp256k1 0.4.0",
  "ark-secp256k1 0.5.0",
  "ark-serialize 0.4.2",
