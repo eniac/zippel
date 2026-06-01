@@ -13,6 +13,7 @@ pub struct Timing {
     pub verify: Duration,
 }
 
+pub mod groth16;
 pub mod ipa;
 pub mod kzg;
 pub mod pari;

@@ -48,6 +48,15 @@ np-ark-poly = { package = "ark-poly", version = "0.5" }
 np-ark-ff = { package = "ark-ff", version = "0.5" }
 np-ark-serialize = { package = "ark-serialize", version = "0.5" }
 
+# Native Groth16 baseline: ark-groth16 + ark-relations from crates.io
+# v0.5. Coexists with the rest of the np-ark-* set at v0.5 (same
+# pinned ark-ec/ff/poly underneath). The zippel side reuses the git-main
+# arkworks already pulled by `backend`; setup data (keys, matrices,
+# h_coeffs) is byte-translated from v0.5 → git-main once per run, since
+# both share BLS12-381's canonical serialization format.
+np-ark-groth16 = { package = "ark-groth16", version = "0.5" }
+np-ark-relations = { package = "ark-relations", version = "0.5" }
+
 # Hyperplonk-side arkworks (v0.4 from crates.io, renamed so they don't
 # shadow the git-main versions above).
 hp-ark-bls12-381 = { package = "ark-bls12-381", version = "0.4" }
@@ -95,6 +104,10 @@ path = "src/bin/kzg.rs"
 [[bin]]
 name = "pari"
 path = "src/bin/pari.rs"
+
+[[bin]]
+name = "groth16"
+path = "src/bin/groth16.rs"
 
 [[bin]]
 name = "bench_all"

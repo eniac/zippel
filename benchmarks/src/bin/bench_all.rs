@@ -11,6 +11,7 @@
 //!   ipa      : S           (folding vector length N = 2^S)
 //!   kzg      : log_2(N)    (N = coefficient count; degree = N-1)
 //!   pari     : M           (K = 2^M constraints)
+//!   groth16  : log_2(C)    (C = num_constraints in the bench circuit)
 //!
 //! Thread sweeping is done by running this binary multiple times with
 //! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
@@ -19,14 +20,14 @@
 //! single-thread pool installed mid-process — running with the global pool
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
-use benchmarks::{Timing, ipa, kzg, pari, schnorr, sumcheck};
+use benchmarks::{Timing, groth16, ipa, kzg, pari, schnorr, sumcheck};
 use clap::Parser;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
-const ALL_SYSTEMS: &[&str] = &["schnorr", "sumcheck", "ipa", "kzg", "pari"];
+const ALL_SYSTEMS: &[&str] = &["schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16"];
 
 #[derive(Parser, Debug)]
 #[command(about = "Run every benchmark at the current rayon thread count and emit a CSV")]
@@ -203,6 +204,29 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
         .collect()
 }
 
+fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
+    log_sizes
+        .iter()
+        .map(|&log_size| {
+            let num_constraints = 1usize << log_size;
+            let shared = groth16::shared::build(num_constraints);
+            let mut z = groth16::zippel_side::Setup::new(&shared);
+            let n = groth16::native_side::Setup::new(&shared);
+            let zippel = z.time_protocol();
+            let native = n.time_protocol();
+            let r = Row {
+                system: "groth16",
+                threads,
+                log_size,
+                zippel,
+                native,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn main() {
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {
@@ -233,12 +257,18 @@ fn main() {
     // PARI starts at M=2 because the protocol divides q(X) by (X−r); at
     // K=2 the quotient q has degree 0 and the type checker rejects the
     // div. K=4 (M=2) is the smallest size where q has degree ≥ 1.
-    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns) = if args.quick {
+    // Groth16 sweep is capped at log_constraints=14 (16K constraints).
+    // Beyond that, the zippel-side keys + circuit balloon (a_query,
+    // b_query, h_query are each Vec<G1Projective> of length ≥
+    // num_constraints), and single-thread prove already runs in
+    // tens of seconds at log_size=14.
+    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns) = if args.quick {
         (
             vec![4usize, 8],
             vec![4usize, 8],
             vec![4usize, 6],
             vec![16usize, 256],
+            vec![4usize, 8],
         )
     } else {
         (
@@ -246,6 +276,7 @@ fn main() {
             (3..=20).collect::<Vec<_>>(),
             (1..=14).collect::<Vec<_>>(),
             (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
+            (1..=14).collect::<Vec<_>>(),
         )
     };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
@@ -276,6 +307,7 @@ fn main() {
             "ipa" => run_ipa(threads, &ipa_ss),
             "kzg" => run_kzg(threads, &kzg_ns),
             "pari" => run_pari(threads, &pari_ms, pari_n_pub, pari_k_vars),
+            "groth16" => run_groth16(threads, &groth16_log_ns),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);
