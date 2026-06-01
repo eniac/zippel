@@ -194,21 +194,18 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     let v_q   = (lhs_a * lhs_a - lhs_b) / v_k_at_r;
 
     // === Verifier: pairing check ===
-    // e(T, δ_2 H) · e(U, τ H) · e(V·G − r·U, H) = 1_GT
-    // where V = α v_a + β v_b + v_q. Rewrite as
-    //   e(T, δ_2 H) + e(U, τ H) == e(r·U − V·G, H) in additive G_T.
-    //
-    // Batching: native verifiers run this via `multi_pairing` (one Miller
-    // loop + one final exponentiation over all pairs). The LHS is folded
-    // into a single `dot([T, U], [δ_2 H, τ H])` which dispatches to
-    // `multi_pairing` in the backend (values.rs `value_dot` arm for
-    // `VecG1 . VecG2 -> GT`), so the verifier pays 2 final exponentiations
-    // instead of 3 — about a 500-700 µs saving on BLS12-381.
-    let inner     = alpha_g * va_proof + beta_g * vb_proof + g_g1 * v_q - u_proof * r;
-    let neg_inner = inner * f_neg_one;
+    // The native garuda-pari verifier folds all three pairs into a single
+    // `multi_miller_loop + final_exponentiation`. Mirror that here: rearrange
+    //   e(T, δ_2 H) + e(U, τ H) == e(r·U − V·G, H)
+    // to
+    //   e(T, δ_2 H) + e(U, τ H) + e(V·G − r·U, H) == 0_GT
+    // (negating the G1 side of the third term flips its sign in additive GT)
+    // so all three pairs land in one `dot(VecG1, VecG2) -> GT`. The check
+    // against identity uses `result == result - result`: `result - result` is
+    // GT additive identity (cheap field subtraction, no extra pairings), so
+    // the verifier pays exactly one final exponentiation — same as native.
+    let inner = alpha_g * va_proof + beta_g * vb_proof + g_g1 * v_q - u_proof * r;
 
-    let lhs = dot([t_proof, u_proof], [delta2_h, tau_h]);
-    let rhs = pair(neg_inner, h_g2);
-
-    verify(lhs == rhs)
+    let result = dot([t_proof, u_proof, inner], [delta2_h, tau_h, h_g2]);
+    verify(result == result - result)
 }
