@@ -309,6 +309,12 @@ impl ATyp {
                 }
             }
             CTyp::Vec(box t, n) => Some(ATyp::Vec(Box::new(ATyp::from_ctyp(t, kctx)?), *n)),
+            // CTyp::Poly(F, num_vars, max_degree) maps by convention:
+            //   (1, m)  → Uni(m)   — univariate, m = max degree
+            //   (n, 1)  → Mle(n)   — multilinear, n = num variables (n≥2)
+            //   (m, n)  → VPoly(m, m*n) — general, total degree bound m*n
+            // Order matters: Poly(F,1,1) hits the Uni arm (degree-1 univariate
+            // = constant), not the Mle arm (which requires n≥2).
             CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
             CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
             CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, *m * *n)),
