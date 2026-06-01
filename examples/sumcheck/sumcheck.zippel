@@ -8,7 +8,7 @@
 // absorbs the full polynomial into the FS transcript at the start (which
 // was the dominant O(2^NV) cost in verify) — making verify O(log N)
 // instead of O(N).
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST, MAX_DEGREE_CONST: 10>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 2..NUM_VARS_CONST, MAX_DEGREE_CONST: Size>(
     private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - V],
@@ -32,7 +32,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST, MAX_DEGREE
     sumcheck_round(pi, points, next_challenges, next_prev, r_next, curr_round + 1)
 }
 
-fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     private curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - 1],
@@ -53,7 +53,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
 }
 
 // Round 1: first challenge r1 folds round-1 message; second challenge r2 feeds the first tail round.
-proto sumcheck<F: Field, NUM_VARS_CONST: 10, MAX_DEGREE_CONST: 10>(
+proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     public claimed_sum: F,
     private poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let zero: F = 0;
