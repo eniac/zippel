@@ -7,7 +7,7 @@ use std::fmt;
 
 /// Binomial coefficient `C(n, k)` with saturating semantics.
 ///
-/// Used by `ATyp::size` to count coefficients of `VPoly(n, m)` — the
+/// Used by `ATyp::physical_len` to count coefficients of `VPoly(n, m)` — the
 /// number of multi-indices `(i₁, …, iₙ) ∈ ℕⁿ` with `i₁ + ⋯ + iₙ ≤ m`
 /// equals `C(m + n, n)`. See `docs/poly-encoding.md`.
 pub fn binomial(n: usize, k: usize) -> usize {
@@ -179,7 +179,8 @@ impl ATyp {
     /// - `Uni(m)` → `m + 1` (one coefficient per degree level)
     /// - `Mle(n)` → `2^n`
     /// - `VPoly(n, m)` → `C(m + n, n)`
-    /// - `Base` / `Record` → `size()` (no logical/physical split)
+    /// - `Base` → 1
+    /// - `Record` → `fields.len()` (one logical slot per field)
     pub fn logical_len(&self) -> usize {
         match self {
             ATyp::Vec(_, n) => *n,
@@ -314,7 +315,7 @@ impl ATyp {
             //   (n, 1)  → Mle(n)   — multilinear, n = num variables (n≥2)
             //   (m, n)  → VPoly(m, m*n) — general, total degree bound m*n
             // Order matters: Poly(F,1,1) hits the Uni arm (degree-1 univariate
-            // = constant), not the Mle arm (which requires n≥2).
+            // = linear), not the Mle arm (which requires n≥2).
             CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
             CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
             CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, *m * *n)),
