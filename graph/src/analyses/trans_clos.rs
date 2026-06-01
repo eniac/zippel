@@ -93,7 +93,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     /// private).
     pub fn prover(dag: &DQDag<C>) -> Self {
         let prefs = Self::prefs_from_marker(dag, dag.input_node());
-        let transcripts: HashSet<NodeIndex> = dag.transcript_nodes().into_iter().collect();
+        let transcripts_vec = dag.transcript_nodes();
 
         let mut tc = Self {
             clos: Vec::new(),
@@ -104,7 +104,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
 
         // Walk backward from transcript nodes to input args.
         let mut done: HashSet<NodeIndex> = HashSet::new();
-        let mut worklist: Vec<NodeIndex> = transcripts.iter().copied().collect();
+        let mut worklist: Vec<NodeIndex> = transcripts_vec;
 
         while let Some(node) = worklist.pop() {
             if !done.insert(node) {
@@ -141,7 +141,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             .collect();
 
         let checks = dag.find_check();
-        let transcripts: HashSet<NodeIndex> = dag.transcript_nodes().into_iter().collect();
+        let transcripts_vec = dag.transcript_nodes();
+        let transcripts_set: HashSet<NodeIndex> = transcripts_vec.iter().copied().collect();
 
         let mut tc = Self {
             clos: Vec::new(),
@@ -153,7 +154,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         // transcript source PRefs to prefs — they are opaque inputs to
         // the verifier, analogous to public args.
         let mut index: HashMap<NodeIndex, usize> = HashMap::new();
-        for &n in &transcripts {
+        for &n in &transcripts_vec {
             match &dag[n] {
                 Node::Op(op, (qualifier, distribution))
                 | Node::Transcr(op, (qualifier, distribution)) => {
@@ -178,7 +179,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             if dag[node].is_op() {
                 tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
             }
-            if transcripts.contains(&node) {
+            if transcripts_set.contains(&node) {
                 continue;
             }
             for neighbor in dag.nodes_to(node) {
