@@ -790,13 +790,35 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         nb,
                     );
                 }
-                if ma < mb || mb == 0 {
+                if ma < mb {
                     unreachable!(
-                        "{}: dividend degree < divisor degree ({} < {}) or divisor is constant",
+                        "{}: dividend degree < divisor degree ({} < {})",
                         if is_rem { "Rem" } else { "Div" },
                         ma,
                         mb,
                     );
+                }
+                if mb == 0 {
+                    let q_name = self.ns.next_name("div_q");
+                    let r_name = self.ns.next_name("div_r");
+                    let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(na, ma), result);
+                    let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(na, 0), result);
+                    let a_idx = multi_indices(na, ma);
+                    let b_poly = &b.polys()[0];
+                    for (ka_pos, _k) in a_idx.iter().enumerate() {
+                        let rhs: SparsePolynomial<C::F, T> =
+                            b_poly * &SparsePolynomial::var(&q_wit.with_slot(ka_pos).unwrap());
+                        result.basis.push(&a.polys()[ka_pos] - &rhs);
+                    }
+                    for rf in r_wit.slots() {
+                        result.basis.push(SparsePolynomial::var(&rf));
+                    }
+                    let wit = if is_rem { &r_wit } else { &q_wit };
+                    self.link_to_witness(target, wit, result);
+                    if let Some(key) = cache_key {
+                        self.ns.div_wit.insert(&key, &(q_wit, r_wit));
+                    }
+                    return;
                 }
 
                 let nr = na;
