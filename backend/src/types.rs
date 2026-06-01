@@ -186,16 +186,11 @@ impl ATyp {
             ATyp::Uni(m) => *m + 1,
             ATyp::Mle(n) => 1usize << *n,
             ATyp::VPoly(n, m) => binomial(*m + *n, *n),
-            ATyp::Base(_) | ATyp::Record(_) => self.physical_len(),
+            ATyp::Base(_) => 1,
+            ATyp::Record(fields) => fields.len(),
         }
     }
 
-    /// Type of logical slot `i`. Returns `None` if `i >= logical_len()`.
-    ///
-    /// - `Vec(T, n)` → `T` for all slots
-    /// - All polynomial types → `ATyp::scalar()`
-    /// - `Base` → `None` (only one slot, use `size()` = 1)
-    /// - `Record` → type of field `i`
     pub fn logical_slot_type(&self, i: usize) -> Option<ATyp> {
         match self {
             ATyp::Vec(t, n) => {
@@ -212,17 +207,17 @@ impl ATyp {
                     None
                 }
             }
-            ATyp::Base(_) => None,
+            ATyp::Base(_) => {
+                if i == 0 {
+                    Some(self.clone())
+                } else {
+                    None
+                }
+            }
             ATyp::Record(fields) => fields.iter().nth(i).map(|(_, t)| t.clone()),
         }
     }
 
-    /// Physical offset of logical slot `i`. Returns `None` if `i >= logical_len()`.
-    ///
-    /// - `Vec(T, n)` → `i * T.physical_len()` (each element occupies `T.physical_len()` physical slots)
-    /// - All polynomial types → `i` (each coefficient is one physical slot)
-    /// - `Base` → `None`
-    /// - `Record` → sum of sizes of preceding fields
     pub fn logical_slot_offset(&self, i: usize) -> Option<usize> {
         match self {
             ATyp::Vec(t, n) => {
@@ -239,7 +234,13 @@ impl ATyp {
                     None
                 }
             }
-            ATyp::Base(_) => None,
+            ATyp::Base(_) => {
+                if i == 0 {
+                    Some(0)
+                } else {
+                    None
+                }
+            }
             ATyp::Record(fields) => {
                 if i < fields.len() {
                     Some(fields.iter().take(i).map(|(_, t)| t.physical_len()).sum())
@@ -634,20 +635,20 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_div(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
-            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 && *n2 > 0 => Ok(ATyp::uni(*n1 - *n2)),
-            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if *n1 >= *n2 && *n2 > 0 => {
+            (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(*n1 - *n2)),
+            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if *n1 >= *n2 => {
                 Ok(ATyp::vpoly(*m1.max(m2), *n1 - *n2))
             }
-            (ATyp::VPoly(m, n), ATyp::Uni(d)) if *n >= *d && *d > 0 => Ok(ATyp::vpoly(*m, *n - *d)),
-            (ATyp::Uni(d), ATyp::VPoly(m, n)) if *d >= *n && *n > 0 => Ok(ATyp::vpoly(*m, *d - *n)),
-            (ATyp::VPoly(m1, n), ATyp::Mle(m2)) if *n >= *m2 && *m2 > 0 => {
+            (ATyp::VPoly(m, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(*m, *n - *d)),
+            (ATyp::Uni(d), ATyp::VPoly(m, n)) if *d >= *n => Ok(ATyp::vpoly(*m, *d - *n)),
+            (ATyp::VPoly(m1, n), ATyp::Mle(m2)) if *n >= *m2 => {
                 Ok(ATyp::vpoly(*m1.max(m2), *n - *m2))
             }
-            (ATyp::Mle(m1), ATyp::VPoly(m2, n)) if *m1 >= *n && *n > 0 => {
+            (ATyp::Mle(m1), ATyp::VPoly(m2, n)) if *m1 >= *n => {
                 Ok(ATyp::vpoly(*m1.max(m2), *m1 - *n))
             }
-            (ATyp::Uni(n), ATyp::Mle(m)) if *n >= *m && *m > 0 => Ok(ATyp::vpoly(*m, *n - *m)),
-            (ATyp::Mle(m), ATyp::Uni(n)) if *m >= *n && *n > 0 => Ok(ATyp::vpoly(*m, *m - *n)),
+            (ATyp::Uni(n), ATyp::Mle(m)) if *n >= *m => Ok(ATyp::vpoly(*m, *n - *m)),
+            (ATyp::Mle(m), ATyp::Uni(n)) if *m >= *n => Ok(ATyp::vpoly(*m, *m - *n)),
             (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
             | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
             (ATyp::Mle(n1), ATyp::Base(ABase::Scalar))
@@ -768,10 +769,15 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+            (ATyp::Vec(box t1, n1), ATyp::Base(ABase::Bool)) => {
                 let t = ATyp::lub_and(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
+            }
+            (ATyp::Base(ABase::Bool), ATyp::Vec(box t2, n2)) => {
+                let t = ATyp::lub_and(a, t2, ctx)
+                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
+                Ok(ATyp::vec(&t, *n2))
             }
             (a, b) => Err(LubError::and(&a, &b)),
         }

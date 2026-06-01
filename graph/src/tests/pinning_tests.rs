@@ -1376,10 +1376,6 @@ fn pin_proj_var_record() {
     let mut expected = UDag::<B>::new();
     let s = ATyp::scalar();
 
-    let mut record_fields = Ctx::<String, ATyp>::new();
-    record_fields.insert(&"x".to_string(), &s);
-    record_fields.insert(&"y".to_string(), &s);
-
     let (_inp, _inp_args) = expected_inp(&mut expected, "f", &[pub_s("a"), pub_s("b")]);
     let _arg_a = _inp_args[0];
     let _arg_b = _inp_args[1];
