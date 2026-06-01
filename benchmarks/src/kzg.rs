@@ -27,7 +27,7 @@ pub const DEFAULT_N: usize = 4;
 /// the diagnostic is supposed to isolate). N is the type-parameter
 /// default; the caller still rebinds it via `sizes.insert("N", n)`.
 fn render_zippel_source_no_srs_check() -> &'static str {
-    r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
+    r#"proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
         where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result {
