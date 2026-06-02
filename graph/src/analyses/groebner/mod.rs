@@ -1256,11 +1256,28 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             (ATyp::Base(_), ATyp::Base(_)) => {
-                let target_slots = target.slots();
-                for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
-                    let prod = ap * bp;
-                    result.pl.insert(pf, &prod);
-                    result.basis.push(prod - SparsePolynomial::var(pf));
+                // Pairing multiplication: G1 * G2 → GT requires the GT
+                // sentinel to encode the bilinear pairing axiom, just like
+                // pair_op. Scalar multiplication (G1 * Scalar → G1, etc.)
+                // falls through to regular slot-wise multiplication.
+                let needs_gt = matches!(r_typ, ATyp::Base(ABase::GT))
+                    || matches!(r_typ, ATyp::Vec(box ATyp::Base(ABase::GT), _));
+                if needs_gt {
+                    let gt = self.gt_pref(result);
+                    let gt_var = SparsePolynomial::var(&gt);
+                    let target_slots = target.slots();
+                    for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
+                        let prod = ap * bp * gt_var.clone();
+                        result.pl.insert(pf, &prod);
+                        result.basis.push(prod - SparsePolynomial::var(pf));
+                    }
+                } else {
+                    let target_slots = target.slots();
+                    for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
+                        let prod = ap * bp;
+                        result.pl.insert(pf, &prod);
+                        result.basis.push(prod - SparsePolynomial::var(pf));
+                    }
                 }
             }
             _ => {
