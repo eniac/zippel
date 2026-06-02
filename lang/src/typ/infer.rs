@@ -854,6 +854,14 @@ impl Typeable for CExp {
 
                 match tv {
                     CTyp::Vec(box tv, n) if n > 0 => {
+                        // If we are multiplying a vector of polynomials, the resulting
+                        // polynomial's degree is the sum of the degrees of the elements,
+                        // i.e., tv.degree * n.
+                        if *op == BinOp::Mul {
+                            if let CTyp::Poly(a, num_vars, d) = &tv {
+                                return Ok(CTyp::Poly(a.clone(), *num_vars, d * n));
+                            }
+                        }
                         // Infer the return type
                         CTyp::lub_op(*op, &tv, &tv, kctx)
                             .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))
@@ -2120,5 +2128,42 @@ mod tests {
             Ok(poly_t),
             "reduce(+, [Poly<F, 1, 3>; 4]) must yield Poly<F, 1, 3>",
         );
+    }
+
+    /// Property-based test to verify the correctness of type inference for
+    /// `reduce(*, vector_of_polys)`. It verifies that the degree of the
+    /// product polynomial matches `degree * vector_len`.
+    #[test]
+    fn test_reduce_mul_poly_pbt() {
+        use arbitrary::Unstructured;
+        let fctx = Set::new();
+
+        arbtest::arbtest(|u| {
+            let num_vars = u.int_in_range(1..=4)?;
+            let degree = u.int_in_range(0..=4)?;
+            let vector_len = u.int_in_range(1..=4)?;
+
+            let poly_t = CTyp::Poly(Tid::from("F"), num_vars, degree);
+            let vec_poly_t = CTyp::vec(&poly_t, vector_len);
+
+            let mut vctx = Ctx::new();
+            vctx.insert(&Vid::from("pv"), &vec_poly_t);
+
+            let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv"));
+            let expected_deg = degree * vector_len;
+            let expected_t = CTyp::Poly(Tid::from("F"), num_vars, expected_deg);
+
+            assert_eq!(
+                e.infer(&KIND_CTX, &fctx, &vctx),
+                Ok(expected_t),
+                "reduce(*, [Poly<F, {}, {}>; {}]) should yield Poly<F, {}, {}>",
+                num_vars,
+                degree,
+                vector_len,
+                num_vars,
+                expected_deg
+            );
+            Ok(())
+        });
     }
 }

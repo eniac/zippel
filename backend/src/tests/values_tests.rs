@@ -1296,3 +1296,61 @@ mod test_into_scalar {
         assert_eq!(vp_empty.into_scalar(), Some(Fr::zero()));
     }
 }
+
+#[test]
+fn test_poly_vector_reduction_pbt() {
+    arbtest::arbtest(|u| {
+        let mut rng = test_rng();
+        // Generate vector length 1..=6
+        let len: usize = u.int_in_range(1..=6)?;
+
+        // Generate polynomial type:
+        // 0: Uni
+        // 1: Mle
+        // 2: VPoly
+        let poly_type_choice: u8 = u.int_in_range(0..=2)?;
+        let atyp = match poly_type_choice {
+            0 => {
+                let deg: usize = u.int_in_range(0..=4)?;
+                ATyp::uni(deg)
+            }
+            1 => {
+                let vars: usize = u.int_in_range(1..=3)?;
+                ATyp::mle(vars)
+            }
+            _ => {
+                let vars: usize = u.int_in_range(1..=3)?;
+                let deg: usize = u.int_in_range(1..=3)?;
+                ATyp::vpoly(vars, deg)
+            }
+        };
+
+        // Generate 'len' random polynomials of the chosen type
+        let mut elems = Vec::with_capacity(len);
+        for _ in 0..len {
+            elems.push(Value::<TestConfig>::random(&mut rng, &atyp));
+        }
+
+        // Test value_vec construction
+        let vec_val = Value::value_vec(elems.clone());
+
+        // Assert it is constructed as Value::Vec(v)
+        let Value::Vec(ref internal_vec) = vec_val else {
+            panic!(
+                "Expected Value::Vec for vector of polynomials, found {}",
+                vec_val
+            );
+        };
+        assert_eq!(internal_vec.len(), len);
+
+        // Test reduction under Addition
+        let reduced_add = vec_val.clone().value_reduce(lang::ast::BinOp::Add);
+        assert!(matches!(reduced_add, Value::Poly(_)));
+
+        // Test reduction under Multiplication
+        let reduced_mul = vec_val.value_reduce(lang::ast::BinOp::Mul);
+        assert!(matches!(reduced_mul, Value::Poly(_)));
+
+        Ok(())
+    });
+}

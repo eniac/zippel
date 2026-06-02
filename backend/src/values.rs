@@ -339,6 +339,9 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n])
             }
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                Value::Poly(VirtualPolynomial::from_scalar(C::FOps::one()))
+            }
             ATyp::Vec(box vt, n) => {
                 let mut v = Vec::<Value<C>>::with_capacity(*n);
                 for _ in 0..*n {
@@ -2560,7 +2563,9 @@ impl<C: ArkConfig> Value<C> {
                 vec_value.into_vec_gt_mut();
                 vec_value
             }
-            _ => panic!("Not yet implemented for vector"),
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) | ATyp::Record(_) | ATyp::Vec(_, _) => {
+                vec_value
+            }
         }
     }
 

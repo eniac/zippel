@@ -8,14 +8,17 @@ use zippel::*;
 
 fn main() {
     println!("=== Membership ===");
+    let n_size = 3;
+    let m_size = 4;
+
     let args = ZippelArgs::new(PathBuf::from("examples/membership/membership.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("N"), &2);
-    sizes.insert(&Tid::new("M"), &2);
+    sizes.insert(&Tid::new("N"), &n_size);
+    sizes.insert(&Tid::new("M"), &m_size);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs();
+    let inputs = prover_create_inputs(n_size, m_size);
     let public_inputs = inputs
         .clone()
         .into_iter()
@@ -55,9 +58,9 @@ fn main() {
     }
 }
 
-fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
+fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let m_size = 2; // For S = {0, 1}
+    let l_size = (n_size - 1) * m_size;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::G1(g_input);
@@ -67,22 +70,27 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    // SRS G1 up to size M (which is 2)
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..m_size).map(|_| g_input).collect());
-    let ss_index = Value::VecScalar((0..m_size).map(|i| tau_input.pow([i as u64])).collect());
+    // SRS G1 up to size L
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..l_size).map(|_| g_input).collect());
+    let ss_index = Value::VecScalar((0..l_size).map(|i| tau_input.pow([i as u64])).collect());
     let ss = ss_g.clone() * ss_index.clone();
 
     // SRS G2_s
     let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
-    // Set S = {0, 1}
-    let zero = <ArkBls12_381 as ArkConfig>::F::from(0u64);
-    let one = <ArkBls12_381 as ArkConfig>::F::from(1u64);
-    let s_val = Value::VecScalar(vec![zero, one]);
+    // Set S of size M (choose 0, 1, 2, ..., M-1)
+    let s_val = Value::VecScalar(
+        (0..m_size)
+            .map(|i| <ArkBls12_381 as ArkConfig>::F::from(i as u64))
+            .collect(),
+    );
 
-    // f_coeffs. f(0) = z = 0. f(X) = c*X. So f_coeffs = [0, c]
-    let c = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let f_coeffs = Value::VecScalar(vec![zero, c]);
+    // f_coeffs. Constant term must be one of the elements of S (we choose S[0] which is 0).
+    let mut f_coeffs_vec = vec![<ArkBls12_381 as ArkConfig>::F::from(0u64)];
+    for _ in 1..n_size {
+        f_coeffs_vec.push(<ArkBls12_381 as ArkConfig>::F::rand(&mut rng));
+    }
+    let f_coeffs = Value::VecScalar(f_coeffs_vec);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("f_coeffs".to_string()), f_coeffs),
