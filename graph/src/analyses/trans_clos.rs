@@ -192,6 +192,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     }
 
     /// Remap every PRef (both prefs and clos entries) through `f`.
+    ///
+    /// `f` must not change the `reference` (node identity) of a PRef, only its
+    /// metadata. Changing the reference would leave `Op::Ref` children in
+    /// `clos` pointing at stale node identities.
     pub fn remap(&mut self, f: &impl Fn(&PRef) -> PRef) {
         self.prefs = self.prefs.iter().map(f).collect();
         self.clos = self.clos.drain(..).map(|(pr, op)| (f(&pr), op)).collect();

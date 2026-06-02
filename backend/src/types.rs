@@ -318,7 +318,10 @@ impl ATyp {
             // = linear), not the Mle arm (which requires n≥2).
             CTyp::Poly(_, 1, m) => Some(ATyp::Uni(*m)),
             CTyp::Poly(_, n, 1) if *n >= 2 => Some(ATyp::Mle(*n)),
-            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(*m, *m * *n)),
+            CTyp::Poly(_, m, n) => Some(ATyp::VPoly(
+                *m,
+                m.checked_mul(*n).expect("polynomial degree overflow"),
+            )),
             CTyp::Fin(r) => Some(ATyp::fin(*r)),
             CTyp::Bool => Some(ATyp::bool()),
             CTyp::Record(fields) => {
