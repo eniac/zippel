@@ -110,6 +110,10 @@ name = "groth16"
 path = "src/bin/groth16.rs"
 
 [[bin]]
+name = "groth16_profile"
+path = "src/bin/groth16_profile.rs"
+
+[[bin]]
 name = "bench_all"
 path = "src/bin/bench_all.rs"
 
