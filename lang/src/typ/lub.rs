@@ -321,6 +321,14 @@ impl Lub for Tid {
             (Kind::Scalar(g), Kind::Pairing(g1, g2)) if g.contains(g1) || g.contains(g2) => {
                 Ok(b.clone())
             }
+            // Bilinear pairing: G1 * G2 => Pairing(G1, G2) and G2 * G1 => Pairing(G2, G1)
+            (Kind::Group, Kind::Group) => {
+                if let Some((pid, _)) = ctx.find(|_, k| k.is_pairing(a, b)) {
+                    Ok(pid.clone())
+                } else {
+                    Err(LubError::mul(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
+                }
+            }
             // Range kinds should be substituted at this point
             (Kind::Range(_), _) | (_, Kind::Range(_)) | (Kind::SizeVar, _) | (_, Kind::SizeVar) => {
                 unreachable!()
@@ -861,22 +869,15 @@ impl Lub for CTyp {
         }
     }
 
-    fn lub_dot(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
+    fn lub_dot(x: &Self, y: &Self, ctx: &Self::Context) -> Result<Self, LubError> {
         match (x, y) {
-            // Vec<A> . Vec<B> = C
+            // Vec<A> . Vec<B> = C where C is the element-wise result of
+            // multiplication or pairing, determined by lub_mul.
+            // dot(VecG1, VecG2) -> GT works because lub_mul(G1, G2)
+            // resolves the pairing kind rule, and dot(VecG1, VecScalar) -> G1
+            // works because lub_mul(G1, Scalar) = G1 (scalar multiplication).
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
                 if n == m {
-                    // Special-case `dot(VecG1, VecG2) -> GT`: at the element
-                    // level this is the pairing kind rule (`Tid::lub_pair`),
-                    // not multiplication. The runtime arm in `value_dot`
-                    // routes this through `multi_pairing`, which folds N
-                    // pairings into one final exponentiation — the standard
-                    // batching trick every native SNARK verifier uses.
-                    if let (CTyp::Base(ea), CTyp::Base(eb)) = (a, b) {
-                        if let Ok(t) = Tid::lub_pair(ea, eb, ctx) {
-                            return Ok(CTyp::Base(t));
-                        }
-                    }
                     Ok(CTyp::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?)
                 } else {
@@ -1042,6 +1043,8 @@ fn lub_tid() {
 
     assert_eq!(Tid::lub_mul(&f, &f, &ctx), Ok(f.clone()));
     assert!(Tid::lub_mul(&g1, &g1, &ctx).is_err());
+    assert_eq!(Tid::lub_mul(&g1, &g2, &ctx), Ok(p.clone()));
+    assert_eq!(Tid::lub_mul(&g2, &g1, &ctx), Ok(p.clone()));
     assert!(Tid::lub_mul(&s1, &s2, &ctx).is_err());
     assert_eq!(Tid::lub_mul(&s1, &s1, &ctx), Ok(s1.clone()));
     assert_eq!(Tid::lub_mul(&s1, &g1, &ctx), Ok(g1.clone()));

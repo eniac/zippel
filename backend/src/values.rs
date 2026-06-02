@@ -748,22 +748,35 @@ impl<C: ArkConfig> Value<C> {
                 }
             },
             Value::G1(a) => match &other {
-                // Group1 * scalar multiplication
+                // G1 * scalar multiplication
                 Value::Scalar(_) | Value::Index(_) => {
                     let mut group = C::G1Ops::vec_mul(a, &[other.into_scalar()]);
                     *other = Value::G1Affine(group.remove(0));
                 }
-                // Group1 * Vec<Index>
+                // G1 * Vec<Index/Scalar> = VecG1Affine (broadcast scalar mul)
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
                     *other = Value::VecG1Affine(C::G1Ops::vec_mul(a, vr));
                 }
-                // Group1 * Vec<T>
+                // G1 * G2 = GT (pairing)
+                Value::G2(b) => *other = Value::GT(C::POps::billinear_map(a, b)),
+                Value::G2Affine(b) => *other = Value::GT(C::POps::billinear_map(a, &(*b).into())),
+                // G1 * VecG2 = VecGT (broadcast pairing)
+                Value::VecG2(b) => {
+                    let g1_vec = vec![*a; b.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1_vec, b))
+                }
+                Value::VecG2Affine(b) => {
+                    let g2: Vec<_> = b.iter().map(|b| (*b).into()).collect();
+                    let g1_vec = vec![*a; g2.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1_vec, &g2))
+                }
+                // G1 * Vec<T> = Vec<T'> (broadcast)
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
-                _ => panic!("Expected scalar or group2, found {}", other),
+                _ => panic!("Cannot multiply G1 and {}", other),
             },
             Value::G2(a) => match &other {
                 // G2 * scalar multiplication
@@ -771,17 +784,30 @@ impl<C: ArkConfig> Value<C> {
                     let mut group = C::G2Ops::vec_mul(a, &[other.into_scalar()]);
                     *other = Value::G2Affine(group.remove(0));
                 }
-                // G2 * Vec<Index>
+                // G2 * Vec<Index/Scalar> = VecG2Affine (broadcast scalar mul)
                 Value::VecIndex(_) | Value::VecScalar(_) => {
                     let vr = other.into_vec_scalar_mut();
                     *other = Value::VecG2Affine(C::G2Ops::vec_mul(a, vr));
                 }
-                // G2 * Vec<T>
+                // G2 * G1 = GT (pairing)
+                Value::G1(b) => *other = Value::GT(C::POps::billinear_map(b, a)),
+                Value::G1Affine(b) => *other = Value::GT(C::POps::billinear_map(&(*b).into(), a)),
+                // G2 * VecG1 = VecGT (broadcast pairing)
+                Value::VecG1(b) => {
+                    let g2_vec = vec![*a; b.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(b, &g2_vec))
+                }
+                Value::VecG1Affine(b) => {
+                    let g1: Vec<_> = b.iter().map(|b| (*b).into()).collect();
+                    let g2_vec = vec![*a; g1.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1, &g2_vec))
+                }
+                // G2 * Vec<T> = Vec<T'> (broadcast)
                 Value::Vec(_) => other
                     .into_vec_mut()
                     .par_iter_mut()
                     .for_each(|b| self.value_mul(b)),
-                _ => panic!("Expected scalar or group1, found {}", other),
+                _ => panic!("Cannot multiply G2 and {}", other),
             },
             Value::G1Affine(a) => Self::value_mul(&Value::G1((*a).into()), other),
             Value::G2Affine(a) => Self::value_mul(&Value::G2((*a).into()), other),
@@ -949,7 +975,6 @@ impl<C: ArkConfig> Value<C> {
                 }
                 // Vec<Group1> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
-                    // TODO: There has to be a better way to do this...
                     let vl = &*other.into_vec_scalar_mut();
                     let mut vr = v.clone();
                     vl.par_iter()
@@ -957,12 +982,27 @@ impl<C: ArkConfig> Value<C> {
                         .for_each(|(a, b)| C::G1Ops::mul(a, b));
                     *other = Value::VecG1(vr);
                 }
+                // VecG1 * G2 = VecGT (broadcast pairing)
+                Value::G2(b) => {
+                    let g2_vec = vec![*b; v.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(v, &g2_vec))
+                }
+                Value::G2Affine(b) => {
+                    let g2_vec = vec![(*b).into(); v.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(v, &g2_vec))
+                }
+                // VecG1 * VecG2 = VecGT (element-wise pairing)
+                Value::VecG2(b) => *other = Value::VecGT(C::POps::billinear_vec_mul(v, b)),
+                Value::VecG2Affine(b) => {
+                    let g2: Vec<_> = b.iter().map(|b| (*b).into()).collect();
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(v, &g2))
+                }
                 // Vec<Group1> * Vec<T>
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::G1(*a).value_mul(b)),
-                _ => panic!("Expected scalar or group2, found {}", other),
+                _ => panic!("Cannot multiply VecG1 and {}", other),
             },
             Value::VecG2(v) => match &other {
                 // Vec<G2> * scalar multiplication
@@ -980,7 +1020,6 @@ impl<C: ArkConfig> Value<C> {
                 }
                 // Vec<G2> * Vec<Index>
                 Value::VecIndex(_) | Value::VecScalar(_) => {
-                    // TODO: There has to be a better way to do this...
                     let vl = &*other.into_vec_scalar_mut();
                     let mut vr = v.clone();
                     vl.par_iter()
@@ -988,12 +1027,27 @@ impl<C: ArkConfig> Value<C> {
                         .for_each(|(a, b)| C::G2Ops::mul(a, b));
                     *other = Value::VecG2(vr);
                 }
+                // VecG2 * G1 = VecGT (broadcast pairing)
+                Value::G1(b) => {
+                    let g1_vec = vec![*b; v.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1_vec, v))
+                }
+                Value::G1Affine(b) => {
+                    let g1_vec = vec![(*b).into(); v.len()];
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1_vec, v))
+                }
+                // VecG2 * VecG1 = VecGT (element-wise pairing)
+                Value::VecG1(b) => *other = Value::VecGT(C::POps::billinear_vec_mul(b, v)),
+                Value::VecG1Affine(b) => {
+                    let g1: Vec<_> = b.iter().map(|b| (*b).into()).collect();
+                    *other = Value::VecGT(C::POps::billinear_vec_mul(&g1, v))
+                }
                 // Vec<G2> * Vec<T>
                 Value::Vec(_) => v
                     .par_iter()
                     .zip(other.into_vec_mut().par_iter_mut())
                     .for_each(|(a, b)| Value::G2(*a).value_mul(b)),
-                _ => panic!("Expected scalar or group1, found {}", other),
+                _ => panic!("Cannot multiply VecG2 and {}", other),
             },
             Value::VecG1Affine(v) => Self::value_mul(
                 &Value::VecG1(v.par_iter().map(|a| (*a).into()).collect()),

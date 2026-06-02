@@ -397,6 +397,7 @@ impl Lub for ABase {
             (ABase::G1, ABase::Scalar) | (ABase::Scalar, ABase::G1) => Ok(ABase::G1),
             (ABase::G2, ABase::Scalar) | (ABase::Scalar, ABase::G2) => Ok(ABase::G2),
             (ABase::GT, ABase::Scalar) | (ABase::Scalar, ABase::GT) => Ok(ABase::GT),
+            (ABase::G1, ABase::G2) | (ABase::G2, ABase::G1) => Ok(ABase::GT),
             (a, b) => Err(LubError::mul(&a, &b)),
         }
     }
@@ -1166,6 +1167,92 @@ mod tests {
         });
     }
 
+    // ---------- lub_mul: pairing and group broadcast ----------
+
+    /// `G1 * G2 == GT` and `G2 * G1 == GT` — pairing promoted to mul.
+    #[test]
+    fn pbt_lub_mul_g1_g2_is_gt() {
+        assert_eq!(
+            ABase::lub_mul(&ABase::G1, &ABase::G2, &Nothing).unwrap(),
+            ABase::GT
+        );
+        assert_eq!(
+            ABase::lub_mul(&ABase::G2, &ABase::G1, &Nothing).unwrap(),
+            ABase::GT
+        );
+    }
+
+    /// `VecG1 * G2 == VecGT` — broadcast pairing through lub_mul.
+    #[test]
+    fn pbt_lub_mul_vec_g1_g2_is_vec_gt() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=8)?;
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::vec_g1(n), &ATyp::g2(), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "VecG1({n}) * G2 should be VecGT({n})"
+            );
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::g2(), &ATyp::vec_g1(n), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "G2 * VecG1({n}) should be VecGT({n})"
+            );
+            Ok(())
+        });
+    }
+
+    /// `VecG2 * G1 == VecGT` — broadcast pairing in reverse order.
+    #[test]
+    fn pbt_lub_mul_vec_g2_g1_is_vec_gt() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=8)?;
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::vec_g2(n), &ATyp::g1(), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "VecG2({n}) * G1 should be VecGT({n})"
+            );
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::g1(), &ATyp::vec_g2(n), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "G1 * VecG2({n}) should be VecGT({n})"
+            );
+            Ok(())
+        });
+    }
+
+    /// `VecG1 * VecG2 == VecGT` — element-wise pairing via lub_mul.
+    #[test]
+    fn pbt_lub_mul_vec_g1_vec_g2_is_vec_gt() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=8)?;
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "VecG1({n}) * VecG2({n}) should be VecGT({n})"
+            );
+            assert_eq!(
+                ATyp::lub_mul(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing).unwrap(),
+                ATyp::vec(&ATyp::gt(), n),
+                "VecG2({n}) * VecG1({n}) should be VecGT({n})"
+            );
+            Ok(())
+        });
+    }
+
+    /// `VecG1 * VecG1` errors — group element multiplication is not valid
+    /// even with pairing in lub_mul (G1*G1 has no pairing).
+    #[test]
+    fn pbt_lub_mul_vec_g1_vec_g1_pins_error() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=8)?;
+            assert!(
+                ATyp::lub_mul(&ATyp::vec_g1(n), &ATyp::vec_g1(n), &Nothing).is_err(),
+                "VecG1({n}) * VecG1({n}) should error (no self-pairing)"
+            );
+            Ok(())
+        });
+    }
+
     // ---------- lub_add ----------
 
     /// `Uni(m1) + Uni(m2) == Uni(max(m1, m2))`.
@@ -1342,28 +1429,42 @@ mod tests {
         });
     }
 
-    /// `dot(Vec<G1, n>, Vec<G2, n>)` (and reverse) — the pairing-style inner
-    /// product is **not** wired up.  The Vec arm delegates to `ATyp::lub_mul`,
-    /// which rejects `G1 * G2`.  Pin the error so any future `dot` -> `pair`
-    /// rule has to update this test deliberately.
+    /// `dot(Vec<G1, n>, Vec<G2, n>) == GT` (and reverse) — multi-pairing
+    /// inner product. The Vec arm delegates element types to `ATyp::lub_dot`,
+    /// which resolves `G1 · G2 → GT` via the pairing rule.
     #[test]
-    fn pbt_lub_dot_vec_g1_vec_g2_pins_error() {
+    fn pbt_lub_dot_vec_g1_vec_g2_is_gt() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=8)?;
-            assert!(
-                ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing).is_err(),
-                "dot(Vec<G1,{n}>, Vec<G2,{n}>) currently has no pairing arm and should error",
+            assert_eq!(
+                ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing).unwrap(),
+                ATyp::gt(),
+                "dot(Vec<G1,{n}>, Vec<G2,{n}>) should be GT"
             );
-            assert!(
-                ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing).is_err(),
-                "dot(Vec<G2,{n}>, Vec<G1,{n}>) currently has no pairing arm and should error",
+            assert_eq!(
+                ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing).unwrap(),
+                ATyp::gt(),
+                "dot(Vec<G2,{n}>, Vec<G1,{n}>) should be GT"
             );
             Ok(())
         });
     }
 
-    /// `dot(Uni(n), Uni(n)) == Scalar` — explicit Uni–Uni arm.
+    /// `dot(Vec<GT, n>, Vec<Scalar, n>) == GT` — GT is a target group,
+    /// and `GT · Scalar → GT` under `lub_dot`.
     #[test]
+    fn pbt_lub_dot_vec_gt_vec_scalar_is_gt() {
+        arbtest::arbtest(|u| {
+            let n: usize = u.int_in_range(1..=8)?;
+            assert_eq!(
+                ATyp::lub_dot(&ATyp::vec(&ATyp::gt(), n), &ATyp::vec_scalar(n), &Nothing).unwrap(),
+                ATyp::gt(),
+                "dot(Vec<GT,{n}>, Vec<Scalar,{n}>) should be GT"
+            );
+            Ok(())
+        });
+    }
+
     /// `dot(Vec<Scalar, n>, Vec<Scalar, m>)` with `n != m` has no covering arm,
     /// so it must error.
     #[test]
