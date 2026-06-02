@@ -780,16 +780,6 @@ impl Lub for ATyp {
                     .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, n1), ATyp::Base(ABase::Bool)) => {
-                let t = ATyp::lub_and(t1, b, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
-                Ok(ATyp::vec(&t, *n1))
-            }
-            (ATyp::Base(ABase::Bool), ATyp::Vec(box t2, n2)) => {
-                let t = ATyp::lub_and(a, t2, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
-                Ok(ATyp::vec(&t, *n2))
-            }
             (a, b) => Err(LubError::and(&a, &b)),
         }
     }

@@ -207,7 +207,7 @@ mod op_construction_tests {
         let v1 = GOp::<C>::value(&Value::Bool(true));
         let v2 = GOp::<C>::value(&Value::Bool(true));
 
-        let result = Op::and(v1, v2);
+        let result = Op::and(v1, v2, ATyp::bool());
 
         match result {
             Op::Value(Value::Bool(true)) => (),
@@ -220,7 +220,7 @@ mod op_construction_tests {
         let v1 = GOp::<C>::value(&Value::Bool(false));
         let v2 = GOp::<C>::value(&Value::Bool(true));
 
-        let result = Op::and(v1, v2);
+        let result = Op::and(v1, v2, ATyp::bool());
 
         match result {
             Op::Value(Value::Bool(false)) => (),
@@ -233,7 +233,7 @@ mod op_construction_tests {
         let v1 = GOp::<C>::value(&Value::Bool(true));
         let v2 = GOp::<C>::value(&Value::Bool(false));
 
-        let result = Op::and(v1, v2);
+        let result = Op::and(v1, v2, ATyp::bool());
 
         match result {
             Op::Value(Value::Bool(false)) => (),

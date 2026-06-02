@@ -1641,14 +1641,21 @@ impl<C: HasOpFactory> UDag<C> {
                             TypeError::ark(kctx, &vctx, &exp, &typ),
                         )
                     })?;
-                    let element_typ = atyp.clone().into_vec().0;
+
+                    let input_element_typ = ATyp::from_ctyp(&ie, kctx).ok_or_else(|| {
+                        TypeError::next(
+                            TypeError::exp(kctx, &vctx, &exp),
+                            TypeError::ark(kctx, &vctx, &exp, &ie),
+                        )
+                    })?;
 
                     let mut res = Vec::with_capacity(n);
                     for i in 0..n {
                         let mut local_vars = vars.clone();
                         let mut local_vctx = vctx.clone();
                         let ram_op = GOp::ram(oe.clone(), GOp::index(i));
-                        let ram_ref = self.materialize(ram_op, edge_type, element_typ.clone());
+                        let ram_ref =
+                            self.materialize(ram_op, edge_type, input_element_typ.clone());
                         local_vars.insert(&x, &ram_ref);
                         local_vctx.insert(&x, &ie);
                         let ol = self.add_exp(

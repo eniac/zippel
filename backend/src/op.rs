@@ -421,7 +421,7 @@ impl<C: HasOpFactory> GOp<C> {
             BinOp::Dot => Self::dot(a, b, typ),
             BinOp::Concat => Self::concat(a, b, typ),
             BinOp::Equ => Self::equ(a, b),
-            BinOp::And => Self::and(a, b),
+            BinOp::And => Self::and(a, b, typ),
         }
     }
 
@@ -836,11 +836,11 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
-    pub fn and(v1: Self, v2: Self) -> Self {
+    pub fn and(v1: Self, v2: Self, typ: ATyp) -> Self {
         match (v1, v2) {
             (Op::Value(Value::Bool(false)), _) | (_, Op::Value(Value::Bool(false))) => Op::bfalse(),
             (Op::Value(a), Op::Value(b)) => Op::Value(a & b),
-            (v1, v2) => Op::Bin(BinOp::And, mk::<C>(v1), mk::<C>(v2), ATyp::bool()),
+            (v1, v2) => Op::Bin(BinOp::And, mk::<C>(v1), mk::<C>(v2), typ),
         }
     }
 
@@ -1117,7 +1117,8 @@ impl<C: HasOpFactory> BitXorAssign<GOp<C>> for GOp<C> {
 
 impl<C: HasOpFactory> BitAndAssign<GOp<C>> for GOp<C> {
     fn bitand_assign(&mut self, other: GOp<C>) {
-        *self = Op::and(self.clone(), other);
+        let typ = self.typ();
+        *self = Op::and(self.clone(), other, typ);
     }
 }
 
@@ -1179,7 +1180,8 @@ impl<C: HasOpFactory> BitAnd for GOp<C> {
     type Output = GOp<C>;
 
     fn bitand(self, other: GOp<C>) -> GOp<C> {
-        Op::and(self, other)
+        let typ = self.typ();
+        Op::and(self, other, typ)
     }
 }
 
