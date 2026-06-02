@@ -215,7 +215,7 @@ impl PRef {
         })
     }
 
-    /// Logical slot access: returns a PRef at logical slot `i` with the all physical slot PRefs for this type.
+    /// Collect all physical slot PRefs for this value, flattened one per scalar position.
     ///
     /// For leaf types (scalar, group), returns a single-element vec with
     /// `self`. For `Vec(T, n)`, returns `n` logical elements, each
