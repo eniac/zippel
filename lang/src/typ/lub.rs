@@ -923,16 +923,6 @@ impl Lub for CTyp {
                     .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
                 Ok(CTyp::vec(&t, *n))
             }
-            (CTyp::Vec(box a, n), CTyp::Bool) => {
-                let t = CTyp::lub_and(a, y, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
-                Ok(CTyp::vec(&t, *n))
-            }
-            (CTyp::Bool, CTyp::Vec(box b, m)) => {
-                let t = CTyp::lub_and(x, b, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&x, &y), e))?;
-                Ok(CTyp::vec(&t, *m))
-            }
             (_, _) => Err(LubError::and(&x, &y)),
         }
     }
@@ -1152,11 +1142,11 @@ fn lub_typ() {
     );
     assert_eq!(
         CTyp::lub_and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10), &ctx),
-        Ok(CTyp::vec(&CTyp::Bool, 10))
+        Err(LubError::and(&CTyp::Bool, &CTyp::vec(&CTyp::Bool, 10)))
     );
     assert_eq!(
         CTyp::lub_and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::Bool, &ctx),
-        Ok(CTyp::vec(&CTyp::Bool, 10))
+        Err(LubError::and(&CTyp::vec(&CTyp::Bool, 10), &CTyp::Bool))
     );
 
     // Regression (phase 7): Poly * Poly degree math.

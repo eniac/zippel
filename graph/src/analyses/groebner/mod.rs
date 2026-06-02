@@ -1090,7 +1090,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         b: &SparsePolynomial<C::F, T>,
     ) -> SparsePolynomial<C::F, T> {
         match op {
-            BinOp::Add | BinOp::And => a + b,
+            BinOp::Add => a + b,
             BinOp::Sub => a - b,
             other => unreachable!("apply_binop called with {:?}", other),
         }
@@ -1754,10 +1754,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.basis.push(p - SparsePolynomial::var(&pf));
                 }
             }
-            Op::Bin(BinOp::Add | BinOp::And, a, b, _) => {
+            Op::Bin(BinOp::Add, a, b, _) => {
                 let a_src = PolySource::from_ref_vars(self, &a);
                 let b_src = PolySource::from_ref_vars(self, &b);
                 self.broadcast_binop(&pr, &a_src, &b_src, &pr.typ, BinOp::Add, result);
+            }
+            Op::Bin(BinOp::And, ref a, ref b, _) => {
+                let a_src = PolySource::from_ref_vars(self, a);
+                let b_src = PolySource::from_ref_vars(self, b);
+                self.mul_op(&pr, &a_src, &b_src, &pr.typ, result);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
                 let a_src = PolySource::from_ref_vars(self, &a);
@@ -2196,7 +2201,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let v_src = PolySource::from_ref_vars(self, v);
 
         match rop {
-            BinOp::Add | BinOp::And => {
+            BinOp::Add => {
                 let mut acc: PolySource<C, T> = PolySource::new(
                     (0..elem_t.physical_len())
                         .map(|_| SparsePolynomial::zero())
@@ -2212,6 +2217,26 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::And => {
+                let mut acc = v_src.at_index(0).unwrap();
+                for i in 1..n {
+                    let elem = v_src.at_index(i).unwrap();
+                    let acc_name = self.ns.next_name("reduce_and_acc");
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
+                    self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
+                    acc = PolySource::new(
+                        acc_pref
+                            .slots()
+                            .into_iter()
+                            .map(|s| SparsePolynomial::var(&s))
+                            .collect(),
+                        elem_t.clone(),
+                    );
+                }
+                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     result.basis.push(p - SparsePolynomial::var(&pf));
                 }
             }
