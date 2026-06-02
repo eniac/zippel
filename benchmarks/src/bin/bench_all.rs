@@ -209,9 +209,9 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
         .iter()
         .map(|&log_size| {
             let num_constraints = 1usize << log_size;
-            let shared = groth16::shared::build(num_constraints);
-            let mut z = groth16::zippel_side::Setup::new(&shared);
-            let n = groth16::native_side::Setup::new(&shared);
+            let translated = groth16::build_translated(num_constraints);
+            let mut z = groth16::zippel_side::Setup::new(&translated);
+            let n = groth16::native_side::Setup::new(&translated);
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {

@@ -424,8 +424,20 @@ pub mod native_side {
     use crate::pari_native::{Proof, ProvingKey, VerifyingKey, keygen, prove, verify};
     use ark_bls12_381::Bls12_381;
     use ark_ec::pairing::Pairing;
+    use ark_ff::Zero;
     use ark_serialize::CanonicalSerialize;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
+
+    /// Sparse matrix row · dense vector — same shape as pari_native's
+    /// internal `eval_constraint`, inlined here so we can time it from
+    /// outside the prove function without exposing pari_native internals.
+    fn eval_sparse_row<F: ark_ff::Field>(row: &[(F, usize)], v: &[F]) -> F {
+        let mut acc = F::zero();
+        for (c, j) in row {
+            acc += *c * v[*j];
+        }
+        acc
+    }
 
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
@@ -448,6 +460,41 @@ pub mod native_side {
             Setup { pk, vk }
         }
 
+        /// Time the sparse matrix–vector products the native prover would
+        /// have to do anyway (z_a = A·z, z_b = B·z, w_a = A·w_punctured,
+        /// w_b = B·w_punctured on the K-domain). The zippel side gets these
+        /// vectors as precomputed inputs (`inst.z_a_evals` etc.) and so its
+        /// prove timer excludes this cost; we subtract it from the native
+        /// prove timer to put the two sides on the same footing.
+        fn time_mvm(&self, inst: &super::Instance<F>) -> Duration {
+            let k = inst.k;
+            let instance_assignment = &inst.z[..inst.instance_len];
+            let witness_assignment = &inst.z[inst.instance_len..];
+
+            let mut assignment = instance_assignment.to_vec();
+            assignment.extend_from_slice(witness_assignment);
+            let mut punctured = vec![F::zero(); inst.instance_len];
+            punctured.extend_from_slice(witness_assignment);
+
+            // Mirror pari_native::prove's MVM loop verbatim.
+            let mut z_a = vec![F::zero(); k];
+            let mut z_b = vec![F::zero(); k];
+            let mut w_a = vec![F::zero(); k];
+            let mut w_b = vec![F::zero(); k];
+            let t = Instant::now();
+            for i in 0..k {
+                z_a[i] = eval_sparse_row(&inst.a_mat[i], &assignment);
+                z_b[i] = eval_sparse_row(&inst.b_mat[i], &assignment);
+                w_a[i] = eval_sparse_row(&inst.a_mat[i], &punctured);
+                w_b[i] = eval_sparse_row(&inst.b_mat[i], &punctured);
+            }
+            let elapsed = t.elapsed();
+            // Defeat dead-code elimination — keep the output alive past
+            // the timer so the loop isn't optimized away.
+            std::hint::black_box((z_a, z_b, w_a, w_b));
+            elapsed
+        }
+
         pub fn time_protocol(&self, inst: &super::Instance<F>) -> Timing {
             let instance_assignment = &inst.z[..inst.instance_len];
             let witness_assignment = &inst.z[inst.instance_len..];
@@ -462,6 +509,13 @@ pub mod native_side {
             );
             let prove_t = t.elapsed();
 
+            // Subtract the MVM cost from the prove timer so the
+            // comparison reports SNARK-specific work only (the zippel
+            // side doesn't compute these MVMs inside its timer — see
+            // `time_mvm`'s docstring).
+            let mvm_t = self.time_mvm(inst);
+            let prove_adjusted = prove_t.saturating_sub(mvm_t);
+
             // Verifier receives public_input as everything except the
             // constant 1 at z[0] — matching upstream's stripping convention.
             let public_input: Vec<F> = instance_assignment[1..].to_vec();
@@ -472,7 +526,7 @@ pub mod native_side {
             assert!(ok, "native PARI verification FAILED");
 
             Timing {
-                prove: prove_t,
+                prove: prove_adjusted,
                 verify: verify_t,
             }
         }

@@ -7,7 +7,7 @@
 //! v0.5 proving/verifying keys into git-main types and runs against
 //! `examples/groth16/groth16-opt.zippel`.
 
-use benchmarks::groth16::{DEFAULT_LOG_CONSTRAINTS, native_side, shared, zippel_side};
+use benchmarks::groth16::{DEFAULT_LOG_CONSTRAINTS, build_translated, native_side, zippel_side};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -25,9 +25,9 @@ fn main() {
     let args = Args::parse();
     let log_sizes = args.sweep.unwrap_or_else(|| vec![args.log_size]);
 
-    println!("=== Groth16: zippel vs. ark-groth16 v0.5 (BLS12-381) ===");
+    println!("=== Groth16: zippel vs. vendored native (BLS12-381, git-main arkworks) ===");
     println!("statement: BenchCircuit — N multiplication constraints w1*w2 = out");
-    println!("native side  = ark-groth16 v0.5 (crates.io)");
+    println!("native side  = vendored Groth16 prover/verifier (git-main ark_ec + multi_pairing)");
     println!("zippel side  = examples/groth16/groth16-opt.zippel\n");
     println!(
         "  log |    C    |  M  |  L  | zippel prove   zippel verify | native prove   native verify | prove ratio  verify ratio"
@@ -38,12 +38,12 @@ fn main() {
 
     for &log_size in &log_sizes {
         let num_constraints = 1usize << log_size;
-        let s = shared::build(num_constraints);
-        let m = s.vk.gamma_abc_g1.len();
-        let l = s.pk.l_query.len();
+        let t = build_translated(num_constraints);
+        let m = t.m;
+        let l = t.l;
 
-        let mut zs = zippel_side::Setup::new(&s);
-        let ns = native_side::Setup::new(&s);
+        let mut zs = zippel_side::Setup::new(&t);
+        let ns = native_side::Setup::new(&t);
         let zt = zs.time_protocol();
         let nt = ns.time_protocol();
 
