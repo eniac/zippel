@@ -339,6 +339,9 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n])
             }
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
+                Value::Poly(VirtualPolynomial::from_scalar(C::FOps::one()))
+            }
             ATyp::Vec(box vt, n) => {
                 let mut v = Vec::<Value<C>>::with_capacity(*n);
                 for _ in 0..*n {
@@ -2193,7 +2196,12 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, t)).collect()),
             // Univariate poly: m = max_degree, so m+1 coefficients.
             ATyp::Uni(m) => {
-                let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
+                if *m > 0 {
+                    while coeffs[*m].is_zero() {
+                        coeffs[*m] = C::FOps::rand(rng);
+                    }
+                }
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                     DensePolynomial::from_coefficients_vec(coeffs),
                 )))
@@ -2210,7 +2218,12 @@ impl<C: ArkConfig> Value<C> {
             // a representative inhabitant of the type.
             ATyp::VPoly(n, m) => {
                 if *n <= 1 {
-                    let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    if *m > 0 {
+                        while coeffs[*m].is_zero() {
+                            coeffs[*m] = C::FOps::rand(rng);
+                        }
+                    }
                     Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                         DensePolynomial::from_coefficients_vec(coeffs),
                     )))
@@ -2614,7 +2627,9 @@ impl<C: ArkConfig> Value<C> {
                 vec_value.into_vec_gt_mut();
                 vec_value
             }
-            _ => panic!("Not yet implemented for vector"),
+            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) | ATyp::Record(_) | ATyp::Vec(_, _) => {
+                vec_value
+            }
         }
     }
 
