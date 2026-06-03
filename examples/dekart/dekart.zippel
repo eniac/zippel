@@ -1,5 +1,5 @@
 // DeKART: ZK range proofs from univariate polynomials
-// Protocol definition
+// From: https://eprint.iacr.org/2025/1159 and https://alinush.github.io/dekart
 
 proto dekart<
     g1: Group,
@@ -71,7 +71,7 @@ proto dekart<
     com_chunks <- [ dot(coef(f_j_vec[j]), srs_g1_n) + xi_g1 * rho_vec[j] for j in 0..l_chunk ];
 
     // Step 5: Quotient polynomials
-    // v_s vanishing polynomial
+    // v_s: vanishing polynomial of the constraint domain H (excluding omega^0 = 1)
     let v_s = poly([f_one for i in 0..n+1]);
 
     // h_j(X) = \prod_{i=0..b-1} (f_j - i) / v_s

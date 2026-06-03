@@ -18,7 +18,7 @@ fn main() {
     println!("=== DeKART Range Proof ===");
     let n_size = 3;
     let b_size = 2;
-    let l_chunk = 4;
+    let l_chunk = 8;
     let h_deg = (b_size - 1) * n_size;
 
     let args = ZippelArgs::new(PathBuf::from("examples/dekart/dekart.zippel"));
@@ -115,7 +115,7 @@ fn build_inputs(
         let r_j = F::rand(&mut rng);
         let mut chunk_j = vec![r_j];
         for z in &z_vals {
-            let chunk_val = (z / 2u64.pow(j as u32)) % (b_size as u64);
+            let chunk_val = (z / (b_size as u64).pow(j as u32)) % (b_size as u64);
             chunk_j.push(F::from(chunk_val));
         }
         chunks_evals.push(Value::VecScalar(chunk_j));

@@ -1462,12 +1462,20 @@ fn test_value_concat_pbt() {
             }
         };
 
-        let max_format1 = if len1 == 1 { 2 } else { 1 };
-        let format1: u8 = u.int_in_range(0..=max_format1)?;
+        let make_format_range = |len: usize| -> std::ops::RangeInclusive<u8> {
+            if len == 0 {
+                0..=0
+            } else if len == 1 {
+                0..=2
+            } else {
+                0..=1
+            }
+        };
+
+        let format1 = u.int_in_range(make_format_range(len1))?;
         let left = make_value(elems1.clone(), format1);
 
-        let max_format2 = if len2 == 1 { 2 } else { 1 };
-        let format2: u8 = u.int_in_range(0..=max_format2)?;
+        let format2 = u.int_in_range(make_format_range(len2))?;
         let right = make_value(elems2.clone(), format2);
 
         // 1. Direct evaluation via Value::value_concat
