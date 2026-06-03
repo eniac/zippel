@@ -3,7 +3,6 @@ use crate::analyses::groebner::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
-use lang::typ::Qualifier;
 use share::Ctx;
 use std::fmt;
 use std::fmt::Debug;
@@ -69,24 +68,58 @@ pub trait Monomial:
 #[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
 pub struct MonoTerm(Ctx<PRef, usize>); // (var index, power)
 
-/// A monomial term with elimination ordering
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ElimTerm(MonoTerm);
+/// Strategy for deciding which variables to eliminate in a block-elimination order.
+///
+/// Implementations are zero-sized marker types that carry the `eliminate_var`
+/// predicate as an associated function, allowing `ElimTerm<E>` to share all
+/// boilerplate (arithmetic, `Monomial` impl, `Ord`) across strategies.
+pub trait ElimStrategy: Sized + Send + Sync {
+    /// Returns `true` if `v` belongs to the elimination block (compared first
+    /// in the two-level block-elimination monomial order).
+    fn eliminate_var(v: &PRef) -> bool;
+}
 
 /// A monomial term with grevlex ordering
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GrevLexTerm(MonoTerm);
 
-/// From constructors for ElimTerm and GrevLexTerm
-impl From<MonoTerm> for ElimTerm {
-    fn from(t: MonoTerm) -> Self {
-        ElimTerm(t)
+/// A monomial term with block-elimination ordering, parameterized by the
+/// elimination strategy `E`.
+///
+/// The `Ord` implementation uses a two-level block order: first compare the
+/// elimination block (variables for which `E::eliminate_var` returns true)
+/// via grevlex, then the kept block via grevlex.
+pub struct ElimMono<E: ElimStrategy>(MonoTerm, std::marker::PhantomData<E>);
+
+impl<E: ElimStrategy> Clone for ElimMono<E> {
+    fn clone(&self) -> Self {
+        ElimMono(self.0.clone(), std::marker::PhantomData)
+    }
+}
+
+impl<E: ElimStrategy> PartialEq for ElimMono<E> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<E: ElimStrategy> Eq for ElimMono<E> {}
+
+impl<E: ElimStrategy> Debug for ElimMono<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ElimMono").field(&self.0).finish()
     }
 }
 
 impl From<MonoTerm> for GrevLexTerm {
     fn from(t: MonoTerm) -> Self {
         GrevLexTerm(t)
+    }
+}
+
+impl<E: ElimStrategy> From<MonoTerm> for ElimMono<E> {
+    fn from(t: MonoTerm) -> Self {
+        ElimMono(t, std::marker::PhantomData)
     }
 }
 
@@ -227,25 +260,12 @@ impl MonoTerm {
         loop {
             match (a.peek(), b.peek()) {
                 (None, None) => return Ordering::Equal,
-                // Self still has vars at smaller PRefs; other has none left.
-                // At the current rightmost-unvisited coordinate (va): self
-                // has pa > 0, other has 0 => self has LARGER exp => self is
-                // the SMALLER monomial (textbook) => self is NOT leading =>
-                // self.cmp(other) = Ord::Greater.
                 (Some(_), None) => return Ordering::Greater,
                 (None, Some(_)) => return Ordering::Less,
                 (Some(&(va, _pa)), Some(&(vb, _pb))) => match va.cmp(vb) {
-                    // va is a larger PRef than vb, so va is rightmost and
-                    // `other` has 0 on it; self has pa > 0 => self larger
-                    // exp on rightmost differing => self smaller monomial
-                    // => self.cmp(other) = Ord::Greater.
                     Ordering::Greater => return Ordering::Greater,
                     Ordering::Less => return Ordering::Less,
                     Ordering::Equal => {
-                        // Same variable, same degree so far — compare exps
-                        // at this (rightmost-unvisited) coordinate. Larger
-                        // exp = smaller monomial, so self.cmp(other) is
-                        // *directly* pa.cmp(pb).
                         let (_, pa) = a.next().unwrap();
                         let (_, pb) = b.next().unwrap();
                         match pa.cmp(pb) {
@@ -274,43 +294,30 @@ impl GrevLexTerm {
     }
 }
 
-/// Constructors for ElimTerm
-impl ElimTerm {
+/// Constructors for ElimMono<E>
+impl<E: ElimStrategy> ElimMono<E> {
     pub fn new(vars: Ctx<PRef, usize>) -> Self {
-        ElimTerm(MonoTerm(vars))
-    }
-
-    /// Returns true for Gröbner-builder helper variables that are not
-    /// verifier-visible protocol values, even though they may be represented by
-    /// public sentinels for basis construction.
-    pub(crate) fn is_generated_internal(v: &PRef) -> bool {
-        v.name()
-            .map(|name| name.0.starts_with(super::GB_GENERATED_NAME_PREFIX))
-            .unwrap_or(false)
-    }
-
-    /// Returns true if the variable should be eliminated in the KnowledgeAnalysis.
-    /// Local variables (prover-internal computations), Gröbner-generated helper
-    /// sentinels, and private uniform variables (random masks) are eliminated.
-    pub fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier == Qualifier::Local
-            || Self::is_generated_internal(v)
-            || (v.qualifier == Qualifier::Private && v.distribution.is_uniform())
+        ElimMono(MonoTerm(vars), std::marker::PhantomData)
     }
 
     pub fn eliminate(&self) -> bool {
-        self.0.iter().any(|(v, _)| Self::eliminate_var(v))
+        self.0.iter().any(|(v, _)| E::eliminate_var(v))
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
         self.0.iter()
     }
+
+    /// Borrow the underlying `MonoTerm` (variable → exponent map).
+    pub(crate) fn as_mono_term(&self) -> &MonoTerm {
+        &self.0
+    }
 }
 
 /// Default constructors for Monomials
-impl Default for ElimTerm {
+impl<E: ElimStrategy> Default for ElimMono<E> {
     fn default() -> Self {
-        ElimTerm(MonoTerm(Ctx::new()))
+        ElimMono(MonoTerm(Ctx::new()), std::marker::PhantomData)
     }
 }
 
@@ -323,7 +330,7 @@ impl Default for GrevLexTerm {
 /// Multiplies two terms in place. (var, power) pairs are combined by adding powers
 /// for common variables.
 #[allow(clippy::suspicious_op_assign_impl)]
-impl MulAssign for ElimTerm {
+impl<E: ElimStrategy> MulAssign for ElimMono<E> {
     #[allow(clippy::suspicious_op_assign_impl)]
     fn mul_assign(&mut self, other: Self) {
         for (var, power) in other.0.iter() {
@@ -343,7 +350,7 @@ impl MulAssign for GrevLexTerm {
 }
 
 /// Multiplies two terms. (var, power) pairs are combined by adding powers
-impl Mul for ElimTerm {
+impl<E: ElimStrategy> Mul for ElimMono<E> {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -364,10 +371,10 @@ impl Mul for GrevLexTerm {
 }
 
 /// Multiplies by reference
-impl<'a> Mul for &'a ElimTerm {
-    type Output = ElimTerm;
+impl<'a, E: ElimStrategy> Mul for &'a ElimMono<E> {
+    type Output = ElimMono<E>;
 
-    fn mul(self, other: &'a ElimTerm) -> ElimTerm {
+    fn mul(self, other: &'a ElimMono<E>) -> ElimMono<E> {
         self.clone() * other.clone()
     }
 }
@@ -381,7 +388,7 @@ impl<'a> Mul for &'a GrevLexTerm {
 }
 
 /// Display for Monomials
-impl fmt::Display for ElimTerm {
+impl<E: ElimStrategy> fmt::Display for ElimMono<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -394,11 +401,11 @@ impl fmt::Display for GrevLexTerm {
 }
 
 /// Divides two terms. (var, power) pairs are combined by subtracting powers
-impl Div for ElimTerm {
+impl<E: ElimStrategy> Div for ElimMono<E> {
     type Output = Option<Self>;
 
     fn div(self, other: Self) -> Option<Self> {
-        self.0.div(other.0).map(ElimTerm)
+        self.0.div(other.0).map(ElimMono::from)
     }
 }
 
@@ -411,10 +418,10 @@ impl Div for GrevLexTerm {
 }
 
 /// Divides by reference
-impl<'a> Div for &'a ElimTerm {
-    type Output = Option<ElimTerm>;
+impl<'a, E: ElimStrategy> Div for &'a ElimMono<E> {
+    type Output = Option<ElimMono<E>>;
 
-    fn div(self, other: &'a ElimTerm) -> Option<ElimTerm> {
+    fn div(self, other: &'a ElimMono<E>) -> Option<ElimMono<E>> {
         self.clone() / other.clone()
     }
 }
@@ -427,10 +434,10 @@ impl<'a> Div for &'a GrevLexTerm {
     }
 }
 
-/// Convenienec constructors from vectors of variables and exponents
-impl From<Vec<(PRef, usize)>> for ElimTerm {
+/// Convenience constructors from vectors of variables and exponents
+impl<E: ElimStrategy> From<Vec<(PRef, usize)>> for ElimMono<E> {
     fn from(vars: Vec<(PRef, usize)>) -> Self {
-        ElimTerm::new(vars.into_iter().collect())
+        ElimMono::new(vars.into_iter().collect())
     }
 }
 
@@ -484,8 +491,8 @@ impl Monomial for GrevLexTerm {
     }
 }
 
-/// Implement Monomial trait for ElimTerm
-impl Monomial for ElimTerm {
+/// Implement Monomial trait for ElimMono<E>
+impl<E: ElimStrategy> Monomial for ElimMono<E> {
     fn vars(&self) -> Vec<PRef> {
         self.0.vars()
     }
@@ -503,15 +510,15 @@ impl Monomial for ElimTerm {
         self.0.is_divided(&other.0)
     }
     fn lcm(&self, other: &Self) -> Self {
-        ElimTerm(self.0.lcm(&other.0))
+        ElimMono(self.0.lcm(&other.0), std::marker::PhantomData)
     }
     fn gcd(&self, other: &Self) -> Self {
-        ElimTerm(self.0.gcd(&other.0))
+        ElimMono(self.0.gcd(&other.0), std::marker::PhantomData)
     }
 
     /// Override the default Buchberger backend: route through the
     /// external `ark-gb` crate with an elim-aware monomial wrapper.
-    /// See `ark_gb_adapter::compute_reduced_gb_elim` for the encoding.
+    /// See `ark_gb_adapter::compute_reduced_gb_with_elim` for the encoding.
     ///
     /// W is the packed monomial width. Caller must ensure W is appropriate.
     fn compute_reduced_gb<F: Field, const W: usize>(
@@ -521,20 +528,20 @@ impl Monomial for ElimTerm {
     where
         Self: Sized,
     {
-        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_elim;
-        compute_reduced_gb_elim::<F, W>(num_vars, input)
+        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
+        compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, E::eliminate_var)
     }
 }
 
-/// Define elimination order comparison. First, we compare principals such that if any variable has
-/// Principal::Any > Principal::Verifier and Principal::Any > Principal::Prover, then the same is true for MonoTerm.
-/// If the principals are equal, then perform a grevlex comparison on the powers of the variables (graded, reverse lexicographic order).
-impl Ord for ElimTerm {
+/// Block-elimination order: first compare the elimination block (variables for
+/// which `E::eliminate_var` returns true) via grevlex, then the kept block
+/// via grevlex.
+impl<E: ElimStrategy> Ord for ElimMono<E> {
     fn cmp(&self, other: &Self) -> Ordering {
         let elim_self = MonoTerm(
             self.0
                 .iter()
-                .filter(|(var, _)| ElimTerm::eliminate_var(var))
+                .filter(|(var, _)| E::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
                 .collect::<Ctx<PRef, usize>>(),
         );
@@ -543,41 +550,38 @@ impl Ord for ElimTerm {
             other
                 .0
                 .iter()
-                .filter(|(var, _)| ElimTerm::eliminate_var(var))
+                .filter(|(var, _)| E::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
                 .collect::<Ctx<PRef, usize>>(),
         );
 
-        // Compare the variables we prefer to eliminate first, using the grevlex monomial order
         match elim_self.grevlex(&elim_other) {
             Ordering::Equal => {}
             order => return order,
         };
 
-        // If they are equal, compare the remaining variables
-        let other_self = MonoTerm(
+        let keep_self = MonoTerm(
             self.0
                 .iter()
-                .filter(|(var, _)| !ElimTerm::eliminate_var(var))
+                .filter(|(var, _)| !E::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
                 .collect::<Ctx<PRef, usize>>(),
         );
 
-        let other_other = MonoTerm(
+        let keep_other = MonoTerm(
             other
                 .0
                 .iter()
-                .filter(|(var, _)| !ElimTerm::eliminate_var(var))
+                .filter(|(var, _)| !E::eliminate_var(var))
                 .map(|(var, power)| (var.clone(), *power))
                 .collect::<Ctx<PRef, usize>>(),
         );
 
-        // If they are equal, compare the remaining variables
-        other_self.grevlex(&other_other)
+        keep_self.grevlex(&keep_other)
     }
 }
 
-impl PartialOrd for ElimTerm {
+impl<E: ElimStrategy> PartialOrd for ElimMono<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -600,205 +604,6 @@ impl GrevLexTerm {
     /// Borrow the underlying `MonoTerm` (variable → exponent map).
     pub(crate) fn as_mono_term(&self) -> &MonoTerm {
         &self.0
-    }
-}
-
-impl ElimTerm {
-    /// Borrow the underlying `MonoTerm` (variable → exponent map).
-    pub(crate) fn as_mono_term(&self) -> &MonoTerm {
-        &self.0
-    }
-}
-
-/// A monomial term with soundness-elimination ordering.
-///
-/// Like `ElimTerm`, this uses a two-level elimination order (eliminate-then-grevlex),
-/// but the elimination criterion is `Qualifier::Private` — all private variables
-/// (witnesses) are eliminated first. Local and public variables are kept and
-/// compared using grevlex. This ensures that extractor polynomials for private
-/// witnesses appear as leading terms in the Gröbner basis.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct SoundnessElimTerm(MonoTerm);
-
-impl From<MonoTerm> for SoundnessElimTerm {
-    fn from(t: MonoTerm) -> Self {
-        SoundnessElimTerm(t)
-    }
-}
-
-impl SoundnessElimTerm {
-    pub fn new(vars: Ctx<PRef, usize>) -> Self {
-        SoundnessElimTerm(MonoTerm(vars))
-    }
-
-    pub fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier.is_private()
-    }
-
-    pub fn eliminate(&self) -> bool {
-        self.0.iter().any(|(v, _)| Self::eliminate_var(v))
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
-        self.0.iter()
-    }
-
-    pub(crate) fn as_mono_term(&self) -> &MonoTerm {
-        &self.0
-    }
-}
-
-impl Default for SoundnessElimTerm {
-    fn default() -> Self {
-        SoundnessElimTerm(MonoTerm(Ctx::new()))
-    }
-}
-
-#[allow(clippy::suspicious_op_assign_impl)]
-impl MulAssign for SoundnessElimTerm {
-    #[allow(clippy::suspicious_op_assign_impl)]
-    fn mul_assign(&mut self, other: Self) {
-        for (var, power) in other.0.iter() {
-            *self.0.0.entry(var.clone()).or_insert(0) += power;
-        }
-    }
-}
-
-impl Mul for SoundnessElimTerm {
-    type Output = Self;
-
-    fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
-    }
-}
-
-impl<'a> Mul for &'a SoundnessElimTerm {
-    type Output = SoundnessElimTerm;
-
-    fn mul(self, other: &'a SoundnessElimTerm) -> SoundnessElimTerm {
-        self.clone() * other.clone()
-    }
-}
-
-impl fmt::Display for SoundnessElimTerm {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl Div for SoundnessElimTerm {
-    type Output = Option<Self>;
-
-    fn div(self, other: Self) -> Option<Self> {
-        self.0.div(other.0).map(SoundnessElimTerm)
-    }
-}
-
-impl<'a> Div for &'a SoundnessElimTerm {
-    type Output = Option<SoundnessElimTerm>;
-
-    fn div(self, other: &'a SoundnessElimTerm) -> Option<SoundnessElimTerm> {
-        self.clone() / other.clone()
-    }
-}
-
-impl From<Vec<(PRef, usize)>> for SoundnessElimTerm {
-    fn from(vars: Vec<(PRef, usize)>) -> Self {
-        SoundnessElimTerm::new(vars.into_iter().collect())
-    }
-}
-
-impl Monomial for SoundnessElimTerm {
-    fn vars(&self) -> Vec<PRef> {
-        self.0.vars()
-    }
-
-    fn powers(&self) -> Vec<usize> {
-        self.0.powers()
-    }
-
-    fn is_constant(&self) -> bool {
-        self.0.is_constant()
-    }
-
-    fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
-        self.0.evaluate(p)
-    }
-
-    fn is_divided(&self, other: &Self) -> bool {
-        self.0.is_divided(&other.0)
-    }
-
-    fn lcm(&self, other: &Self) -> Self {
-        SoundnessElimTerm(self.0.lcm(&other.0))
-    }
-
-    fn gcd(&self, other: &Self) -> Self {
-        SoundnessElimTerm(self.0.gcd(&other.0))
-    }
-
-    fn compute_reduced_gb<F: Field, const W: usize>(
-        num_vars: usize,
-        input: Vec<SparsePolynomial<F, Self>>,
-    ) -> Vec<SparsePolynomial<F, Self>>
-    where
-        Self: Sized,
-    {
-        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
-        compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, Self::eliminate_var)
-    }
-}
-
-impl Ord for SoundnessElimTerm {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let elim_self = MonoTerm(
-            self.0
-                .iter()
-                .filter(|(var, _)| Self::eliminate_var(var))
-                .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>(),
-        );
-
-        let elim_other = MonoTerm(
-            other
-                .0
-                .iter()
-                .filter(|(var, _)| Self::eliminate_var(var))
-                .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>(),
-        );
-
-        match elim_self.grevlex(&elim_other) {
-            Ordering::Equal => {}
-            order => return order,
-        };
-
-        let keep_self = MonoTerm(
-            self.0
-                .iter()
-                .filter(|(var, _)| !Self::eliminate_var(var))
-                .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>(),
-        );
-
-        let keep_other = MonoTerm(
-            other
-                .0
-                .iter()
-                .filter(|(var, _)| !Self::eliminate_var(var))
-                .map(|(var, power)| (var.clone(), *power))
-                .collect::<Ctx<PRef, usize>>(),
-        );
-
-        keep_self.grevlex(&keep_other)
-    }
-}
-
-impl PartialOrd for SoundnessElimTerm {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 

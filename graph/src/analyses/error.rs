@@ -1,4 +1,6 @@
-use crate::analyses::groebner::{ElimTerm, GrevLexTerm, SoundnessElimTerm, SparsePolynomial};
+use crate::analyses::groebner::{GrevLexTerm, SparsePolynomial};
+use crate::analyses::knowledge::ElimTerm;
+use crate::analyses::soundness::SoundnessElimTerm;
 use crate::{GraphError, PRef};
 use backend::ArkConfig;
 use thiserror::Error;

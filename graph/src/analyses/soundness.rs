@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{
-    GroebnerBuilder, GroebnerResult, Monomial, SoundnessElimTerm, SparsePolynomial,
-};
+use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy};
+use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, Monomial, SparsePolynomial};
 use crate::{DQDag, PRef, Ref};
 use ark_ff::One;
 use backend::op::HasOpFactory;
@@ -16,12 +15,26 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::Set;
 
+/// Special-soundness elimination strategy: all private variables (witnesses)
+/// are eliminated first. Local and public variables are kept.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Soundness;
+
+impl ElimStrategy for Soundness {
+    fn eliminate_var(v: &PRef) -> bool {
+        v.qualifier.is_private()
+    }
+}
+
+/// Special-soundness elimination term. Type alias for the soundness case.
+pub type SoundnessElimTerm = ElimMono<Soundness>;
+
 type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, SoundnessElimTerm>;
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     search_result: GroebnerResult<C, SoundnessElimTerm>,
     validity_result: GroebnerResult<C, SoundnessElimTerm>,
-    #[allow(dead_code)]
+    #[allow(dead_code, unnameable_types)]
     relation_polys: Vec<Poly<C>>,
     witness_slots: Vec<PRef>,
 }

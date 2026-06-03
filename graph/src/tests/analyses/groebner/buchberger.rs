@@ -18,10 +18,38 @@ use share::assert_deq;
 
 use crate::PRef;
 use crate::analyses::groebner::buchberger::GroebnerBasis;
-use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm, Monomial};
-use crate::analyses::groebner::sparsepoly::{
-    SparsePolynomial, elim_sparse_poly, grevlex_sparse_poly,
-};
+use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::analyses::groebner::sparsepoly::SparsePolynomial;
+use crate::analyses::knowledge::ElimTerm;
+use ark_ff::Field;
+
+fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, T> {
+    SparsePolynomial {
+        terms: terms
+            .into_iter()
+            .map(|(coeff, term_vec)| {
+                (
+                    T::from(term_vec.into_iter().map(|(k, v)| (k.clone(), v)).collect::<Vec<_>>()),
+                    coeff,
+                )
+            })
+            .collect(),
+    }
+}
+
+fn elim_sparse_poly<F: Field>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, ElimTerm> {
+    sparse_poly(terms)
+}
+
+fn grevlex_sparse_poly<F: Field>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, GrevLexTerm> {
+    sparse_poly(terms)
+}
 
 fn elim_var(name: &str) -> PRef {
     PRef::from_var(

@@ -23,10 +23,12 @@ use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
 use crate::PRef;
-use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm, Monomial};
+use crate::analyses::knowledge::ElimTerm;
+use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
 use crate::tests::analyses::groebner::legacy::legacy_compute_reduced_gb;
 use crate::tests::analyses::groebner::shared;
+use ark_ff::Field;
 
 /// Compute the reduced Gröbner basis of `input` through both the legacy
 /// in-tree Buchberger and the ark-gb-backed `T::compute_reduced_gb`, then
@@ -69,6 +71,28 @@ fn noelim_var(name: &str) -> PRef {
         Qualifier::Public,
         Distribution::Nonuniform,
     )
+}
+
+fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, T> {
+    SparsePolynomial {
+        terms: terms
+            .into_iter()
+            .map(|(coeff, term_vec)| {
+                (
+                    T::from(term_vec.into_iter().map(|(k, v)| (k.clone(), v)).collect::<Vec<_>>()),
+                    coeff,
+                )
+            })
+            .collect(),
+    }
+}
+
+fn elim_sparse_poly<F: Field>(
+    terms: Vec<(F, Vec<(&PRef, usize)>)>,
+) -> SparsePolynomial<F, ElimTerm> {
+    sparse_poly(terms)
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +218,6 @@ fn regression_elim_cyclic_5() {
 /// lock-step on a small elimination-order example with mixed qualifiers.
 #[test]
 fn regression_elim_maple() {
-    use crate::analyses::groebner::sparsepoly::elim_sparse_poly;
 
     let t = elim_var("t");
     let x = noelim_var("x");
@@ -224,7 +247,6 @@ fn regression_elim_maple() {
 /// elimination ordering to actually do work eliminating `u`.
 #[test]
 fn regression_elim_small_mixed() {
-    use crate::analyses::groebner::sparsepoly::elim_sparse_poly;
 
     let u = elim_var("u");
     let a = noelim_var("a");

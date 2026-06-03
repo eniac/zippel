@@ -12,7 +12,7 @@
 //!   built-in `ArkGrev<W>`; var-index assignment is just sorted-PRef
 //!   order.
 //!
-//! * [`compute_reduced_gb_elim`] — for `ElimTerm`. Uses an ark-gb
+//! * [`compute_reduced_gb_with_elim`] — for `ElimMono<E>`. Uses an ark-gb
 //!   monomial wrapper [`ZippelElimMono`] whose `Ord` and `cmp_key` are
 //!   overridden to implement zippel's block-elimination order:
 //!   `(elim_block_grevlex, keep_block_grevlex)` lex.
@@ -44,7 +44,7 @@
 //!
 //! # Threading
 //!
-//! [`compute_reduced_gb_elim`] uses a thread-local mask and therefore calls
+//! [`compute_reduced_gb_with_elim`] uses a thread-local mask and therefore calls
 //! ark-gb's serial driver directly. This keeps elim ordering independent of
 //! the process-wide `ARK_GB_THREADS` setting. The `GrevLexTerm` path has no
 //! thread-local ordering state and still uses ark-gb's env-dispatched
@@ -61,7 +61,8 @@ use share::{Ctx, Set};
 
 use crate::PRef;
 use crate::analyses::groebner::monomial::{
-    ElimTerm, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial, SoundnessElimTerm,
+    ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm,
+    Monomial as ZipMonomial,
 };
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
 
@@ -96,17 +97,10 @@ impl HasMonoTerm for GrevLexTerm {
     }
 }
 
-impl HasMonoTerm for ElimTerm {
+impl<E: ElimStrategy> HasMonoTerm for ElimMono<E> {
     #[inline]
     fn as_mono_term(&self) -> &ZipMonoTerm {
-        ElimTerm::as_mono_term(self)
-    }
-}
-
-impl HasMonoTerm for SoundnessElimTerm {
-    #[inline]
-    fn as_mono_term(&self) -> &ZipMonoTerm {
-        SoundnessElimTerm::as_mono_term(self)
+        ElimMono::as_mono_term(self)
     }
 }
 
@@ -244,7 +238,7 @@ fn set_elim_mask<const W: usize>(mask: &[u64; W]) {
 }
 
 /// RAII guard that installs an elim-byte-mask for the duration of a
-/// `compute_reduced_gb_elim` call, restoring the previous mask on drop.
+/// `compute_reduced_gb_with_elim` call, restoring the previous mask on drop.
 /// Generic over W to support W=8, W=16, and W=128.
 struct ElimMaskGuard<const W: usize> {
     prev: [u64; W],
@@ -414,15 +408,6 @@ where
     )
 }
 
-/// `ElimTerm` backend: fully parametric on W.
-/// Routes to ark-gb with elim-aware monomial ordering.
-pub(crate) fn compute_reduced_gb_elim<F: Field, const W: usize>(
-    num_vars: usize,
-    input: Vec<SparsePolynomial<F, ElimTerm>>,
-) -> Vec<SparsePolynomial<F, ElimTerm>> {
-    compute_reduced_gb_with_elim::<F, ElimTerm, W>(num_vars, input, ElimTerm::eliminate_var)
-}
-
 fn collect_vars_with<F: Field, T: ZipMonomial + HasMonoTerm>(
     input: &[SparsePolynomial<F, T>],
     eliminate_fn: fn(&PRef) -> bool,
@@ -461,7 +446,7 @@ fn build_elim_byte_mask<const W: usize>(num_keep: usize, nvars: usize) -> [u64; 
 
 /// Union of `PRef`s appearing in any term of any input polynomial. Shared
 /// by both backend paths; the elim path additionally partitions the result
-/// on `ElimTerm::eliminate_var`.
+/// using the elimination strategy's `eliminate_var` predicate.
 /// Collect all PRef variables and validate exponents in a single traversal.
 /// Returns (variable_set, exponents_fit).
 fn collect_and_validate<F: Field, T: ZipMonomial + HasMonoTerm>(
@@ -601,35 +586,4 @@ fn sort_basis_by_zippel_lt<F: Field, T: ZipMonomial>(basis: &mut [SparsePolynomi
         let lt2 = p2.leading_term().map(|(_, t)| t);
         lt1.cmp(&lt2)
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_bls12_381::Fr;
-    use backend::ATyp;
-    use lang::typ::{Distribution, Qualifier};
-    use petgraph::graph::NodeIndex;
-
-    #[test]
-    fn elim_adapter_supports_w128_with_more_than_127_variables() {
-        let vars = (0..130)
-            .map(|i| {
-                PRef::from_node(
-                    NodeIndex::new(i + 1),
-                    ATyp::scalar(),
-                    0,
-                    Qualifier::Local,
-                    Distribution::Nonuniform,
-                )
-            })
-            .map(|v| (v, 1usize))
-            .collect::<Vec<_>>();
-        let product = ElimTerm::from(vars);
-        let polynomial = SparsePolynomial::from(vec![(&product, Fr::from(1u64))]);
-
-        let basis = compute_reduced_gb_elim::<Fr, 128>(130, vec![polynomial]);
-
-        assert_eq!(basis.len(), 1);
-    }
 }

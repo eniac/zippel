@@ -2,7 +2,7 @@ pub mod buchberger;
 pub use buchberger::GroebnerBasis;
 
 pub mod monomial;
-pub use monomial::{ElimTerm, GrevLexTerm, Monomial, SoundnessElimTerm};
+pub use monomial::{ElimMono, ElimStrategy, GrevLexTerm, Monomial};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
@@ -38,7 +38,7 @@ const MAX_GROEBNER_MATERIALIZED_SLOTS: usize = 1 << 20;
 //
 // These define the canonical order in which the slots of a polynomial-typed
 // PRef are laid out (via `PRef::with_slot(i)`). They are NOT monomial / term
-// orderings — the existing `ElimTerm` / `GrevLexTerm` orderings in
+// orderings — the `GrevLexTerm` and `ElimMono<E>` orderings in
 // `monomial.rs` are untouched.
 //
 //   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
@@ -5497,7 +5497,7 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
         // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c).
@@ -5554,7 +5554,7 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
         // Single (a, b) pair → one div_witnesses call → 1 div_wit cache entry (q_wit, r_wit).
@@ -5608,7 +5608,7 @@ mod tests {
                 verify(v[0] == a + c)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // Vec add verify: v[0] == a + c
@@ -5640,7 +5640,7 @@ mod tests {
                 verify(m3r0[0] == a + e)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // 2d Vec add: the verify expression is m3r0[0] == a+e
@@ -5682,7 +5682,7 @@ mod tests {
                 verify(t3d0r0[0] == a + a)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // 3d Vec add: same structure, verify(t3d0r0[0] == a + a)

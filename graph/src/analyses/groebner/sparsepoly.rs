@@ -7,9 +7,6 @@ use std::fmt;
 use std::fmt::Debug;
 use std::iter::Sum;
 
-#[cfg(test)]
-use crate::analyses::groebner::monomial::{ElimTerm, GrevLexTerm};
-
 /// A sparse polynomial is a polynomial represented as a map from terms to their coefficients.
 /// The terms are stored in a sorted order, and the coefficients are stored in a field.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -461,65 +458,5 @@ where
 
     fn is_nil(&self) -> bool {
         false
-    }
-}
-
-#[cfg(test)]
-pub fn elim_sparse_poly<F: Field>(
-    terms: Vec<(F, Vec<(&PRef, usize)>)>,
-) -> SparsePolynomial<F, ElimTerm> {
-    let mut vars = Set::new();
-
-    let processed_terms = terms
-        .into_iter()
-        .map(|(coeff, term_vec)| {
-            (
-                ElimTerm::from(
-                    term_vec
-                        .into_iter()
-                        .map(|(k, v)| {
-                            let var = k.clone();
-                            vars.insert(var.clone());
-                            (var, v)
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                coeff,
-            )
-        })
-        .collect();
-
-    SparsePolynomial {
-        terms: processed_terms,
-    }
-}
-
-#[cfg(test)]
-pub fn grevlex_sparse_poly<F: Field>(
-    terms: Vec<(F, Vec<(&PRef, usize)>)>,
-) -> SparsePolynomial<F, GrevLexTerm> {
-    let mut vars = Set::new();
-
-    let processed_terms = terms
-        .into_iter()
-        .map(|(coeff, term_vec)| {
-            (
-                GrevLexTerm::from(
-                    term_vec
-                        .into_iter()
-                        .map(|(k, v)| {
-                            let var = k.clone();
-                            vars.insert(var.clone());
-                            (var, v)
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                coeff,
-            )
-        })
-        .collect();
-
-    SparsePolynomial {
-        terms: processed_terms,
     }
 }

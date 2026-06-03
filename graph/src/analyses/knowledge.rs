@@ -2,9 +2,8 @@
 use crate::WritePdf;
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{
-    ElimTerm, GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial,
-};
+use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy};
+use crate::analyses::groebner::{GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
@@ -12,7 +11,23 @@ use backend::op::HasOpFactory;
 use log::debug;
 use log::warn;
 
+/// Knowledge-analysis elimination strategy: Local variables and private-uniform
+/// variables (random masks) are eliminated first.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Knowledge;
+
+impl ElimStrategy for Knowledge {
+    fn eliminate_var(v: &PRef) -> bool {
+        v.qualifier == lang::typ::Qualifier::Local
+            || (v.qualifier == lang::typ::Qualifier::Private && v.distribution.is_uniform())
+    }
+}
+
+/// Knowledge-analysis elimination term. Type alias for the common case.
+pub type ElimTerm = ElimMono<Knowledge>;
+
 /// Perform a knowledge analysis using Groebner bases.
+#[allow(unnameable_types)]
 pub struct KnowledgeAnalysis<C: ArkConfig> {
     result: GroebnerResult<C, ElimTerm>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
