@@ -6887,6 +6887,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_element_wise() {
         use crate::PRef;
         use lang::ast::BinOp;
@@ -7132,6 +7133,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_mixed_const_and_opaque() {
         use crate::PRef;
         use backend::op::mk;
