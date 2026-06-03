@@ -202,14 +202,11 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
 
     /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
     /// Idempotent — allocates once, then returns the cached PRef.
-    pub fn gt_pref(&mut self, np: &mut Ctx<PRef, GOp<C>>) -> PRef {
+    pub fn gt_pref(&mut self) -> PRef {
         if let Some(pr) = self.gt_sentinel.as_ref() {
             return pr.clone();
         }
         let pr = self.sentinel_pref("__zippel::gb::gt", ATyp::gt());
-        if !np.contains(&pr) {
-            np.insert(&pr, &Op::Ref(pr.reference, ATyp::gt()));
-        }
         self.gt_sentinel = Some(pr.clone());
         pr
     }
@@ -745,14 +742,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///   `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
     /// combined with bilinearity:
     ///   `pair(α·g1, β·g2) = α·β·gt`.
-    fn gt_pref(&mut self, result: &mut GroebnerResult<C, T>) -> PRef {
-        self.ns.gt_pref(&mut result.np)
+    fn gt_pref(&mut self) -> PRef {
+        self.ns.gt_pref()
     }
 
-    fn sentinel_pref(&mut self, name: &str, typ: ATyp, result: &mut GroebnerResult<C, T>) -> PRef {
-        let pr = self.ns.sentinel_pref(name, typ.clone());
-        result.np.insert(&pr, &Op::Ref(pr.reference, typ));
-        pr
+    fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
+        self.ns.sentinel_pref(name, typ)
     }
 
     /// Canonical poly shape extraction → `(num_vars, max_total_degree)`.
@@ -839,8 +834,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 if mb == 0 {
                     let q_name = self.ns.next_name("div_q");
                     let r_name = self.ns.next_name("div_r");
-                    let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(na, ma), result);
-                    let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(na, 0), result);
+                    let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(na, ma));
+                    let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(na, 0));
                     let a_idx = multi_indices(na, ma);
                     let b_poly = &b.polys()[0];
                     for (ka_pos, _k) in a_idx.iter().enumerate() {
@@ -865,8 +860,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
                 let q_name = self.ns.next_name("div_q");
                 let r_name = self.ns.next_name("div_r");
-                let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq), result);
-                let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr), result);
+                let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq));
+                let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr));
 
                 let a_idx = multi_indices(na, ma);
                 let b_idx = multi_indices(nb, mb);
@@ -1430,7 +1425,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     vec![SparsePolynomial::zero(); r_elem_len];
                 for i in 0..*na {
                     let acc_name = self.ns.next_name("dot_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), result);
+                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone());
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
                     self.mul_op(&acc_pref, &a_elem, &b_elem, &pr.typ, result);
@@ -1482,7 +1477,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         b: &PolySource<C, T>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        let gt = self.gt_pref(result);
+        let gt = self.gt_pref();
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let gt_var = SparsePolynomial::var(&gt);
@@ -1637,7 +1632,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             let next_name = self.ns.next_name("pow_acc");
             let next_typ =
                 ATyp::lub_mul(acc.typ(), base.typ(), &Nothing).expect("pow_const: lub_mul");
-            let next_pref = self.sentinel_pref(&next_name, next_typ.clone(), result);
+            let next_pref = self.sentinel_pref(&next_name, next_typ.clone());
             self.mul_op(&next_pref, &acc, base, &next_typ, result);
             acc = PolySource::new(
                 next_pref
@@ -1942,14 +1937,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.broadcast_equ(&pr, &a_src, &b_src, result);
             }
             Op::Check(a) => self.add_op(pr, a.get().clone(), result),
-            Op::Challenge(t, b) => {
-                let op = Op::Challenge(t, b);
-                result.np.insert(&pr, &op);
-            }
-            Op::Random(t, b) => {
-                let op = Op::Random(t, b);
-                result.np.insert(&pr, &op);
-            }
+            Op::Challenge(_, _) | Op::Random(_, _) => {}
             Op::Interpolate(ref points, ref evals) => {
                 self.interpolate_op(pr, points, evals, result);
             }
@@ -2391,7 +2379,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_mul_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone());
                     self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
                     acc = PolySource::new(
                         acc_pref
@@ -2426,7 +2414,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         } else {
                             "reduce_div_acc"
                         });
-                        self.sentinel_pref(&acc_name, elem_t.clone(), result)
+                        self.sentinel_pref(&acc_name, elem_t.clone())
                     };
                     let elem_src = v_src.at_index(step + 1).unwrap();
                     if is_poly {
@@ -7777,6 +7765,10 @@ mod tests {
             "challenge should not insert into pl"
         );
         assert!(
+            !result.np.contains(&pref),
+            "challenge should not insert into np"
+        );
+        assert!(
             !result.vars().contains(&pref),
             "challenge should not be visible in vars() unless used in a polynomial"
         );
@@ -7808,6 +7800,10 @@ mod tests {
         assert!(
             !result.pl.contains(&pref),
             "random should not insert into pl"
+        );
+        assert!(
+            !result.np.contains(&pref),
+            "random should not insert into np"
         );
         assert!(
             !result.vars().contains(&pref),
@@ -7886,6 +7882,89 @@ mod tests {
         assert!(
             result.vars().contains(&challenge_pref),
             "challenge must be in result.vars() when used in polynomial"
+        );
+    }
+
+    /// Test that internal sentinels (like GT from Op::Pair) are visible through basis.vars()
+    /// without requiring an np registry entry.
+    /// This is a regression test for Task 4: sentinels no longer go into np, only into basis.
+    #[test]
+    fn sentinel_visibility_through_basis_vars() {
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Create two G1 PRefs to use in a pair operation
+        let g1_pref = PRef::from_node(
+            NodeIndex::new(300),
+            ATyp::g1(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&g1_pref);
+
+        let g2_pref = PRef::from_node(
+            NodeIndex::new(301),
+            ATyp::g2(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&g2_pref);
+
+        // Create a target PRef for the pairing result
+        let pair_result_pref = PRef::from_node(
+            NodeIndex::new(302),
+            ATyp::gt(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&pair_result_pref);
+
+        // Execute Op::Pair which internally uses the GT sentinel
+        builder.add_op(
+            pair_result_pref.clone(),
+            Op::Pair(
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(300)),
+                    ATyp::g1(),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(301)),
+                    ATyp::g2(),
+                )),
+                ATyp::gt(),
+            ),
+            &mut result,
+        );
+
+        // The GT sentinel should be visible through basis.vars() and result.vars()
+        let basis_vars = result.basis.vars();
+        let gt_sentinel = basis_vars
+            .iter()
+            .find(|pr| {
+                if let Some(name) = &pr.name {
+                    name.0.starts_with("__zippel::gb::gt")
+                } else {
+                    false
+                }
+            })
+            .expect("GT sentinel must be visible in basis.vars()");
+
+        assert!(
+            result.vars().contains(gt_sentinel),
+            "GT sentinel must be in result.vars()"
+        );
+
+        // The GT sentinel should NOT be in np
+        assert!(
+            !result.np.contains(gt_sentinel),
+            "GT sentinel must not be in np (Task 4 removes sentinel np inserts)"
         );
     }
 }
