@@ -718,8 +718,22 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Panic with a clear, searchable message when an operation has no
+    /// polynomial-ideal treatment in the Groebner analysis.
+    ///
+    /// `context` is a short kebab-case string identifying the code path
+    /// (e.g. `"concat-non-vector"`, `"dynamic-pow"`).
+    fn uncovered_op(context: &str, target: &PRef) -> ! {
+        panic!(
+            "Groebner operation has no polynomial-ideal treatment at {} for {}",
+            context,
+            target.verbose()
+        )
+    }
+
     /// Build a `GroebnerResult` from a `TransClos`. Each call returns a
-    /// fresh result with its own `prefs` namespace.
+    /// fresh result with its own `prefs` namespace, while the builder
+    /// namespace keeps generated witness/sentinel allocation stable.
     pub fn build(&mut self, tc: TransClos<C>) -> GroebnerResult<C, T> {
         let mut result = GroebnerResult::new();
         for new_arg in tc.prefs.iter() {
@@ -985,8 +999,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         pr: &PRef,
         a: &PolySource<C, T>,
         b: &PolySource<C, T>,
-        a_op: &HOp<C>,
-        b_op: &HOp<C>,
+        _a_op: &HOp<C>,
+        _b_op: &HOp<C>,
         result: &mut GroebnerResult<C, T>,
     ) {
         match (&pr.typ, a.typ(), b.typ()) {
@@ -1045,10 +1059,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             _ => {
-                result.np.insert(
-                    pr,
-                    &Op::Bin(BinOp::Concat, a_op.clone(), b_op.clone(), pr.typ.clone()),
-                );
+                Self::uncovered_op("concat-non-vector", pr);
             }
         }
     }
@@ -1530,10 +1541,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     if let Some(k) = elem_exps[i] {
                         self.pow_const(&t_i, &elem_a, r_inner, k, result);
                     } else {
-                        result.np.insert(
-                            &t_i,
-                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
-                        );
+                        Self::uncovered_op("dynamic-pow", &t_i);
                     }
                 }
             }
@@ -1545,10 +1553,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     if let Some(k) = k {
                         self.pow_const(&t_i, &elem_a, r_inner, k, result);
                     } else {
-                        result.np.insert(
-                            &t_i,
-                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
-                        );
+                        Self::uncovered_op("dynamic-pow", &t_i);
                     }
                 }
             }
@@ -1559,10 +1564,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     if let Some(k) = elem_exps[i] {
                         self.pow_const(&t_i, &a_src, &t_i.typ, k, result);
                     } else {
-                        result.np.insert(
-                            &t_i,
-                            &Op::Bin(BinOp::Pow, a.clone(), b.clone(), t_i.typ.clone()),
-                        );
+                        Self::uncovered_op("dynamic-pow", &t_i);
                     }
                 }
             }
@@ -1570,10 +1572,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 if let Some(k) = self.resolve_const_exp_scalar(b) {
                     self.pow_const(pr, &a_src, &pr.typ, k, result);
                 } else {
-                    result.np.insert(
-                        pr,
-                        &Op::Bin(BinOp::Pow, a.clone(), b.clone(), pr.typ.clone()),
-                    );
+                    Self::uncovered_op("dynamic-pow", pr);
                 }
             }
         }
@@ -2090,7 +2089,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         }
                     }
                     None => {
-                        result.np.insert(&pr, &Op::Value(v.clone()));
+                        Self::uncovered_op("unsupported-value", &pr);
                     }
                 }
             }
@@ -2123,8 +2122,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                 }
                 _ => {
-                    let raw = Op::Ram(a.clone(), b.clone());
-                    result.np.insert(&pr, &raw);
+                    Self::uncovered_op("dynamic-ram", &pr);
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
@@ -2625,7 +2623,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             BinOp::Equ | BinOp::Pow => {
-                result.np.insert(&pr, &Op::Reduce(rop, v.clone()));
+                Self::uncovered_op("reduce-equ-or-pow", &pr);
             }
             BinOp::Dot => {
                 unreachable!("reduce(dot, _) is rejected by the type checker");
@@ -8575,6 +8573,183 @@ mod tests {
                 crate::Ref::new(NodeIndex::new(0)),
                 cfg_typ,
             ))),
+            &mut gresult,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 6: uncovered_op explicit-failure tests
+    // These tests verify that operation fallbacks now panic immediately
+    // instead of silently inserting into np.
+    // -----------------------------------------------------------------
+
+    /// dynamic-pow: Vec^Vec with non-const exponent must panic rather
+    /// than fall through to np.insert.
+    #[test]
+    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    fn uncovered_op_dynamic_pow_vec_vec_panics() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+        let vec_fin = ATyp::Vec(Box::new(fin.clone()), 2);
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            vec_fin.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Vec(Box::new(s.clone()), 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        // Non-const exponent (a runtime Ref, not a Value::Index) must panic.
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                ATyp::Vec(Box::new(s.clone()), 2),
+            ),
+            &mut gresult,
+        );
+    }
+
+    /// dynamic-pow: scalar^scalar with non-const exponent must panic.
+    #[test]
+    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    fn uncovered_op_dynamic_pow_scalar_panics() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+
+        // pref_b is a Ref, not a Value::Index → non-const exponent.
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            fin.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_b);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Bin(
+                BinOp::Pow,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), fin.clone())),
+                s.clone(),
+            ),
+            &mut gresult,
+        );
+    }
+
+    /// dynamic-ram: runtime index in Ram must panic rather than fall
+    /// through to np.insert.
+    #[test]
+    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-ram")]
+    fn uncovered_op_dynamic_ram_panics() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+        let fin = ATyp::fin(lang::typ::range::CRange::default());
+        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
+
+        // Array operand (must be a Ref).
+        let pref_arr = PRef::from_node(
+            NodeIndex::new(0),
+            vec_s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_arr);
+
+        // Index operand is a Ref (runtime), not a Value::Index.
+        let pref_idx = PRef::from_node(
+            NodeIndex::new(1),
+            fin.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_idx);
+
+        let pref_r = PRef::from_node(
+            NodeIndex::new(2),
+            s.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_r);
+
+        builder.add_op(
+            pref_r.clone(),
+            Op::Ram(
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), fin.clone())),
+            ),
             &mut gresult,
         );
     }
