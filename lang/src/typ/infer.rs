@@ -2605,4 +2605,3 @@ mod tests {
         assert!(proj_y.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 }
-

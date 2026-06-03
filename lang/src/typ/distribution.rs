@@ -27,9 +27,10 @@ impl Distribution {
     // Assumes independence, adding two distributions
     pub fn add(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, _)
-            | (_, Distribution::Uniform) => Distribution::Uniform,
-            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::Nonuniform,
+            (Distribution::Uniform, _) | (_, Distribution::Uniform) => Distribution::Uniform,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => {
+                Distribution::Nonuniform
+            }
             (Distribution::UniformNonZero, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::UniformNonZero) => Distribution::Nonuniform,
             (Distribution::Nonuniform, Distribution::Nonuniform) => Distribution::Nonuniform,
@@ -38,9 +39,10 @@ impl Distribution {
 
     pub fn sub(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, _)
-            | (_, Distribution::Uniform) => Distribution::Uniform,
-            (Distribution::UniformNonZero, Distribution::UniformNonZero) => Distribution::Nonuniform,
+            (Distribution::Uniform, _) | (_, Distribution::Uniform) => Distribution::Uniform,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => {
+                Distribution::Nonuniform
+            }
             (Distribution::UniformNonZero, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::UniformNonZero) => Distribution::Nonuniform,
             (Distribution::Nonuniform, Distribution::Nonuniform) => Distribution::Nonuniform,
