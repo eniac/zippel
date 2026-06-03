@@ -1837,6 +1837,27 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Compute the slot offset of `field_name` within a record type.
+    ///
+    /// Fields are laid out in `Ctx` iteration order (alphabetical for `String`
+    /// keys), each occupying `ftyp.physical_len()` consecutive slots.
+    ///
+    /// Panics if `field_name` is not found in `fields`.
+    fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
+        let mut offset = 0;
+        for (fname, ftyp) in fields.iter() {
+            if fname == field_name {
+                return offset;
+            }
+            offset += ftyp.physical_len();
+        }
+        panic!(
+            "Groebner record_field_offset: field '{}' not found in record fields {:?}",
+            field_name,
+            fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
+        )
+    }
+
     /// Resolve an `Op::Ref(v, typ)` to a vector of variable polynomials,
     /// one per physical slot of the resolved PRef.
     ///
@@ -2151,36 +2172,187 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.pow_op(&pr, a, b, result);
             }
             Op::Marginalize(ref inner) => {
-                result.np.insert(&pr, &Op::Marginalize(inner.clone()));
+                // After IR lowering, `inner` must be `Op::Ref` pointing to a Record
+                // config with at minimum `poly` and `challenge` fields.
+                //
+                // We only support static VPoly/Uni configs and round == 0.
+                // For round > 0 or Mle poly types, we panic explicitly rather than
+                // falling back to np.
+                //
+                // Mathematical encoding (round == 0, VPoly(n, d)):
+                //   P(x_0,...,x_{n-1}) = Σ_{|α|≤d} c_α · x^α  (coefficient basis)
+                //
+                //   evaluations[t] = Σ_{b ∈ {0,1}^{n-1}} P(t, b_1,...,b_{n-1})
+                //                  = Σ_α c_α · t^{α_0} · Π_{i=1}^{n-1}(α_i==0 ? 2 : 1)
+                //
+                // For t = 0,1,...,out_degree (constants), each coefficient w_{α,t} =
+                // t^{α_0} · Π_{i≥1}(α_i==0 ? 2 : 1) is a constant field element, so
+                // evaluations[t] is a linear F-polynomial in the c_α slot variables.
+                //
+                // next_poly: at round == 0 next_poly is a clone of the input poly.
+                // VPoly(n,d) → VPoly(n-1,d) have different slot counts; the symbolic
+                // coefficient-level aliasing is non-trivial and mathematically subtle,
+                // so we emit a clear panic rather than a wrong or silent np fallback.
+                let inner_typ = inner.typ();
+                let ATyp::Record(cfg_fields) = &inner_typ else {
+                    panic!(
+                        "Groebner Marginalize: inner must be Op::Ref to a Record config; \
+                         got type {:?}",
+                        inner_typ
+                    );
+                };
+
+                // Get poly type and validate it is VPoly or Uni.
+                let poly_typ = cfg_fields
+                    .get(&"poly".to_string())
+                    .unwrap_or_else(|| {
+                        panic!("Groebner Marginalize: missing 'poly' field in config record")
+                    });
+                let (n, d) = match poly_typ {
+                    ATyp::Uni(deg) => (1usize, *deg),
+                    ATyp::VPoly(vars, deg) => (*vars, *deg),
+                    t => panic!(
+                        "Groebner Marginalize requires static VPoly/Uni config; got {:?}. \
+                         Mle and dynamic configs are not symbolically supported.",
+                        t
+                    ),
+                };
+
+                // Determine output degree (max_degree field if present, else d).
+                let out_degree = cfg_fields
+                    .get(&"max_degree".to_string())
+                    .and_then(|t| match t {
+                        ATyp::Base(ABase::Fin(r))
+                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                        {
+                            Some(r.start)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(d);
+
+                // Determine round (static Fin value if present, else 0).
+                let round = cfg_fields
+                    .get(&"round".to_string())
+                    .and_then(|t| match t {
+                        ATyp::Base(ABase::Fin(r))
+                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                        {
+                            Some(r.start)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+
+                if round > 0 {
+                    panic!(
+                        "Groebner Marginalize: round {} > 0 is not yet symbolically encoded \
+                         (only round == 0 is supported). poly type: {:?}. \
+                         Task 6 will handle this case.",
+                        round, poly_typ
+                    );
+                }
+
+                // Get the polynomial coefficient slot polynomials from inner record.
+                let inner_polys = self.ref_vars(inner);
+                let poly_offset = Self::record_field_offset(cfg_fields, "poly");
+                let poly_len = poly_typ.physical_len();
+                let poly_polys: Vec<SparsePolynomial<C::F, T>> =
+                    inner_polys[poly_offset..poly_offset + poly_len].to_vec();
+
+                // Enumerate all multi-indices for VPoly(n, d).
+                // For Uni(deg) we use n=1 which gives multi_indices(1, deg) = [[0],[1],...,[deg]].
+                let all_indices = multi_indices(n, d);
+                debug_assert_eq!(
+                    all_indices.len(),
+                    poly_len,
+                    "multi_indices count must match poly physical_len"
+                );
+
+                // Output record layout:
+                //   "evaluations": Vec<Scalar, out_degree+1>   → slots 0..out_degree (inclusive)
+                //   "next_poly":   VPoly(n-1, out_degree)      → slots after evaluations
+                // (Ctx iterates alphabetically: "evaluations" < "next_poly")
+                let pr_slots = pr.slots();
+                let evaluations_len = out_degree + 1;
+
+                // Encode evaluations[t] = Σ_α c_α · t^{α[0]} · weight(α[1..]) as a
+                // linear SparsePolynomial in the coefficient slot variables.
+                for t_idx in 0..=out_degree {
+                    let t = C::FOps::from_usize(t_idx);
+                    let eval_slot = &pr_slots[t_idx];
+
+                    let e_t: SparsePolynomial<C::F, T> = all_indices
+                        .iter()
+                        .zip(poly_polys.iter())
+                        .map(|(alpha, c_poly)| {
+                            // t^{alpha[0]}
+                            let t_pow = t.pow([alpha[0] as u64]);
+                            // Π_{i=1}^{n-1}(alpha[i] == 0 ? 2 : 1)
+                            // For boolean b ∈ {0,1}: Σ_b b^k = (k==0 ? 2 : 1)
+                            let tail_weight: C::F =
+                                alpha[1..].iter().fold(C::F::one(), |acc, &ai| {
+                                    if ai == 0 {
+                                        acc * C::FOps::from_usize(2)
+                                    } else {
+                                        acc
+                                    }
+                                });
+                            let w = t_pow * tail_weight;
+                            c_poly * &SparsePolynomial::lit(&w)
+                        })
+                        .fold(SparsePolynomial::zero(), |acc, p| acc + p);
+
+                    result.pl.insert(eval_slot, &e_t);
+                    result.basis.push(e_t - SparsePolynomial::var(eval_slot));
+                }
+
+                // next_poly: at round == 0 the runtime returns next_poly == poly.clone().
+                // However, the output type is VPoly(n-1, out_degree) while the input is
+                // VPoly(n, d). These have different slot counts and the coefficient-level
+                // mapping is non-trivial and mathematically ambiguous at this stage.
+                // Panic explicitly rather than silently emit wrong constraints or fall
+                // back to np.
+                if pr_slots.len() > evaluations_len {
+                    panic!(
+                        "Groebner Marginalize: next_poly symbolic encoding is not supported \
+                         (poly type {:?}, n={}, d={}, out_degree={}). \
+                         next_poly at round==0 is a clone of the input poly but VPoly({},{}) \
+                         has different slot count from VPoly({},{}) and cannot be aliased \
+                         without explicit projection semantics. Task 6 will handle this.",
+                        poly_typ, n, d, out_degree, n, d,
+                        n.saturating_sub(1), out_degree
+                    );
+                }
             }
             // `Op::Proj(inner, field, typ)` — extract a field from a Record.
             // The field's physical slots sit at an offset within the Record's
             // slot layout: offset = sum of physical_len() of preceding fields
             // (in Ctx iteration order). Emit basis rows linking proj result
             // slots to the corresponding inner Record slots.
+            //
+            // Non-record inner types are not supported — after IR lowering every
+            // Proj must operate on a Record; any other variant is a compiler bug.
             Op::Proj(ref inner, ref field, ref _typ) => {
                 let inner_typ = inner.typ();
                 let inner_polys = Self::ref_vars(inner, &result.prefs);
                 match &inner_typ {
                     ATyp::Record(fields) => {
-                        let mut offset = 0usize;
-                        for (fname, ftyp) in fields.iter() {
-                            let f_len = ftyp.physical_len();
-                            if fname == field {
-                                let pr_slots = pr.slots();
-                                for (j, pf) in pr_slots.iter().enumerate() {
-                                    result.pl.insert(pf, &inner_polys[offset + j]);
-                                    result.basis.push(
-                                        inner_polys[offset + j].clone() - SparsePolynomial::var(pf),
-                                    );
-                                }
-                                break;
-                            }
-                            offset += f_len;
+                        let offset = Self::record_field_offset(fields, field);
+                        let pr_slots = pr.slots();
+                        for (j, pf) in pr_slots.iter().enumerate() {
+                            result.pl.insert(pf, &inner_polys[offset + j]);
+                            result.basis.push(
+                                inner_polys[offset + j].clone() - SparsePolynomial::var(pf),
+                            );
                         }
                     }
                     _ => {
-                        result.np.insert(&pr, &op);
+                        unreachable!(
+                            "Groebner Proj: non-record inner type {:?} for field '{}'; \
+                             all Proj ops must operate on Record types after IR lowering",
+                            inner_typ, field
+                        );
                     }
                 }
             }
@@ -7965,6 +8137,438 @@ mod tests {
         assert!(
             !result.np.contains(gt_sentinel),
             "GT sentinel must not be in np (Task 4 removes sentinel np inserts)"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 5: record_projection_resolves_without_np_lookup
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn record_projection_resolves_without_np_lookup() {
+        // Build a record {a: Scalar, b: Scalar} from scalar refs, project
+        // field "a", assert pl/basis aliases the field without np insertion.
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let s = ATyp::scalar();
+
+        // Build record {a: Scalar, b: Scalar}.
+        // Alphabetical order: "a" at offset 0, "b" at offset 1.
+        let mut rec_fields = Ctx::<String, ATyp>::new();
+        rec_fields.insert(&"a".to_string(), &s);
+        rec_fields.insert(&"b".to_string(), &s);
+        let rec_typ = ATyp::Record(rec_fields);
+
+        // Register the record PRef.
+        let pref_rec = PRef::from_node(
+            NodeIndex::new(0),
+            rec_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_rec);
+
+        // Register scalar refs for a and b.
+        let pref_a = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let pref_b = PRef::from_node(
+            NodeIndex::new(2),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_a);
+        builder.ns.register(&pref_b);
+
+        // Build record {a: pref_a, b: pref_b}.
+        let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        field_ops.insert(
+            &"a".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+        );
+        field_ops.insert(
+            &"b".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(2)), s.clone())),
+        );
+
+        builder.add_op(
+            pref_rec.clone(),
+            Op::Record(field_ops),
+            &mut gresult,
+        );
+
+        // Project field "a" from the record.
+        let pref_proj = PRef::from_node(
+            NodeIndex::new(3),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_proj);
+
+        let inner_op: GOp<ArkBls12_381> =
+            Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ.clone());
+
+        builder.add_op(
+            pref_proj.clone(),
+            Op::Proj(mk::<ArkBls12_381>(inner_op), "a".to_string(), s.clone()),
+            &mut gresult,
+        );
+
+        // Projection result should be in pl (not np).
+        assert!(
+            gresult.pl.contains(&pref_proj),
+            "proj result should be in pl, not np"
+        );
+        assert!(
+            !gresult.np.contains(&pref_proj),
+            "proj result must NOT be in np (Task 5: no np fallback for Proj)"
+        );
+
+        // The proj poly should reference record slot 0 (field "a").
+        let proj_poly = gresult.pl.get(&pref_proj).unwrap();
+        let rec_slot_0 = pref_rec.clone().with_slot(0).unwrap();
+        assert!(
+            proj_poly.contains(&rec_slot_0),
+            "proj result should alias record slot 0 (field 'a')"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 5: marginalize_evaluations_round0_has_explicit_ideal_treatment
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn marginalize_evaluations_round0_has_explicit_ideal_treatment() {
+        // Build a static VPoly(1, 1) marginalize config (round=0):
+        //   config = {poly: VPoly(1,1), challenge: Scalar, round: Fin(0..1),
+        //             num_variables: Fin(1..2), max_degree: Fin(1..2)}
+        // The output type is Record { evaluations: Vec<Scalar,2>, next_poly: VPoly(0,1) }.
+        //
+        // We only test that evaluations slots are in pl/basis and NOT in np.
+        // (next_poly will panic — we test just the evaluations part here by using
+        // a fake output PRef with type Vec<Scalar, 2> instead of the full record,
+        // so pr.slots().len() == evaluations_len == 2 and no next_poly panic fires.)
+        use crate::PRef;
+        use backend::op::mk;
+        use backend::ABase;
+        use lang::typ::{CRange, Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let s = ATyp::scalar();
+
+        let mut builder2 = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult2 = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        // VPoly(1, 1) config: 2 polynomial coefficient slots, round=0, max_degree=1.
+        let poly_typ2 = ATyp::VPoly(1, 1);
+
+        // Config record: alphabetical field order is:
+        //   challenge, max_degree, num_variables, poly, round
+        let mut cfg_fields2 = Ctx::<String, ATyp>::new();
+        cfg_fields2.insert(&"challenge".to_string(), &s);
+        cfg_fields2.insert(
+            &"max_degree".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields2.insert(
+            &"num_variables".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields2.insert(&"poly".to_string(), &poly_typ2);
+        cfg_fields2.insert(
+            &"round".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(0))),
+        );
+        let cfg_typ2 = ATyp::Record(cfg_fields2);
+
+        let pref_cfg2 = PRef::from_node(
+            NodeIndex::new(10),
+            cfg_typ2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder2.ns.register(&pref_cfg2);
+
+        // Use an output type with ONLY the evaluations Vec<Scalar, 2> to
+        // avoid triggering the next_poly panic. This tests the evaluations
+        // encoding in isolation.
+        let eval_only_typ = ATyp::vec_scalar(2);
+        let pref_out2 = PRef::from_node(
+            NodeIndex::new(11),
+            eval_only_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder2.ns.register(&pref_out2);
+
+        // The config's pr_slots must be set up correctly. For the inner config record,
+        // add a dummy Record op first so the fields are accessible via ref_vars.
+        // Register a scalar PRef for challenge and poly coefficient slots.
+        let pref_challenge = PRef::from_node(
+            NodeIndex::new(12),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let pref_poly = PRef::from_node(
+            NodeIndex::new(13),
+            poly_typ2.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder2.ns.register(&pref_challenge);
+        builder2.ns.register(&pref_poly);
+
+        // Build config record from refs.
+        let _cfg_ref_for_idx = &ATyp::Base(ABase::Fin(CRange::singleton(0)));
+
+        // We need all config fields. For Fin fields, use Op::Value(Index).
+        let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        cfg_record_fields.insert(
+            &"challenge".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(12)),
+                s.clone(),
+            )),
+        );
+        cfg_record_fields.insert(
+            &"max_degree".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"num_variables".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"poly".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(13)),
+                poly_typ2.clone(),
+            )),
+        );
+        cfg_record_fields.insert(
+            &"round".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
+        );
+
+        builder2.add_op(
+            pref_cfg2.clone(),
+            Op::Record(cfg_record_fields),
+            &mut gresult2,
+        );
+
+        // Now run Marginalize with the eval-only output PRef.
+        // The inner type is the config record — ref_vars will extract all field polys.
+        // The marginalize handler reads poly_offset, poly_polys from the inner polys,
+        // then iterates t=0..=out_degree to emit evaluations.
+        // Since pr_slots.len() == 2 == evaluations_len, no next_poly panic occurs.
+        builder2.add_op(
+            pref_out2.clone(),
+            Op::Marginalize(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(10)),
+                cfg_typ2,
+            ))),
+            &mut gresult2,
+        );
+
+        // Both evaluation slots should be in pl and NOT in np.
+        for i in 0..2 {
+            let eval_slot = pref_out2.clone().with_slot(i).unwrap();
+            assert!(
+                gresult2.pl.contains(&eval_slot),
+                "marginalize evaluations[{}] should be in pl (Task 5)",
+                i
+            );
+            assert!(
+                !gresult2.np.contains(&eval_slot),
+                "marginalize evaluations[{}] must NOT be in np (Task 5)",
+                i
+            );
+        }
+
+        // The whole output PRef should not be in np either.
+        assert!(
+            !gresult2.np.contains(&pref_out2),
+            "marginalize output PRef must NOT be in np (Task 5)"
+        );
+
+        // Verify the evaluations are mathematically correct for VPoly(1,1).
+        // P(x) = c_0 + c_1 * x; evaluations[t] = Σ_{b∈{0,1}^0} P(t) = P(t).
+        // (n=1 means no tail variables, so the only hypercube is the empty sum = P(t).)
+        //
+        // Config record field layout (alphabetical):
+        //   challenge: offset 0 (1 slot)
+        //   max_degree: offset 1 (1 slot)
+        //   num_variables: offset 2 (1 slot)
+        //   poly: offset 3 (2 slots: c_0 at slot 3, c_1 at slot 4)
+        //   round: offset 5 (1 slot)
+        //
+        // The marginalize handler uses ref_vars on the config record Op::Ref, which
+        // returns the config record's slot variables (pref_cfg2.slot(i)).
+        // poly_polys = [var(pref_cfg2.slot(3)), var(pref_cfg2.slot(4))].
+        //
+        // evaluations[0] = P(0) = c_0 = pref_cfg2.slot(3)
+        // evaluations[1] = P(1) = c_0 + c_1 = pref_cfg2.slot(3) + pref_cfg2.slot(4)
+        let eval0_slot = pref_out2.clone().with_slot(0).unwrap();
+        let eval1_slot = pref_out2.clone().with_slot(1).unwrap();
+        let eval0_poly = gresult2.pl.get(&eval0_slot).unwrap();
+        let eval1_poly = gresult2.pl.get(&eval1_slot).unwrap();
+        let cfg_poly_slot_0 = pref_cfg2.clone().with_slot(3).unwrap(); // c_0 in cfg record
+        let cfg_poly_slot_1 = pref_cfg2.clone().with_slot(4).unwrap(); // c_1 in cfg record
+
+        assert!(
+            eval0_poly.contains(&cfg_poly_slot_0),
+            "evaluations[0] should contain cfg_poly_slot_0 (constant term c_0)"
+        );
+
+        // evaluations[1] = P(1) = c_0 + c_1
+        assert!(
+            eval1_poly.contains(&cfg_poly_slot_0),
+            "evaluations[1] should contain cfg_poly_slot_0"
+        );
+        assert!(
+            eval1_poly.contains(&cfg_poly_slot_1),
+            "evaluations[1] should contain cfg_poly_slot_1 (linear term c_1)"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 5: next_poly_projection_panics_explicitly_without_np_fallback
+    // Verifies that the next_poly path panics with an informative message
+    // rather than silently inserting into np.
+    // -----------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "next_poly symbolic encoding is not supported")]
+    fn marginalize_next_poly_panics_explicitly_without_np_fallback() {
+        use crate::PRef;
+        use backend::op::mk;
+        use backend::ABase;
+        use lang::typ::{CRange, Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let s = ATyp::scalar();
+        let poly_typ = ATyp::VPoly(1, 1);
+
+        // Config record with poly: VPoly(1,1), round=0, max_degree=1.
+        let mut cfg_fields = Ctx::<String, ATyp>::new();
+        cfg_fields.insert(&"challenge".to_string(), &s);
+        cfg_fields.insert(
+            &"max_degree".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields.insert(
+            &"num_variables".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields.insert(&"poly".to_string(), &poly_typ);
+        cfg_fields.insert(
+            &"round".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(0))),
+        );
+        let cfg_typ = ATyp::Record(cfg_fields);
+
+        // Full output type: evaluations: Vec<Scalar,2>, next_poly: VPoly(0,1)
+        let mut out_fields = Ctx::<String, ATyp>::new();
+        out_fields.insert(&"evaluations".to_string(), &ATyp::vec_scalar(2));
+        out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(0, 1));
+        let out_typ = ATyp::Record(out_fields);
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Register config PRef.
+        let pref_cfg = PRef::from_node(
+            NodeIndex::new(0),
+            cfg_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_cfg);
+
+        // Register poly and challenge PRef.
+        let pref_challenge = PRef::from_node(
+            NodeIndex::new(2),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let pref_poly = PRef::from_node(
+            NodeIndex::new(3),
+            poly_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_challenge);
+        builder.ns.register(&pref_poly);
+
+        // Build config record.
+        let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        cfg_record_fields.insert(
+            &"challenge".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(2)), s.clone())),
+        );
+        cfg_record_fields.insert(
+            &"max_degree".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"num_variables".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"poly".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(3)),
+                poly_typ.clone(),
+            )),
+        );
+        cfg_record_fields.insert(
+            &"round".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
+        );
+        builder.add_op(pref_cfg.clone(), Op::Record(cfg_record_fields), &mut gresult);
+
+        // Register output PRef with full type (includes next_poly slots → triggers panic).
+        let pref_out = PRef::from_node(
+            NodeIndex::new(1),
+            out_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_out);
+
+        // This should panic with "next_poly symbolic encoding is not supported".
+        builder.add_op(
+            pref_out.clone(),
+            Op::Marginalize(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(0)),
+                cfg_typ,
+            ))),
+            &mut gresult,
         );
     }
 }
