@@ -28,7 +28,7 @@ impl Distribution {
     pub fn add(&self, other: &Distribution) -> Distribution {
         match (self, other) {
             (Distribution::Uniform, Distribution::UniformNonZero)
-            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
+            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::Uniform,
             (Distribution::Uniform, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
             (a, b) if a == b => *a,
@@ -39,7 +39,7 @@ impl Distribution {
     pub fn sub(&self, other: &Distribution) -> Distribution {
         match (self, other) {
             (Distribution::Uniform, Distribution::UniformNonZero)
-            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
+            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::Uniform,
             (Distribution::Uniform, Distribution::Nonuniform)
             | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
             (a, b) if a == b => *a,
@@ -176,13 +176,13 @@ mod tests {
     #[test]
     fn test_add_uniform_uniform_nz() {
         let result = Distribution::Uniform.add(&Distribution::UniformNonZero);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
     fn test_add_uniform_nz_uniform() {
         let result = Distribution::UniformNonZero.add(&Distribution::Uniform);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
@@ -222,13 +222,13 @@ mod tests {
     #[test]
     fn test_sub_uniform_uniform_nz() {
         let result = Distribution::Uniform.sub(&Distribution::UniformNonZero);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
     fn test_sub_uniform_nz_uniform() {
         let result = Distribution::UniformNonZero.sub(&Distribution::Uniform);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]

@@ -278,9 +278,9 @@ fn tid_fresh() {
 
 #[test]
 fn vid_fresh() {
-    let mut bound = Set::from(vec![Tid("v".to_string()), Tid("v1".to_string())]);
-    let t = Tid::fresh("v", &mut bound);
-    assert_eq!(t, Tid("v2".to_string()));
+    let mut bound = Set::from(vec![Vid("v".to_string()), Vid("v1".to_string())]);
+    let t = Vid::fresh("v", &mut bound);
+    assert_eq!(t, Vid("v2".to_string()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
