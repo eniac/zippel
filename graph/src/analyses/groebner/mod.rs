@@ -164,17 +164,10 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
     basis
 }
 
-/// Namespace shared across Groebner builders that must agree on variable names
-/// and sentinel allocation (e.g., prover and verifier builders for the same protocol).
-///
-/// Owns the argument registry (`args`), the division-witness table (`div_wit`),
-/// and a sentinel counter for stable `PRef` generation. Multiple builders
-/// share one namespace so they agree on variable names and sentinel indices.
-///
-/// `GroebnerBuilder` borrows the namespace via `&mut` — it does not own it.
+/// Namespace for division-witness and sentinel allocation shared across
+/// Groebner builders.
 #[derive(Clone)]
 pub struct GroebnerNamespace<C: ArkConfig> {
-    pub prefs: HashMap<Ref, PRef>,
     pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
     sentinel_counter: usize,
     gt_sentinel: Option<PRef>,
@@ -184,18 +177,11 @@ pub struct GroebnerNamespace<C: ArkConfig> {
 impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
     pub fn new() -> Self {
         Self {
-            prefs: HashMap::new(),
             div_wit: Ctx::new(),
             sentinel_counter: usize::MAX,
             gt_sentinel: None,
             name_counters: HashMap::new(),
         }
-    }
-
-    /// Register a PRef in the namespace. Overwrites any existing entry
-    /// for the same reference. Returns the previous entry if one existed.
-    pub fn register(&mut self, pr: &PRef) -> Option<PRef> {
-        self.prefs.insert(pr.reference, pr.clone())
     }
 
     /// Allocate a fresh sentinel PRef with a stable unique NodeIndex.
@@ -230,12 +216,14 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
 }
 
 /// The result of building a Gröbner basis — the basis polynomials, their
-/// polynomial definitions (pl), and non-polynomial definitions (np).
+/// polynomial definitions (pl), non-polynomial definitions (np), and all
+/// prefs used in the basis (prefs).
 #[derive(Clone)]
 pub struct GroebnerResult<C: ArkConfig, T: Monomial> {
     pub basis: GroebnerBasis<C::F, T>,
     pub np: Ctx<PRef, GOp<C>>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
+    pub prefs: HashMap<Ref, PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
@@ -244,7 +232,22 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             basis: GroebnerBasis::empty(0),
             np: Ctx::new(),
             pl: Ctx::new(),
+            prefs: HashMap::new(),
         }
+    }
+
+    /// Register a PRef in the namespace. Overwrites any existing entry
+    /// for the same reference. Returns the previous entry if one existed.
+    pub fn register(&mut self, pr: &PRef) -> Option<PRef> {
+        self.prefs.insert(pr.reference, pr.clone())
+    }
+
+    /// Look up a Ref in the namespace. Panics if not found.
+    pub fn find_ref(&self, r: &Ref) -> PRef {
+        if let Some(v) = self.prefs.get(r) {
+            return v.clone();
+        }
+        panic!("groebner: ref {} not found in namespace prefs", r)
     }
 
     pub fn vars(&self) -> Set<PRef> {
@@ -439,12 +442,12 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         self.typ.physical_len()
     }
 
-    fn from_ref_vars(builder: &GroebnerBuilder<C, T>, op: &GOp<C>) -> Self
+    fn from_ref_vars(prefs: &HashMap<Ref, PRef>, op: &GOp<C>) -> Self
     where
         C: HasOpFactory,
     {
         let typ = op.typ();
-        let polys = builder.ref_vars(op);
+        let polys = GroebnerBuilder::<C, T>::ref_vars(op, prefs);
         PolySource { polys, typ }
     }
 
@@ -695,9 +698,9 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
 }
 
 /// Constructs `GroebnerResult`s from `TransClos` inputs. Owns a
-/// `GroebnerNamespace` so that multiple `build()` calls share variable names
-/// and sentinel indices. Each call to `build(TransClos)` returns a fresh
-/// `GroebnerResult` while accumulating `args` and `div_wit` in the namespace.
+/// `GroebnerNamespace` for division-witness and sentinel allocation
+/// that persists across `build()` calls. Each call to `build(TransClos)`
+/// returns a fresh `GroebnerResult` with its own `prefs` namespace.
 #[derive(Clone)]
 pub struct GroebnerBuilder<C: ArkConfig, T: Monomial = GrevLexTerm> {
     pub ns: GroebnerNamespace<C>,
@@ -718,28 +721,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    /// Build a `GroebnerResult` from a `TransClos`. The namespace accumulates
-    /// across calls: `prefs` and `div_wit` persist so that subsequent `build()`
-    /// calls agree on variable names and sentinel indices.
+    /// Build a `GroebnerResult` from a `TransClos`. Each call returns a
+    /// fresh result with its own `prefs` namespace.
     pub fn build(&mut self, tc: TransClos<C>) -> GroebnerResult<C, T> {
         let mut result = GroebnerResult::new();
         for new_arg in tc.prefs.iter() {
-            self.ns.register(new_arg);
+            result.register(new_arg);
         }
         for (pr, _op) in tc.clos.iter() {
-            self.ns.register(pr);
+            result.register(pr);
         }
         for (pr, op) in tc.clos.into_iter() {
             self.add_op(pr, op, &mut result);
         }
         result
-    }
-
-    pub fn find_ref(&self, r: &Ref) -> PRef {
-        if let Some(v) = self.ns.prefs.get(r) {
-            return v.clone();
-        }
-        panic!("groebner: ref {} not found in namespace prefs", r)
     }
 
     /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
@@ -1457,7 +1452,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     fn pow_op(&mut self, pr: &PRef, a: &HOp<C>, b: &HOp<C>, result: &mut GroebnerResult<C, T>) {
-        let a_src = PolySource::from_ref_vars(self, a);
+        let a_src = PolySource::from_ref_vars(&result.prefs, a);
         match (a_src.typ(), &b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let elem_exps = self.resolve_const_exps_vec(b, *na);
@@ -1618,7 +1613,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    fn to_poly_value(&self, v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn to_poly_value(v: &Value<C>) -> Vec<SparsePolynomial<C::F, T>> {
         match v {
             Value::Scalar(s) => vec![SparsePolynomial::lit(s)],
             Value::Bool(b) => vec![SparsePolynomial::lit(&if *b {
@@ -1627,7 +1622,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 C::F::zero()
             })],
             Value::Index(i) => vec![SparsePolynomial::lit(&C::FOps::from_usize(*i))],
-            Value::Vec(v) => v.iter().flat_map(|v| self.to_poly_value(v)).collect(),
+            Value::Vec(v) => v.iter().flat_map(|v| Self::to_poly_value(v)).collect(),
             Value::VecBool(v) => v
                 .iter()
                 .map(|b| SparsePolynomial::lit(&if *b { C::F::one() } else { C::F::zero() }))
@@ -1645,9 +1640,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// polynomials for evaluating `p` at `xs`. Panics on unsupported
     /// (p.typ(), |xs|) combinations; the type checker guarantees these
     /// are unreachable.
-    fn eval_to_poly(&mut self, p: &GOp<C>, xs: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn eval_to_poly(
+        &mut self,
+        p: &GOp<C>,
+        xs: &GOp<C>,
+        prefs: &HashMap<Ref, PRef>,
+    ) -> Vec<SparsePolynomial<C::F, T>> {
         let p_typ = p.typ();
-        let xs_polys = self.ref_vars(xs);
+        let xs_polys = Self::ref_vars(xs, prefs);
         let k = xs_polys.len();
         match &p_typ {
             ATyp::Uni(_) | ATyp::VPoly(1, _) => {
@@ -1656,7 +1656,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Evaluate on Uni/VPoly(1,_) requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = self.ref_vars(p);
+                let p_polys = Self::ref_vars(p, prefs);
                 let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
                 (0..k)
                     .map(|i| {
@@ -1677,7 +1677,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Evaluate on VPoly requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = self.ref_vars(p);
+                let p_polys = Self::ref_vars(p, prefs);
                 let all_k = multi_indices(*n, *mdeg);
                 let mono = |k_fixed: &[usize],
                             xs_polys: &[SparsePolynomial<C::F, T>]|
@@ -1723,7 +1723,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     "Evaluate on Mle requires at least 1 point; got {}",
                     k
                 );
-                let p_polys = self.ref_vars(p);
+                let p_polys = Self::ref_vars(p, prefs);
                 let all_b = hypercube(*n);
                 let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
                 let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
@@ -1775,10 +1775,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// After IR lowering, every child of a compound op is `Op::Ref` or
     /// `Op::Value`. This helper asserts the `Op::Ref` invariant and
     /// returns the slot variables for use in basis row construction.
-    fn ref_vars(&self, op: &GOp<C>) -> Vec<SparsePolynomial<C::F, T>> {
+    fn ref_vars(op: &GOp<C>, prefs: &HashMap<Ref, PRef>) -> Vec<SparsePolynomial<C::F, T>> {
         match op {
             Op::Ref(v, typ) => {
-                let pf = self.find_ref(v);
+                let pf = prefs
+                    .get(v)
+                    .unwrap_or_else(|| panic!("groebner: ref {} not found in namespace prefs", v));
                 debug_assert_eq!(
                     pf.typ, *typ,
                     "find_ref type mismatch: namespace has {:?} but Op::Ref says {:?}",
@@ -1789,7 +1791,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     .map(|s| SparsePolynomial::var(&s))
                     .collect()
             }
-            Op::Value(v) => self.to_poly_value(v),
+            Op::Value(v) => Self::to_poly_value(v),
             other => {
                 panic!(
                     "ref_vars called with unsupported op variant: {:?} — children should be materialized to Ref",
@@ -1804,7 +1806,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn add_op(&mut self, pr: PRef, op: GOp<C>, result: &mut GroebnerResult<C, T>) {
         match op {
             Op::Ref(r, typ) => {
-                let ref_src = PolySource::from_ref_vars(self, &Op::Ref(r, typ.clone()));
+                let ref_src: PolySource<C, T> =
+                    PolySource::from_ref_vars(&result.prefs, &Op::Ref(r, typ.clone()));
                 let lifted = ref_src.lift_to(&pr.typ);
                 for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
                     result.pl.insert(&pf, &p);
@@ -1812,33 +1815,33 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             Op::Bin(BinOp::Add, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(self, &a);
-                let b_src = PolySource::from_ref_vars(self, &b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, &a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, &b);
                 self.broadcast_binop(&pr, &a_src, &b_src, &pr.typ, BinOp::Add, result);
             }
             Op::Bin(BinOp::And, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.mul_op(&pr, &a_src, &b_src, &pr.typ, result);
             }
             Op::Bin(BinOp::Sub, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(self, &a);
-                let b_src = PolySource::from_ref_vars(self, &b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, &a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, &b);
                 self.broadcast_binop(&pr, &a_src, &b_src, &pr.typ, BinOp::Sub, result);
             }
             Op::Bin(BinOp::Mul, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.mul_op(&pr, &a_src, &b_src, &pr.typ, result);
             }
             Op::Bin(BinOp::Dot, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.dot_op(&pr, &a_src, &b_src, result);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.div_rem_op(
                     &pr,
                     &a_src,
@@ -1849,8 +1852,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.div_rem_op(
                     &pr,
                     &a_src,
@@ -1861,8 +1864,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
-                let a_src = PolySource::from_ref_vars(self, &a);
-                let b_src = PolySource::from_ref_vars(self, &b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, &a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, &b);
                 self.broadcast_equ(&pr, &a_src, &b_src, result);
             }
             Op::Check(a) => self.add_op(pr, a.get().clone(), result),
@@ -1883,7 +1886,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // where ω is a primitive N-th root of unity. The type checker
             // guarantees N is a 2-adic divisor of |F|-1, so ω always exists.
             Op::Ifft(ref a) => {
-                let v_polys = self.ref_vars(a);
+                let v_polys = Self::ref_vars(a, &result.prefs);
                 let n = v_polys.len();
                 let omega = C::F::get_root_of_unity(n as u64)
                     .expect("IFFT size must have a root of unity; type checker guarantees this");
@@ -1901,7 +1904,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             //   v[i] = Σ_j ω^{i·j} · p[j]
             // The type checker guarantees N is a 2-adic divisor of |F|-1.
             Op::Fft(ref a) => {
-                let coeff_polys = self.ref_vars(a);
+                let coeff_polys = Self::ref_vars(a, &result.prefs);
                 let n = coeff_polys.len();
                 let omega = C::F::get_root_of_unity(n as u64)
                     .expect("FFT size must have a root of unity; type checker guarantees this");
@@ -1921,7 +1924,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // and evaluation form happens in later phases (Eval / Bin on
             // mixed polynomial types).
             Op::Poly(ref inner) | Op::Mle(ref inner) | Op::Coef(ref inner) => {
-                let polys = self.ref_vars(inner);
+                let polys = Self::ref_vars(inner, &result.prefs);
                 debug_assert!(
                     !polys.is_empty(),
                     "Op::Poly/Mle/Coef produced zero polys for {:?}",
@@ -1960,7 +1963,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // The type checker guarantees xs is non-empty and p has a supported
             // polynomial type; unsupported shapes are unreachable.
             Op::Evaluate(ref p, ref xs) => {
-                let polys = self.eval_to_poly(p, xs);
+                let polys = self.eval_to_poly(p, xs, &result.prefs);
                 for (pf, poly) in pr.slots().into_iter().zip(polys) {
                     result.pl.insert(&pf, &poly);
                     result.basis.push(poly - SparsePolynomial::var(&pf));
@@ -1994,7 +1997,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     | Value::Vec(_)
                     | Value::VecBool(_)
                     | Value::VecScalar(_)
-                    | Value::VecIndex(_) => Some(self.to_poly_value(v)),
+                    | Value::VecIndex(_) => Some(Self::to_poly_value(v)),
                     _ => None,
                 };
                 match polys_opt {
@@ -2021,7 +2024,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             std::mem::discriminant(a.get())
                         )
                     };
-                    let array_pref = self.find_ref(r);
+                    let array_pref = result.find_ref(r);
                     let Some(elem_pref) = array_pref.with_index(*i) else {
                         unreachable!(
                             "Ram operand with literal index must be within bound; Got {:?}",
@@ -2054,8 +2057,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // sides of a `verify(lhs == rhs)` then cancel under Buchberger
             // because their basis rows are identical F-polynomials.
             Op::Pair(ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a.get());
-                let b_src = PolySource::from_ref_vars(self, b.get());
+                let a_src = PolySource::from_ref_vars(&result.prefs, a.get());
+                let b_src = PolySource::from_ref_vars(&result.prefs, b.get());
                 self.pair_op(&pr, &a_src, &b_src, result);
             }
             // `Op::Record(fields)` — field-slot-aware layout.
@@ -2067,7 +2070,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let pr_slots = pr.slots();
                 let mut slot_offset = 0usize;
                 for (_, field_op) in fields.iter() {
-                    let field_polys = self.ref_vars(field_op.get());
+                    let field_polys = Self::ref_vars(field_op.get(), &result.prefs);
                     for (j, p) in field_polys.into_iter().enumerate() {
                         let pf = &pr_slots[slot_offset + j];
                         result.pl.insert(pf, &p);
@@ -2079,8 +2082,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Concat/Pow/Marginalize/Proj: opaque in np — cannot be
             // converted to polynomial ideal constraints.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(self, a);
-                let b_src = PolySource::from_ref_vars(self, b);
+                let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                let b_src = PolySource::from_ref_vars(&result.prefs, b);
                 self.concat_op(&pr, &a_src, &b_src, a, b, result);
             }
             Op::Bin(BinOp::Pow, ref a, ref b, _) => {
@@ -2096,7 +2099,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // slots to the corresponding inner Record slots.
             Op::Proj(ref inner, ref field, ref _typ) => {
                 let inner_typ = inner.typ();
-                let inner_polys = self.ref_vars(inner);
+                let inner_polys = Self::ref_vars(inner, &result.prefs);
                 match &inner_typ {
                     ATyp::Record(fields) => {
                         let mut offset = 0usize;
@@ -2144,12 +2147,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         evals: &HOp<C>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        let evals_polys = self.ref_vars(evals);
+        let evals_polys = Self::ref_vars(evals, &result.prefs);
         let n = evals_polys.len();
 
         let xs: Option<Vec<C::F>> = match points.get() {
-            Op::Value(v) => self
-                .to_poly_value(v)
+            Op::Value(v) => Self::to_poly_value(v)
                 .iter()
                 .map(|p| {
                     if p.is_constant() {
@@ -2160,7 +2162,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 })
                 .collect(),
             Op::Ref(r, _) => {
-                let points_pref = self.find_ref(r);
+                let points_pref = result.find_ref(r);
                 points_pref
                     .slots()
                     .iter()
@@ -2249,13 +2251,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     std::mem::discriminant(v.get())
                 )
             };
-            let v_pref = self.find_ref(r);
+            let v_pref = result.find_ref(r);
             let elem_pref = v_pref.with_index(0).unwrap();
             self.link_to_witness(&pr, &elem_pref, result);
             return;
         }
 
-        let v_src = PolySource::from_ref_vars(self, v);
+        let v_src = PolySource::from_ref_vars(&result.prefs, v);
 
         match rop {
             BinOp::Add => {
@@ -2433,73 +2435,66 @@ mod tests {
 
     #[test]
     fn test_groebner_builder_to_poly_value_scalar() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use ark_bls12_381::Fr;
         use backend::Value;
 
         let val = Value::Scalar(Fr::from(42u64));
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_bool_true() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use backend::Value;
 
         let val = Value::Bool(true);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_bool_false() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use backend::Value;
 
         let val = Value::Bool(false);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_index() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use backend::Value;
 
         let val = Value::Index(5);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 1);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_vec_scalar() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use ark_bls12_381::Fr;
         use backend::Value;
 
         let val = Value::VecScalar(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_vec_bool() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use backend::Value;
 
         let val = Value::VecBool(vec![true, false, true]);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
     #[test]
     fn test_groebner_builder_to_poly_value_vec_index() {
-        let builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         use backend::Value;
 
         let val = Value::VecIndex(vec![0, 1, 2]);
-        let poly = builder.to_poly_value(&val);
+        let poly = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::to_poly_value(&val);
         assert_eq!(poly.len(), 3);
     }
 
@@ -2552,7 +2547,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -2560,10 +2555,10 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2));
-        let polys = builder.ref_vars(&op);
+        let polys = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::ref_vars(&op, &gresult.prefs);
         assert_eq!(polys.len(), 6);
         for (i, _) in polys.iter().enumerate() {
             let expected = pref_p.clone().with_slot(i).unwrap();
@@ -2583,7 +2578,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref_p = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(3),
@@ -2591,10 +2586,10 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
 
         let op: GOp<ArkBls12_381> = Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(3));
-        let polys = builder.ref_vars(&op);
+        let polys = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::ref_vars(&op, &gresult.prefs);
         assert_eq!(polys.len(), 8);
     }
 
@@ -2621,7 +2616,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
@@ -2638,7 +2633,7 @@ mod tests {
             crate::Ref::new(NodeIndex::new(0)),
             ATyp::VPoly(1, 2),
         )));
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
         builder.add_op(pref_p.clone(), op_poly, &mut gresult);
 
         // Three coefficient slots should have been bound.
@@ -2670,7 +2665,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
         let coefs: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
@@ -2684,7 +2679,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
         builder.add_op(
             pref_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
@@ -2743,7 +2738,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
         let vals: Vec<_> = (1..=4u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
@@ -2756,7 +2751,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_m);
+        gresult.register(&pref_m);
         builder.add_op(
             pref_m.clone(),
             Op::Mle(mk::<ArkBls12_381>(Op::Ref(
@@ -2808,7 +2803,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let _pref_xs = {
@@ -2819,7 +2814,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -2913,7 +2908,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_vp);
+        gresult.register(&pref_vp);
         let coefs: Vec<_> = [3u64, 5]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
@@ -2926,7 +2921,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
         builder.add_op(
             pref_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
@@ -2944,7 +2939,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_vxs);
+        gresult.register(&pref_vxs);
         let xs_vals: Vec<_> = [7u64, 11]
             .iter()
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(*n)))))
@@ -2957,7 +2952,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_xs);
+        gresult.register(&pref_xs);
         builder.add_op(
             pref_xs.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
@@ -3020,7 +3015,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let _ = {
@@ -3031,7 +3026,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3086,7 +3081,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let _ = {
@@ -3097,7 +3092,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3149,7 +3144,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let _ = {
@@ -3160,7 +3155,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3210,7 +3205,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let _ = {
@@ -3221,7 +3216,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3278,7 +3273,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let pref_b = {
@@ -3289,7 +3284,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3349,7 +3344,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
         let pref_b = {
@@ -3360,7 +3355,7 @@ mod tests {
                 Qualifier::Private,
                 Distribution::default(),
             );
-            builder.ns.register(&p);
+            gresult.register(&p);
             p
         };
 
@@ -3409,7 +3404,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 2),
@@ -3417,7 +3412,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -3467,7 +3462,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
@@ -3475,7 +3470,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -3546,7 +3541,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(2, 1),
@@ -3554,7 +3549,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -3624,7 +3619,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_u);
+        gresult.register(&pref_u);
         let pref_v = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Mle(1),
@@ -3632,7 +3627,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -3731,7 +3726,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
@@ -3739,7 +3734,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let basis_before = gresult.basis.len();
         let result = PRef::from_node(
@@ -3872,7 +3867,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&_pref_a);
+        gresult.register(&_pref_a);
         let _pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
@@ -3880,7 +3875,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&_pref_b);
+        gresult.register(&_pref_b);
 
         let basis_before = gresult.basis.len();
         let result = PRef::from_node(
@@ -3958,7 +3953,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&_pref_a);
+        gresult.register(&_pref_a);
         let _pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::VPoly(1, 1),
@@ -3966,7 +3961,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&_pref_b);
+        gresult.register(&_pref_b);
 
         let basis_before_div = gresult.basis.len();
         let _q_res = {
@@ -4045,7 +4040,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
@@ -4053,7 +4048,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let basis_before = gresult.basis.len();
         let result = PRef::from_node(
@@ -4489,12 +4484,7 @@ mod tests {
         );
 
         // Namespace should register all 8 public inputs
-        let ns_named_count = builder
-            .ns
-            .prefs
-            .values()
-            .filter(|p| p.name.is_some())
-            .count();
+        let ns_named_count = gr.prefs.values().filter(|p| p.name.is_some()).count();
         assert!(
             ns_named_count >= 8,
             "namespace should register >= 8 named public prefs, got {}",
@@ -4540,12 +4530,7 @@ mod tests {
             gr.basis.len()
         );
 
-        let ns_named_count = builder
-            .ns
-            .prefs
-            .values()
-            .filter(|p| p.name.is_some())
-            .count();
+        let ns_named_count = gr.prefs.values().filter(|p| p.name.is_some()).count();
         assert!(
             ns_named_count >= 8,
             "namespace should register >= 8 named public prefs, got {}",
@@ -4570,7 +4555,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -4629,7 +4614,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -4764,7 +4749,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_evals);
+        gresult.register(&pref_evals);
 
         let points: GOp<ArkBls12_381> =
             Op::Value(Value::VecScalar(vec![Fr::from(0u64), Fr::from(1u64)]));
@@ -4779,7 +4764,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
@@ -4855,7 +4840,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_evals);
+        gresult.register(&pref_evals);
 
         let points: GOp<ArkBls12_381> = Op::Value(Value::VecScalar(
             [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect(),
@@ -4871,7 +4856,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
@@ -4955,7 +4940,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_points);
+        gresult.register(&pref_points);
 
         let coefs: Vec<_> = [0u64, 1]
             .iter()
@@ -4970,7 +4955,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_evals);
+        gresult.register(&pref_evals);
 
         let result_typ = ATyp::uni(2);
         let pref_result = PRef::from_node(
@@ -4980,7 +4965,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
         let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
@@ -5052,8 +5037,8 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_points);
-        builder.ns.register(&pref_evals);
+        gresult.register(&pref_points);
+        gresult.register(&pref_evals);
 
         let result_typ = ATyp::uni(2);
         let pref_result = PRef::from_node(
@@ -5063,7 +5048,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
         let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
@@ -5101,8 +5086,8 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
 
         let pref_result = PRef::from_node(
             NodeIndex::new(2),
@@ -5111,7 +5096,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::scalar());
         let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::scalar());
@@ -5159,8 +5144,8 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
 
         let pref_result = PRef::from_node(
             NodeIndex::new(2),
@@ -5169,7 +5154,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::scalar());
         let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::scalar());
@@ -5200,7 +5185,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -5260,7 +5245,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -5269,7 +5254,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&result);
+        gresult.register(&result);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Rem,
@@ -5302,8 +5287,8 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
 
         let result = PRef::from_node(
             NodeIndex::new(2),
@@ -5312,7 +5297,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&result);
+        gresult.register(&result);
 
         let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
         let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::Mle(2));
@@ -5343,7 +5328,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -5352,7 +5337,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&result);
+        gresult.register(&result);
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
@@ -5393,7 +5378,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             s.clone(),
@@ -5401,7 +5386,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -5420,7 +5405,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
 
@@ -5472,7 +5457,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_scalar);
+        gresult.register(&pref_scalar);
 
         let pref_poly = PRef::from_node(
             NodeIndex::new(1),
@@ -5481,7 +5466,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_poly);
+        gresult.register(&pref_poly);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -5500,7 +5485,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
 
@@ -5557,7 +5542,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_x);
+        gresult.register(&pref_x);
 
         let pref_v = PRef::from_node(
             NodeIndex::new(1),
@@ -5566,7 +5551,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
@@ -5585,7 +5570,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(pref_r.clone(), Op::Record(fields), &mut gresult);
 
@@ -5623,7 +5608,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_rec);
+        gresult.register(&pref_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
 
@@ -5634,7 +5619,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_proj);
+        gresult.register(&pref_proj);
 
         builder.add_op(
             pref_proj.clone(),
@@ -5681,7 +5666,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_rec);
+        gresult.register(&pref_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
 
@@ -5692,7 +5677,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_proj);
+        gresult.register(&pref_proj);
 
         builder.add_op(
             pref_proj.clone(),
@@ -5746,7 +5731,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_rec);
+        gresult.register(&pref_rec);
 
         let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
 
@@ -5757,7 +5742,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_proj);
+        gresult.register(&pref_proj);
 
         builder.add_op(
             pref_proj.clone(),
@@ -5812,7 +5797,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let coefs_a: Vec<_> = (1..=3u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
@@ -5825,7 +5810,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
         let coefs_b: Vec<_> = (1..=5u64)
             .map(|n| mk::<ArkBls12_381>(Op::Value(Value::Scalar(Fr::from(n)))))
             .collect();
@@ -5838,7 +5823,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -5882,7 +5867,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_s);
+        gresult.register(&pref_s);
 
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
@@ -5891,7 +5876,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -5900,7 +5885,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -5948,7 +5933,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let pref_s = PRef::from_node(
             NodeIndex::new(1),
@@ -5957,7 +5942,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_s);
+        gresult.register(&pref_s);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -5966,7 +5951,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6006,7 +5991,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_s);
+        gresult.register(&pref_s);
 
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
@@ -6015,7 +6000,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_p);
+        gresult.register(&pref_p);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6024,7 +6009,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6067,7 +6052,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6076,7 +6061,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6085,7 +6070,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6144,7 +6129,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6153,7 +6138,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6162,7 +6147,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6209,7 +6194,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6218,7 +6203,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6227,7 +6212,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6272,7 +6257,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6281,7 +6266,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6290,7 +6275,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6336,7 +6321,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6345,7 +6330,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6354,7 +6339,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6406,7 +6391,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6415,7 +6400,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6424,7 +6409,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6469,7 +6454,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6478,7 +6463,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6487,7 +6472,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6531,7 +6516,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
@@ -6540,7 +6525,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6590,7 +6575,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
@@ -6599,7 +6584,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6655,7 +6640,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(1),
@@ -6664,7 +6649,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6715,7 +6700,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -6724,7 +6709,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -6733,7 +6718,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -6766,7 +6751,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
@@ -6774,9 +6759,9 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref);
-        let src = PolySource::from_ref_vars(
-            &builder,
+        gresult.register(&pref);
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+            &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
         assert_eq!(src.polys.len(), 3);
@@ -6805,7 +6790,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Mle(2),
@@ -6813,9 +6798,9 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref);
-        let src = PolySource::from_ref_vars(
-            &builder,
+        gresult.register(&pref);
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+            &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2)),
         );
         assert_eq!(src.polys.len(), 4);
@@ -6844,7 +6829,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -6852,12 +6837,11 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref);
-        let src = PolySource::from_ref_vars(
-            &builder,
+        gresult.register(&pref);
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+            &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
-        assert_eq!(src.polys.len(), 6);
 
         let lifted = src.lift_to(&ATyp::VPoly(2, 3));
         assert_eq!(lifted.polys.len(), 10);
@@ -6883,7 +6867,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::VPoly(2, 2),
@@ -6891,9 +6875,9 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref);
-        let src = PolySource::from_ref_vars(
-            &builder,
+        gresult.register(&pref);
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+            &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 2)),
         );
 
@@ -6985,7 +6969,7 @@ mod tests {
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
         let pref = PRef::from_node(
             NodeIndex::new(0),
             ATyp::Uni(2),
@@ -6993,9 +6977,9 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref);
-        let src = PolySource::from_ref_vars(
-            &builder,
+        gresult.register(&pref);
+        let src = PolySource::<ArkBls12_381, GrevLexTerm>::from_ref_vars(
+            &gresult.prefs,
             &Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2)),
         );
         assert_eq!(src.polys.len(), 3);
@@ -7032,7 +7016,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::scalar(),
@@ -7040,7 +7024,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
@@ -7094,7 +7078,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(2),
@@ -7102,7 +7086,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
@@ -7167,7 +7151,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             ATyp::Uni(4),
@@ -7175,7 +7159,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             ATyp::bool(),
@@ -7248,7 +7232,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
             vec3.clone(),
@@ -7256,7 +7240,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
             vec5.clone(),
@@ -7311,7 +7295,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_v);
+        gresult.register(&pref_v);
 
         let result = PRef::from_node(
             NodeIndex::new(1),
@@ -7361,7 +7345,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_src);
+        gresult.register(&pref_src);
 
         let pref_dst = PRef::from_node(
             NodeIndex::new(1),
@@ -7370,7 +7354,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_dst);
+        gresult.register(&pref_dst);
 
         builder.add_op(
             pref_dst.clone(),
