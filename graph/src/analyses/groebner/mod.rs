@@ -265,17 +265,74 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         self.np.retain(|p, _| vars.contains(p));
     }
 
-    #[allow(dead_code)]
-    pub fn inline<F: Fn(&PRef) -> bool>(&mut self, f: F) {
-        for p in self.basis.iter_mut() {
-            *p = p.clone().flat_map_vars(&|v| {
-                if f(&v) || !self.pl.contains(&v) {
-                    SparsePolynomial::var(&v)
-                } else {
-                    self.pl[v].clone()
-                }
-            });
+    /// Inline all `pl` definitions into the basis polynomials.
+    ///
+    /// Topologically sorts `pl` entries, substitutes dependencies into
+    /// each other to resolve chains, then substitutes the resolved
+    /// definitions into all basis polynomials. Clears `pl` afterwards.
+    pub fn inline(&mut self) {
+        if self.pl.is_empty() {
+            return;
         }
+
+        let pl_keys: Set<PRef> = self.pl.keys();
+        let mut order: Vec<PRef> = Vec::with_capacity(pl_keys.len());
+        let mut resolved: Set<PRef> = Set::new();
+        let mut remaining: Vec<(PRef, usize)> = pl_keys
+            .iter()
+            .map(|k| {
+                let deps = self.pl[k]
+                    .terms
+                    .iter()
+                    .flat_map(|(t, _)| t.vars())
+                    .filter(|v| pl_keys.contains(v))
+                    .count();
+                (k.clone(), deps)
+            })
+            .collect();
+
+        loop {
+            let before = remaining.len();
+            let mut next_remaining = Vec::new();
+            for (k, deps) in remaining {
+                if deps == 0 {
+                    order.push(k.clone());
+                    resolved.insert(k.clone());
+                } else {
+                    let new_deps = self.pl[&k]
+                        .terms
+                        .iter()
+                        .flat_map(|(t, _)| t.vars())
+                        .filter(|v| pl_keys.contains(v) && !resolved.contains(v))
+                        .count();
+                    next_remaining.push((k, new_deps));
+                }
+            }
+            remaining = next_remaining;
+            if remaining.len() == before {
+                for (k, _) in remaining {
+                    order.push(k);
+                }
+                break;
+            }
+            if remaining.is_empty() {
+                break;
+            }
+        }
+
+        for k in &order {
+            if let Some(def) = self.pl.remove(k) {
+                let (new_def, _) = def.inline_vars(&self.pl);
+                self.pl.insert(k, &new_def);
+            }
+        }
+
+        for p in self.basis.iter_mut() {
+            let (new_p, _) = p.clone().inline_vars(&self.pl);
+            *p = new_p;
+        }
+
+        self.pl.clear();
     }
 
     /// Compute Groebner basis using Buchberger algorithm.
