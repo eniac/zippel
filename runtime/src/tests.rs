@@ -28,7 +28,8 @@ mod runtime_tests {
                 x <- a * a;
                 y <- b * b;
                 c <- challenge<F>;
-                verify(c * (x + y) == c * (x + y))
+                t <- c * (x + y);
+                verify(t == c * (x + y))
             }
         "#;
         let m = UModule::from_str(src)
@@ -74,8 +75,8 @@ mod runtime_tests {
         )
         .unwrap();
 
-        // Proof must contain x (9) and y (16)
-        assert_eq!(proof.len(), 2);
+        // Proof must contain x (9), y (16) and t (c * 25)
+        assert_eq!(proof.len(), 3);
         assert_eq!(
             proof[0],
             Value::Scalar(<TestConfig as backend::ArkConfig>::F::from(9u64))
