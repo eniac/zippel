@@ -54,18 +54,6 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     // Public constructors
     // ----------------------------------------------------------------
 
-    /// Transitive closure from the `Inp` (input) marker of the full DAG.
-    pub fn input(dag: &DQDag<C>) -> Self {
-        let prefs = Self::prefs_from_marker(dag, dag.input_node());
-        let mut tc = Self {
-            clos: Vec::new(),
-            prefs,
-        };
-        let mut index = HashMap::new();
-        tc.build_from(dag, dag.input_node(), &mut index);
-        tc
-    }
-
     /// Transitive closure from the `Rel` (relation) marker of the full DAG.
     ///
     /// Pre-populates the index with identity entries for each input arg
@@ -424,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn trans_clos_input_not_empty() {
+    fn trans_clos_prover_not_empty() {
         let g = make_qualified_dag(
             r#"
             proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
@@ -435,16 +423,16 @@ mod tests {
             }"#,
         );
 
-        let tc = TransClos::input(&g);
+        let tc = TransClos::prover(&g);
 
         assert!(!tc.prefs.is_empty(), "prefs should not be empty");
         assert!(
             tc.prefs.iter().any(|p| p.is_private()),
-            "input should include private args"
+            "prover should include private args"
         );
         assert!(
             tc.prefs.iter().any(|p| p.is_public()),
-            "input should include public args"
+            "prover should include public args"
         );
         assert!(!tc.clos.is_empty(), "clos should not be empty");
 
@@ -472,36 +460,34 @@ mod tests {
             }"#,
         );
 
-        let tc_input = TransClos::input(&g);
+        let tc_prover = TransClos::prover(&g);
         let tc_rel = TransClos::relation(&g);
 
         // Relation prefs should use input namespace (same NodeIndex)
         for rel_pref in &tc_rel.prefs {
-            let matching_input = tc_input
+            let matching_prover = tc_prover
                 .prefs
                 .iter()
                 .find(|ip| ip.name() == rel_pref.name());
             assert!(
-                matching_input.is_some(),
-                "relation arg {:?} should have a matching input arg",
+                matching_prover.is_some(),
+                "relation arg {:?} should have a matching prover arg",
                 rel_pref.name()
             );
             assert_eq!(
                 rel_pref.node(),
-                matching_input.unwrap().node(),
-                "relation arg {:?} should map to same node as input arg",
+                matching_prover.unwrap().node(),
+                "relation arg {:?} should map to same node as prover arg",
                 rel_pref.name()
             );
         }
 
         // Relation clos entries for arg nodes should also use input namespace
         for (pref, _) in tc_rel.clos.iter() {
-            // If this pref's node matches an input arg by name, it should
-            // use the input arg's node index
-            if let Some(input_pref) = tc_input.prefs.iter().find(|ip| ip.name() == pref.name()) {
+            if let Some(prover_pref) = tc_prover.prefs.iter().find(|ip| ip.name() == pref.name()) {
                 assert_eq!(
                     pref.node(),
-                    input_pref.node(),
+                    prover_pref.node(),
                     "relation clos entry {:?} should use input namespace",
                     pref.name()
                 );
@@ -521,7 +507,7 @@ mod tests {
             }"#,
         );
 
-        let tc = TransClos::input(&g);
+        let tc = TransClos::prover(&g);
 
         for (_, op) in tc.clos.iter() {
             assert!(
@@ -570,23 +556,21 @@ mod tests {
         );
 
         let tc_prover = TransClos::prover(&g);
-        let tc_input = TransClos::input(&g);
 
-        // Prover should have some clos entries (reachable from transcripts)
         assert!(
             !tc_prover.clos.is_empty(),
             "prover should have reachable ops"
         );
 
-        // Prover closure should be a subset of input closure
-        let input_nodes: HashSet<NodeIndex> = tc_input.clos.iter().map(|(p, _)| p.node()).collect();
-        for (prover_pref, _) in tc_prover.clos.iter() {
-            assert!(
-                input_nodes.contains(&prover_pref.node()),
-                "prover clos entry at node {:?} should appear in input clos",
-                prover_pref.node()
-            );
-        }
+        // Prover should include both private and public input prefs
+        assert!(
+            tc_prover.prefs.iter().any(|p| p.is_private()),
+            "prover should see private inputs"
+        );
+        assert!(
+            tc_prover.prefs.iter().any(|p| p.is_public()),
+            "prover should see public inputs"
+        );
     }
 
     #[test]
@@ -600,7 +584,6 @@ mod tests {
             }"#,
         );
 
-        let tc_input = TransClos::input(&g);
         let tc = TransClos::verifier(&g);
 
         assert!(
@@ -623,12 +606,23 @@ mod tests {
             "verifier should see at least one transcript source (Challenge/Random)"
         );
 
-        // Verifier closure should be a subset of input closure
-        let input_nodes: HashSet<NodeIndex> = tc_input.clos.iter().map(|(p, _)| p.node()).collect();
+        // Verifier clos should not contain any private-input PRefs
+        let private_prefs: HashSet<NodeIndex> = g
+            .input_args()
+            .into_iter()
+            .filter_map(|n| {
+                let pref = g[n].arg_pref(n)?;
+                if pref.is_private() {
+                    Some(pref.node())
+                } else {
+                    None
+                }
+            })
+            .collect();
         for (verifier_pref, _) in tc.clos.iter() {
             assert!(
-                input_nodes.contains(&verifier_pref.node()),
-                "verifier clos entry at node {:?} should appear in input clos",
+                !private_prefs.contains(&verifier_pref.node()),
+                "verifier clos entry at node {:?} should not be a private input",
                 verifier_pref.node()
             );
         }
@@ -645,11 +639,11 @@ mod tests {
             }"#,
         );
 
-        let tc = TransClos::input(&g);
+        let tc = TransClos::prover(&g);
         let original_clos_len = tc.clos.len();
         let original_prefs_len = tc.prefs.len();
 
-        let mut tc2 = TransClos::input(&g);
+        let mut tc2 = TransClos::prover(&g);
         tc2.remap(&|pr| pr.clone());
 
         assert_eq!(
@@ -681,7 +675,7 @@ mod tests {
             }"#,
         );
 
-        let tc = TransClos::input(&g);
+        let tc = TransClos::prover(&g);
 
         for (_, op) in tc.clos.iter() {
             assert!(
@@ -707,7 +701,7 @@ mod tests {
             }"#,
         );
 
-        let tc = TransClos::input(&g);
+        let tc = TransClos::verifier(&g);
 
         let has_marginalize = tc
             .clos

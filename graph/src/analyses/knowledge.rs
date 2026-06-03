@@ -34,7 +34,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     pub fn from_input_with_w<const W: usize>(dag: &DQDag<C>) -> Self {
         let mut gb = GroebnerBuilder::new();
-        let mut result = gb.build(TransClos::input(dag));
+        let mut result = gb.build(TransClos::prover(dag));
 
         if dag.relation_node().is_some() {
             let rel_result = gb.build(TransClos::relation(dag));
