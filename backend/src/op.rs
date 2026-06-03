@@ -475,10 +475,21 @@ impl<C: HasOpFactory> GOp<C> {
                 Op::Vec(vs1)
             }
             // [e0, e1, ..., en] + e = [e0, e1, ..., e_n, e]
-            (Op::Vec(mut vs), v) | (v, Op::Vec(mut vs)) => {
+            (Op::Vec(mut vs), v) => {
                 let (t, _) = typ.clone().into_vec();
                 if v.typ() == t {
                     vs.push(mk::<C>(v));
+                    Op::Vec(vs)
+                } else {
+                    let v_h = mk::<C>(v);
+                    Op::Bin(BinOp::Concat, mk::<C>(Op::Vec(vs)), v_h, typ)
+                }
+            }
+            // e + [e0, e1, ..., en] = [e, e0, e1, ..., e_n]
+            (v, Op::Vec(mut vs)) => {
+                let (t, _) = typ.clone().into_vec();
+                if v.typ() == t {
+                    vs.insert(0, mk::<C>(v));
                     Op::Vec(vs)
                 } else {
                     let v_h = mk::<C>(v);

@@ -1,0 +1,145 @@
+// DeKART: ZK range proofs from univariate polynomials
+// From: https://eprint.iacr.org/2025/1159 and https://alinush.github.io/dekart
+
+proto dekart<
+    g1: Group,
+    g2: Group,
+    gt: Pairing<g1, g2>,
+    f: Scalar<g1, g2>,
+    n: Size,
+    b: Size,
+    l_chunk: Size,
+    h_deg: (b-1)*n
+>(
+    // Private inputs (witness)
+    private f_evals: [f; n+1],
+    private chunks_evals: [[f; n+1]; l_chunk],
+    
+    // Blinding factors (private)
+    private rho: f,
+    private delta_rho: f,
+    private rho_h: f,
+    private rho_vec: [f; l_chunk],
+
+    // Public inputs/SRS
+    public b_vals: [f; b],
+    public b_pow: [f; l_chunk],
+    public f_one: f,
+    public gen_g1: g1,
+    public gen_g2: g2,
+    public srs_g2_tau: g2,
+    public srs_g2_xi: g2,
+    public xi_g1: g1,
+    public s0_commit: g1,
+    private srs_g1_n: [g1; n+1],
+    private srs_g1_h: [g1; h_deg+1]
+) where srs_g1_n[0] == gen_g1 && srs_g1_h[0] == gen_g1 {
+
+    let f_zero = f_one - f_one;
+
+    // Interpolate f
+    let f_poly = interpolate(f_evals);
+
+    // Commit to f
+    let f_coeffs = coef(f_poly);
+    com_f <- dot(f_coeffs, srs_g1_n) + xi_g1 * rho;
+
+    // Prover Step 2: Mask/randomize f
+    let r_blind = random<f>;
+    let f_hat_evals = [r_blind] ++ f_evals[1..n+1];
+    let f_hat = interpolate(f_hat_evals);
+    // hat_c commitment to f_hat with additional blinding delta_rho
+    let f_hat_coeffs = coef(f_hat);
+    hat_c <- dot(f_hat_coeffs, srs_g1_n) + xi_g1 * (rho + delta_rho);
+
+    // Step 3a: Proof of Knowledge of delta_rho and r_blind
+    // Statement: hat_c - com_f = xi_g1 * delta_rho + s0_commit * r_blind
+    let pok_x1 = random<f>;
+    let pok_x2 = random<f>;
+    pok_a <- xi_g1 * pok_x1 + s0_commit * pok_x2;
+
+    pok_e <- challenge<f>;
+
+    let pok_sigma1 = pok_x1 - pok_e * delta_rho;
+    let pok_sigma2 = pok_x2 - pok_e * r_blind;
+
+    pok_s1 <- pok_sigma1;
+    pok_s2 <- pok_sigma2;
+
+    // Step 4: commitments to chunks f_j
+    let f_j_vec = [ interpolate(chunks_evals[j]) for j in 0..l_chunk ];
+    com_chunks <- [ dot(coef(f_j_vec[j]), srs_g1_n) + xi_g1 * rho_vec[j] for j in 0..l_chunk ];
+
+    // Step 5: Quotient polynomials
+    // v_s: vanishing polynomial of the constraint domain H (excluding omega^0 = 1)
+    let v_s = poly([f_one for i in 0..n+1]);
+
+    // h_j(X) = \prod_{i=0..b-1} (f_j - i) / v_s
+    let h_j_vec = [ (reduce(*, [f_j_vec[j] - d for d in b_vals])) / v_s for j in 0..l_chunk ];
+
+    // g(X) = (f_hat - \sum b^j f_j) / v_s
+    let g = (f_hat - reduce(+, [ f_j_vec[j] * b_pow[j] for j in 0..l_chunk ])) / v_s;
+
+    // Step 6: Combine quotients using challenge beta
+    beta <- challenge<f>;
+    let beta_pow = [ beta ^ (j+1) for j in 0..l_chunk ];
+    let h = g * beta + reduce(+, [ h_j_vec[j] * beta_pow[j] for j in 0..l_chunk ]);
+
+    // Step 7: Commit to h
+    let h_coeffs = coef(h);
+    com_h <- dot(h_coeffs, srs_g1_h) + xi_g1 * rho_h;
+
+    // Step 8: Batch challenge mu
+    mu_seed <- challenge<f>;
+    let mu_h = mu_seed;
+    let mu = mu_seed * mu_seed;
+    let mu_j = [ mu_seed ^ (j+3) for j in 0..l_chunk ];
+
+    // u(X) = mu * f_hat + mu_h * h + \sum mu_j * f_j
+    let u = f_hat * mu + h * mu_h + reduce(+, [ f_j_vec[j] * mu_j[j] for j in 0..l_chunk ]);
+
+    // Step 9: challenge evaluation point gamma
+    gamma <- challenge<f>;
+
+    let a_hat_gamma_vec = eval(f_hat, [gamma]);
+    let a_hat_gamma = a_hat_gamma_vec[0];
+    let a_h_gamma_vec = eval(h, [gamma]);
+    let a_h_gamma = a_h_gamma_vec[0];
+    let a_j_gamma = [ (let v = eval(f_j_vec[j], [gamma]); v[0]) for j in 0..l_chunk ];
+
+    a <- a_hat_gamma;
+    a_h <- a_h_gamma;
+    a_j_log <- a_j_gamma;
+
+    // u(gamma)
+    let a_u = a * mu + a_h * mu_h + reduce(+, [ a_j_log[j] * mu_j[j] for j in 0..l_chunk ]);
+
+    // Step 10: Open u at gamma
+    let s_blind = random<f>;
+    let q_u = (u - a_u) / poly([-gamma, f_one]);
+
+    let rho_u = mu * (rho + delta_rho) + mu_h * rho_h + reduce(+, [ rho_vec[j] * mu_j[j] for j in 0..l_chunk ]);
+
+    pi_1 <- xi_g1 * s_blind + dot(coef(q_u), srs_g1_h[0..h_deg]);
+    pi_2 <- gen_g1 * rho_u - (srs_g1_h[1] - gen_g1 * gamma) * s_blind;
+
+    // VERIFICATION
+    // Verifier Step 3: verify PoK
+    verify(pok_a == (hat_c - com_f) * pok_e + xi_g1 * pok_s1 + s0_commit * pok_s2);
+
+    // Verifier Step 8: Reconstruct U
+    let verif_u = hat_c * mu + com_h * mu_h + reduce(+, [ com_chunks[j] * mu_j[j] for j in 0..l_chunk ]);
+
+    // Verifier Step 10: Verify batch KZG opening check
+    let pairing_lhs = pair(pi_1, srs_g2_tau - gen_g2 * gamma) + pair(pi_2, srs_g2_xi);
+    let pairing_rhs = pair(verif_u - gen_g1 * a_u, gen_g2);
+    verify(pairing_lhs == pairing_rhs);
+
+    // Verifier Step 11: verify radix decomposition quotient check
+    let v_s_at_gamma_vec = eval(v_s, [gamma]);
+    let v_s_at_gamma = v_s_at_gamma_vec[0];
+    let prod_j = [ reduce(*, [a_j_log[j] - d for d in b_vals]) for j in 0..l_chunk ];
+    let sum_val = reduce(+, [ beta_pow[j] * prod_j[j] for j in 0..l_chunk ]);
+    let diff_val = a - reduce(+, [ a_j_log[j] * b_pow[j] for j in 0..l_chunk ]);
+    verify(a_h * v_s_at_gamma == beta * diff_val + sum_val)
+}
