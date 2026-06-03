@@ -858,8 +858,19 @@ impl Typeable for CExp {
                         // polynomial's degree is the sum of the degrees of the elements,
                         // i.e., tv.degree * n.
                         if *op == BinOp::Mul {
-                            if let CTyp::Poly(a, num_vars, d) = &tv {
-                                return Ok(CTyp::Poly(a.clone(), *num_vars, d * n));
+                            if let CTyp::Poly(_, _, d) = &tv {
+                                // Validate that the multiplication is valid under kind context first.
+                                let res_t = CTyp::lub_op(*op, &tv, &tv, kctx)
+                                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                                if let CTyp::Poly(res_a, num_vars, _) = res_t {
+                                    let degree = d.checked_mul(n).ok_or_else(|| {
+                                        TypeError::lub(
+                                            TypeError::exp(kctx, vctx, self),
+                                            LubError::DegreeOverflow(*d, n),
+                                        )
+                                    })?;
+                                    return Ok(CTyp::Poly(res_a, num_vars, degree));
+                                }
                             }
                         }
                         // Infer the return type
@@ -2128,6 +2139,32 @@ mod tests {
             Ok(poly_t),
             "reduce(+, [Poly<F, 1, 3>; 4]) must yield Poly<F, 1, 3>",
         );
+    }
+
+    #[test]
+    fn test_reduce_mul_poly_invalid_coeff_kind() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        // Poly with group coefficients G
+        let poly_t = CTyp::Poly(Tid::from("G"), 1, 3);
+        vctx.insert(&Vid::from("pv_g"), &CTyp::vec(&poly_t, 4));
+
+        let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv_g"));
+        // This must fail because group types cannot be multiplied
+        assert!(e.infer(&KIND_CTX, &fctx, &vctx).is_err());
+    }
+
+    #[test]
+    fn test_reduce_mul_poly_overflow() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        // Poly with field coefficients F but extremely large degree to trigger overflow
+        let poly_t = CTyp::Poly(Tid::from("F"), 1, usize::MAX / 2);
+        vctx.insert(&Vid::from("pv_overflow"), &CTyp::vec(&poly_t, 4));
+
+        let e = CExp::reduce(BinOp::Mul, CExp::varstr("pv_overflow"));
+        // This must fail because of degree overflow
+        assert!(e.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 
     /// Property-based test to verify the correctness of type inference for

@@ -10,6 +10,8 @@ fn main() {
     println!("=== Membership ===");
     let n_size = 3;
     let m_size = 4;
+    assert!(n_size >= 1, "n_size must be at least 1");
+    assert!(m_size >= 1, "m_size must be at least 1");
     let l_size = (n_size - 1) * m_size;
     let s_size = usize::max(n_size, l_size);
 
@@ -62,6 +64,8 @@ fn main() {
 }
 
 fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
+    assert!(n_size >= 1, "n_size must be at least 1");
+    assert!(m_size >= 1, "m_size must be at least 1");
     let mut rng = rand::rngs::OsRng;
     let l_size = (n_size - 1) * m_size;
     let s_size = usize::max(n_size, l_size);

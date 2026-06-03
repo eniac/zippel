@@ -25,6 +25,8 @@ pub enum LubError {
     KindNotFound(Tid),
     #[error("LubError: Cannot evaluate {0} at {1}")]
     Eval(String, String),
+    #[error("LubError: Degree overflow under reduce multiplication: degree {0} * vector length {1}")]
+    DegreeOverflow(usize, usize),
 }
 
 impl LubError {
