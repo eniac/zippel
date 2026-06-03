@@ -1,5 +1,5 @@
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::scheduler::{TDag, ThreadAlloc};
+use graph::scheduler::TDag;
 use graph::{Dag, GOp, Node, Op};
 use lang::id::Vid;
 use log::debug;
@@ -52,16 +52,13 @@ pub struct RuntimeInformation<C: ArkConfig> {
     /// Number of unfinished dependencies. Atomically decremented;
     /// when it reaches zero, this node is ready to execute.
     pub remaining_deps: AtomicUsize,
-    /// Thread allocation hint from the scheduler.
-    pub thread_num: usize,
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
-    pub fn new(thread_num: usize) -> Self {
+    pub fn new() -> Self {
         RuntimeInformation {
             return_value: Mutex::new(None),
             remaining_deps: AtomicUsize::new(0),
-            thread_num,
         }
     }
 }
@@ -177,9 +174,7 @@ fn update_successors<C: ArkConfig>(
 impl<C: ArkConfig> MutexGraph<C> {
     pub fn new(tdag: TDag<C>) -> Self {
         MutexGraph {
-            mutex_graph: tdag.map_annotations(&|_, nthreads: &ThreadAlloc| {
-                Arc::new(RuntimeInformation::<C>::new(nthreads.get()))
-            }),
+            mutex_graph: tdag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
         }
     }
 
@@ -273,7 +268,7 @@ impl<C: ArkConfig> MutexGraph<C> {
     }
 
     /// Execute all nodes in the DAG using counter-based readiness tracking
-    /// and parallel computation via a capacity-managed thread pool.
+    /// and parallel computation via Rayon.
     ///
     /// # Readiness tracking
     ///
@@ -281,8 +276,8 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// initialized to its number of unique predecessors. When a node
     /// finishes execution, it atomically decrements the counters of all
     /// its unique successors. When a successor's counter reaches zero,
-    /// it is submitted to the pool manager (for compute nodes) or notifies
-    /// the main thread (for sponge-requiring nodes).
+    /// it is spawned onto Rayon (for compute nodes) or pushes to the sync
+    /// channel (for sponge-requiring nodes).
     ///
     /// # Sponge synchronization
     ///
@@ -291,15 +286,11 @@ impl<C: ArkConfig> MutexGraph<C> {
     /// Inp node sends public values through the sponge;
     /// Transcr nodes (including Challenge) update or squeeze sponge state.
     ///
-    /// # Thread pool
+    /// # Parallel execution
     ///
-    /// A `PoolManager` is created with `max_thread_num` capacity (the
-    /// maximum per-node thread allocation from the scheduler). Each task
-    /// declares its cost (`thread_num`) and the pool manager ensures the
-    /// total cost of concurrently running tasks does not exceed capacity.
-    /// Per-cost thread pools are cached for reuse. Completed tasks can
-    /// submit new tasks (e.g., when successors become ready), enabling
-    /// successor-driven scheduling.
+    /// Non-sync compute nodes are spawned onto Rayon worker threads
+    /// (`rayon::spawn`), allowing them to run concurrently as soon as their
+    /// dependencies are fully satisfied.
     ///
     /// # Returns
     ///
