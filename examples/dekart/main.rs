@@ -101,9 +101,18 @@ fn build_inputs(
         current_tau *= tau;
     }
 
-    // 3. Witness values to prove (must be in [0, b^l_chunk - 1])
-    // With n=3, b=2, l_chunk=4, values are in [0, 15]
+    // 3. Witness values to prove (must be in [0, b_size^l_chunk - 1])
+    // With n = n_size, b = b_size, l_chunk = l_chunk, values must be in [0, b_size^l_chunk - 1]
     let z_vals = vec![5u64, 12u64, 7u64];
+    assert_eq!(z_vals.len(), n_size, "z_vals length must equal n_size");
+    for &z in &z_vals {
+        assert!(
+            z < (b_size as u64).pow(l_chunk as u32),
+            "witness value {} exceeds max allowed range {}",
+            z,
+            (b_size as u64).pow(l_chunk as u32) - 1
+        );
+    }
     let mut f_evals = vec![F::zero()];
     for z in &z_vals {
         f_evals.push(F::from(*z));
