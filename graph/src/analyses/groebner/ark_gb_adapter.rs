@@ -61,7 +61,7 @@ use share::{Ctx, Set};
 
 use crate::PRef;
 use crate::analyses::groebner::monomial::{
-    ElimTerm, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial,
+    ElimTerm, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial, SoundnessElimTerm,
 };
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
 
@@ -85,7 +85,7 @@ pub(crate) const fn max_vars_for_w(w: usize) -> usize {
 /// `as_mono_term()` inherent methods. This lets the conversion helpers be
 /// generic over the zippel term type without exposing `MonoTerm` outside
 /// the crate.
-trait HasMonoTerm {
+pub(crate) trait HasMonoTerm {
     fn as_mono_term(&self) -> &ZipMonoTerm;
 }
 
@@ -100,6 +100,13 @@ impl HasMonoTerm for ElimTerm {
     #[inline]
     fn as_mono_term(&self) -> &ZipMonoTerm {
         ElimTerm::as_mono_term(self)
+    }
+}
+
+impl HasMonoTerm for SoundnessElimTerm {
+    #[inline]
+    fn as_mono_term(&self) -> &ZipMonoTerm {
+        SoundnessElimTerm::as_mono_term(self)
     }
 }
 
@@ -372,14 +379,18 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelElimMono<W> {
     }
 }
 
-/// `ElimTerm` backend: fully parametric on W.
+/// Generic elim-ordering backend, parametric on W and the zippel term type.
 /// Routes to ark-gb with elim-aware monomial ordering.
-pub(crate) fn compute_reduced_gb_elim<F: Field, const W: usize>(
+pub(crate) fn compute_reduced_gb_with_elim<F, T, const W: usize>(
     _num_vars: usize,
-    input: Vec<SparsePolynomial<F, ElimTerm>>,
-) -> Vec<SparsePolynomial<F, ElimTerm>> {
-    // Partition PRefs into keep (low ark-gb indices) and elim (high indices).
-    let (keep_vars, elim_vars, exponents_fit) = collect_vars_elim(&input);
+    input: Vec<SparsePolynomial<F, T>>,
+    eliminate_fn: fn(&PRef) -> bool,
+) -> Vec<SparsePolynomial<F, T>>
+where
+    F: Field,
+    T: ZipMonomial + HasMonoTerm,
+{
+    let (keep_vars, elim_vars, exponents_fit) = collect_vars_with(&input, eliminate_fn);
     let actual_nvars = keep_vars.len() + elim_vars.len();
 
     if actual_nvars == 0 {
@@ -388,54 +399,39 @@ pub(crate) fn compute_reduced_gb_elim<F: Field, const W: usize>(
 
     assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit);
 
-    // Var order: keeps at indices [0, |keep|), elims at [|keep|, nvars).
-    // Eliminated PRefs at high indices map to high byte positions in
-    // ark-gb's packing; ark-gb's degrevlex then orders elim-rev-lex
-    // before keep-rev-lex automatically. The only thing left for the
-    // adapter is to put `elim_total_deg` in front via `cmp_key`.
     let mut var_order: Vec<PRef> = Vec::with_capacity(actual_nvars);
     var_order.extend(keep_vars.iter().cloned());
     var_order.extend(elim_vars.iter().cloned());
-    let var_index = index_map(&var_order);
 
-    let ring: Arc<Ring<F, W>> = Arc::new(
-        Ring::<F, W>::new(actual_nvars as u32).expect("nvars within ark-gb packing layout"),
-    );
-
-    // Guard must be active during both conversion and GB computation
     let _guard =
         ElimMaskGuard::<W>::install(build_elim_byte_mask::<W>(keep_vars.len(), actual_nvars));
 
-    let polys: Vec<Poly<F, ZippelElimMono<W>, W>> = input
-        .into_iter()
-        .map(|p| {
-            zippel_poly_to_ark_gb::<F, ElimTerm, ZippelElimMono<W>, W>(
-                &ring,
-                &var_index,
-                actual_nvars,
-                p,
-            )
-        })
-        .collect();
-
-    let gb = ark_gb::bba::compute_gb_serial::<F, ZippelElimMono<W>, W>(Arc::clone(&ring), polys);
-
-    let mut out: Vec<SparsePolynomial<F, ElimTerm>> = gb
-        .into_iter()
-        .map(|p| ark_gb_to_zippel::<F, ElimTerm, ZippelElimMono<W>, W>(&ring, &var_order, p))
-        .collect();
-    sort_basis_by_zippel_lt(&mut out);
-    out
+    compute_gb_pipeline::<F, T, ZippelElimMono<W>, W, _>(
+        input,
+        var_order,
+        exponents_fit,
+        |ring, polys| ark_gb::bba::compute_gb_serial::<F, ZippelElimMono<W>, W>(ring, polys),
+    )
 }
 
-pub(crate) fn collect_vars_elim<F: Field>(
-    input: &[SparsePolynomial<F, ElimTerm>],
+/// `ElimTerm` backend: fully parametric on W.
+/// Routes to ark-gb with elim-aware monomial ordering.
+pub(crate) fn compute_reduced_gb_elim<F: Field, const W: usize>(
+    num_vars: usize,
+    input: Vec<SparsePolynomial<F, ElimTerm>>,
+) -> Vec<SparsePolynomial<F, ElimTerm>> {
+    compute_reduced_gb_with_elim::<F, ElimTerm, W>(num_vars, input, ElimTerm::eliminate_var)
+}
+
+fn collect_vars_with<F: Field, T: ZipMonomial + HasMonoTerm>(
+    input: &[SparsePolynomial<F, T>],
+    eliminate_fn: fn(&PRef) -> bool,
 ) -> (Vec<PRef>, Vec<PRef>, bool) {
     let (vars, exponents_fit) = collect_and_validate(input);
     let mut keep: Vec<PRef> = Vec::new();
     let mut elim: Vec<PRef> = Vec::new();
     for v in vars.iter().cloned() {
-        if ElimTerm::eliminate_var(&v) {
+        if eliminate_fn(&v) {
             elim.push(v);
         } else {
             keep.push(v);

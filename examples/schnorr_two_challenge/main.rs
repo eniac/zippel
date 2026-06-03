@@ -61,11 +61,11 @@ fn main() {
     }
 
     let soundness_start = Instant::now();
-    let soundness_result = analysis_handler.analyze_special_soundness(2);
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2, 2]);
     let soundness_elapsed = soundness_start.elapsed();
     match &soundness_result {
-        Ok(()) => println!("K-Soundness (l=2):    ✓"),
-        Err(e) => println!("K-Soundness (l=2):    ✗ {}", e),
+        Ok(()) => println!("K-Soundness (l=[2,2]):  ✓"),
+        Err(e) => println!("K-Soundness (l=[2,2]):  ✗ {}", e),
     }
 
     println!("Completeness and ZK Analysis time:  {analysis_elapsed:.2?}");

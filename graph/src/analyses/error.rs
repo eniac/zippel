@@ -1,4 +1,4 @@
-use crate::analyses::groebner::{ElimTerm, GrevLexTerm, SparsePolynomial};
+use crate::analyses::groebner::{ElimTerm, GrevLexTerm, SoundnessElimTerm, SparsePolynomial};
 use crate::{GraphError, PRef};
 use backend::ArkConfig;
 use thiserror::Error;
@@ -18,22 +18,19 @@ pub enum AnalysisError<C: ArkConfig> {
     #[error("Verifier invalid: {0}")]
     VerifierInvalid(GraphError),
 
-    /// Special soundness requires l >= 2.
-    #[error("Special soundness requires l >= 2")]
+    /// Special soundness requires l_vec non-empty and each li >= 2.
+    #[error("Special soundness requires l_vec non-empty and each li >= 2")]
     InvalidSoundnessParameter,
 
     /// Special soundness requires at least one challenge.
     #[error("Special soundness requires at least one challenge")]
     NoChallenge,
 
-    /// Protocol is not a sigma (3-move) protocol: challenges and
-    /// prover responses are interleaved rather than all challenges
-    /// preceding all responses.
-    #[error("Not a sigma protocol: challenges and responses interleaved (challenge {challenge_name} follows response {response_name})")]
-    NotSigmaProtocol {
-        challenge_name: String,
-        response_name: String,
-    },
+    /// The number of challenge rounds does not match l_vec length.
+    #[error(
+        "Not a 2n+1-move protocol: l_vec has {expected} round(s) but verifier has {found} challenge(s)"
+    )]
+    Not2nPlus1MoveProtocol { expected: usize, found: usize },
 
     /// No extractor polynomial found for witness variable.
     #[error("No extractor for witness: {0}")]
@@ -43,10 +40,10 @@ pub enum AnalysisError<C: ArkConfig> {
     #[error("Extractor for witness {witness} is not transcript-computable: {poly}")]
     ExtractorNotVisible {
         witness: PRef,
-        poly: SparsePolynomial<C::F, GrevLexTerm>,
+        poly: SparsePolynomial<C::F, SoundnessElimTerm>,
     },
 
     /// Extractor invalid; relation remainder is non-zero.
     #[error("Extractor invalid; relation remainder: {0}")]
-    ExtractorInvalid(SparsePolynomial<C::F, GrevLexTerm>),
+    ExtractorInvalid(SparsePolynomial<C::F, SoundnessElimTerm>),
 }

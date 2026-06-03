@@ -31,6 +31,15 @@ pub trait Monomial:
     fn is_constant(&self) -> bool {
         self.vars().is_empty()
     }
+    fn remap_vars(&self, f: &dyn Fn(&PRef) -> PRef) -> Self {
+        let pairs: Vec<(PRef, usize)> = self
+            .vars()
+            .iter()
+            .zip(self.powers().iter())
+            .map(|(v, &p)| (f(v), p))
+            .collect();
+        Self::from(pairs)
+    }
     fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F;
 
     fn is_divided(&self, other: &Self) -> bool;
@@ -598,6 +607,198 @@ impl ElimTerm {
     /// Borrow the underlying `MonoTerm` (variable → exponent map).
     pub(crate) fn as_mono_term(&self) -> &MonoTerm {
         &self.0
+    }
+}
+
+/// A monomial term with soundness-elimination ordering.
+///
+/// Like `ElimTerm`, this uses a two-level elimination order (eliminate-then-grevlex),
+/// but the elimination criterion is `Qualifier::Private` — all private variables
+/// (witnesses) are eliminated first. Local and public variables are kept and
+/// compared using grevlex. This ensures that extractor polynomials for private
+/// witnesses appear as leading terms in the Gröbner basis.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SoundnessElimTerm(MonoTerm);
+
+impl From<MonoTerm> for SoundnessElimTerm {
+    fn from(t: MonoTerm) -> Self {
+        SoundnessElimTerm(t)
+    }
+}
+
+impl SoundnessElimTerm {
+    pub fn new(vars: Ctx<PRef, usize>) -> Self {
+        SoundnessElimTerm(MonoTerm(vars))
+    }
+
+    pub fn eliminate_var(v: &PRef) -> bool {
+        v.qualifier.is_private()
+    }
+
+    pub fn eliminate(&self) -> bool {
+        self.0.iter().any(|(v, _)| Self::eliminate_var(v))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
+        self.0.iter()
+    }
+
+    pub(crate) fn as_mono_term(&self) -> &MonoTerm {
+        &self.0
+    }
+}
+
+impl Default for SoundnessElimTerm {
+    fn default() -> Self {
+        SoundnessElimTerm(MonoTerm(Ctx::new()))
+    }
+}
+
+#[allow(clippy::suspicious_op_assign_impl)]
+impl MulAssign for SoundnessElimTerm {
+    #[allow(clippy::suspicious_op_assign_impl)]
+    fn mul_assign(&mut self, other: Self) {
+        for (var, power) in other.0.iter() {
+            *self.0.0.entry(var.clone()).or_insert(0) += power;
+        }
+    }
+}
+
+impl Mul for SoundnessElimTerm {
+    type Output = Self;
+
+    fn mul(self, other: Self) -> Self {
+        let mut result = self.clone();
+        result *= other;
+        result
+    }
+}
+
+impl<'a> Mul for &'a SoundnessElimTerm {
+    type Output = SoundnessElimTerm;
+
+    fn mul(self, other: &'a SoundnessElimTerm) -> SoundnessElimTerm {
+        self.clone() * other.clone()
+    }
+}
+
+impl fmt::Display for SoundnessElimTerm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Div for SoundnessElimTerm {
+    type Output = Option<Self>;
+
+    fn div(self, other: Self) -> Option<Self> {
+        self.0.div(other.0).map(SoundnessElimTerm)
+    }
+}
+
+impl<'a> Div for &'a SoundnessElimTerm {
+    type Output = Option<SoundnessElimTerm>;
+
+    fn div(self, other: &'a SoundnessElimTerm) -> Option<SoundnessElimTerm> {
+        self.clone() / other.clone()
+    }
+}
+
+impl From<Vec<(PRef, usize)>> for SoundnessElimTerm {
+    fn from(vars: Vec<(PRef, usize)>) -> Self {
+        SoundnessElimTerm::new(vars.into_iter().collect())
+    }
+}
+
+impl Monomial for SoundnessElimTerm {
+    fn vars(&self) -> Vec<PRef> {
+        self.0.vars()
+    }
+
+    fn powers(&self) -> Vec<usize> {
+        self.0.powers()
+    }
+
+    fn is_constant(&self) -> bool {
+        self.0.is_constant()
+    }
+
+    fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
+        self.0.evaluate(p)
+    }
+
+    fn is_divided(&self, other: &Self) -> bool {
+        self.0.is_divided(&other.0)
+    }
+
+    fn lcm(&self, other: &Self) -> Self {
+        SoundnessElimTerm(self.0.lcm(&other.0))
+    }
+
+    fn gcd(&self, other: &Self) -> Self {
+        SoundnessElimTerm(self.0.gcd(&other.0))
+    }
+
+    fn compute_reduced_gb<F: Field, const W: usize>(
+        num_vars: usize,
+        input: Vec<SparsePolynomial<F, Self>>,
+    ) -> Vec<SparsePolynomial<F, Self>>
+    where
+        Self: Sized,
+    {
+        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
+        compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, Self::eliminate_var)
+    }
+}
+
+impl Ord for SoundnessElimTerm {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let elim_self = MonoTerm(
+            self.0
+                .iter()
+                .filter(|(var, _)| Self::eliminate_var(var))
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<PRef, usize>>(),
+        );
+
+        let elim_other = MonoTerm(
+            other
+                .0
+                .iter()
+                .filter(|(var, _)| Self::eliminate_var(var))
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<PRef, usize>>(),
+        );
+
+        match elim_self.grevlex(&elim_other) {
+            Ordering::Equal => {}
+            order => return order,
+        };
+
+        let keep_self = MonoTerm(
+            self.0
+                .iter()
+                .filter(|(var, _)| !Self::eliminate_var(var))
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<PRef, usize>>(),
+        );
+
+        let keep_other = MonoTerm(
+            other
+                .0
+                .iter()
+                .filter(|(var, _)| !Self::eliminate_var(var))
+                .map(|(var, power)| (var.clone(), *power))
+                .collect::<Ctx<PRef, usize>>(),
+        );
+
+        keep_self.grevlex(&keep_other)
+    }
+}
+
+impl PartialOrd for SoundnessElimTerm {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

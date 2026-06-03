@@ -350,10 +350,13 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         result
     }
 
-    pub fn analyze_special_soundness(&self, l: usize) -> Result<(), graph::analyses::AnalysisError<C>> {
+    pub fn analyze_special_soundness(
+        &self,
+        l_vec: Vec<usize>,
+    ) -> Result<(), graph::analyses::AnalysisError<C>> {
         use graph::analyses::SpecialSoundnessAnalysis;
         let g_analyze = self.analyze_graph.as_ref().unwrap();
-        let mut analysis = SpecialSoundnessAnalysis::from_input(g_analyze, l)?;
+        let mut analysis = SpecialSoundnessAnalysis::from_input(g_analyze, l_vec)?;
         analysis.run()
     }
 

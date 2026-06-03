@@ -2,7 +2,7 @@ pub mod buchberger;
 pub use buchberger::GroebnerBasis;
 
 pub mod monomial;
-pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
+pub use monomial::{ElimTerm, GrevLexTerm, Monomial, SoundnessElimTerm};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
