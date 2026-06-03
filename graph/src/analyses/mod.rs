@@ -2,6 +2,7 @@ pub mod completeness;
 pub mod error;
 pub mod groebner;
 pub mod qualifier;
+pub mod soundness;
 pub mod trans_clos;
 pub mod uniform;
 
@@ -12,6 +13,7 @@ pub use error::AnalysisError;
 pub use groebner::{GroebnerBasis, GroebnerBuilder, GroebnerNamespace, GroebnerResult};
 pub use knowledge::KnowledgeAnalysis;
 pub use qualifier::QualifierPropagation;
+pub use soundness::SpecialSoundnessAnalysis;
 pub use trans_clos::TransClos;
 pub use uniform::UniformityPropagation;
 
