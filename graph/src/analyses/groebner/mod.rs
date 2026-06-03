@@ -2419,7 +2419,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        TransClos::input(&g)
+        TransClos::verifier(&g)
     }
 
     fn trans_clos_from_src_sized(
@@ -2430,7 +2430,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        TransClos::input(&g)
+        TransClos::verifier(&g)
     }
 
     #[test]

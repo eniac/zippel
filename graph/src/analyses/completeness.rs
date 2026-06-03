@@ -29,12 +29,14 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
-        let verifier_tc = TransClos::input(dag);
-        let public_args: Set<PRef> = verifier_tc
-            .prefs
-            .iter()
-            .filter(|a| a.is_public())
-            .cloned()
+        let verifier_tc = TransClos::verifier(dag);
+        let public_args: Set<PRef> = dag
+            .input_args()
+            .into_iter()
+            .filter_map(|n| {
+                let pref = dag[n].arg_pref(n)?;
+                if pref.is_public() { Some(pref) } else { None }
+            })
             .collect();
         let verifier_result = builder.build(verifier_tc);
 
