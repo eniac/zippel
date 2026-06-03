@@ -86,12 +86,8 @@ name = "ipa"
 path = "examples/ipa/main.rs"
 
 [[example]]
-name = "ipa_optimized"
-path = "examples/ipa_optimized/main.rs"
-
-[[example]]
-name = "ipa_field"
-path = "examples/ipa_field/main.rs"
+name = "ipa_weighted"
+path = "examples/ipa_weighted/main.rs"
 
 [[example]]
 name = "schnorr"

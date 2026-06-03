@@ -23,7 +23,7 @@ cargo run --example kzg          # run KZG commitment
 cargo test                       # run all tests
 ```
 
-Available examples: `ipa`, `ipa_optimized`, `ipa_field`, `schnorr`, `cp`, `kzg`, `sumcheck`, `zerocheck`, `hadamard`, `mle`, `toy_record`, `marginalize`.
+Available examples: `ipa`, `ipa_weighted`, `ipa_field`, `schnorr`, `cp`, `kzg`, `sumcheck`, `zerocheck`, `hadamard`, `mle`, `toy_record`, `marginalize`.
 
 To add a new example, create a `.zippel` file in `examples/` and a corresponding `examples/<name>/main.rs` entry with a `[[example]]` target in the root `Cargo.toml`.
 

@@ -1,6 +1,12 @@
-// This function implements the recursive Inner Product Argument (Protocol 2 from your text,
+// This file implements the Inner Product Argument from the Bulletproofs paper:
+// - `ipa_wrapper` implements Protocol 1, which reduces the relation <a, b> = c
+//   to a recursive argument by scaling the commitment with the inner product value
+//   (P' = P + u * (x * c)).
+// - `ipa_recursive` implements Protocol 2, the recursive vector-folding argument.
+//
+// Reference: Section 3 of "Bulletproofs: Short Proofs for Confidential Transactions and More"
+// (https://eprint.iacr.org/2017/1066).
 // curve: ArkSecp256k1
-// which corresponds to Protocol 1 in the Bulletproofs paper images).
 // N_current: Current dimension of vectors g, h, a, b.
 // u_base_for_ipa: The 'u' base to be used for L,R commitments and base case check in this IPA run.
 fn ipa_recursive<G: Group, F: Scalar<G>>(
