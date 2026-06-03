@@ -1135,4 +1135,32 @@ mod tests {
             "full KZG should be complete via phase-12 pairing + phase-13 poly-div"
         );
     }
+
+    /// Task 2 regression test: ensure verifier equations are not silently skipped
+    /// when vars() changes after refactoring.
+    /// The assertion intent is that verifier equations must be reduced or rejected,
+    /// not silently skipped when vars() shrinks.
+    #[test]
+    fn completeness_does_not_skip_verifier_equation_after_vars_refactor() {
+        let ex = r#"
+            proto challenge_visibility<F: Field>(private x: F) where x == x {
+                c <- challenge<F>;
+                y <- x + c;
+                verify(y == c)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run::<8>().is_err(),
+            "verifier equation must be reduced or rejected, not silently skipped"
+        );
+    }
 }

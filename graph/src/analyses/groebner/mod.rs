@@ -251,7 +251,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     }
 
     pub fn vars(&self) -> Set<PRef> {
-        self.np.keys().union(self.pl.keys())
+        self.pl.keys().union(self.basis.vars())
     }
 
     /// Filter out variables that satisfy the predicate
@@ -7697,5 +7697,195 @@ mod tests {
         for (i, p) in broadcast.polys.iter().enumerate() {
             assert_eq!(*p, scalar_poly, "broadcast slot {} should be the scalar", i);
         }
+    }
+
+    // Task 2 tests for algebraic variable discovery and free identifiers
+
+    /// Test that vars() returns pl.keys() union basis.vars().
+    /// This test is expected to FAIL before Task 3 because current vars() ignores basis-only vars.
+    #[test]
+    fn vars_is_pl_keys_union_basis_vars() {
+        use ark_bls12_381::Fr;
+        use lang::id::Vid;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let pl_ref = PRef::from_var(
+            Vid::new("pl_v"),
+            NodeIndex::new(10),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        let basis_ref = PRef::from_var(
+            Vid::new("basis_v"),
+            NodeIndex::new(11),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+
+        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        result
+            .pl
+            .insert(&pl_ref, &SparsePolynomial::<Fr, GrevLexTerm>::zero());
+        result
+            .basis
+            .push(SparsePolynomial::<Fr, GrevLexTerm>::var(&basis_ref));
+
+        let vars = result.vars();
+        assert!(
+            vars.contains(&pl_ref),
+            "vars() should contain pl key: {:?}",
+            pl_ref
+        );
+        assert!(
+            vars.contains(&basis_ref),
+            "vars() should contain basis var: {:?}",
+            basis_ref
+        );
+        assert_eq!(vars.len(), 2, "vars() should have exactly 2 elements");
+    }
+
+    /// Test that challenge emits no basis or pl state.
+    /// This test is expected to FAIL before Task 4 because current challenge inserts into np.
+    #[test]
+    fn challenge_emits_no_basis_or_pl_state() {
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(100),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+
+        builder.add_op(pref.clone(), Op::Challenge(ATyp::scalar(), false), &mut result);
+
+        assert!(
+            result.basis.is_empty(),
+            "challenge should not emit basis polynomials"
+        );
+        assert!(
+            !result.pl.contains(&pref),
+            "challenge should not insert into pl"
+        );
+        assert!(
+            !result.vars().contains(&pref),
+            "challenge should not be visible in vars() unless used in a polynomial"
+        );
+    }
+
+    /// Test that random emits no basis or pl state.
+    /// This test is expected to FAIL before Task 4 because current random inserts into np.
+    #[test]
+    fn random_emits_no_basis_or_pl_state() {
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref = PRef::from_node(
+            NodeIndex::new(101),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::Uniform,
+        );
+
+        builder.add_op(pref.clone(), Op::Random(ATyp::scalar(), false), &mut result);
+
+        assert!(
+            result.basis.is_empty(),
+            "random should not emit basis polynomials"
+        );
+        assert!(
+            !result.pl.contains(&pref),
+            "random should not insert into pl"
+        );
+        assert!(
+            !result.vars().contains(&pref),
+            "random should not be visible in vars() unless used in a polynomial"
+        );
+    }
+
+    /// Test that a challenge used in a polynomial is visible through basis.vars().
+    /// This test captures the desired invariant: challenges become visible when referenced.
+    #[test]
+    fn challenge_used_in_polynomial_is_visible() {
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Create a challenge PRef
+        let challenge_pref = PRef::from_node(
+            NodeIndex::new(200),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&challenge_pref);
+        builder.add_op(
+            challenge_pref.clone(),
+            Op::Challenge(ATyp::scalar(), false),
+            &mut result,
+        );
+
+        // Create a private variable
+        let x_pref = PRef::from_node(
+            NodeIndex::new(201),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&x_pref);
+
+        // Create a polynomial operation that uses the challenge: y = x + c
+        let y_pref = PRef::from_node(
+            NodeIndex::new(202),
+            ATyp::scalar(),
+            0,
+            Qualifier::Public,
+            Distribution::Nonuniform,
+        );
+        builder.ns.register(&y_pref);
+
+        builder.add_op(
+            y_pref.clone(),
+            Op::Bin(
+                lang::ast::BinOp::Add,
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(201)),
+                    ATyp::scalar(),
+                )),
+                mk::<ArkBls12_381>(Op::Ref(
+                    crate::Ref::new(NodeIndex::new(200)),
+                    ATyp::scalar(),
+                )),
+                ATyp::scalar(),
+            ),
+            &mut result,
+        );
+
+        // The challenge should now be visible through basis.vars() and result.vars()
+        let basis_vars = result.basis.vars();
+        assert!(
+            basis_vars.contains(&challenge_pref),
+            "challenge must be visible through basis vars once an equation references it"
+        );
+        assert!(
+            result.vars().contains(&challenge_pref),
+            "challenge must be in result.vars() when used in polynomial"
+        );
     }
 }
