@@ -2320,7 +2320,7 @@ mod ctyp_lub_poly_tests {
     }
 
     #[test]
-    fn test_record_lub_width_subtyping() {
+    fn test_record_lub_width_mismatch_rejected() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
         fields_a.insert(&"x".to_string(), &tf());
@@ -2332,11 +2332,7 @@ mod ctyp_lub_poly_tests {
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
 
-        let mut expected_fields = share::Ctx::new();
-        expected_fields.insert(&"x".to_string(), &tf());
-        let expected = CTyp::Record(expected_fields);
-
-        assert_eq!(CTyp::lub_equ(&a, &b, &ctx), Ok(expected));
+        assert!(CTyp::lub_equ(&a, &b, &ctx).is_err());
     }
 
     #[test]
