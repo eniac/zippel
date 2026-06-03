@@ -9,7 +9,7 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/ipa/ipa.zippel"));
     let mut handler: zippel::ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &6usize);
+    sizes.insert(&Tid::new("S"), &8usize);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();
@@ -68,7 +68,7 @@ fn main() {
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {
     let mut rng = rand::rngs::OsRng;
-    let n_val_const = 64;
+    let n_val_const = 256;
 
     let u_aux_base: Value<ArkSecp256k1> = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
 
