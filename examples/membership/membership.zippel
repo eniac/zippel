@@ -1,11 +1,10 @@
 // Membership proofs from polynomial commitments by William Borgeaud, 2020 
 // https://solvable.group/posts/membership-proofs-from-polynomial-commitments/
-// TODO: make generic once backend supports vectors of polys with reduce operator.
 
-proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2, M: Size>
-        (private f_coeffs: [F; N], public s: [F; M], public srs_g1: [G1; M],
+proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: (N-1)*M, S: Size>
+        (private f_coeffs: [F; N], public s: [F; M], public srs_g1: [G1; S],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-        where srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..M-1]) {
+        where srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..S-1]) {
 
         let poly_f = poly(f_coeffs);
         
@@ -13,21 +12,21 @@ proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N
         com_f <- dot(f_coeffs, srs_g1[0..N]);
 
         // g(X) = \prod_{r \in S} (f(X) - r)
-        let g_poly = (poly_f - s[0]) * (poly_f - s[1]);
+        let g_poly = reduce(*, [poly_f - r for r in s]);
         
         // h(X) = g(X) / X
         let poly_x = poly([0, 1]);
         let h_poly = g_poly / poly_x;
         
         let h_coeffs = coef(h_poly);
-        com_h <- dot(h_coeffs, srs_g1[0..M]);
+        com_h <- dot(h_coeffs, srs_g1[0..L]);
 
         // Challenge alpha
         alpha <- challenge<F*>;
 
         // Prover sends f(alpha) and h(alpha)
         let f_alpha = dot(f_coeffs, [alpha ^ i for i in 0..N]);
-        let h_alpha = dot(h_coeffs, [alpha ^ i for i in 0..M]);
+        let h_alpha = dot(h_coeffs, [alpha ^ i for i in 0..L]);
 
         f_eval <- f_alpha;
         h_eval <- h_alpha;
@@ -38,7 +37,7 @@ proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N
 
         // KZG Proof for h
         let q_h = (h_poly - h_alpha) / poly([-alpha, 1]);
-        proof_h <- dot(coef(q_h), srs_g1[0..M-1]);
+        proof_h <- dot(coef(q_h), srs_g1[0..L-1]);
 
         // Verifier checks KZG proof for f
         let pairing_lhs_f = pair(proof_f, srs_g2_s - gen_g2 * alpha);

@@ -12,7 +12,7 @@ use ark_ec::models::bn::Bn;
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ec::scalar_mul::ScalarMul;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, Fp64, MontBackend, MontConfig, PrimeField};
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::UniformRand;
 
