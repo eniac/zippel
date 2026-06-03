@@ -860,8 +860,9 @@ impl Typeable for CExp {
                         if *op == BinOp::Mul {
                             if let CTyp::Poly(_, _, d) = &tv {
                                 // Validate that the multiplication is valid under kind context first.
-                                let res_t = CTyp::lub_op(*op, &tv, &tv, kctx)
-                                    .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
+                                let res_t = CTyp::lub_op(*op, &tv, &tv, kctx).map_err(|e| {
+                                    TypeError::lub(TypeError::exp(kctx, vctx, self), e)
+                                })?;
                                 if let CTyp::Poly(res_a, num_vars, _) = res_t {
                                     let degree = d.checked_mul(n).ok_or_else(|| {
                                         TypeError::lub(
