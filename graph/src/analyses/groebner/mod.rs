@@ -2231,18 +2231,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     })
                     .unwrap_or(d);
 
-                // Determine round (static Fin value if present, else 0).
-                let round = cfg_fields
-                    .get(&"round".to_string())
-                    .and_then(|t| match t {
-                        ATyp::Base(ABase::Fin(r))
-                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
-                        {
-                            Some(r.start)
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(0);
+                // Determine round. If the field is absent, default to 0.
+                // If the field is present but not a static singleton Fin value
+                // (e.g. a dynamic/non-singleton range), panic explicitly — silently
+                // falling back to round==0 would produce wrong constraints.
+                let round = match cfg_fields.get(&"round".to_string()) {
+                    None => 0,
+                    Some(ATyp::Base(ABase::Fin(r)))
+                        if r.step == 1 && r.end == r.start.saturating_add(1) =>
+                    {
+                        r.start
+                    }
+                    Some(t) => panic!(
+                        "Groebner Marginalize: 'round' field has non-static type {:?}; \
+                         only a static singleton Fin value (round==0) is supported. \
+                         Dynamic round is not symbolically encodable.",
+                        t
+                    ),
+                };
 
                 if round > 0 {
                     panic!(
@@ -2263,10 +2269,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // Enumerate all multi-indices for VPoly(n, d).
                 // For Uni(deg) we use n=1 which gives multi_indices(1, deg) = [[0],[1],...,[deg]].
                 let all_indices = multi_indices(n, d);
-                debug_assert_eq!(
+                assert_eq!(
                     all_indices.len(),
                     poly_len,
-                    "multi_indices count must match poly physical_len"
+                    "multi_indices count must match poly physical_len (n={}, d={}, poly_typ={:?})",
+                    n, d, poly_typ
                 );
 
                 // Output record layout:
@@ -8564,6 +8571,128 @@ mod tests {
         // This should panic with "next_poly symbolic encoding is not supported".
         builder.add_op(
             pref_out.clone(),
+            Op::Marginalize(mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(0)),
+                cfg_typ,
+            ))),
+            &mut gresult,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Task 5 fix: dynamic/non-singleton round panics explicitly
+    // A non-singleton Fin range for 'round' must never silently default
+    // to round==0; it must panic with a clear message.
+    // -----------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "'round' field has non-static type")]
+    fn marginalize_dynamic_round_panics_explicitly() {
+        use crate::PRef;
+        use backend::op::mk;
+        use backend::ABase;
+        use lang::typ::{CRange, Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let s = ATyp::scalar();
+        let poly_typ = ATyp::VPoly(1, 1);
+
+        // Config record with a non-singleton Fin range for 'round' (0..2 = two values).
+        // This represents a dynamic round that cannot be statically resolved.
+        let dynamic_round_typ = ATyp::Base(ABase::Fin(CRange {
+            start: 0,
+            end: 2,
+            step: 1,
+        }));
+
+        let mut cfg_fields = Ctx::<String, ATyp>::new();
+        cfg_fields.insert(&"challenge".to_string(), &s);
+        cfg_fields.insert(
+            &"max_degree".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields.insert(
+            &"num_variables".to_string(),
+            &ATyp::Base(ABase::Fin(CRange::singleton(1))),
+        );
+        cfg_fields.insert(&"poly".to_string(), &poly_typ);
+        // Dynamic range: round can be 0 or 1 — not statically resolvable.
+        cfg_fields.insert(&"round".to_string(), &dynamic_round_typ);
+        let cfg_typ = ATyp::Record(cfg_fields);
+
+        // Output type: evaluations only (to avoid next_poly panic).
+        let eval_only_typ = ATyp::vec_scalar(2);
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        // Register config and challenge/poly prefs.
+        let pref_cfg = PRef::from_node(
+            NodeIndex::new(0),
+            cfg_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_cfg);
+
+        let pref_challenge = PRef::from_node(
+            NodeIndex::new(1),
+            s.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        let pref_poly = PRef::from_node(
+            NodeIndex::new(2),
+            poly_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_challenge);
+        builder.ns.register(&pref_poly);
+
+        // Build the config record.
+        let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
+        cfg_record_fields.insert(
+            &"challenge".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+        );
+        cfg_record_fields.insert(
+            &"max_degree".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"num_variables".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(1))),
+        );
+        cfg_record_fields.insert(
+            &"poly".to_string(),
+            &mk::<ArkBls12_381>(Op::Ref(
+                crate::Ref::new(NodeIndex::new(2)),
+                poly_typ.clone(),
+            )),
+        );
+        // Dynamic round: use Index(0) as value but the TYPE in the record is the dynamic range.
+        cfg_record_fields.insert(
+            &"round".to_string(),
+            &mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
+        );
+        builder.add_op(pref_cfg.clone(), Op::Record(cfg_record_fields), &mut gresult);
+
+        let pref_out = PRef::from_node(
+            NodeIndex::new(3),
+            eval_only_typ.clone(),
+            0,
+            Qualifier::Public,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_out);
+
+        // Should panic: 'round' field type is a non-singleton Fin range.
+        builder.add_op(
+            pref_out,
             Op::Marginalize(mk::<ArkBls12_381>(Op::Ref(
                 crate::Ref::new(NodeIndex::new(0)),
                 cfg_typ,
