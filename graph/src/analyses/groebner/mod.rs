@@ -1259,6 +1259,79 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.basis.push(poly - SparsePolynomial::var(&pf));
                 }
             }
+            (ATyp::Mle(na), ATyp::VPoly(nb, mb)) | (ATyp::VPoly(nb, mb), ATyp::Mle(na))
+                if *na == *nb =>
+            {
+                let ATyp::VPoly(nr, mr) = r_typ else {
+                    unreachable!("Mul Mle×VPoly result must be VPoly");
+                };
+                assert!(
+                    *nr == *na && *mr == *mb + *na,
+                    "Mul Mle({})×VPoly({}, {}) result must be VPoly({}, {}), got VPoly({}, {})",
+                    na,
+                    nb,
+                    mb,
+                    na,
+                    *mb + *na,
+                    nr,
+                    mr
+                );
+                let n = *na;
+                let (mle_src, vpoly_src) = if matches!(a.typ(), ATyp::Mle(_)) {
+                    (a, b)
+                } else {
+                    (b, a)
+                };
+                let all_b = hypercube(n);
+                let b_idx = multi_indices(n, *mb);
+                let r_idx = multi_indices(n, *mr);
+                let lit_of = |v: i64| -> SparsePolynomial<C::F, T> {
+                    if v >= 0 {
+                        SparsePolynomial::lit(&C::FOps::from_usize(v as usize))
+                    } else {
+                        -SparsePolynomial::lit(&C::FOps::from_usize((-v) as usize))
+                    }
+                };
+                let mut out: Vec<SparsePolynomial<C::F, T>> =
+                    vec![SparsePolynomial::<C::F, T>::zero(); r_idx.len()];
+                // Coefficient of x^k in L_{ba}(x) · x^{kb}, indexed by
+                // [ba][k - kb] (only when k >= kb).  L_0(x)=1-x → x^kb - x^{kb+1};
+                // L_1(x)=x → x^{kb+1}.
+                const C: [[i64; 2]; 2] = [[1, -1], [0, 1]];
+                for (ia, ba) in all_b.iter().enumerate() {
+                    for (ib, kb) in b_idx.iter().enumerate() {
+                        let uv = &mle_src.polys()[ia] * &vpoly_src.polys()[ib];
+                        for (ir, k) in r_idx.iter().enumerate() {
+                            let mut scalar: i64 = 1;
+                            for i in 0..n {
+                                if k[i] < kb[i] {
+                                    scalar = 0;
+                                    break;
+                                }
+                                let delta = k[i] - kb[i];
+                                if delta >= 2 {
+                                    scalar = 0;
+                                    break;
+                                }
+                                let c = C[ba[i]][delta];
+                                if c == 0 {
+                                    scalar = 0;
+                                    break;
+                                }
+                                scalar *= c;
+                            }
+                            if scalar == 0 {
+                                continue;
+                            }
+                            out[ir] = &out[ir] + &(&lit_of(scalar) * &uv);
+                        }
+                    }
+                }
+                for (pf, poly) in target.slots().into_iter().zip(out) {
+                    result.pl.insert(&pf, &poly);
+                    result.basis.push(poly - SparsePolynomial::var(&pf));
+                }
+            }
             _ if a.is_poly() && b.is_poly() => {
                 let a_norm = match a.typ() {
                     ATyp::Uni(m) => ATyp::VPoly(1, *m),
@@ -3691,6 +3764,223 @@ mod tests {
         let expected_deg2 = &(&(&var(&u0) * &var(&v0)) - &(&var(&u0) * &var(&v1)))
             + &(&(&var(&u1) * &var(&v1)) - &(&var(&u1) * &var(&v0)));
         assert_eq!(deg2, expected_deg2, "mle mul deg2");
+    }
+
+    #[test]
+    fn test_add_op_mle_vpoly_mul_univariate() {
+        // Mle(1) × VPoly(1, 1) → VPoly(1, 2).
+        //   MLE: u_0 (eval at 0), u_1 (eval at 1), so p(x) = u_0·(1-x) + u_1·x
+        //   VPoly: b_0 + b_1·x
+        //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
+        //                      + (u_1·b_1 - u_0·b_1)·x²
+        use crate::{PRef, Ref};
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_u = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_u);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::VPoly(1, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(1, 2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 1))),
+            ATyp::VPoly(1, 2),
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        let u0 = pref_u.clone().with_slot(0).unwrap();
+        let u1 = pref_u.clone().with_slot(1).unwrap();
+        let b0 = pref_b.clone().with_slot(0).unwrap();
+        let b1 = pref_b.clone().with_slot(1).unwrap();
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+
+        let deg0 = gresult
+            .pl
+            .get(&result.clone().with_slot(0).unwrap())
+            .unwrap()
+            .clone();
+        let deg1 = gresult
+            .pl
+            .get(&result.clone().with_slot(1).unwrap())
+            .unwrap()
+            .clone();
+        let deg2 = gresult
+            .pl
+            .get(&result.clone().with_slot(2).unwrap())
+            .unwrap()
+            .clone();
+
+        assert_eq!(deg0, &var(&u0) * &var(&b0), "mle×vpoly deg0");
+
+        let expected_deg1 =
+            &(&var(&u1) * &var(&b0)) - &(&var(&u0) * &var(&b0)) + &var(&u0) * &var(&b1);
+        assert_eq!(deg1, expected_deg1, "mle×vpoly deg1");
+
+        let expected_deg2 = &(&var(&u1) * &var(&b1)) - &(&var(&u0) * &var(&b1));
+        assert_eq!(deg2, expected_deg2, "mle×vpoly deg2");
+    }
+
+    #[test]
+    fn test_add_op_vpoly_mle_mul_bivariate() {
+        // VPoly(2, 1) × Mle(2) → VPoly(2, 3). Commutative variant.
+        // VPoly(2,1) has 3 slots: [0,0], [1,0], [0,1] (graded-lex).
+        // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
+        // Result VPoly(2,3) has 10 slots.
+        // Just verify all 10 result slots are populated.
+        use crate::{PRef, Ref};
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_b = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::VPoly(2, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_b);
+        let pref_u = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_u);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::VPoly(2, 1))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::Mle(2))),
+            ATyp::VPoly(2, 3),
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        let r_idx = multi_indices(2, 3);
+        assert_eq!(r_idx.len(), 10, "VPoly(2,3) should have 10 multi-indices");
+        for i in 0..10 {
+            assert!(
+                gresult.pl.contains(&result.clone().with_slot(i).unwrap()),
+                "VPoly×Mle slot {} missing",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
+        // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
+        // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
+        use crate::{PRef, Ref};
+        use backend::op::mk;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_u = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_u);
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::VPoly(2, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::VPoly(2, 3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::VPoly(2, 1))),
+            ATyp::VPoly(2, 3),
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        let r_idx = multi_indices(2, 3);
+        let v_idx = multi_indices(2, 1);
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+
+        // Constant term [0,0]: u_00 * b_00
+        let pos_00 = r_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
+        let v_pos_00 = v_idx.iter().position(|k| k == &vec![0, 0]).unwrap();
+        let u00 = pref_u.clone().with_slot(0).unwrap();
+        let b00 = pref_b.clone().with_slot(v_pos_00).unwrap();
+        let got_00 = gresult
+            .pl
+            .get(&result.clone().with_slot(pos_00).unwrap())
+            .unwrap()
+            .clone();
+        assert_eq!(got_00, &var(&u00) * &var(&b00), "bivariate constant term");
+
+        // [1,0] slot: -u_00·b_10 + u_10·b_00 + u_00·b_10... check it's populated
+        let pos_10 = r_idx.iter().position(|k| k == &vec![1, 0]).unwrap();
+        assert!(
+            gresult
+                .pl
+                .contains(&result.clone().with_slot(pos_10).unwrap()),
+            "bivariate [1,0] slot missing"
+        );
+
+        // All 10 slots populated
+        assert_eq!(r_idx.len(), 10);
+        for i in 0..10 {
+            assert!(
+                gresult.pl.contains(&result.clone().with_slot(i).unwrap()),
+                "Mle×VPoly bivariate slot {} missing",
+                i
+            );
+        }
     }
 
     // ---------------------------------------------------------------------
