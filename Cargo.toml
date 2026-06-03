@@ -272,3 +272,8 @@ path = "examples/zeromorph_kzg/main.rs"
 [[example]]
 name = "groth16"
 path = "examples/groth16/main.rs"
+
+[[example]]
+name = "dekart"
+path = "examples/dekart/main.rs"
+
