@@ -13,8 +13,6 @@ graph = { path = "../graph" }
 share = { path = "../share" }
 lang = { path = "../lang" }
 backend = { path = "../backend" }
-
-ark-std = { version = "0.6.0", features = ["parallel"] }
 log = "0.4.27"
 spongefish =  { git = "https://github.com/arkworks-rs/spongefish.git", branch = "main", features = ["ark-ff", "ark-ec"] }
 

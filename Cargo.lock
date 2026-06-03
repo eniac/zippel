@@ -2038,7 +2038,6 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "arbtest",
- "ark-std",
  "backend",
  "crossbeam-channel",
  "graph",
