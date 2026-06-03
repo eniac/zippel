@@ -2572,4 +2572,37 @@ mod tests {
         let random_bad = CExp::random(Tid::from("X"));
         assert!(random_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
+
+    #[test]
+    fn test_record_lub_vector_subtyping() {
+        let fctx = Set::new();
+        let vctx = VAR_CTX.clone();
+
+        // r1 = {| x: 1 |}
+        let mut r1_fields = Ctx::new();
+        r1_fields.insert(&"x".to_string(), &CExp::lit(1));
+        let r1 = CExp::record(r1_fields);
+
+        // r2 = {| x: 1, y: 2 |}
+        let mut r2_fields = Ctx::new();
+        r2_fields.insert(&"x".to_string(), &CExp::lit(1));
+        r2_fields.insert(&"y".to_string(), &CExp::lit(2));
+        let r2 = CExp::record(r2_fields);
+
+        // v = [r1, r2]
+        // Under intersection LUB: LUB({x}, {x, y}) = {x}
+        let v = CExp::vec(vec![r1, r2]);
+
+        // Accessing common field "x" via ram(v, 0).x is correct and should succeed
+        let proj_x = CExp::proj(CExp::ram(v.clone(), CExp::lit(0)), "x".to_string());
+        assert_eq!(
+            proj_x.infer(&KIND_CTX, &fctx, &vctx),
+            Ok(CTyp::Fin(Range::singleton(1)))
+        );
+
+        // Accessing extra field "y" via ram(v, 0).y is incorrect and must fail typechecking
+        let proj_y = CExp::proj(CExp::ram(v, CExp::lit(0)), "y".to_string());
+        assert!(proj_y.infer(&KIND_CTX, &fctx, &vctx).is_err());
+    }
 }
+
