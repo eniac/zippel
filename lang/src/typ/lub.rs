@@ -457,34 +457,14 @@ impl Lub for CTyp {
             )),
             // Record types: width and depth subtyping, permutation
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
-                use std::collections::BTreeSet;
-                let all_fields: BTreeSet<_> = fields_a
-                    .keys()
-                    .iter()
-                    .chain(fields_b.keys().iter())
-                    .cloned()
-                    .collect();
-
                 let mut result_fields = share::Ctx::new();
-                for field_name in all_fields {
-                    match (fields_a.get(&field_name), fields_b.get(&field_name)) {
-                        (Some(typ_a), Some(typ_b)) => {
-                            let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
-                                .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
-                            result_fields.insert(&field_name, &lub_typ);
-                        }
-                        (Some(typ_a), None) => {
-                            // Only in a - include it (width subtyping: {a:T, b:U} > {a:T})
-                            result_fields.insert(&field_name, typ_a);
-                        }
-                        (None, Some(typ_b)) => {
-                            // Only in b - include it (width subtyping)
-                            result_fields.insert(&field_name, typ_b);
-                        }
-                        (None, None) => unreachable!(),
+                for (field_name, typ_a) in fields_a.iter() {
+                    if let Some(typ_b) = fields_b.get(field_name) {
+                        let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                            .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
+                        result_fields.insert(field_name, &lub_typ);
                     }
                 }
-
                 Ok(CTyp::Record(result_fields))
             }
             // Indices can act like finite fields
@@ -2333,6 +2313,109 @@ mod ctyp_lub_poly_tests {
                 "lub_add(Base(F), {:?}) != {:?}",
                 a,
                 a
+            );
+            Ok(())
+        });
+    }
+
+    fn arb_record(u: &mut Unstructured) -> arbitrary::Result<CTyp> {
+        let num_fields = u.int_in_range(1..=3)?;
+        let mut fields = share::Ctx::new();
+        let names = ["x", "y", "z", "w"];
+        for i in 0..num_fields {
+            fields.insert(&names[i].to_string(), &arb_ctyp(u)?);
+        }
+        Ok(CTyp::Record(fields))
+    }
+
+    #[test]
+    fn test_record_lub_width_subtyping() {
+        let ctx = kind_ctx();
+        let mut fields_a = share::Ctx::new();
+        fields_a.insert(&"x".to_string(), &tf());
+
+        let mut fields_b = share::Ctx::new();
+        fields_b.insert(&"x".to_string(), &tf());
+        fields_b.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
+
+        let a = CTyp::Record(fields_a);
+        let b = CTyp::Record(fields_b);
+
+        let mut expected_fields = share::Ctx::new();
+        expected_fields.insert(&"x".to_string(), &tf());
+        let expected = CTyp::Record(expected_fields);
+
+        assert_eq!(CTyp::lub_equ(&a, &b, &ctx), Ok(expected));
+    }
+
+    #[test]
+    fn test_record_lub_depth_subtyping() {
+        let ctx = kind_ctx();
+        let mut fields_a = share::Ctx::new();
+        fields_a.insert(&"x".to_string(), &CTyp::Fin(Range::singleton(1)));
+
+        let mut fields_b = share::Ctx::new();
+        fields_b.insert(&"x".to_string(), &CTyp::Fin(Range::singleton(2)));
+
+        let a = CTyp::Record(fields_a);
+        let b = CTyp::Record(fields_b);
+
+        let res = CTyp::lub_equ(&a, &b, &ctx);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_record_lub_permutations() {
+        let ctx = kind_ctx();
+        let mut fields_a = share::Ctx::new();
+        fields_a.insert(&"x".to_string(), &tf());
+        fields_a.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
+
+        let mut fields_b = share::Ctx::new();
+        fields_b.insert(&"y".to_string(), &CTyp::Poly(f(), 1, 3));
+        fields_b.insert(&"x".to_string(), &tf());
+
+        let a = CTyp::Record(fields_a);
+        let b = CTyp::Record(fields_b);
+
+        let res_ab = CTyp::lub_equ(&a, &b, &ctx).unwrap();
+        let res_ba = CTyp::lub_equ(&b, &a, &ctx).unwrap();
+
+        assert_eq!(res_ab, res_ba);
+    }
+
+    #[test]
+    fn pbt_lub_record_symmetry() {
+        let ctx = kind_ctx();
+        arbtest::arbtest(|u| {
+            let a = arb_record(u)?;
+            let b = arb_record(u)?;
+            assert_symmetric(&a, &b, "lub_equ", |x, y| CTyp::lub_equ(x, y, &ctx));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn pbt_lub_record_associativity() {
+        let ctx = kind_ctx();
+        arbtest::arbtest(|u| {
+            let a = arb_record(u)?;
+            let b = arb_record(u)?;
+            let c = arb_record(u)?;
+            let bc = match CTyp::lub_equ(&b, &c, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let ab = match CTyp::lub_equ(&a, &b, &ctx) {
+                Ok(t) => t,
+                Err(_) => return Ok(()),
+            };
+            let left = CTyp::lub_equ(&a, &bc, &ctx);
+            let right = CTyp::lub_equ(&ab, &c, &ctx);
+            assert_eq!(
+                left, right,
+                "lub_equ record not associative: a={:?}, b={:?}, c={:?}",
+                a, b, c
             );
             Ok(())
         });

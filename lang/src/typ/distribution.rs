@@ -27,23 +27,25 @@ impl Distribution {
     // Assumes independence, adding two distributions
     pub fn add(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, Distribution::UniformNonZero)
-            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
-            (Distribution::Uniform, Distribution::Nonuniform)
-            | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
-            (a, b) if a == b => *a,
-            (_, _) => Distribution::Nonuniform,
+            (Distribution::Uniform, _) | (_, Distribution::Uniform) => Distribution::Uniform,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => {
+                Distribution::Nonuniform
+            }
+            (Distribution::UniformNonZero, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::UniformNonZero) => Distribution::Nonuniform,
+            (Distribution::Nonuniform, Distribution::Nonuniform) => Distribution::Nonuniform,
         }
     }
 
     pub fn sub(&self, other: &Distribution) -> Distribution {
         match (self, other) {
-            (Distribution::Uniform, Distribution::UniformNonZero)
-            | (Distribution::UniformNonZero, Distribution::Uniform) => Distribution::UniformNonZero,
-            (Distribution::Uniform, Distribution::Nonuniform)
-            | (Distribution::Nonuniform, Distribution::Uniform) => Distribution::Uniform,
-            (a, b) if a == b => *a,
-            (_, _) => Distribution::Nonuniform,
+            (Distribution::Uniform, _) | (_, Distribution::Uniform) => Distribution::Uniform,
+            (Distribution::UniformNonZero, Distribution::UniformNonZero) => {
+                Distribution::Nonuniform
+            }
+            (Distribution::UniformNonZero, Distribution::Nonuniform)
+            | (Distribution::Nonuniform, Distribution::UniformNonZero) => Distribution::Nonuniform,
+            (Distribution::Nonuniform, Distribution::Nonuniform) => Distribution::Nonuniform,
         }
     }
 
@@ -176,13 +178,13 @@ mod tests {
     #[test]
     fn test_add_uniform_uniform_nz() {
         let result = Distribution::Uniform.add(&Distribution::UniformNonZero);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
     fn test_add_uniform_nz_uniform() {
         let result = Distribution::UniformNonZero.add(&Distribution::Uniform);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
@@ -205,7 +207,7 @@ mod tests {
         );
         assert_eq!(
             Distribution::UniformNonZero.add(&Distribution::UniformNonZero),
-            Distribution::UniformNonZero
+            Distribution::Nonuniform
         );
         assert_eq!(
             Distribution::Nonuniform.add(&Distribution::Nonuniform),
@@ -222,13 +224,13 @@ mod tests {
     #[test]
     fn test_sub_uniform_uniform_nz() {
         let result = Distribution::Uniform.sub(&Distribution::UniformNonZero);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
     fn test_sub_uniform_nz_uniform() {
         let result = Distribution::UniformNonZero.sub(&Distribution::Uniform);
-        assert_eq!(result, Distribution::UniformNonZero);
+        assert_eq!(result, Distribution::Uniform);
     }
 
     #[test]
@@ -251,7 +253,7 @@ mod tests {
         );
         assert_eq!(
             Distribution::UniformNonZero.sub(&Distribution::UniformNonZero),
-            Distribution::UniformNonZero
+            Distribution::Nonuniform
         );
         assert_eq!(
             Distribution::Nonuniform.sub(&Distribution::Nonuniform),

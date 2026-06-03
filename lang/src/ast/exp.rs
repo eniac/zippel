@@ -1937,3 +1937,94 @@ fn parser_fun_simple() {
     let expected = Exp::fun(vec![Vid::from("x")], Exp::varstr("x"));
     assert_eq!(UExp::from_pest(&mut pairs), Ok(expected));
 }
+
+#[test]
+fn parser_mle() {
+    let ex = "mle(x)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::mle(Exp::varstr("x"))));
+}
+
+#[test]
+fn parser_record() {
+    let ex = "{| x: 1, y: f |}";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let mut fields = Ctx::new();
+    fields.insert(&"x".to_string(), &Exp::from(1));
+    fields.insert(&"y".to_string(), &Exp::varstr("f"));
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::record(fields)));
+}
+
+#[test]
+fn parser_proj() {
+    let ex = "r.x";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::proj(Exp::varstr("r"), "x".to_string()))
+    );
+}
+
+#[test]
+fn parser_set_record() {
+    let ex = "r.set(x, 2)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::set_record(
+            Exp::varstr("r"),
+            "x".to_string(),
+            Exp::from(2)
+        ))
+    );
+}
+
+#[test]
+fn parser_record_nested() {
+    let ex = "{| a: {| b: 1 |}, c: 2 |}";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    let mut inner_fields = Ctx::new();
+    inner_fields.insert(&"b".to_string(), &Exp::from(1));
+    let mut fields = Ctx::new();
+    fields.insert(&"a".to_string(), &Exp::record(inner_fields));
+    fields.insert(&"c".to_string(), &Exp::from(2));
+    assert_eq!(UExp::from_pest(&mut pairs), Ok(Exp::record(fields)));
+}
+
+#[test]
+fn parser_record_set_nested() {
+    let ex = "r.set(x, 2).set(y, 3)";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::set_record(
+            Exp::set_record(Exp::varstr("r"), "x".to_string(), Exp::from(2)),
+            "y".to_string(),
+            Exp::from(3)
+        ))
+    );
+}
+
+#[test]
+fn parser_let_with_type() {
+    let ex = "let x: F = 2; x";
+    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
+    assert_eq!(
+        UExp::from_pest(&mut pairs),
+        Ok(Exp::letx(Vid::from("x"), Exp::from(2), Exp::varstr("x")))
+    );
+}
+
+#[test]
+fn parser_assert_and_verify_chain() {
+    let ex = "assert(x == 2); verify(y == 3); z";
+    let mut pairs = ZippelParser::parse(Rule::exps, ex).unwrap();
+    let expected = Exps(vec![Exp::seq(
+        Exp::assert(Exp::equ(Exp::varstr("x"), Exp::from(2))),
+        Exp::seq(
+            Exp::verify(Exp::equ(Exp::varstr("y"), Exp::from(3))),
+            Exp::varstr("z"),
+        ),
+    )]);
+    assert_eq!(UExps::from_pest(&mut pairs), Ok(expected));
+}
