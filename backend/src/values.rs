@@ -2142,7 +2142,12 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box t, n) => Value::Vec((0..*n).map(|_| Self::random(rng, t)).collect()),
             // Univariate poly: m = max_degree, so m+1 coefficients.
             ATyp::Uni(m) => {
-                let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
+                if *m > 0 {
+                    while coeffs[*m].is_zero() {
+                        coeffs[*m] = C::FOps::rand(rng);
+                    }
+                }
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                     DensePolynomial::from_coefficients_vec(coeffs),
                 )))
@@ -2159,7 +2164,12 @@ impl<C: ArkConfig> Value<C> {
             // a representative inhabitant of the type.
             ATyp::VPoly(n, m) => {
                 if *n <= 1 {
-                    let coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    let mut coeffs = C::FOps::vec_rand(rng, *m + 1);
+                    if *m > 0 {
+                        while coeffs[*m].is_zero() {
+                            coeffs[*m] = C::FOps::rand(rng);
+                        }
+                    }
                     Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
                         DensePolynomial::from_coefficients_vec(coeffs),
                     )))

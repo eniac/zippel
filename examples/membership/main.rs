@@ -10,12 +10,15 @@ fn main() {
     println!("=== Membership ===");
     let n_size = 3;
     let m_size = 4;
+    let l_size = (n_size - 1) * m_size;
+    let s_size = usize::max(n_size, l_size);
 
     let args = ZippelArgs::new(PathBuf::from("examples/membership/membership.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
     sizes.insert(&Tid::new("N"), &n_size);
     sizes.insert(&Tid::new("M"), &m_size);
+    sizes.insert(&Tid::new("S"), &s_size);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(n_size, m_size);
@@ -61,6 +64,7 @@ fn main() {
 fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
     let l_size = (n_size - 1) * m_size;
+    let s_size = usize::max(n_size, l_size);
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
     let g: Value<ArkBls12_381> = Value::G1(g_input);
@@ -70,9 +74,9 @@ fn prover_create_inputs(n_size: usize, m_size: usize) -> Ctx<Vid, Value<ArkBls12
 
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    // SRS G1 up to size L
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..l_size).map(|_| g_input).collect());
-    let ss_index = Value::VecScalar((0..l_size).map(|i| tau_input.pow([i as u64])).collect());
+    // SRS G1 up to size S
+    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..s_size).map(|_| g_input).collect());
+    let ss_index = Value::VecScalar((0..s_size).map(|i| tau_input.pow([i as u64])).collect());
     let ss = ss_g.clone() * ss_index.clone();
 
     // SRS G2_s

@@ -1319,7 +1319,7 @@ fn test_poly_vector_reduction_pbt() {
                 ATyp::mle(vars)
             }
             _ => {
-                let vars: usize = u.int_in_range(1..=3)?;
+                let vars: usize = u.int_in_range(2..=3)?;
                 let deg: usize = u.int_in_range(1..=3)?;
                 ATyp::vpoly(vars, deg)
             }

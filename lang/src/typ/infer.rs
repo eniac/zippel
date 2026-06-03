@@ -2135,7 +2135,6 @@ mod tests {
     /// product polynomial matches `degree * vector_len`.
     #[test]
     fn test_reduce_mul_poly_pbt() {
-        use arbitrary::Unstructured;
         let fctx = Set::new();
 
         arbtest::arbtest(|u| {

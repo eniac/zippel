@@ -1,10 +1,10 @@
 // Membership proofs from polynomial commitments by William Borgeaud, 2020 
 // https://solvable.group/posts/membership-proofs-from-polynomial-commitments/
 
-proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: (N-1)*M>
-        (private f_coeffs: [F; N], public s: [F; M], public srs_g1: [G1; L],
+proto membership<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size, M: Size, L: (N-1)*M, S: Size>
+        (private f_coeffs: [F; N], public s: [F; M], public srs_g1: [G1; S],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
-        where srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..L-1]) {
+        where srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..S-1]) {
 
         let poly_f = poly(f_coeffs);
         
