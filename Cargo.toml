@@ -71,7 +71,7 @@ harness = false
 
 [[example]]
 name = "mle"
-path = "examples/mle_example/main.rs"
+path = "examples/tests/mle_example/main.rs"
 
 [[example]]
 name = "kzg"
@@ -107,7 +107,7 @@ path = "examples/sumcheck/main.rs"
 
 [[example]]
 name = "fft_interpolate"
-path = "examples/fft_interpolate/main.rs"
+path = "examples/tests/fft_interpolate/main.rs"
 
 [[example]]
 name = "zerocheck"
@@ -119,15 +119,15 @@ path = "examples/hadamard/main.rs"
 
 [[example]]
 name = "toy_record"
-path = "examples/toy_record/main.rs"
+path = "examples/tests/toy_record/main.rs"
 
 [[example]]
 name = "marginalize"
-path = "examples/marginalize/main.rs"
+path = "examples/tests/marginalize/main.rs"
 
 [[example]]
 name = "vpoly"
-path = "examples/vpoly/main.rs"
+path = "examples/tests/vpoly/main.rs"
 
 [[example]]
 name = "hyrax_pop"
@@ -151,7 +151,7 @@ path = "examples/dory/main.rs"
 
 [[example]]
 name = "node_issue"
-path = "examples/node_issue/main.rs"
+path = "examples/tests/node_issue/main.rs"
 
 [[example]]
 name = "pst13"
@@ -159,19 +159,19 @@ path = "examples/pst13/main.rs"
 
 [[example]]
 name = "benchmark"
-path = "examples/benchmark/main.rs"
+path = "examples/tests/benchmark/main.rs"
 
 [[example]]
 name = "schnorr_no_random"
-path = "examples/schnorr_no_random/main.rs"
+path = "examples/tests/schnorr_no_random/main.rs"
 
 [[example]]
 name = "schnorr_and"
-path = "examples/schnorr_and/main.rs"
+path = "examples/tests/schnorr_and/main.rs"
 
 [[example]]
 name = "schnorr_and_two_verify"
-path = "examples/schnorr_and_two_verify/main.rs"
+path = "examples/tests/schnorr_and_two_verify/main.rs"
 
 [[example]]
 name = "commitment_equality"
@@ -179,15 +179,15 @@ path = "examples/commitment_equality/main.rs"
 
 [[example]]
 name = "ex_hyrax_sum"
-path = "examples/ex_hyrax_sum/main.rs"
+path = "examples/tests/ex_hyrax_sum/main.rs"
 
 [[example]]
 name = "ex_pairing"
-path = "examples/ex_pairing/main.rs"
+path = "examples/tests/ex_pairing/main.rs"
 
 [[example]]
 name = "ex_rec"
-path = "examples/ex_rec/main.rs"
+path = "examples/tests/ex_rec/main.rs"
 
 [[example]]
 name = "kzh"
@@ -195,23 +195,23 @@ path = "examples/kzh/main.rs"
 
 [[example]]
 name = "stdlib"
-path = "examples/stdlib/main.rs"
+path = "examples/tests/stdlib/main.rs"
 
 [[example]]
 name = "transcript_random"
-path = "examples/transcript_random/main.rs"
+path = "examples/tests/transcript_random/main.rs"
 
 [[example]]
 name = "virtual_test"
-path = "examples/virtual_test/main.rs"
+path = "examples/tests/virtual_test/main.rs"
 
 [[example]]
 name = "map_comp_bench"
-path = "examples/map_comp_bench/main.rs"
+path = "examples/tests/map_comp_bench/main.rs"
 
 [[example]]
 name = "type_alias"
-path = "examples/type_alias/main.rs"
+path = "examples/tests/type_alias/main.rs"
 
 [[example]]
 name = "r1cs_sigma"
