@@ -5,6 +5,25 @@ use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+fn named_pref(
+    dag: &DQDag<impl ArkConfig>,
+    r: Ref,
+    typ: backend::ATyp,
+    qualifier: crate::Qualifier,
+    distribution: crate::Distribution,
+) -> PRef {
+    let name = dag.find_var(r.node());
+    PRef {
+        reference: r,
+        index: 0,
+        typ,
+        qualifier,
+        distribution,
+        from_transcript: false,
+        name,
+    }
+}
+
 /// Transitive closure on a DAG.
 ///
 /// Flattens a `DQDag` into a linear list of `(PRef, GOp)` pairs.
@@ -159,10 +178,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 Node::Op(op, (qualifier, distribution))
                 | Node::Transcr(op, (qualifier, distribution)) => {
                     let inner = op.get();
-                    let pref = PRef::from_ref(Ref::new(n), inner.typ(), *qualifier, *distribution);
+                    let pref = named_pref(dag, Ref::new(n), inner.typ(), *qualifier, *distribution);
                     tc.prefs.push(pref.clone());
                     let idx = tc.clos.len();
-                    tc.clos.push((pref, inner.clone()));
+                    tc.clos
+                        .push((pref.clone(), Op::Ref(pref.reference, pref.typ.clone())));
                     index.insert(n, idx);
                 }
                 _ => {}
@@ -343,14 +363,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 if matches!(op.get(), Op::Challenge(_, _) | Op::Random(_, _)) =>
             {
                 let inner = op.get();
-                let pref = PRef::from_ref(r, inner.typ(), *qualifier, *distribution);
+                let pref = named_pref(dag, r, inner.typ(), *qualifier, *distribution);
                 self.insert(pref, inner.clone(), index)
             }
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution)) => {
                 let obin = self.trans_clos_op(dag, op.get().clone(), index);
                 self.insert(
-                    PRef::from_ref(r, obin.typ(), *qualifier, *distribution),
+                    named_pref(dag, r, obin.typ(), *qualifier, *distribution),
                     obin,
                     index,
                 )

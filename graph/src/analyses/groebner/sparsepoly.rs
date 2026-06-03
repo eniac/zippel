@@ -267,6 +267,34 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         new_poly
     }
 
+    /// Inline variables from `substitutions` into this polynomial.
+    /// Returns `(result, did_change)` where `did_change` is true if any
+    /// substitution was applied.
+    pub fn inline_vars(
+        self,
+        substitutions: &Ctx<PRef, SparsePolynomial<F, T>>,
+    ) -> (SparsePolynomial<F, T>, bool) {
+        let mut new_poly = SparsePolynomial::zero();
+        let mut did_change = false;
+        for (term, coeff) in self.terms.into_iter() {
+            let mut new_mono = SparsePolynomial::lit(&coeff);
+            for (var, power) in term.vars().into_iter().zip(term.powers()) {
+                if let Some(sub) = substitutions.get(&var) {
+                    did_change = true;
+                    let mut p = sub.clone();
+                    p.pow(power);
+                    new_mono *= p;
+                } else {
+                    let mut p = SparsePolynomial::var(&var);
+                    p.pow(power);
+                    new_mono *= p;
+                };
+            }
+            new_poly += new_mono;
+        }
+        (new_poly, did_change)
+    }
+
     pub fn mul_by_term_and_scalar(&self, scalar: F, term: &T) -> SparsePolynomial<F, T> {
         if scalar.is_zero() {
             return SparsePolynomial::zero();
