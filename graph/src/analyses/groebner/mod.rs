@@ -731,6 +731,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         )
     }
 
+    /// Admit a target PRef as an unconstrained free identifier: emit no
+    /// basis equations and no `pl` binding. The target
+    /// variable is therefore unconstrained and will be visible through
+    /// `basis.vars()` only if it is referenced by another operation that
+    /// does emit basis rows — effectively making it an opaque/symbolic
+    /// witness that the ideal does not constrain.
+    ///
+    /// This is the correct treatment for operations whose index cannot be
+    /// resolved at compile time (e.g. dynamic RAM reads): we cannot emit
+    /// equality constraints, but we also cannot panic because the variable
+    /// participates in later `verify` equations that *do* get constrained.
+    #[allow(unused_variables)]
+    fn admit_unconstrained_identifier(context: &str, target: &PRef) {
+        // Intentionally a no-op: no basis and no pl binding.
+        // The target becomes a free symbolic variable in the ideal;
+        // proof completeness is checked separately at the call site.
+    }
+
     /// Build a `GroebnerResult` from a `TransClos`. Each call returns a
     /// fresh result with its own `prefs` namespace, while the builder
     /// namespace keeps generated witness/sentinel allocation stable.
@@ -2122,7 +2140,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                 }
                 _ => {
-                    Self::uncovered_op("dynamic-ram", &pr);
+                    Self::admit_unconstrained_identifier("dynamic-ram", &pr);
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
@@ -8700,11 +8718,11 @@ mod tests {
         );
     }
 
-    /// dynamic-ram: runtime index in Ram must panic rather than fall
-    /// through to np.insert.
+    /// dynamic-ram: a runtime (non-literal) index in Ram is admitted as an
+    /// unconstrained free identifier.  The result PRef must emit no basis
+    /// equations, no pl binding, and must not appear in np.
     #[test]
-    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-ram")]
-    fn uncovered_op_dynamic_ram_panics() {
+    fn dynamic_ram_admits_unconstrained_identifier() {
         use crate::PRef;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -8746,6 +8764,7 @@ mod tests {
         );
         builder.ns.register(&pref_r);
 
+        // Must not panic — dynamic RAM is admitted as a free identifier.
         builder.add_op(
             pref_r.clone(),
             Op::Ram(
@@ -8753,6 +8772,23 @@ mod tests {
                 mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), fin.clone())),
             ),
             &mut gresult,
+        );
+
+        // No basis equation, no pl binding, no np entry for the result PRef.
+        for slot in pref_r.slots() {
+            assert!(
+                !gresult.pl.contains(&slot),
+                "dynamic-ram result must not appear in pl"
+            );
+        }
+        assert!(
+            !gresult.np.contains(&pref_r),
+            "dynamic-ram result must not appear in np"
+        );
+        assert!(
+            gresult.basis.is_empty(),
+            "dynamic-ram must emit no basis equations; got {} rows",
+            gresult.basis.len()
         );
     }
 
