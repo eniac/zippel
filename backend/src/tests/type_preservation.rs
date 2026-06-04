@@ -876,8 +876,11 @@ mod cross_layer {
         arbtest::arbtest(|u| {
             let tm: AnyUniATyp = u.arbitrary()?;
             let m = tm.m;
-            // k ∈ 2..=5 — never a pow2-aligned single eval
-            let k: usize = u.int_in_range(2..=5)?;
+            // k ∈ {3, 5} — runtime pads to the next power of two, while
+            // Op::Evaluate::typ() declares exactly k outputs.
+            let candidates = [3usize, 5];
+            let idx: usize = u.int_in_range(0..=1)?;
+            let k = candidates[idx];
             let mut rng = test_rng();
             let p: V = Value::random(&mut rng, &ATyp::uni(m));
             let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
