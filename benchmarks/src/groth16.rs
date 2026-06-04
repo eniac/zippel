@@ -555,7 +555,7 @@ pub mod native_side {
     /// Cached affine views of the proving-key MSM bases. Affine form is
     /// what `VariableBaseMSM::msm_bigint` consumes, so we pay the
     /// `normalize_batch` cost once at setup rather than on every prove.
-    struct AffineKeys {
+    pub struct AffineKeys {
         alpha_g1: G1Affine,
         beta_g1: G1Affine,
         beta_g2_aff: G2Affine,
@@ -571,7 +571,7 @@ pub mod native_side {
     }
 
     impl AffineKeys {
-        fn from(translated: &Translated) -> Self {
+        pub fn from(translated: &Translated) -> Self {
             let keys = &translated.keys;
             AffineKeys {
                 alpha_g1: keys.alpha_g1.into_affine(),
@@ -700,7 +700,7 @@ pub mod native_side {
     /// reduction). Single MSM per key vector; uses
     /// `VariableBaseMSM::msm_bigint` from git-main `ark_ec`.
     #[allow(clippy::too_many_arguments)]
-    fn prove(
+    pub fn prove(
         keys: &AffineKeys,
         mat: &super::bridge::GitMatrices,
         num_inputs: usize,
@@ -746,7 +746,7 @@ pub mod native_side {
     /// Vendored Groth16 verifier. One MSM over `gamma_abc_g1` plus a
     /// single 3-pair `multi_pairing` (one Miller loop + one
     /// final-exponentiation), then GT identity check via `result == result − result`.
-    fn verify(keys: &AffineKeys, proof: &Proof, public_inputs: &[GitFr]) -> bool {
+    pub fn verify(keys: &AffineKeys, proof: &Proof, public_inputs: &[GitFr]) -> bool {
         // IC = gamma_abc_g1[0] + MSM(gamma_abc_g1[1..], public_inputs).
         // public_inputs already drops the constant-1, matching the v0.5
         // ark-groth16 convention.
@@ -800,4 +800,226 @@ pub mod native_side {
 
 pub fn build_translated(num_constraints: usize) -> bridge::Translated {
     bridge::translate_shared(&shared::build(num_constraints))
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verification tests: confirm that zippel and native compute the same
+// Groth16 protocol by having each side verify the other's proof. Unlike
+// KZG, Groth16 is randomized (prover picks blinding factors r, s), so two
+// runs with different randomness produce different valid proofs — we
+// cannot assert byte-equality. We only assert mutual acceptance:
+//
+//   * Test 1: native produces a Proof; zippel verifier accepts it.
+//   * Test 2: zippel produces a Proof; native verifier accepts it.
+//
+// If either test fails, the two sides are not implementing the same
+// protocol and the benchmark comparison is invalid.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod cross_tests {
+    use super::bridge::{Translated, witness_map};
+    use super::native_side::{AffineKeys, Proof, prove, verify};
+    use super::{build_translated, zippel_side};
+    use ark_bls12_381::Fr as GitFr;
+    use ark_ff::{UniformRand, Zero};
+    use backend::{ArkBls12_381, Value};
+    use lang::id::{Tid, Vid};
+    use share::Ctx;
+    use std::path::PathBuf;
+    use zippel::{ZippelArgs, ZippelHandler, check_verification};
+
+    /// Sweep used by both cross-tests. Capped at log_2 num_constraints = 6
+    /// (= 64 constraints, M ≈ 65 inputs, L ≈ 128 witnesses) so each test
+    /// stays under ~15 seconds. Larger sizes work but increase test wall-
+    /// clock without exercising additional logic.
+    const LOG_SWEEP: &[usize] = &[2, 4, 6];
+
+    /// Build a zippel handler for Groth16, compiled at the given (M, L, H)
+    /// sizes. The .zippel path is resolved relative to the benchmarks crate
+    /// manifest so tests work regardless of cargo's cwd.
+    fn zippel_handler(t: &Translated) -> ZippelHandler<ArkBls12_381> {
+        let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("examples/groth16/groth16-opt.zippel");
+        let args = ZippelArgs::new(zippel_path);
+        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("M"), &t.m);
+        sizes.insert(&Tid::new("L"), &t.l);
+        sizes.insert(&Tid::new("H"), &t.h_size);
+        handler.compile(&sizes);
+        handler
+    }
+
+    /// Build the zippel-side input context from a `Translated`. Mirrors
+    /// the construction in `zippel_side::Setup::new` but inlined so this
+    /// test module doesn't reach into Setup's private fields.
+    fn zip_inputs_from_translated(t: &Translated) -> Ctx<Vid, Value<ArkBls12_381>> {
+        // h_coeffs is the QAP witness-map output, computed in Rust on the
+        // zippel side too (since zippel can't express the QAP reduction
+        // inside the proto). Match the zippel bench's behavior.
+        let mut h_coeffs = witness_map(
+            &t.mat,
+            t.num_inputs,
+            t.num_constraints,
+            &t.full_assignment,
+        );
+        h_coeffs.resize(t.h_size, GitFr::zero());
+
+        Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+            (Vid("alpha_g1".to_string()), Value::G1(t.keys.alpha_g1)),
+            (Vid("beta_g2".to_string()), Value::G2(t.keys.beta_g2)),
+            (Vid("gamma_g2".to_string()), Value::G2(t.keys.gamma_g2)),
+            (Vid("delta_g2".to_string()), Value::G2(t.keys.delta_g2)),
+            (
+                Vid("gamma_abc_g1".to_string()),
+                Value::VecG1(t.keys.gamma_abc_g1.clone()),
+            ),
+            (Vid("beta_g1".to_string()), Value::G1(t.keys.beta_g1)),
+            (Vid("delta_g1".to_string()), Value::G1(t.keys.delta_g1)),
+            (Vid("a_query".to_string()), Value::VecG1(t.keys.a_query.clone())),
+            (
+                Vid("b_g1_query".to_string()),
+                Value::VecG1(t.keys.b_g1_query.clone()),
+            ),
+            (
+                Vid("b_g2_query".to_string()),
+                Value::VecG2(t.keys.b_g2_query.clone()),
+            ),
+            (Vid("h_query".to_string()), Value::VecG1(t.keys.h_query.clone())),
+            (Vid("l_query".to_string()), Value::VecG1(t.keys.l_query.clone())),
+            (
+                Vid("instance_assignment".to_string()),
+                Value::VecScalar(t.instance_assignment.clone()),
+            ),
+            (
+                Vid("witness_assignment".to_string()),
+                Value::VecScalar(t.witness_assignment.clone()),
+            ),
+            (Vid("h_coeffs".to_string()), Value::VecScalar(h_coeffs)),
+        ])
+    }
+
+    /// Test 1: native produces (a, b, c); zippel verifier accepts it.
+    #[test]
+    fn native_prove_then_zippel_verify() {
+        for &log_constraints in LOG_SWEEP {
+            run_native_prove_zippel_verify(log_constraints);
+        }
+    }
+
+    fn run_native_prove_zippel_verify(log_constraints: usize) {
+        let num_constraints = 1usize << log_constraints;
+        let t = build_translated(num_constraints);
+
+        // ---- Native: build keys, sample randomness, produce Proof ---------
+        let keys = AffineKeys::from(&t);
+        let mut rng = ark_std::test_rng();
+        let r = GitFr::rand(&mut rng);
+        let s = GitFr::rand(&mut rng);
+        let proof_n = prove(
+            &keys,
+            &t.mat,
+            t.num_inputs,
+            t.num_constraints,
+            &t.full_assignment,
+            &t.witness_assignment,
+            t.h_size,
+            r,
+            s,
+        );
+
+        // Sanity: native's own verifier accepts native's proof (drop the
+        // leading constant-1 from instance assignment, matching the
+        // libsnark convention).
+        let public_inputs = &t.instance_assignment[1..];
+        assert!(
+            verify(&keys, &proof_n, public_inputs),
+            "log_constraints={log_constraints}: native verifier rejected its own proof — bug in this test"
+        );
+
+        // ---- Zippel: compile handler, prime state via run_prover, then
+        //      run_verifier against the NATIVE-produced proof --------------
+        let mut handler = zippel_handler(&t);
+        let zip_inputs = zip_inputs_from_translated(&t);
+        let prover_sched = handler.default_schedule_prover();
+        let _ = handler
+            .run_prover(prover_sched, zip_inputs)
+            .expect("zippel run_prover (priming handler state)");
+
+        // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
+        // (lines 38, 39, 44 of groth16-opt.zippel).
+        let cross_proof: Vec<Value<ArkBls12_381>> = vec![
+            Value::G1(proof_n.a),
+            Value::G2(proof_n.b),
+            Value::G1(proof_n.c),
+        ];
+        let verifier_sched = handler.default_schedule_verifier();
+        let verifier_result = handler
+            .run_verifier(verifier_sched, cross_proof)
+            .expect("zippel run_verifier on cross-proof");
+        let result = check_verification(verifier_result);
+        assert!(
+            result.passed,
+            "log_constraints={log_constraints}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"
+        );
+    }
+
+    /// Test 2: zippel produces (a, b, c) via run_prover; native verifier
+    /// accepts it.
+    #[test]
+    fn zippel_prove_then_native_verify() {
+        for &log_constraints in LOG_SWEEP {
+            run_zippel_prove_native_verify(log_constraints);
+        }
+    }
+
+    fn run_zippel_prove_native_verify(log_constraints: usize) {
+        let num_constraints = 1usize << log_constraints;
+        let t = build_translated(num_constraints);
+
+        // ---- Zippel: run_prover and extract (a, b, c) from the transcript -
+        let mut handler = zippel_handler(&t);
+        let zip_inputs = zip_inputs_from_translated(&t);
+        let prover_sched = handler.default_schedule_prover();
+        let zip_proof: Vec<Value<ArkBls12_381>> = handler
+            .run_prover(prover_sched, zip_inputs)
+            .expect("zippel run_prover");
+
+        assert_eq!(
+            zip_proof.len(),
+            3,
+            "log_constraints={log_constraints}: expected 3 transcript items (a, b, c)"
+        );
+        let a = match &zip_proof[0] {
+            Value::G1(g) => *g,
+            other => panic!(
+                "expected G1 a_proof, got variant {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+        let b = match &zip_proof[1] {
+            Value::G2(g) => *g,
+            other => panic!(
+                "expected G2 b_proof, got variant {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+        let c = match &zip_proof[2] {
+            Value::G1(g) => *g,
+            other => panic!(
+                "expected G1 c_proof, got variant {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+        let proof_z = Proof { a, b, c };
+
+        // ---- Native: verify the zippel-produced proof --------------------
+        let keys = AffineKeys::from(&t);
+        let public_inputs = &t.instance_assignment[1..];
+        assert!(
+            verify(&keys, &proof_z, public_inputs),
+            "log_constraints={log_constraints}: CROSS-VERIFY FAILED: native verifier rejected zippel-produced proof"
+        );
+    }
 }
