@@ -213,12 +213,10 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
 }
 
 /// The result of building a Gröbner basis — the basis polynomials, their
-/// polynomial definitions (pl), non-polynomial definitions (np), and all
-/// prefs used in the basis (prefs).
+/// polynomial definitions (pl), and the prefs used in the basis.
 #[derive(Clone)]
 pub struct GroebnerResult<C: ArkConfig, T: Monomial> {
     pub basis: GroebnerBasis<C::F, T>,
-    pub np: Ctx<PRef, GOp<C>>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub prefs: HashMap<Ref, PRef>,
 }
@@ -227,7 +225,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     pub fn new() -> Self {
         Self {
             basis: GroebnerBasis::empty(0),
-            np: Ctx::new(),
             pl: Ctx::new(),
             prefs: HashMap::new(),
         }
@@ -255,14 +252,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     pub fn eliminate_var<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
         self.basis.eliminate_var(f);
         self.pl.retain(|p, _| !f(p));
-        self.np.retain(|p, _| !f(p));
     }
 
     pub fn eliminate_monomial<F: Fn(&T) -> bool>(&mut self, f: &F) {
         self.basis.eliminate_monomial(f);
         let vars = self.basis.vars();
         self.pl.retain(|p, _| vars.contains(p));
-        self.np.retain(|p, _| vars.contains(p));
     }
 
     /// Inline all `pl` definitions into the basis polynomials.
@@ -343,17 +338,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         self.basis = self.basis.clone().buchberger_and_reduce::<W>();
     }
 
-    /// Merge another result's basis, polynomial definitions, and non-polynomial
-    /// definitions into this result.
+    /// Merge another result's basis and polynomial definitions into this result.
     pub fn merge(&mut self, other: &Self) {
         for p in other.basis.iter() {
             self.basis.push(p.clone());
         }
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
-        }
-        for (k, v) in other.np.iter() {
-            self.np.insert(k, v);
         }
     }
 }
@@ -382,25 +373,11 @@ where
                     .map(|p| p.pretty(allocator).indent(8)),
                 allocator.hardline(),
             ),
-            allocator.hardline(),
-            allocator.hardline(),
-            allocator.text("NP definitions: "),
-            allocator.hardline(),
-            allocator.intersperse(
-                self.np.into_iter().map(|(r, op)| {
-                    allocator
-                        .text(r.verbose())
-                        .append(allocator.text(": "))
-                        .append(op.pretty(allocator))
-                        .indent(8)
-                }),
-                allocator.hardline(),
-            ),
         ])
     }
 
     fn is_nil(&self) -> bool {
-        self.basis.is_empty() && self.np.is_empty()
+        self.basis.is_empty() && self.pl.is_empty()
     }
 }
 
