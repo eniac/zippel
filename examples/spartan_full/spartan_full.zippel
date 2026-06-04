@@ -1,0 +1,205 @@
+// Spartan-NIZK (parametric in M via Rust-side code generation).
+//
+// Zippel's helper-function overload resolution can't distinguish
+// `draw_taus([F; M])` from `draw_taus([F; K])` for the various K specs of
+// the recursive helper when M is still an abstract proto generic at the
+// call site — so we don't write the proto generic in M. Instead, the
+// Rust harness templates out a fully-unrolled, M-specific zippel proto
+// per sweep value (see `examples/spartan_full/main.rs::generate_proto`).
+//
+// This file is kept as a reference / smoke-test for M = 2 (also the
+// historical pinned version from the first cut). The harness ignores it
+// at runtime and writes its own per-M file to a temp path.
+//
+// Composition: info-theoretic Spartan PIOP + PST13 multilinear PCS,
+// equivalent to the NIZK column of Fig. 5 in Setty CRYPTO 2020 with the
+// vSQL-VPD line for the witness commitment.
+
+fn pst13_commit_n1<G1: Group, G2: Group, F: Scalar<G1, G2>>(
+    private p:    [F; 2],
+    public ck_n:  [G1; 2]
+) -> G1 {
+    dot(p, ck_n)
+}
+
+fn pst13_open_n1<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    private p:          [F; 2],
+    public ck_n:        [G1; 2],
+    public z_pcs:       [F; 1],
+    public alpha_h:     [G2; 1],
+    public h_gen:       G2,
+    public lhs:         GT
+) -> Bool {
+    let ck_lo = ck_n[0..1];
+    let ck_hi = ck_n[1..2];
+    let ck_0  = ck_lo + ck_hi;
+
+    let p_lo = p[0..1];
+    let p_hi = p[1..2];
+    let q    = p_hi - p_lo;
+
+    pi_w <- dot(q, ck_0);
+    lhs == pair(pi_w, alpha_h[0] - (h_gen * z_pcs[0]))
+}
+
+proto spartan_full<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    public mat_a:     [F; 16],
+    public mat_b:     [F; 16],
+    public mat_c:     [F; 16],
+    public io:        [F; 1],
+    private w:        [F; 2],
+    public ck_n_w:    [G1; 2],
+    public g_gen:     G1,
+    public h_gen:     G2,
+    public alpha_h_w: [G2; 1],
+    public f_one:     F
+) where
+    let z  = w ++ io ++ [f_one];
+    let az = [reduce(+, [mat_a[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+    let bz = [reduce(+, [mat_b[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+    let cz = [reduce(+, [mat_c[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+    az * bz == cz
+{
+    let one  = f_one;
+    let zero = f_one - f_one;
+
+    c_w <- pst13_commit_n1(w, ck_n_w);
+
+    let z  = w ++ io ++ [one];
+    let az = [reduce(+, [mat_a[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+    let bz = [reduce(+, [mat_b[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+    let cz = [reduce(+, [mat_c[i*4 + j] * z[j] for j in 0..4]) for i in 0..4];
+
+    let f_a = mle(az);
+    let f_b = mle(bz);
+    let f_c = mle(cz);
+
+    tau0 <- challenge<F>;
+    tau1 <- challenge<F>;
+
+    let eq_tau_evs = [
+        (one - tau0) * (one - tau1),
+        tau0 * (one - tau1),
+        (one - tau0) * tau1,
+        tau0 * tau1
+    ];
+    let eq_tau = mle(eq_tau_evs);
+
+    let neg_one = zero - one;
+    let g_sub   = f_a * f_b + f_c * neg_one;
+    let g_poly  = g_sub * eq_tau;
+
+    let cfg1_0 = {| poly: g_poly, num_variables: 2, max_degree: 3, round: 0, challenge: zero |};
+    let out1_0 = marginalize(cfg1_0);
+    evs1_0 <- out1_0.evaluations;
+    verify(zero == evs1_0[0] + evs1_0[1]);
+
+    let pts3 = [i for i in 0..4];
+    let g1_r1 = interpolate(pts3, evs1_0);
+    rx0 <- challenge<F>;
+    let prev1_vec = eval(g1_r1, [rx0]);
+    let prev1 = prev1_vec[0];
+
+    let cfg1_1 = {| poly: out1_0.next_poly, num_variables: 2, max_degree: 3, round: 1, challenge: rx0 |};
+    let out1_1 = marginalize(cfg1_1);
+    evs1_1 <- out1_1.evaluations;
+    verify(prev1 == evs1_1[0] + evs1_1[1]);
+
+    let g1_r2 = interpolate(pts3, evs1_1);
+    rx1 <- challenge<F>;
+    let e_x_vec = eval(g1_r2, [rx1]);
+    let e_x = e_x_vec[0];
+
+    let omr0  = one - rx0;
+    let omr1  = one - rx1;
+    let lx_00 = omr0 * omr1;
+    let lx_10 = rx0  * omr1;
+    let lx_01 = omr0 * rx1;
+    let lx_11 = rx0  * rx1;
+
+    v_a <- lx_00 * az[0] + lx_10 * az[1] + lx_01 * az[2] + lx_11 * az[3];
+    v_b <- lx_00 * bz[0] + lx_10 * bz[1] + lx_01 * bz[2] + lx_11 * bz[3];
+    v_c <- lx_00 * cz[0] + lx_10 * cz[1] + lx_01 * cz[2] + lx_11 * cz[3];
+
+    let eq_tau_at_rx =
+        lx_00 * eq_tau_evs[0] + lx_10 * eq_tau_evs[1]
+      + lx_01 * eq_tau_evs[2] + lx_11 * eq_tau_evs[3];
+
+    verify(e_x == (v_a * v_b - v_c) * eq_tau_at_rx);
+
+    ra <- challenge<F>;
+    rb <- challenge<F>;
+    rc <- challenge<F>;
+    let t2 = ra * v_a + rb * v_b + rc * v_c;
+
+    let partial_a = [
+        lx_00 * mat_a[ 0 + y] + lx_10 * mat_a[ 4 + y]
+      + lx_01 * mat_a[ 8 + y] + lx_11 * mat_a[12 + y]
+        for y in 0..4
+    ];
+    let partial_b = [
+        lx_00 * mat_b[ 0 + y] + lx_10 * mat_b[ 4 + y]
+      + lx_01 * mat_b[ 8 + y] + lx_11 * mat_b[12 + y]
+        for y in 0..4
+    ];
+    let partial_c = [
+        lx_00 * mat_c[ 0 + y] + lx_10 * mat_c[ 4 + y]
+      + lx_01 * mat_c[ 8 + y] + lx_11 * mat_c[12 + y]
+        for y in 0..4
+    ];
+
+    let combined = [
+        ra * partial_a[y] + rb * partial_b[y] + rc * partial_c[y]
+        for y in 0..4
+    ];
+    let l_mle  = mle(combined);
+    let z_mle  = mle(z);
+    let m_poly = l_mle * z_mle;
+
+    let cfg2_0 = {| poly: m_poly, num_variables: 2, max_degree: 2, round: 0, challenge: zero |};
+    let out2_0 = marginalize(cfg2_0);
+    evs2_0 <- out2_0.evaluations;
+    verify(t2 == evs2_0[0] + evs2_0[1]);
+
+    let pts2 = [i for i in 0..3];
+    let g2_r1 = interpolate(pts2, evs2_0);
+    ry0 <- challenge<F>;
+    let prev2_vec = eval(g2_r1, [ry0]);
+    let prev2 = prev2_vec[0];
+
+    let cfg2_1 = {| poly: out2_0.next_poly, num_variables: 2, max_degree: 2, round: 1, challenge: ry0 |};
+    let out2_1 = marginalize(cfg2_1);
+    evs2_1 <- out2_1.evaluations;
+    verify(prev2 == evs2_1[0] + evs2_1[1]);
+
+    let g2_r2 = interpolate(pts2, evs2_1);
+    ry1 <- challenge<F>;
+    let e_y_vec = eval(g2_r2, [ry1]);
+    let e_y = e_y_vec[0];
+
+    let v_w_val = (one - ry0) * w[0] + ry0 * w[1];
+    sent_v_w <- v_w_val;
+
+    let pcs_lhs = pair(c_w - (g_gen * sent_v_w), h_gen);
+    let pcs_z   = [ry0];
+    let pcs_ok  = pst13_open_n1(w, ck_n_w, pcs_z, alpha_h_w, h_gen, pcs_lhs);
+
+    let v_io = (one - ry0) * io[0] + ry0 * one;
+    let v_z  = (one - ry1) * sent_v_w + ry1 * v_io;
+
+    let omry0 = one - ry0;
+    let omry1 = one - ry1;
+    let ly_00 = omry0 * omry1;
+    let ly_10 = ry0   * omry1;
+    let ly_01 = omry0 * ry1;
+    let ly_11 = ry0   * ry1;
+
+    let v1 = ly_00 * partial_a[0] + ly_10 * partial_a[1]
+           + ly_01 * partial_a[2] + ly_11 * partial_a[3];
+    let v2 = ly_00 * partial_b[0] + ly_10 * partial_b[1]
+           + ly_01 * partial_b[2] + ly_11 * partial_b[3];
+    let v3 = ly_00 * partial_c[0] + ly_10 * partial_c[1]
+           + ly_01 * partial_c[2] + ly_11 * partial_c[3];
+
+    verify(pcs_ok && e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
+}

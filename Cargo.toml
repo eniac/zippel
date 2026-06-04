@@ -222,6 +222,10 @@ name = "sc_test_m3"
 path = "examples/sc_test_m3/main.rs"
 
 [[example]]
+name = "spartan_full"
+path = "examples/spartan_full/main.rs"
+
+[[example]]
 name = "cds"
 path = "examples/cds/main.rs"
 
