@@ -218,7 +218,7 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         let vid = Vid::from(name);
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
-        PRef::from_var(vid, idx, typ, 0, Qualifier::Public, Distribution::default())
+        PRef::from_var(vid, idx, typ, 0, Qualifier::Local, Distribution::default())
     }
 
     /// Return a unique name for the given key by appending a per-key counter.

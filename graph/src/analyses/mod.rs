@@ -1,5 +1,6 @@
 pub mod completeness;
 pub mod error;
+pub mod extractor;
 pub mod groebner;
 pub mod qualifier;
 pub mod soundness;

@@ -2,10 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy};
-use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, Monomial, SparsePolynomial};
+use crate::analyses::extractor::{ExtractLocalTerm, extract_locals};
+use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy, Monomial};
+use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::{DQDag, PRef, Ref};
-use ark_ff::One;
+use ark_ff::{One, Zero};
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
 use lang::id::Vid;
@@ -13,7 +14,7 @@ use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use share::Set;
+use share::{Ctx, Set};
 
 /// Special-soundness elimination strategy: all private variables (witnesses)
 /// are eliminated first. Local and public variables are kept.
@@ -22,7 +23,7 @@ pub struct Soundness;
 
 impl ElimStrategy for Soundness {
     fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier.is_private()
+        v.qualifier.is_private() || v.is_local()
     }
 }
 
@@ -37,6 +38,7 @@ pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
     #[allow(dead_code, unnameable_types)]
     relation_polys: Vec<Poly<C>>,
     witness_slots: Vec<PRef>,
+    rel_tc: TransClos<C>,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -265,16 +267,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         for (_prefix, tc) in worklist {
             let copy_result = search_builder.build(tc);
-            for p in copy_result.basis.iter() {
-                search_result.basis.push(p.clone());
-            }
-            for (k, v) in copy_result.pl.iter() {
-                search_result.pl.insert(k, v);
-            }
+            search_result.merge(&copy_result);
+            validity_result.merge(&copy_result);
         }
 
         let rel_tc = TransClos::relation(dag);
-        let rel_result = search_builder.build(rel_tc);
+        let rel_result = search_builder.build(rel_tc.clone());
         let relation_polys: Vec<Poly<C>> = rel_result
             .basis
             .iter()
@@ -298,6 +296,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             validity_result,
             relation_polys,
             witness_slots,
+            rel_tc,
         })
     }
 
@@ -397,26 +396,31 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             self.witness_slots.len()
         );
 
-        info!("Checking: <V_1 ∪ ... ∪ V_l ∪ D ∪ E> ⊇ <R>...");
-        for (_, poly) in &extractors {
-            self.validity_result.basis.push(poly.clone());
+        for (_, ext_poly) in &extractors {
+            self.validity_result.basis.push(ext_poly.clone());
         }
+
+        let local_extractors = extract_locals(&self.rel_tc);
+        for (_, lex_poly) in &local_extractors {
+            let converted = convert_extract_local_poly::<C>(lex_poly);
+            self.validity_result.basis.push(converted);
+        }
+
+        self.validity_result.inline();
         self.validity_result.run::<128>();
         factor_group_gcd(&mut self.validity_result);
 
-        // TODO: Re-enable validity check once relation_polys are correctly
-        // populated with per-copy-remapped relation constraints.
-        // for r in self.relation_polys.iter() {
-        //     if r.is_zero() {
-        //         continue;
-        //     }
-        //     let rem = self.validity_result.basis.reduce(r.clone());
-        //     if !rem.is_zero() {
-        //         warn!("Relation polynomial does not reduce to zero: {}", r);
-        //         warn!("Remainder: {}", rem);
-        //         return Err(AnalysisError::ExtractorInvalid(rem));
-        //     }
-        // }
+        for r in self.relation_polys.iter() {
+            if r.is_zero() {
+                continue;
+            }
+            let rem = self.validity_result.basis.reduce(r.clone());
+            if !rem.is_zero() {
+                warn!("Relation polynomial does not reduce to zero: {}", r);
+                warn!("Remainder: {}", rem);
+                return Err(AnalysisError::ExtractorInvalid(rem));
+            }
+        }
 
         info!("Special soundness proven (with distinct-challenge assumption D)");
         Ok(())
@@ -471,6 +475,18 @@ fn build_round_map<C: ArkConfig>(
     }
 
     round_map
+}
+
+fn convert_extract_local_poly<C: ArkConfig>(
+    p: &SparsePolynomial<C::F, ExtractLocalTerm>,
+) -> Poly<C> {
+    let mut terms: Ctx<SoundnessElimTerm, C::F> = Ctx::new();
+    for (term, coeff) in p.terms.iter() {
+        let pairs: Vec<(PRef, usize)> = term.vars().into_iter().zip(term.powers()).collect();
+        let new_term: SoundnessElimTerm = pairs.into();
+        *terms.entry(new_term).or_insert(C::F::zero()) += *coeff;
+    }
+    SparsePolynomial { terms }
 }
 
 fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTerm>) {

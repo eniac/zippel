@@ -31,7 +31,12 @@ fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(
             .into_iter()
             .map(|(coeff, term_vec)| {
                 (
-                    T::from(term_vec.into_iter().map(|(k, v)| (k.clone(), v)).collect::<Vec<_>>()),
+                    T::from(
+                        term_vec
+                            .into_iter()
+                            .map(|(k, v)| (k.clone(), v))
+                            .collect::<Vec<_>>(),
+                    ),
                     coeff,
                 )
             })

@@ -23,9 +23,9 @@ use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
 use crate::PRef;
-use crate::analyses::knowledge::ElimTerm;
 use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
+use crate::analyses::knowledge::ElimTerm;
 use crate::tests::analyses::groebner::legacy::legacy_compute_reduced_gb;
 use crate::tests::analyses::groebner::shared;
 use ark_ff::Field;
@@ -81,7 +81,12 @@ fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(
             .into_iter()
             .map(|(coeff, term_vec)| {
                 (
-                    T::from(term_vec.into_iter().map(|(k, v)| (k.clone(), v)).collect::<Vec<_>>()),
+                    T::from(
+                        term_vec
+                            .into_iter()
+                            .map(|(k, v)| (k.clone(), v))
+                            .collect::<Vec<_>>(),
+                    ),
                     coeff,
                 )
             })
@@ -218,7 +223,6 @@ fn regression_elim_cyclic_5() {
 /// lock-step on a small elimination-order example with mixed qualifiers.
 #[test]
 fn regression_elim_maple() {
-
     let t = elim_var("t");
     let x = noelim_var("x");
     let y = noelim_var("y");
@@ -247,7 +251,6 @@ fn regression_elim_maple() {
 /// elimination ordering to actually do work eliminating `u`.
 #[test]
 fn regression_elim_small_mixed() {
-
     let u = elim_var("u");
     let a = noelim_var("a");
     let b = noelim_var("b");

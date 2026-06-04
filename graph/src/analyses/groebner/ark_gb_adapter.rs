@@ -61,7 +61,7 @@ use share::{Ctx, Set};
 
 use crate::PRef;
 use crate::analyses::groebner::monomial::{
-    ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm,
+    ElimMono, ElimStrategy, GrevLexTerm, LexElimMono, LexElimStrategy, MonoTerm as ZipMonoTerm,
     Monomial as ZipMonomial,
 };
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
@@ -101,6 +101,13 @@ impl<E: ElimStrategy> HasMonoTerm for ElimMono<E> {
     #[inline]
     fn as_mono_term(&self) -> &ZipMonoTerm {
         ElimMono::as_mono_term(self)
+    }
+}
+
+impl<E: LexElimStrategy> HasMonoTerm for LexElimMono<E> {
+    #[inline]
+    fn as_mono_term(&self) -> &ZipMonoTerm {
+        LexElimMono::as_mono_term(self)
     }
 }
 
@@ -586,4 +593,202 @@ fn sort_basis_by_zippel_lt<F: Field, T: ZipMonomial>(basis: &mut [SparsePolynomi
         let lt2 = p2.leading_term().map(|(_, t)| t);
         lt1.cmp(&lt2)
     });
+}
+
+// ---------------------------------------------------------------------------
+// Pure-lex elimination path (for LexElimMono<E> / local-variable extraction).
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static LEX_NVAR_W8: Cell<usize> = const { Cell::new(0) };
+    static LEX_NVAR_W16: Cell<usize> = const { Cell::new(0) };
+    static LEX_NVAR_W128: Cell<usize> = const { Cell::new(0) };
+}
+
+fn get_lex_nvar<const W: usize>() -> usize {
+    match W {
+        8 => LEX_NVAR_W8.with(|c| c.get()),
+        16 => LEX_NVAR_W16.with(|c| c.get()),
+        128 => LEX_NVAR_W128.with(|c| c.get()),
+        _ => panic!("Unsupported W={W} for lex nvar"),
+    }
+}
+
+fn set_lex_nvar<const W: usize>(n: usize) {
+    match W {
+        8 => LEX_NVAR_W8.with(|c| c.set(n)),
+        16 => LEX_NVAR_W16.with(|c| c.set(n)),
+        128 => LEX_NVAR_W128.with(|c| c.set(n)),
+        _ => panic!("Unsupported W={W} for lex nvar"),
+    }
+}
+
+struct LexNvarGuard<const W: usize> {
+    prev: usize,
+}
+
+impl<const W: usize> LexNvarGuard<W> {
+    fn install(n: usize) -> Self {
+        let prev = get_lex_nvar::<W>();
+        set_lex_nvar::<W>(n);
+        Self { prev }
+    }
+}
+
+impl<const W: usize> Drop for LexNvarGuard<W> {
+    fn drop(&mut self) {
+        set_lex_nvar::<W>(self.prev);
+    }
+}
+
+/// ark-gb monomial wrapper implementing zippel's pure-lex elimination order.
+/// Generic over W to support W=8, W=16, and W=128 layouts.
+///
+/// Variables are assigned ark-gb indices in `E::cmp_vars` order:
+/// index 0 = highest priority (eliminated first). With ark-gb's packing,
+/// index 0 occupies the MSB byte position. A pure-lex comparison of the
+/// packed bytes from MSB to LSB gives the correct ordering.
+///
+/// `cmp` and `cmp_key`:
+/// * `cmp` compares the packed bytes lexicographically from the highest
+///   priority variable to the lowest, without any total-degree pre-comparison.
+///   This gives a true lexicographic order.
+/// * `cmp_key` puts 0 as the pre_key (no degree comparison) and the XOR-
+///   flipped packed bytes as the suffix. Since highest-priority variables
+///   are at MSB positions, the natural byte-order comparison gives lex order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ZippelLexElimMono<const W: usize>(ArkMono<W>);
+
+impl<const W: usize> From<ArkMono<W>> for ZippelLexElimMono<W> {
+    fn from(m: ArkMono<W>) -> Self {
+        ZippelLexElimMono(m)
+    }
+}
+
+impl<const W: usize> PartialOrd for ZippelLexElimMono<W> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Pure lexicographic comparison: compare packed bytes from MSB to LSB.
+///
+/// With variables assigned so that index 0 = highest priority, and ark-gb's
+/// packing putting index 0 at MSB, comparing packed words from word 0 to
+/// word W-1 gives a lex comparison from highest-priority variable to lowest.
+///
+/// We Xor with the flip mask so that larger exponents map to "smaller"
+/// bytes (making higher-exponent monomials = leading = Less in the BTreeMap
+/// convention).
+impl<const W: usize> Ord for ZippelLexElimMono<W> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare lexicographically per-variable, from index 0 (highest
+        // priority) to the last index.  At the first position where
+        // exponents differ, the monomial with the larger exponent is
+        // leading (Ord::Less).
+        let nvars = get_lex_nvar::<W>();
+        // Retrieve exponents via the packed representation. Each variable
+        // occupies one byte in ark-gb's packed layout; byte position for
+        // variable i = i + W*8 - 1 - nvars.
+        for i in 0..nvars {
+            let byte_idx = i + W * 8 - 1 - nvars;
+            let word = byte_idx / 8;
+            let shift = (byte_idx % 8) * 8;
+            let e_self = ((self.0.packed()[word] >> shift) & 0xFF) as u8;
+            let e_other = ((other.0.packed()[word] >> shift) & 0xFF) as u8;
+            match e_self.cmp(&e_other) {
+                std::cmp::Ordering::Equal => continue,
+                std::cmp::Ordering::Greater => return std::cmp::Ordering::Less,
+                std::cmp::Ordering::Less => return std::cmp::Ordering::Greater,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelLexElimMono<W> {
+    #[inline]
+    fn one(ring: &Ring<F, W>) -> Self {
+        ZippelLexElimMono(ArkMono::<W>::one(ring))
+    }
+    #[inline]
+    fn from_exponents(ring: &Ring<F, W>, exps: &[u32]) -> Option<Self> {
+        ArkMono::<W>::from_exponents(ring, exps).map(ZippelLexElimMono)
+    }
+    #[inline]
+    fn exponent(&self, ring: &Ring<F, W>, i: u32) -> Option<u32> {
+        self.0.exponent(ring, i)
+    }
+    #[inline]
+    fn exponents(&self, ring: &Ring<F, W>) -> Vec<u32> {
+        self.0.exponents(ring)
+    }
+    #[inline]
+    fn total_deg(&self, _ring: &Ring<F, W>) -> u32 {
+        self.0.total_deg()
+    }
+    #[inline]
+    fn mul(&self, other: &Self, ring: &Ring<F, W>) -> Self {
+        ZippelLexElimMono(self.0.mul(&other.0, ring))
+    }
+    #[inline]
+    fn divides(&self, other: &Self, ring: &Ring<F, W>) -> bool {
+        self.0.divides(&other.0, ring)
+    }
+    #[inline]
+    fn div(&self, other: &Self, ring: &Ring<F, W>) -> Option<Self> {
+        self.0.div(&other.0, ring).map(ZippelLexElimMono)
+    }
+    #[inline]
+    fn lcm(&self, other: &Self, ring: &Ring<F, W>) -> Self {
+        ZippelLexElimMono(self.0.lcm(&other.0, ring))
+    }
+    #[inline]
+    fn as_mono_term(&self) -> &ArkMono<W> {
+        &self.0
+    }
+
+    fn cmp_key(packed: &ArkMono<W>, ring: &Ring<F, W>) -> (u64, [u64; W]) {
+        // No pre_key (0) — pure lex, no total degree comparison.
+        // XOR-flip packed bytes so that larger exponents → smaller bytes
+        // → leading terms sorted first in the BTreeMap.
+        let flip = ring.cmp_flip_mask();
+        let key: [u64; W] = std::array::from_fn(|i| packed.packed()[i] ^ flip[i]);
+        (0, key)
+    }
+}
+
+/// Pure-lex elimination backend, parametric on W and the zippel term type.
+/// Routes to ark-gb with a pure-lex monomial ordering.
+pub(crate) fn compute_reduced_gb_with_lex_elim<F, T, E, const W: usize>(
+    _num_vars: usize,
+    input: Vec<SparsePolynomial<F, T>>,
+) -> Vec<SparsePolynomial<F, T>>
+where
+    F: Field,
+    T: ZipMonomial + HasMonoTerm,
+    E: LexElimStrategy,
+{
+    let (vars, exponents_fit) = collect_and_validate(&input);
+
+    if vars.is_empty() {
+        return constant_only_basis(&input);
+    }
+
+    // Sort variables by E::cmp_vars: highest priority first (smallest in
+    // the Ord sense, since Less = higher priority in our convention).
+    let mut var_order: Vec<PRef> = vars.iter().cloned().collect();
+    var_order.sort_by(|a, b| E::cmp_vars(a, b));
+
+    let actual_nvars = var_order.len();
+    assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit);
+
+    let _nvar_guard = LexNvarGuard::<W>::install(actual_nvars);
+
+    compute_gb_pipeline::<F, T, ZippelLexElimMono<W>, W, _>(
+        input,
+        var_order,
+        exponents_fit,
+        |ring, polys| ark_gb::bba::compute_gb_serial::<F, ZippelLexElimMono<W>, W>(ring, polys),
+    )
 }
