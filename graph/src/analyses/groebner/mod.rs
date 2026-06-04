@@ -2442,10 +2442,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         };
 
         let Some(xs) = xs else {
-            result
-                .np
-                .insert(&pr, &Op::Interpolate(points.clone(), evals.clone()));
-            return;
+            Self::uncovered_op("dynamic-interpolate-points", &pr);
         };
         assert_eq!(
             n,
@@ -5487,7 +5484,10 @@ mod tests {
     }
 
     #[test]
-    fn test_add_op_interpolate_variable_points_falls_back_to_opaque() {
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-interpolate-points"
+    )]
+    fn test_add_op_interpolate_variable_points_panics_explicitly() {
         use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5529,11 +5529,6 @@ mod tests {
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
-
-        assert!(
-            gresult.np.contains(&pref_result),
-            "variable points should be opaque"
-        );
     }
 
     #[test]
