@@ -15,6 +15,48 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::error::RuntimeError;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
 
+/// Size threshold (in bytes of serialized form) above which a public
+/// input is absorbed into the Fiat-Shamir sponge via a Blake3 digest
+/// instead of its raw byte representation.
+///
+/// At M=12 each Spartan R1CS matrix is 16M field elements × 32 B = 512 MB.
+/// Sponge-absorbing 1.5 GB of matrix bytes was costing ~3 s per prove. The
+/// digest path streams through a Blake3 hasher (single 32 B sponge absorb)
+/// and never holds the full serialized buffer in the sponge.
+///
+/// Both prover and verifier graphs flow through `run_graph`, so they
+/// apply this threshold symmetrically — sponge state stays in sync.
+const FS_DIGEST_THRESHOLD_BYTES: usize = 64 * 1024;
+
+/// Domain separator for the Blake3 digest path. Hashing context-prefix
+/// + value bytes prevents a digest from being confused with raw value
+/// bytes if both schemes were ever fed into the same sponge.
+const FS_DIGEST_DOMAIN: &[u8] = b"zippel-fs-pubinp-digest-v1";
+
+/// Absorb a public input value into the Fiat-Shamir sponge.
+///
+/// For values below `FS_DIGEST_THRESHOLD_BYTES`, serialize as before
+/// (preserves transcript bytes for existing small-input protocols). For
+/// large values, stream the serialized bytes through a Blake3 hasher and
+/// absorb the 32-byte digest — symmetric on prover and verifier sides.
+fn absorb_public_input<C: ArkConfig, H>(
+    prover_state: &mut ProverState<H>,
+    value: &Value<C>,
+) where
+    H: DuplexSpongeInterface<U = u8>,
+{
+    let bytes = value_to_bytes(value).expect("value serialization should not fail");
+    if bytes.len() > FS_DIGEST_THRESHOLD_BYTES {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(FS_DIGEST_DOMAIN);
+        hasher.update(&bytes);
+        let digest = hasher.finalize();
+        prover_state.public_message(digest.as_bytes());
+    } else {
+        prover_state.public_message(bytes.as_slice());
+    }
+}
+
 /// Shared first-error slot used to propagate failures out of rayon-spawned
 /// workers. The first task to fail records its error here; subsequent
 /// workers short-circuit, drop their `SyncSender` clones, and let the sync
@@ -485,7 +527,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                     return Err(err);
                                 }
                             };
-                            prover_state.public_message(value_to_bytes(&**value).unwrap().as_slice());
+                            absorb_public_input::<C, H>(prover_state, &**value);
                         }
                     }
                 }
