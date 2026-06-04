@@ -2039,6 +2039,7 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "backend",
+ "blake3",
  "crossbeam-channel",
  "graph",
  "lang",

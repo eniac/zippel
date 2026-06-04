@@ -226,6 +226,10 @@ name = "spartan_full"
 path = "examples/spartan_full/main.rs"
 
 [[example]]
+name = "spartan_sparse"
+path = "examples/spartan_sparse/main.rs"
+
+[[example]]
 name = "cds"
 path = "examples/cds/main.rs"
 
