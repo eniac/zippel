@@ -2065,7 +2065,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // keep it behind a closure so the panic path is explicit.
                 // Currently it supports Scalar / Bool / Index / Vec and
                 // the Vec* flavours; everything else (G1/G2/GT/Poly/Record)
-                // falls through to np.
+                // fails explicitly via `uncovered_op`.
                 let polys_opt: Option<Vec<SparsePolynomial<C::F, T>>> = match v {
                     Value::Scalar(_)
                     | Value::Bool(_)
@@ -2154,8 +2154,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     slot_offset += field_op.typ().physical_len();
                 }
             }
-            // Concat/Pow/Marginalize/Proj: opaque in np — cannot be
-            // converted to polynomial ideal constraints.
+            // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
+            // unsupported shapes fail instead of becoming hidden op state.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a);
                 let b_src = PolySource::from_ref_vars(&result.prefs, b);
@@ -2170,7 +2170,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 //
                 // We only support static VPoly/Uni configs and round == 0.
                 // For round > 0 or Mle poly types, we panic explicitly rather than
-                // falling back to np.
+                // silently weakening the ideal.
                 //
                 // Mathematical encoding (round == 0, VPoly(n, d)):
                 //   P(x_0,...,x_{n-1}) = Σ_{|α|≤d} c_α · x^α  (coefficient basis)
@@ -2185,7 +2185,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // next_poly: at round == 0 next_poly is a clone of the input poly.
                 // VPoly(n,d) → VPoly(n-1,d) have different slot counts; the symbolic
                 // coefficient-level aliasing is non-trivial and mathematically subtle,
-                // so we emit a clear panic rather than a wrong or silent np fallback.
+                // so we emit a clear panic rather than wrong constraints.
                 let inner_typ = inner.typ();
                 let ATyp::Record(cfg_fields) = &inner_typ else {
                     panic!(
@@ -2311,8 +2311,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 // However, the output type is VPoly(n-1, out_degree) while the input is
                 // VPoly(n, d). These have different slot counts and the coefficient-level
                 // mapping is non-trivial and mathematically ambiguous at this stage.
-                // Panic explicitly rather than silently emit wrong constraints or fall
-                // back to np.
+                // Panic explicitly rather than silently emit wrong constraints.
                 if pr_slots.len() > evaluations_len {
                     panic!(
                         "Groebner Marginalize: next_poly symbolic encoding is not supported \
@@ -3062,7 +3061,7 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        // No np assertion needed: eval uses explicit ideal treatment with no fallback.
+        // Eval uses explicit ideal treatment with no fallback.
         for i in 0..2 {
             assert!(
                 gresult.pl.contains(&result.clone().with_slot(i).unwrap()),
@@ -3274,7 +3273,7 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        // One result slot (scalar) produced, zero np entries for eval.
+        // One result slot (scalar) produced by explicit eval encoding.
         assert!(gresult.pl.contains(&result.clone().with_slot(0).unwrap()));
         // Should contain all 6 coef PRefs of p + both xs slots.
         let slot = gresult
@@ -7848,7 +7847,6 @@ mod tests {
     }
 
     /// Test that challenge emits no basis or pl state.
-    /// This test is expected to FAIL before Task 4 because current challenge inserts into np.
     #[test]
     fn challenge_emits_no_basis_or_pl_state() {
         use lang::typ::{Distribution, Qualifier};
@@ -7881,7 +7879,6 @@ mod tests {
     }
 
     /// Test that random emits no basis or pl state.
-    /// This test is expected to FAIL before Task 4 because current random inserts into np.
     #[test]
     fn random_emits_no_basis_or_pl_state() {
         use lang::typ::{Distribution, Qualifier};
@@ -7988,8 +7985,8 @@ mod tests {
     }
 
     /// Test that internal sentinels (like GT from Op::Pair) are visible through basis.vars()
-    /// without requiring an np registry entry.
-    /// This is a regression test for Task 4: sentinels no longer go into np, only into basis.
+    /// without requiring an auxiliary registry entry.
+    /// This is a regression test for Task 4: sentinels are introduced by basis rows.
     #[test]
     fn sentinel_visibility_through_basis_vars() {
         use backend::op::mk;
@@ -8071,7 +8068,7 @@ mod tests {
     #[test]
     fn record_projection_resolves_without_np_lookup() {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
-        // field "a", assert pl/basis aliases the field without np insertion.
+        // field "a", assert pl/basis aliases the field directly.
         use crate::PRef;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -8153,10 +8150,10 @@ mod tests {
             &mut gresult,
         );
 
-        // Projection result should be in pl, not np.
+        // Projection result should be in pl.
         assert!(
             gresult.pl.contains(&pref_proj),
-            "proj result should be in pl, not np"
+            "proj result should be in pl"
         );
 
         // The proj poly should reference record slot 0 (field "a").
@@ -8179,7 +8176,7 @@ mod tests {
         //             num_variables: Fin(1..2), max_degree: Fin(1..2)}
         // The output type is Record { evaluations: Vec<Scalar,2>, next_poly: VPoly(0,1) }.
         //
-        // We only test that evaluations slots are in pl/basis and NOT in np.
+        // We only test that evaluations slots are in pl/basis.
         // (next_poly will panic — we test just the evaluations part here by using
         // a fake output PRef with type Vec<Scalar, 2> instead of the full record,
         // so pr.slots().len() == evaluations_len == 2 and no next_poly panic fires.)
@@ -8361,9 +8358,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Task 5: next_poly_projection_panics_explicitly_without_np_fallback
+    // Task 5: next_poly_projection_panics_explicitly_without_fallback
     // Verifies that the next_poly path panics with an informative message
-    // rather than silently inserting into np.
+    // rather than silently weakening the ideal.
     // -----------------------------------------------------------------
 
     #[test]
@@ -8484,11 +8481,11 @@ mod tests {
     // -----------------------------------------------------------------
     // Task 6: uncovered_op explicit-failure tests
     // These tests verify that operation fallbacks now panic immediately
-    // instead of silently inserting into np.
+    // instead of silently weakening the ideal.
     // -----------------------------------------------------------------
 
     /// dynamic-pow: Vec^Vec with non-const exponent must panic rather
-    /// than fall through to np.insert.
+    /// than silently weakening the ideal.
     #[test]
     #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
@@ -8604,7 +8601,7 @@ mod tests {
 
     /// dynamic-ram: a runtime (non-literal) index in Ram is admitted as an
     /// unconstrained free identifier.  The result PRef must emit no basis
-    /// equations, no pl binding, and must not appear in np.
+    /// equations and no pl binding.
     #[test]
     fn dynamic_ram_admits_unconstrained_identifier() {
         use crate::PRef;
