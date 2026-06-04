@@ -218,6 +218,10 @@ name = "spartan"
 path = "examples/spartan/main.rs"
 
 [[example]]
+name = "sc_test_m3"
+path = "examples/sc_test_m3/main.rs"
+
+[[example]]
 name = "cds"
 path = "examples/cds/main.rs"
 
