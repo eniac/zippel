@@ -279,10 +279,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             Op::Reduce(op, v) => {
                 Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone(), index)))
             }
-            Op::Evaluate(p, xs) => Op::Evaluate(
-                mk::<C>(self.trans_clos_op(dag, p.get().clone(), index)),
-                mk::<C>(self.trans_clos_op(dag, xs.get().clone(), index)),
-            ),
+            Op::Evaluate(p, xs, typ) => {
+                let p = self.trans_clos_op(dag, p.get().clone(), index);
+                let xs = self.trans_clos_op(dag, xs.get().clone(), index);
+                GOp::evaluate_typed(p, xs, typ.clone())
+            }
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
             Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
@@ -592,7 +593,7 @@ mod tests {
             tc.prefs
         );
         assert!(
-            tc.prefs.len() >= 1,
+            !tc.prefs.is_empty(),
             "verifier should have at least one public arg"
         );
         assert!(!tc.clos.is_empty(), "verifier should have reachable ops");
@@ -718,24 +719,21 @@ mod tests {
             tc.clos.iter().map(|(pr, _)| pr.node()).collect();
 
         for (_, op) in tc.clos.iter() {
-            if let Op::Marginalize(inner) = op {
-                if let Op::Ref(r, _) = inner.get() {
-                    assert!(
-                        canonical_nodes.contains(&r.node()),
-                        "Marginalize child Op::Ref({:?}) should be canonical in clos",
-                        r.node()
-                    );
-                }
-            }
-            if let Op::Proj(inner, _, _) = op {
-                if let Op::Ref(r, _) = inner.get() {
-                    assert!(
-                        canonical_nodes.contains(&r.node()),
-                        "Proj child Op::Ref({:?}) should be canonical in clos",
-                        r.node()
-                    );
-                }
-            }
+            let (op_name, inner) = match op {
+                Op::Marginalize(inner) => ("Marginalize", inner),
+                Op::Proj(inner, _, _) => ("Proj", inner),
+                _ => continue,
+            };
+            let Op::Ref(r, _) = inner.get() else {
+                continue;
+            };
+
+            assert!(
+                canonical_nodes.contains(&r.node()),
+                "{} child Op::Ref({:?}) should be canonical in clos",
+                op_name,
+                r.node()
+            );
         }
     }
 }

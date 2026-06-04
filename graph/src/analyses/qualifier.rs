@@ -23,7 +23,7 @@ impl QualifierPropagation {
             Op::Mle(a) => self.from_op(a),
             Op::Coef(a) => self.from_op(a),
             Op::Reduce(_, v) => self.from_op(v),
-            Op::Evaluate(p, x) => {
+            Op::Evaluate(p, x, _) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))

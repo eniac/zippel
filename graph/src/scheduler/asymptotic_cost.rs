@@ -205,7 +205,7 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Check(op) => cost += self.cost(op, nthreads).0,
             Op::Poly(_op) => cost += 1.0,
             Op::Mle(_op) => cost += 1.0,
-            Op::Evaluate(_p, _x) => cost += 1.0,
+            Op::Evaluate(_p, _x, _) => cost += 1.0,
             Op::Coef(_op) => cost += 1.0,
             Op::Reduce(_, v) => {
                 let (_, n) = v.typ().into_vec();

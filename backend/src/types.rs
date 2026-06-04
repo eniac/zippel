@@ -327,10 +327,8 @@ impl ATyp {
             CTyp::Record(fields) => {
                 let mut atyp_fields = Ctx::new();
                 for (name, field_typ) in fields.iter() {
-                    {
-                        let atyp = ATyp::from_ctyp(field_typ, kctx)?;
-                        atyp_fields.insert(name, &atyp);
-                    }
+                    let atyp = ATyp::from_ctyp(field_typ, kctx)?;
+                    atyp_fields.insert(name, &atyp);
                 }
                 Some(ATyp::Record(atyp_fields))
             }
@@ -647,34 +645,34 @@ impl Lub for ATyp {
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::div(&x, &y), e)),
             (ATyp::Uni(n1), ATyp::Uni(n2)) if *n1 >= *n2 => Ok(ATyp::uni(*n1 - *n2)),
-            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if *n1 >= *n2 => {
-                Ok(ATyp::vpoly(*m1.max(m2), *n1 - *n2))
+            (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) if m1 == m2 && *n1 >= *n2 => {
+                Ok(ATyp::vpoly(*m1, *n1 - *n2))
             }
-            (ATyp::VPoly(m, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(*m, *n - *d)),
-            (ATyp::Uni(d), ATyp::VPoly(m, n)) if *d >= *n => Ok(ATyp::vpoly(*m, *d - *n)),
-            (ATyp::VPoly(m1, n), ATyp::Mle(m2)) if *n >= *m2 => {
-                Ok(ATyp::vpoly(*m1.max(m2), *n - *m2))
+            (ATyp::VPoly(1, n), ATyp::Uni(d)) if *n >= *d => Ok(ATyp::vpoly(1, *n - *d)),
+            (ATyp::Uni(d), ATyp::VPoly(1, n)) if *d >= *n => Ok(ATyp::vpoly(1, *d - *n)),
+
+            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::uni(*n1)),
+            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => Ok(ATyp::mle(*n1)),
+            (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar | ABase::Fin(_))) => {
+                Ok(ATyp::vpoly(*m, *n))
             }
-            (ATyp::Mle(m1), ATyp::VPoly(m2, n)) if *m1 >= *n => {
-                Ok(ATyp::vpoly(*m1.max(m2), *m1 - *n))
-            }
-            (ATyp::Uni(n), ATyp::Mle(m)) if *n >= *m => Ok(ATyp::vpoly(*m, *n - *m)),
-            (ATyp::Mle(m), ATyp::Uni(n)) if *m >= *n => Ok(ATyp::vpoly(*m, *m - *n)),
-            (ATyp::Uni(n1), ATyp::Base(ABase::Scalar))
-            | (ATyp::Base(ABase::Scalar), ATyp::Uni(n1)) => Ok(ATyp::uni(*n1)),
-            (ATyp::Mle(n1), ATyp::Base(ABase::Scalar))
-            | (ATyp::Base(ABase::Scalar), ATyp::Mle(n1)) => Ok(ATyp::mle(*n1)),
-            (ATyp::VPoly(m, n), ATyp::Base(ABase::Scalar))
-            | (ATyp::Base(ABase::Scalar), ATyp::VPoly(m, n)) => Ok(ATyp::vpoly(*m, *n)),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_div(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
             }
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+            (ATyp::Vec(box t1, n1), b) => {
                 let t = ATyp::lub_div(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
+            }
+            (ATyp::Base(ABase::Fin(_)), ATyp::Vec(box ATyp::Base(ABase::Fin(_)), _)) => {
+                Err(LubError::div(&x, &y))
+            }
+            (a, ATyp::Vec(box t2, n2)) => {
+                let t = ATyp::lub_div(a, t2, ctx)
+                    .map_err(|e| LubError::next(LubError::div(&x, &y), e))?;
+                Ok(ATyp::vec(&t, *n2))
             }
             (a, b) => Err(LubError::div(&a, &b)),
         }
@@ -692,18 +690,18 @@ impl Lub for ATyp {
             )),
             // Uni<A> % Uni<B> = Uni<B-1> (requires B > 0)
             (ATyp::Uni(_), ATyp::Uni(n2)) if *n2 > 0 => Ok(ATyp::uni(*n2 - 1)),
-            // VPoly(m1,n1) % VPoly(m2,n2) = VPoly(max(m1,m2), n2-1)
-            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if *n2 >= 1 => {
-                Ok(ATyp::vpoly(*m1.max(m2), *n2 - 1))
+            // VPoly(m,n1) % VPoly(m,n2) = VPoly(m, n2-1); cross-arity
+            // polynomial remainder is rejected before Groebner lowering.
+            (ATyp::VPoly(m1, _), ATyp::VPoly(m2, n2)) if m1 == m2 && *n2 >= 1 => {
+                Ok(ATyp::vpoly(*m1, *n2 - 1))
             }
-            // VPoly % Uni(d) = VPoly(m, d-1)
-            (ATyp::VPoly(m, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(*m, *d - 1)),
-            (ATyp::Uni(_), ATyp::VPoly(m, n)) if *n >= 1 => Ok(ATyp::vpoly(*m, *n - 1)),
-            // VPoly % Mle(v) = VPoly(max(m,v), v-1)
-            (ATyp::VPoly(m, _), ATyp::Mle(v)) if *v >= 1 => Ok(ATyp::vpoly(*m.max(v), *v - 1)),
-            (ATyp::Mle(_), ATyp::VPoly(m, n)) if *n >= 1 => Ok(ATyp::vpoly(*m, *n - 1)),
-            // Vec<A> % C = Vec<A>
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+            // Mixed Uni/VPoly quotient-remainder witnesses are currently
+            // lowerable only for arity-1 VPoly.
+            (ATyp::VPoly(1, _), ATyp::Uni(d)) if *d >= 1 => Ok(ATyp::vpoly(1, *d - 1)),
+            (ATyp::Uni(_), ATyp::VPoly(1, n)) if *n >= 1 => Ok(ATyp::vpoly(1, *n - 1)),
+            // Vec<A> % C = Vec<lub_rem(A, C)>; scalar-left vector remainder
+            // is not Groebner-lowerable and falls through to an error.
+            (ATyp::Vec(box t1, n1), b) => {
                 let t = ATyp::lub_rem(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::rem(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -717,16 +715,11 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_pow(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::pow(&x, &y), e)),
-            // Vec<A> ^ Vec<B> = Vec<C>
-            (ATyp::Vec(box a, n), ATyp::Vec(box b, m)) if n == m => Ok(ATyp::vec(
-                &ATyp::lub_pow(a, b, ctx).map_err(|e| LubError::next(LubError::pow(&x, &y), e))?,
-                *n,
-            )),
-
             // Uni<A> ^ Fin<B> = Uni<A*B>
             (ATyp::Uni(n1), ATyp::Base(ABase::Fin(r))) => Ok(ATyp::uni(n1 * r.len())),
-            // Vec<C> ^ C
-            (ATyp::Vec(box t1, n1), b) | (b, ATyp::Vec(box t1, n1)) => {
+            // Vec<C> ^ C. Vector exponents and scalar-left vector
+            // exponentiation are not runtime-supported.
+            (ATyp::Vec(box t1, n1), b) => {
                 let t = ATyp::lub_pow(t1, b, ctx)
                     .map_err(|e| LubError::next(LubError::pow(&x, &y), e))?;
                 Ok(ATyp::vec(&t, *n1))
@@ -740,6 +733,14 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_dot(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::dot(&x, &y), e)),
+            (
+                ATyp::Vec(box ATyp::Base(ABase::G1), n1),
+                ATyp::Vec(box ATyp::Base(ABase::G2), n2),
+            )
+            | (
+                ATyp::Vec(box ATyp::Base(ABase::G2), n1),
+                ATyp::Vec(box ATyp::Base(ABase::G1), n2),
+            ) if n1 == n2 => Ok(ATyp::gt()),
             (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
                 let t = ATyp::lub_mul(t1, t2, ctx)
                     .map_err(|e| LubError::next(LubError::dot(&x, &y), e))?;
@@ -775,11 +776,7 @@ impl Lub for ATyp {
             (ATyp::Base(a), ATyp::Base(b)) => ABase::lub_and(a, b, ctx)
                 .map(ATyp::Base)
                 .map_err(|e| LubError::next(LubError::and(&a, &b), e)),
-            (ATyp::Vec(box t1, n1), ATyp::Vec(box t2, n2)) if n1 == n2 => {
-                let t = ATyp::lub_and(t1, t2, ctx)
-                    .map_err(|e| LubError::next(LubError::and(&a, &b), e))?;
-                Ok(ATyp::vec(&t, *n1))
-            }
+
             (a, b) => Err(LubError::and(&a, &b)),
         }
     }
@@ -1419,20 +1416,21 @@ mod tests {
         });
     }
 
-    /// `dot(Vec<G1, n>, Vec<G2, n>) == GT` (and reverse) — multi-pairing
-    /// inner product. The Vec arm delegates element types to `ATyp::lub_dot`,
-    /// which resolves `G1 · G2 → GT` via the pairing rule.
+    /// `dot(Vec<G1, n>, Vec<G2, n>) == GT` (and reverse) — aggregate pairing dot.
+    /// The Vec arm delegates element types through the pairing rule.
     #[test]
     fn pbt_lub_dot_vec_g1_vec_g2_is_gt() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(1..=8)?;
+            let left = ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing).unwrap();
+            let right = ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing).unwrap();
             assert_eq!(
-                ATyp::lub_dot(&ATyp::vec_g1(n), &ATyp::vec_g2(n), &Nothing).unwrap(),
+                left,
                 ATyp::gt(),
                 "dot(Vec<G1,{n}>, Vec<G2,{n}>) should be GT"
             );
             assert_eq!(
-                ATyp::lub_dot(&ATyp::vec_g2(n), &ATyp::vec_g1(n), &Nothing).unwrap(),
+                right,
                 ATyp::gt(),
                 "dot(Vec<G2,{n}>, Vec<G1,{n}>) should be GT"
             );
@@ -1453,6 +1451,134 @@ mod tests {
             );
             Ok(())
         });
+    }
+
+    #[test]
+    fn lub_and_accepts_scalar_bool_only() {
+        assert_eq!(
+            ATyp::lub_and(&ATyp::bool(), &ATyp::bool(), &Nothing),
+            Ok(ATyp::bool())
+        );
+        assert!(ATyp::lub_and(&ATyp::vec_bool(2), &ATyp::vec_bool(2), &Nothing).is_err());
+        assert!(ATyp::lub_and(&ATyp::vec_bool(2), &ATyp::bool(), &Nothing).is_err());
+        assert!(ATyp::lub_and(&ATyp::bool(), &ATyp::vec_bool(2), &Nothing).is_err());
+    }
+
+    /// Division preserves vector operand order.
+    #[test]
+    fn lub_div_vector_operand_order() {
+        assert_eq!(
+            ATyp::lub_div(&ATyp::scalar(), &ATyp::vec_scalar(2), &Nothing),
+            Ok(ATyp::vec_scalar(2))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::g1(), &ATyp::vec_scalar(2), &Nothing),
+            Ok(ATyp::vec_g1(2))
+        );
+        assert!(ATyp::lub_div(&ATyp::scalar(), &ATyp::vec_g1(2), &Nothing).is_err());
+        assert_eq!(
+            ATyp::lub_div(&ATyp::vec_g1(2), &ATyp::scalar(), &Nothing),
+            Ok(ATyp::vec_g1(2))
+        );
+
+        let fin = ATyp::fin(CRange::singleton(3));
+        assert!(ATyp::lub_div(&fin, &ATyp::vec(&fin, 2), &Nothing).is_err());
+    }
+
+    #[test]
+    fn lub_rem_rejects_scalar_left_vector() {
+        let fin = ATyp::fin(CRange::singleton(3));
+        assert!(ATyp::lub_rem(&ATyp::vec(&fin, 2), &fin, &Nothing).is_ok());
+        assert!(ATyp::lub_rem(&fin, &ATyp::vec(&fin, 2), &Nothing).is_err());
+    }
+
+    #[test]
+    fn lub_pow_rejects_scalar_left_vector_and_vec_exponents() {
+        let fin = ATyp::fin(CRange::singleton(3));
+        assert!(ATyp::lub_pow(&ATyp::vec(&fin, 2), &fin, &Nothing).is_ok());
+        assert!(ATyp::lub_pow(&fin, &ATyp::vec(&fin, 2), &Nothing).is_err());
+        assert!(ATyp::lub_pow(&ATyp::scalar(), &ATyp::vec(&fin, 2), &Nothing).is_err());
+        assert!(ATyp::lub_pow(&ATyp::vec(&fin, 2), &ATyp::vec(&fin, 2), &Nothing).is_err());
+    }
+
+    #[test]
+    fn lub_div_poly_groebner_supported_shapes() {
+        assert_eq!(
+            ATyp::lub_div(&ATyp::uni(3), &ATyp::uni(1), &Nothing),
+            Ok(ATyp::uni(2))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing),
+            Ok(ATyp::vpoly(2, 2))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing),
+            Ok(ATyp::vpoly(1, 2))
+        );
+        assert_eq!(
+            ATyp::lub_div(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing),
+            Ok(ATyp::vpoly(1, 2))
+        );
+
+        assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::vpoly(3, 1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::vpoly(2, 3), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::uni(3), &ATyp::vpoly(2, 1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::mle(2), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::uni(2), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::mle(2), &ATyp::vpoly(2, 2), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::vpoly(2, 2), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::mle(2), &ATyp::mle(2), &Nothing).is_err());
+    }
+
+    #[test]
+    fn lub_rem_poly_groebner_supported_shapes() {
+        assert_eq!(
+            ATyp::lub_rem(&ATyp::uni(3), &ATyp::uni(1), &Nothing),
+            Ok(ATyp::uni(0))
+        );
+        assert_eq!(
+            ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 1), &Nothing),
+            Ok(ATyp::vpoly(2, 0))
+        );
+        assert_eq!(
+            ATyp::lub_rem(&ATyp::vpoly(1, 3), &ATyp::uni(1), &Nothing),
+            Ok(ATyp::vpoly(1, 0))
+        );
+        assert_eq!(
+            ATyp::lub_rem(&ATyp::uni(3), &ATyp::vpoly(1, 1), &Nothing),
+            Ok(ATyp::vpoly(1, 0))
+        );
+
+        assert!(ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::vpoly(3, 1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::vpoly(2, 3), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::uni(3), &ATyp::vpoly(2, 1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::mle(2), &ATyp::uni(1), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::uni(2), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::mle(2), &ATyp::vpoly(2, 2), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::vpoly(2, 2), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::mle(2), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_rem(&ATyp::vpoly(1, 2), &ATyp::scalar(), &Nothing).is_err());
+    }
+
+    /// Polynomial/scalar division requires the polynomial-like operand on the left.
+    #[test]
+    fn lub_div_poly_scalar_requires_poly_left() {
+        assert!(ATyp::lub_div(&ATyp::scalar(), &ATyp::uni(2), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::scalar(), &ATyp::mle(2), &Nothing).is_err());
+        assert!(ATyp::lub_div(&ATyp::scalar(), &ATyp::vpoly(1, 2), &Nothing).is_err());
+
+        let fin = ATyp::Base(ABase::Fin(CRange::singleton(3)));
+        for (poly, expected) in [
+            (ATyp::uni(2), ATyp::uni(2)),
+            (ATyp::mle(2), ATyp::mle(2)),
+            (ATyp::vpoly(1, 2), ATyp::vpoly(1, 2)),
+        ] {
+            assert_eq!(
+                ATyp::lub_div(&poly, &ATyp::scalar(), &Nothing),
+                Ok(expected.clone())
+            );
+            assert_eq!(ATyp::lub_div(&poly, &fin, &Nothing), Ok(expected));
+        }
     }
 
     /// `dot(Vec<Scalar, n>, Vec<Scalar, m>)` with `n != m` has no covering arm,

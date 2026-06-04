@@ -600,10 +600,7 @@ mod cross_layer {
         Op::Poly(mk::<TestConfig>(val_op(v.clone())))
     }
     fn eval_op(p: &V, x: &V) -> TOp {
-        Op::Evaluate(
-            mk::<TestConfig>(val_op(p.clone())),
-            mk::<TestConfig>(val_op(x.clone())),
-        )
+        GOp::evaluate(val_op(p.clone()), val_op(x.clone()))
     }
     fn mle_op(v: &V) -> TOp {
         Op::Mle(mk::<TestConfig>(val_op(v.clone())))

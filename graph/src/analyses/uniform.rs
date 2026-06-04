@@ -26,7 +26,7 @@ fn op_ancestors_of<C: ArkConfig>(
         Op::Poly(op) => op_ancestors_of(op, ancestors),
         Op::Coef(op) => op_ancestors_of(op, ancestors),
         Op::Reduce(_, v) => op_ancestors_of(v, ancestors),
-        Op::Evaluate(p, x) => op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors)),
+        Op::Evaluate(p, x, _) => op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors)),
         Op::Interpolate(points, evals) => {
             op_ancestors_of(points, ancestors).union(op_ancestors_of(evals, ancestors))
         }
@@ -71,7 +71,7 @@ fn compute_distribution<C: ArkConfig>(
         Op::Ram(a, _) => compute_distribution(a, ancestors, distributions),
         Op::Poly(a) => compute_distribution(a, ancestors, distributions),
         Op::Coef(op) => compute_distribution(op, ancestors, distributions),
-        Op::Evaluate(p, x) => {
+        Op::Evaluate(p, x, _) => {
             let _dist_p = compute_distribution(p, ancestors, distributions)?;
             let dist_x = compute_distribution(x, ancestors, distributions)?;
             if is_independent(p, x, ancestors) {

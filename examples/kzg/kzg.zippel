@@ -1,16 +1,23 @@
-// `srs_g1` is `private` even though the SRS is not cryptographically secret
-// — the verifier graph never consumes it (only the prover does, for the
-// commit + opening MSMs), and zippel's runtime currently requires every
-// `public` input to be passed to the verifier. Privatizing it sidesteps
-// the unused-input overhead. The `where` clause still binds the SRS
-// structure for the prover.
+// `srs_g1` is `private` even though the SRS is not cryptographically secret:
+// it is setup/prover-side data for the commitment and opening MSMs, and the
+// verifier graph never consumes it directly. zippel's runtime currently
+// requires every `public` input to be passed to the verifier, and making this
+// public also creates an unsupported leak path through dot(poly_coeffs, srs_g1).
+// The `where` clause still binds the SRS structure for the prover. The
+// transcript commitment/opening is blinded by a random multiple of
+// `(X - eval_point)`; without that blinding, plain KZG is not ZK.
 proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
         where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
         
-        let poly_x = poly(poly_coeffs);
-        commitment <- dot(poly_coeffs, srs_g1);
+        // Blind by a random multiple of (X - eval_point); this preserves the
+        // claimed evaluation while masking the committed/opened coefficients.
+        let blind = random<F>;
+        let vanishing_blind_coeffs = [-blind * eval_point, blind];
+        let blinded_coeffs = poly_coeffs + vanishing_blind_coeffs;
+        let poly_x = poly(blinded_coeffs);
+        commitment <- dot(blinded_coeffs, srs_g1);
 
         let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
 
@@ -18,7 +25,7 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
         let srs_g1_truncated = srs_g1[0..N-1];
         proof <- dot(quotient_coeffs, srs_g1_truncated);
 
-        let pairing_lhs = pair(proof, (srs_g2_s) - (gen_g2 * eval_point));
+        let pairing_lhs = pair(proof, srs_g2_s - gen_g2 * eval_point);
         let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
         verify(pairing_lhs == pairing_rhs)
 }

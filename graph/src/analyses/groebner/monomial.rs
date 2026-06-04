@@ -98,12 +98,11 @@ impl MonoTerm {
     fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
         let mut result = F::one();
         for (var, power) in self.0.iter() {
+            // Missing variables contribute multiplicative identity.
             if let Some(value) = p.get(var) {
                 for _ in 0..*power {
                     result *= value;
                 }
-            } else {
-                // Variable not found in context, assume it evaluates to 1
             }
         }
         result
@@ -272,11 +271,21 @@ impl ElimTerm {
         ElimTerm(MonoTerm(vars))
     }
 
+    /// Returns true for Gröbner-builder helper variables that are not
+    /// verifier-visible protocol values, even though they may be represented by
+    /// public sentinels for basis construction.
+    pub(crate) fn is_generated_internal(v: &PRef) -> bool {
+        v.name()
+            .map(|name| name.0.starts_with(super::GB_GENERATED_NAME_PREFIX))
+            .unwrap_or(false)
+    }
+
     /// Returns true if the variable should be eliminated in the KnowledgeAnalysis.
-    /// Local variables (prover-internal computations) and private uniform variables
-    /// (random masks) are eliminated.
+    /// Local variables (prover-internal computations), Gröbner-generated helper
+    /// sentinels, and private uniform variables (random masks) are eliminated.
     pub fn eliminate_var(v: &PRef) -> bool {
         v.qualifier == Qualifier::Local
+            || Self::is_generated_internal(v)
             || (v.qualifier == Qualifier::Private && v.distribution.is_uniform())
     }
 

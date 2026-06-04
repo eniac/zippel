@@ -326,7 +326,7 @@ mod op_construction_tests {
         let eval_op = Op::evaluate(p, x);
 
         match eval_op {
-            Op::Evaluate(_, _) => (),
+            Op::Evaluate(_, _, typ) => assert_eq!(typ, ATyp::scalar()),
             _ => panic!("Expected Evaluate"),
         }
     }

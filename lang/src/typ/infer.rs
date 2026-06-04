@@ -494,8 +494,7 @@ impl Typeable for CExp {
                             }
                             // Univariate polynomial evaluated at a vector of points:
                             (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
-                                let _i = b
-                                    .to_scalar(kctx)
+                                b.to_scalar(kctx)
                                     .ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
                                 Ok(CTyp::Vec(b, len_vec))
                             }
@@ -850,23 +849,13 @@ impl Typeable for CExp {
 
                 match tv {
                     CTyp::Vec(box elem, n) if n > 0 => {
-                        let result = CTyp::lub_op(*op, &elem, &elem, kctx)
-                            .map_err(|e| TypeError::lub(TypeError::exp(kctx, vctx, self), e))?;
-                        if result == elem {
-                            Ok(elem.clone())
-                        } else {
-                            Err(TypeError::next(
-                                TypeError::exp(kctx, vctx, self),
-                                TypeError::ReduceAcc(
-                                    kctx.clone(),
-                                    vctx.clone(),
-                                    *op,
-                                    self.clone(),
-                                    elem.clone(),
-                                    result,
-                                ),
-                            ))
+                        let wrap_lub_error =
+                            |e| TypeError::lub(TypeError::exp(kctx, vctx, self), e);
+                        let mut acc = elem.clone();
+                        for _ in 1..n {
+                            acc = CTyp::lub_op(*op, &acc, &elem, kctx).map_err(wrap_lub_error)?;
                         }
+                        Ok(acc)
                     }
                     _ => Err(TypeError::next(
                         TypeError::exp(kctx, vctx, self),
@@ -1513,16 +1502,20 @@ mod tests {
         let mult_group_pow1 = CExp::pow(CExp::varstr("s1"), CExp::varstr("f1"));
         assert!(mult_group_pow1.infer(&KIND_CTX, &fctx, &vctx).is_err());
 
-        // Create expression v1 ^ v1
-        let vec_pow1 = CExp::pow(CExp::varstr("v1"), CExp::vec(vec![CExp::lit(1); 5]));
+        // Create expression v1 ^ 1: vector-left scalar exponentiation is supported.
+        let vec_pow1 = CExp::pow(CExp::varstr("v1"), CExp::lit(1));
         assert_eq!(
             vec_pow1.infer(&KIND_CTX, &fctx, &vctx),
             Ok(CTyp::vec(&CTyp::varstr("F"), 5))
         );
 
-        // Create expression v1 ^ v2
-        let vec_pow2 = CExp::pow(CExp::varstr("v1"), CExp::varstr("v2"));
+        // Vector exponents and scalar-left vector exponentiation are rejected.
+        let vec_pow2 = CExp::pow(CExp::varstr("v1"), CExp::vec(vec![CExp::lit(1); 5]));
         assert!(vec_pow2.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        let vec_pow3 = CExp::pow(CExp::varstr("v1"), CExp::varstr("v2"));
+        assert!(vec_pow3.infer(&KIND_CTX, &fctx, &vctx).is_err());
+        let scalar_left_vec_pow = CExp::pow(CExp::lit(1), CExp::vec(vec![CExp::lit(1); 5]));
+        assert!(scalar_left_vec_pow.infer(&KIND_CTX, &fctx, &vctx).is_err());
     }
 
     // Test for dot product
@@ -1549,6 +1542,39 @@ mod tests {
         assert_eq!(
             vec_dot1.infer(&KIND_CTX, &fctx, &vctx),
             Ok(CTyp::Base(Tid::from("F")))
+        );
+
+        let mut pairing_kctx = KIND_CTX.clone();
+        pairing_kctx.insert(&Tid::from("G1"), &Kind::Group);
+        pairing_kctx.insert(&Tid::from("G2"), &Kind::Group);
+        pairing_kctx.insert(&Tid::from("GT"), &Kind::pairing("G1", "G2"));
+        let mut pairing_vctx = VAR_CTX.clone();
+        pairing_vctx.insert(
+            &Vid::from("vg1"),
+            &CTyp::vec(&CTyp::Base(Tid::from("G1")), 2),
+        );
+        pairing_vctx.insert(
+            &Vid::from("vg2"),
+            &CTyp::vec(&CTyp::Base(Tid::from("G2")), 2),
+        );
+        assert!(CExp::dot(CExp::varstr("g1"), CExp::varstr("g2"))
+            .infer(&pairing_kctx, &fctx, &pairing_vctx)
+            .is_err());
+        assert_eq!(
+            CExp::dot(CExp::varstr("vg1"), CExp::varstr("vg2")).infer(
+                &pairing_kctx,
+                &fctx,
+                &pairing_vctx
+            ),
+            Ok(CTyp::Base(Tid::from("GT")))
+        );
+        assert_eq!(
+            CExp::dot(CExp::varstr("vg2"), CExp::varstr("vg1")).infer(
+                &pairing_kctx,
+                &fctx,
+                &pairing_vctx
+            ),
+            Ok(CTyp::Base(Tid::from("GT")))
         );
 
         // Create expression v1 . v2
@@ -2130,6 +2156,19 @@ mod tests {
             Ok(poly_t),
             "reduce(+, [Poly<F, 1, 3>; 4]) must yield Poly<F, 1, 3>",
         );
+    }
+
+    #[test]
+    fn test_iteration7_reduce_add_fin_widens_left_fold() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        let elem = CTyp::Fin(Range::new(0, 2));
+        vctx.insert(&Vid::from("fv"), &CTyp::vec(&elem, 3));
+
+        let first = CTyp::lub_op(BinOp::Add, &elem, &elem, &KIND_CTX).unwrap();
+        let expected = CTyp::lub_op(BinOp::Add, &first, &elem, &KIND_CTX).unwrap();
+        let e = CExp::reduce(BinOp::Add, CExp::varstr("fv"));
+        assert_eq!(e.infer(&KIND_CTX, &fctx, &vctx), Ok(expected));
     }
 
     /// `reduce(dot, [Vec(F,2); 3])` must be rejected: dot produces a scalar F,

@@ -86,15 +86,18 @@ Let `p₁ : Poly<F, n₁, m₁>`, `p₂ : Poly<F, n₂, m₂>`.
 | `p₁ + p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ − p₂` | `Poly<F, max(n₁,n₂), max(m₁, m₂)>` |
 | `p₁ × p₂` | `Poly<F, max(n₁,n₂), m₁ + m₂>` |
-| `p₁ / p₂` (req. `m₁ ≥ m₂`) | `Poly<F, max(n₁,n₂), m₁ − m₂>` |
-| `p₁ % p₂` (req. `m₂ ≥ 1`) | `Poly<F, max(n₁,n₂), m₂ − 1>` |
+| `p₁ / p₂` (req. `n₁ = n₂`, `m₁ ≥ m₂`) | `Poly<F, n₁, m₁ − m₂>` |
+| `p₁ % p₂` (req. `n₁ = n₂`, `m₂ ≥ 1`) | `Poly<F, n₁, m₂ − 1>` |
 | `p : Poly<…> ± c : F` | input Poly type |
 | `p : Poly<…> × c : F` | input Poly type |
 | `p : Poly<…> / c : F` | input Poly type (scalar division) |
 
 The identity `P = D·Q + R` with `deg(R) < deg(D)` is used by the Gröbner
-phase-13 layer: witnesses `q : Poly<F, nr, m₁ − m₂>` and
-`r : Poly<F, nr, m₂ − 1>` where `nr = max(n₁, n₂)`.
+phase-13 layer for same-arity quotient/remainder operations: witnesses
+`q : Poly<F, n₁, m₁ − m₂>` and `r : Poly<F, n₁, m₂ − 1>`. Backend lowering
+also permits mixed `Uni`/`VPoly` quotient-remainder only when the `VPoly`
+arity is `1`; non-scalar `Mle` quotient/remainder and cross-arity `VPoly`
+quotient/remainder are rejected before Gröbner lowering.
 
 ## Vec ↔ Poly length relations
 

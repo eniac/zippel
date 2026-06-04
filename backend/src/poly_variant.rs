@@ -1,4 +1,4 @@
-use ark_ff::{Field, PrimeField, Zero};
+use ark_ff::{FftField, Field, PrimeField, Zero};
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension, Polynomial,
     multivariate::{
@@ -536,7 +536,6 @@ impl<F: Field> PolyVariant<F> {
         scalar_poly.poly_sub(poly)
     }
 
-    // TODO: Update the rest of this file
     /// Multiply two polynomials - always returns a VirtualPolynomial for any multiplication
     ///
     /// Uses arkworks' `Mul` impl on `&DensePolynomial`, which dispatches
@@ -550,7 +549,9 @@ impl<F: Field> PolyVariant<F> {
         F: ark_ff::FftField,
     {
         match (self, other) {
-            // Univariate * Univariate
+            // Univariate * Univariate. Use arkworks dense multiplication here;
+            // for FFT-capable fields this routes through an evaluation domain
+            // instead of the quadratic `naive_mul` path.
             (PolyVariant::DenseUni(p1), PolyVariant::DenseUni(p2)) => {
                 Ok(PolyVariant::DenseUni(p1 * p2))
             }

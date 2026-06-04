@@ -1556,6 +1556,38 @@ impl<C: ArkConfig> Value<C> {
     #[inline]
     pub fn value_dot(&self, other: &mut Self) {
         match (&self, &other) {
+            (Value::VecG1(a), Value::VecG2(b)) => {
+                *other = Value::GT(C::POps::billinear_vec_dot(a, b))
+            }
+            (Value::VecG2(b), Value::VecG1(a)) => {
+                *other = Value::GT(C::POps::billinear_vec_dot(a, b))
+            }
+            (Value::VecG1Affine(a), Value::VecG2Affine(b)) => {
+                let g1 = a.iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let g2 = b.iter().map(|b| (*b).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(&g1, &g2))
+            }
+            (Value::VecG2Affine(b), Value::VecG1Affine(a)) => {
+                let g1 = a.iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let g2 = b.iter().map(|b| (*b).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(&g1, &g2))
+            }
+            (Value::VecG1(a), Value::VecG2Affine(b)) => {
+                let g2 = b.iter().map(|b| (*b).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(a, &g2))
+            }
+            (Value::VecG2Affine(b), Value::VecG1(a)) => {
+                let g2 = b.iter().map(|b| (*b).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(a, &g2))
+            }
+            (Value::VecG1Affine(a), Value::VecG2(b)) => {
+                let g1 = a.iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(&g1, b))
+            }
+            (Value::VecG2(b), Value::VecG1Affine(a)) => {
+                let g1 = a.iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                *other = Value::GT(C::POps::billinear_vec_dot(&g1, b))
+            }
             (Value::VecIndex(a), Value::VecG1Affine(b))
             | (Value::VecG1Affine(b), Value::VecIndex(a)) => {
                 let vf: Vec<C::F> = a
@@ -1591,11 +1623,11 @@ impl<C: ArkConfig> Value<C> {
                 *other = Value::GT(C::POps::vec_dot(b, a))
             }
             (Value::VecG1(b), Value::VecIndex(_)) => {
-                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vg = <C::G1 as CurveGroup>::normalize_batch(b);
                 Self::value_dot(&Value::VecG1Affine(vg), other);
             }
             (Value::VecIndex(_), Value::VecG1(b)) => {
-                let vg = b.par_iter().map(|a| (*a).into()).collect::<Vec<_>>();
+                let vg = <C::G1 as CurveGroup>::normalize_batch(b);
                 *other = Value::VecG1Affine(vg);
                 Self::value_dot(self, other);
             }
@@ -1607,24 +1639,24 @@ impl<C: ArkConfig> Value<C> {
             // prover wall-clock at large K (≈90% of MSM time at
             // K=4096 on BLS12-381).
             (Value::VecG2(b), Value::VecIndex(_)) => {
-                let vg = <C::G2 as ark_ec::CurveGroup>::normalize_batch(b);
+                let vg = <C::G2 as CurveGroup>::normalize_batch(b);
                 Self::value_dot(&Value::VecG2Affine(vg), other);
             }
             (Value::VecG1(b), Value::VecScalar(_)) => {
-                let vg = <C::G1 as ark_ec::CurveGroup>::normalize_batch(b);
+                let vg = <C::G1 as CurveGroup>::normalize_batch(b);
                 Self::value_dot(&Value::VecG1Affine(vg), other);
             }
             (Value::VecScalar(_), Value::VecG1(b)) => {
-                let vg = <C::G1 as ark_ec::CurveGroup>::normalize_batch(b);
+                let vg = <C::G1 as CurveGroup>::normalize_batch(b);
                 *other = Value::VecG1Affine(vg);
                 Self::value_dot(self, other);
             }
             (Value::VecG2(b), Value::VecScalar(_)) => {
-                let vg = <C::G2 as ark_ec::CurveGroup>::normalize_batch(b);
+                let vg = <C::G2 as CurveGroup>::normalize_batch(b);
                 Self::value_dot(&Value::VecG2Affine(vg), other);
             }
             (Value::VecScalar(_), Value::VecG2(b)) => {
-                let vg = <C::G2 as ark_ec::CurveGroup>::normalize_batch(b);
+                let vg = <C::G2 as CurveGroup>::normalize_batch(b);
                 *other = Value::VecG2Affine(vg);
                 Self::value_dot(self, other);
             }
@@ -3841,6 +3873,42 @@ mod value_tests {
         let zero = TestValue::G2(G2Projective::zero());
         assert_eq!(a.clone() + zero.clone(), a.clone());
         assert_eq!(zero + a.clone(), a);
+    }
+
+    #[test]
+    fn test_value_dot_vec_g1_vec_g2_returns_aggregate_gt_and_pair_returns_vecgt() {
+        use ark_ec::pairing::Pairing;
+        let g1 = vec![
+            G1Projective::rand(&mut thread_rng()),
+            G1Projective::rand(&mut thread_rng()),
+        ];
+        let g2 = vec![
+            G2Projective::rand(&mut thread_rng()),
+            G2Projective::rand(&mut thread_rng()),
+        ];
+
+        let dot = TestValue::VecG1(g1.clone()).dot(TestValue::VecG2(g2.clone()));
+        let reference = ark_bn254::Bn254::multi_pairing(g1.iter().copied(), g2.iter().copied());
+        assert_eq!(dot, TestValue::GT(reference));
+
+        let reverse_dot = TestValue::VecG2(g2.clone()).dot(TestValue::VecG1(g1.clone()));
+        assert_eq!(reverse_dot, TestValue::GT(reference));
+
+        let pair = TestValue::VecG1(g1).pair(TestValue::VecG2(g2));
+        assert!(matches!(pair, TestValue::VecGT(v) if v.len() == 2));
+    }
+
+    #[test]
+    fn value_dot_projective_msm_paths_source_guard_uses_normalize_batch() {
+        let source = include_str!("values.rs");
+        let impl_body = source
+            .split("pub fn value_dot")
+            .nth(1)
+            .and_then(|tail| tail.split("pub fn dot").next())
+            .expect("value_dot implementation should be present");
+        assert!(impl_body.contains("<C::G1 as CurveGroup>::normalize_batch"));
+        assert!(impl_body.contains("<C::G2 as CurveGroup>::normalize_batch"));
+        assert!(impl_body.contains("C::POps::billinear_vec_dot"));
     }
 
     #[test]

@@ -1415,13 +1415,14 @@ impl<C: HasOpFactory> UDag<C> {
                         Some(box x) => {
                             let vx =
                                 self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
-                            let eval_op = GOp::evaluate(vp, vx);
                             let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                                 TypeError::next(
                                     TypeError::exp(kctx, &vctx, &exp),
                                     TypeError::ark(kctx, &vctx, &exp, &typ),
                                 )
                             })?;
+                            let eval_op = GOp::evaluate_typed(vp, vx, atyp.clone());
+                            debug_assert_eq!(eval_op.typ(), atyp);
                             return Ok(self.materialize(eval_op, edge_type, atyp));
                         }
                         // Unary form: eval(p) → Op::Fft(p)  (FFT-grid evaluation)
@@ -1625,14 +1626,14 @@ impl<C: HasOpFactory> UDag<C> {
 
                     let (ie, n) = te.into_vec();
 
-                    let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                    let result_typ = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
                             TypeError::exp(kctx, &vctx, &exp),
                             TypeError::ark(kctx, &vctx, &exp, &typ),
                         )
                     })?;
 
-                    let input_element_typ = ATyp::from_ctyp(&ie, kctx).ok_or_else(|| {
+                    let binder_typ = ATyp::from_ctyp(&ie, kctx).ok_or_else(|| {
                         TypeError::next(
                             TypeError::exp(kctx, &vctx, &exp),
                             TypeError::ark(kctx, &vctx, &exp, &ie),
@@ -1644,8 +1645,7 @@ impl<C: HasOpFactory> UDag<C> {
                         let mut local_vars = vars.clone();
                         let mut local_vctx = vctx.clone();
                         let ram_op = GOp::ram(oe.clone(), GOp::index(i));
-                        let ram_ref =
-                            self.materialize(ram_op, edge_type, input_element_typ.clone());
+                        let ram_ref = self.materialize(ram_op, edge_type, binder_typ.clone());
                         local_vars.insert(&x, &ram_ref);
                         local_vctx.insert(&x, &ie);
                         let ol = self.add_exp(
@@ -1659,7 +1659,7 @@ impl<C: HasOpFactory> UDag<C> {
                         )?;
                         res.push(ol);
                     }
-                    return Ok(self.materialize(GOp::vec(res), edge_type, atyp));
+                    return Ok(self.materialize(GOp::vec(res), edge_type, result_typ));
                 }
 
                 CExp::Reduce(op, box v) => {
@@ -2048,17 +2048,17 @@ impl<C: HasOpFactory> UDag<C> {
                                                 .map(|op| (**op).clone())
                                         }
                                         Op::Ref(r, _op_typ) => {
+                                            let source_node = &self[r.node()];
+
                                             // If the DAG node stores a Record, extract the
                                             // field directly (avoiding an unnecessary Proj node).
-                                            if let Some(inner) = self[r.node()].op() {
-                                                if let Op::Record(fields) = inner.get() {
-                                                    if let Some(field_op) = fields.get(&field_name)
-                                                    {
-                                                        return Ok(field_op.get().clone());
-                                                    }
-                                                }
+                                            if let Some(inner) = source_node.op()
+                                                && let Op::Record(fields) = inner.get()
+                                                && let Some(field_op) = fields.get(&field_name)
+                                            {
+                                                return Ok(field_op.get().clone());
                                             }
-                                            // Record produced by a node (e.g. marginalize); add Proj node
+
                                             let field_typ_atyp =
                                                 ATyp::from_ctyp(field_typ_ctyp, kctx).ok_or_else(
                                                     || {
@@ -2072,8 +2072,9 @@ impl<C: HasOpFactory> UDag<C> {
                                                 )?;
                                             // If the record source is an Arg node we don't need
                                             // to materialise a Proj node — the field is selected
-                                            // directly off the typed reference.
-                                            if self[r.node()].is_arg() {
+                                            // directly off the typed reference. Other record-producing
+                                            // nodes (for example marginalize) use a Proj node.
+                                            if source_node.is_arg() {
                                                 return Ok(Op::Ref(Ref(r.node()), field_typ_atyp));
                                             }
                                             let proj_node = self.add_node(Node::proj(

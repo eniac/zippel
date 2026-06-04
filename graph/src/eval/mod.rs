@@ -86,7 +86,7 @@ where
         }
         Op::Random(typ, _) => Ok(Value::random(rng, typ)),
         Op::Challenge(typ, _) => Ok(Value::random(rng, typ)),
-        Op::Evaluate(p, x) => {
+        Op::Evaluate(p, x, _) => {
             let p_val = eval_op(p, env, rng)?;
             let x_val = eval_op(x, env, rng)?;
             Ok(p_val.value_eval(x_val))
@@ -222,7 +222,7 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
         Op::Bin(_, a, b, _)
         | Op::Pair(a, b, _)
         | Op::Ram(a, b)
-        | Op::Evaluate(a, b)
+        | Op::Evaluate(a, b, _)
         | Op::Interpolate(a, b) => {
             collect_refs_into(a, acc);
             collect_refs_into(b, acc);

@@ -14,11 +14,11 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         // BASE CASE (n=1)
         // Prover "sends" a and b scalars. In non-interactive, these are the final results
         // of the prover's computation, used for the verifier's final check.
-        let final_a_scalar = a_vec_k_private[0];
-        let final_b_scalar = b_vec_k_private[0];
+        final_a_scalar <- a_vec_k_private[0];
+        final_b_scalar <- b_vec_k_private[0];
 
-        ga <- g_vec_k[0] * final_a_scalar;
-        hb <- h_vec_k[0] * final_b_scalar;
+        let ga = g_vec_k[0] * final_a_scalar;
+        let hb = h_vec_k[0] * final_b_scalar;
 
         // For a fully non-interactive system where this fn contributes to a larger transcript:
         // af_val_base_case <- final_a_scalar;
@@ -27,7 +27,7 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         // it performs the check internally.
 
         // Verifier computes c = a*b (the inner product for this base case)
-        ip_val_at_base <- final_a_scalar * final_b_scalar;
+        let ip_val_at_base = final_a_scalar * final_b_scalar;
 
         // Verifier checks if p_commitment_k == g_vec_k[0]*final_a_scalar + h_vec_k[0]*final_b_scalar + u_base_for_ipa*ip_val_at_base
         // (Translated from multiplicative g^a h^b u^c)

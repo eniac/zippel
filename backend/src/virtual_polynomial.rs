@@ -1,5 +1,5 @@
 use crate::{PolyError, PolyVariant};
-use ark_ff::{Field, PrimeField};
+use ark_ff::{FftField, Field, PrimeField};
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use rayon::prelude::*;
 use std::cmp::Ordering;
@@ -37,7 +37,7 @@ pub struct VirtualPolynomial<F: Field> {
 impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     /// Create a new empty virtual polynomial
     pub fn new() -> Self {
-        VirtualPolynomial {
+        Self {
             products: Vec::new(),
             flattened_polys: Vec::new(),
             poly_pointers_lookup: HashMap::new(),
@@ -51,7 +51,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         let mut hm = HashMap::new();
         hm.insert(Arc::clone(&poly_arc), 0);
 
-        VirtualPolynomial {
+        Self {
             products: vec![(F::one(), vec![0])],
             flattened_polys: vec![poly_arc],
             poly_pointers_lookup: hm,
@@ -62,9 +62,9 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     /// Create a virtual polynomial from a scalar constant
     pub fn from_scalar(scalar: F) -> Self {
         if scalar.is_zero() {
-            VirtualPolynomial::new()
+            Self::new()
         } else {
-            VirtualPolynomial {
+            Self {
                 products: vec![(scalar, vec![])],
                 flattened_polys: vec![],
                 poly_pointers_lookup: HashMap::new(),
@@ -78,7 +78,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             return Ok(self.clone());
         }
 
-        let new_flattened: Vec<Arc<PolyVariant<F>>> = self
+        let fixed_factors: Vec<Arc<PolyVariant<F>>> = self
             .flattened_polys
             .par_iter()
             .map(|poly_arc| -> Result<Arc<PolyVariant<F>>, PolyError<F>> {
@@ -92,15 +92,15 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             })
             .collect::<Result<_, _>>()?;
 
-        let mut new_lookup = HashMap::new();
-        for (idx, poly) in new_flattened.iter().enumerate() {
-            new_lookup.insert(Arc::clone(poly), idx);
+        let mut fixed_factor_lookup = HashMap::new();
+        for (idx, poly) in fixed_factors.iter().enumerate() {
+            fixed_factor_lookup.insert(Arc::clone(poly), idx);
         }
 
-        let mut result = VirtualPolynomial {
+        let mut result = Self {
             products: self.products.clone(),
-            flattened_polys: new_flattened,
-            poly_pointers_lookup: new_lookup,
+            flattened_polys: fixed_factors,
+            poly_pointers_lookup: fixed_factor_lookup,
             num_variables: self.num_variables.map(|n| n.saturating_sub(points.len())),
         };
 
@@ -366,7 +366,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Normalize the virtual polynomial to a single PolyVariant
     /// This expands the sum-of-products into a single polynomial
-    pub fn normalize(&self) -> Result<PolyVariant<F>, PolyError<F>> {
+    pub fn normalize(&self) -> Result<PolyVariant<F>, PolyError<F>>
+    where
+        F: FftField,
+    {
         if self.products.is_empty() {
             // Empty virtual polynomial = zero polynomial
             return Ok(PolyVariant::from_scalar(F::zero()));
@@ -412,11 +415,17 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     // Wrapper methods that delegate to normalized PolyVariant
 
-    pub fn is_univariate(&self) -> bool {
+    pub fn is_univariate(&self) -> bool
+    where
+        F: FftField,
+    {
         self.normalize().map(|p| p.is_univariate()).unwrap_or(false)
     }
 
-    pub fn is_multilinear(&self) -> bool {
+    pub fn is_multilinear(&self) -> bool
+    where
+        F: FftField,
+    {
         self.normalize()
             .map(|p| p.is_multilinear())
             .unwrap_or(false)
@@ -436,15 +445,24 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         })
     }
 
-    pub fn degree(&self) -> usize {
+    pub fn degree(&self) -> usize
+    where
+        F: FftField,
+    {
         self.normalize().map(|p| p.degree()).unwrap_or(0)
     }
 
-    pub fn to_coeffs(&self) -> Option<Vec<F>> {
+    pub fn to_coeffs(&self) -> Option<Vec<F>>
+    where
+        F: FftField,
+    {
         self.normalize().ok().and_then(|p| p.to_coeffs())
     }
 
-    pub fn evaluate_vec(&self, points: &[F]) -> Self {
+    pub fn evaluate_vec(&self, points: &[F]) -> Self
+    where
+        F: FftField,
+    {
         // Normalize and evaluate at all points, return as VirtualPolynomial
         if let Ok(normalized) = self.normalize() {
             VirtualPolynomial::from_poly(normalized.evaluate_vec(points))
@@ -453,7 +471,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         }
     }
 
-    pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
+    pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>>
+    where
+        F: FftField,
+    {
         let normalized = self.normalize()?;
         let result = normalized.evaluate_or_fix_mle(points)?;
         Ok(VirtualPolynomial::from_poly(result))
@@ -479,7 +500,10 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(self.poly_mul_scalar(inv))
     }
 
-    pub fn scalar_div_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
+    pub fn scalar_div_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>>
+    where
+        F: FftField,
+    {
         let poly_norm = poly.normalize()?;
         let result = PolyVariant::scalar_sub_poly(scalar, &poly_norm)?;
         Ok(VirtualPolynomial::from_poly(result))

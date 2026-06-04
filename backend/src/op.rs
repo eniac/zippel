@@ -84,7 +84,7 @@ pub enum Op<C: ArkConfig, R> {
     Coef(HOp<C>),
 
     /// Evaluate a polynomial at a point (or vector of points)
-    Evaluate(HOp<C>, HOp<C>),
+    Evaluate(HOp<C>, HOp<C>, ATyp),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -156,6 +156,24 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
     }
 }
 
+/// Operand-derived result type for binary `eval(p, xs)`.
+pub fn eval_typ_from_operands(p_typ: &ATyp, x_typ: &ATyp) -> ATyp {
+    let (elem_typ, k) = match x_typ {
+        ATyp::Vec(t, n) => ((**t).clone(), *n),
+        ATyp::Uni(n) => (ATyp::scalar(), *n),
+        _ => return x_typ.clone(),
+    };
+    match p_typ {
+        ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
+        ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
+        ATyp::VPoly(n, _) if k == *n => elem_typ,
+        ATyp::Mle(n) if k == *n => elem_typ,
+        ATyp::VPoly(n, m) if k < *n => ATyp::VPoly(n - k, *m),
+        ATyp::Mle(n) if k < *n => ATyp::Mle(n - k),
+        _ => x_typ.clone(),
+    }
+}
+
 impl<C: ArkConfig, R> Op<C, R> {
     /// Assign a unique tag to each operation
     pub fn discriminant_order(&self) -> usize {
@@ -182,7 +200,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Fft(_) => 20,
             Op::Check(_) => 21,
             Op::Poly(_) => 22,
-            Op::Evaluate(_, _) => 23,
+            Op::Evaluate(_, _, _) => 23,
             Op::Coef(_) => 24,
             Op::Mle(_) => 25,
             Op::Reduce(_, _) => 26,
@@ -247,32 +265,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
             // convention (see docs/poly-encoding.md).
             Op::Poly(op) => poly_typ_from_vec(op.typ()),
-            Op::Evaluate(p, x) => {
-                // Compute the result type of evaluating polynomial `p` at
-                // the k-length vector of points `x`.
-                //
-                // Shapes (k = |x|):
-                //   Uni(_) / VPoly(1, _)        at Vec(b, k) / Uni(k) -> Vec(b, k)  (batched)
-                //   VPoly(n, _)   with k == n   at Vec(b, n)          -> b           (full)
-                //   VPoly(n, m)   with k <  n   at Vec(b, k)          -> VPoly(n-k, m) (partial)
-                //   Mle(n)        with k == n   at Vec(b, n)          -> b           (full)
-                //   Mle(n)        with k <  n   at Vec(b, k)          -> Mle(n - k)  (partial)
-                let x_typ = x.typ();
-                let (elem_typ, k) = match x_typ.clone() {
-                    ATyp::Vec(box t, n) => (t, n),
-                    ATyp::Uni(n) => (ATyp::scalar(), n),
-                    _ => return x_typ,
-                };
-                match p.typ() {
-                    ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
-                    ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
-                    ATyp::VPoly(n, _) if k == n => elem_typ,
-                    ATyp::Mle(n) if k == n => elem_typ,
-                    ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
-                    ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
-                    _ => x_typ,
-                }
-            }
+            Op::Evaluate(_, _, typ) => typ.clone(),
             // Op::Coef(p) flattens a polynomial to its coefficient vector.
             // The resulting Vec length equals the polynomial's coefficient
             // count (see ATyp::size).
@@ -425,8 +418,13 @@ impl<C: HasOpFactory> GOp<C> {
         }
     }
 
+    pub fn evaluate_typed(p: Self, x: Self, typ: ATyp) -> Self {
+        Op::Evaluate(mk::<C>(p), mk::<C>(x), typ)
+    }
+
     pub fn evaluate(p: Self, x: Self) -> Self {
-        Op::Evaluate(mk::<C>(p), mk::<C>(x))
+        let typ = eval_typ_from_operands(&p.typ(), &x.typ());
+        Self::evaluate_typed(p, x, typ)
     }
 
     /// Random access simplifications
@@ -870,7 +868,7 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![*n],
-            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
+            Op::Bin(_, a, b, _) | Op::Evaluate(a, b, _) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
                 a.references().into_iter().chain(b.references()).collect()
             }
             Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
@@ -920,9 +918,10 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(b.map_node_indices(f)),
                 typ.clone(),
             ),
-            Op::Evaluate(a, b) => Op::Evaluate(
+            Op::Evaluate(a, b, typ) => Op::Evaluate(
                 mk::<C>(a.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
+                typ.clone(),
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
@@ -972,7 +971,9 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
-            Op::Evaluate(p, x) => Op::Evaluate(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
+            Op::Evaluate(p, x, typ) => {
+                Op::Evaluate(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f)), typ.clone())
+            }
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
             Op::Proj(op, field, typ) => {
@@ -1237,7 +1238,7 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Evaluate(p, x) => allocator.concat([
+            Op::Evaluate(p, x, _) => allocator.concat([
                 allocator.text("(eval "),
                 p.get().clone().pretty(allocator),
                 allocator.text(", "),

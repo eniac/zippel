@@ -1,8 +1,5 @@
-use itertools::Itertools;
-
 use crate::id::{Tid, TidSubst};
-use crate::typ::range::Range;
-use crate::typ::{Kind, UTypeVars};
+use crate::typ::{EvalError, Kind, UTypeVars};
 use share::traversal::ToTraversal1;
 use share::{Ctx, Set};
 use thiserror::Error;
@@ -11,6 +8,8 @@ use thiserror::Error;
 pub enum SubstError {
     #[error("Size {1} for typevar {0} is outside its declared range")]
     OutOfRange(Tid, usize),
+    #[error("Error evaluating range for typevar {0}: {1}")]
+    Eval(Tid, EvalError),
 }
 
 /// Represents a possible valuation of sized type variables
@@ -64,49 +63,65 @@ impl SizeSubsts {
     // and take all possible combinations of sizes.
     // If `sizes` provides a value for a Range typevar, pin to that value
     // (generate only the singleton) after validating it's within range.
+    // Range bounds may reference earlier Range typevars in the same signature;
+    // expand declarations left-to-right so dependent bounds such as
+    // `NUM: 10, V: 2..NUM` can be resolved without an external size binding.
     // Warning: exponential, the idea is there are few sizes (or even 1)
     pub fn from_typevars(tv: &UTypeVars, sizes: &Ctx<Tid, usize>) -> Result<Set<Self>, SubstError> {
-        let typevar_ranges: Vec<(Tid, Range<usize>)> = tv
-            .clone()
-            .into_iter()
-            .filter_map(|tv| match tv.kind {
-                Kind::Range(r) => {
-                    let cr = r.traverse1(&mut |s| s.eval(sizes)).ok()?;
-                    Some((tv.id.clone(), cr))
-                }
-                _ => None,
-            })
-            .collect();
+        let mut partials: Vec<Ctx<Tid, usize>> = vec![Ctx::new()];
+        let mut saw_range = false;
 
-        // Pin ranges that have an explicit value in `sizes`
-        let pinned_ranges: Vec<(Tid, Range<usize>)> = typevar_ranges
-            .into_iter()
-            .map(|(tid, range)| {
-                if let Some(&pinned) = sizes.get(&tid) {
-                    if range.contains(pinned) {
-                        Ok((tid, Range::singleton(pinned)))
+        for tv in tv.clone().into_iter() {
+            let Kind::Range(r) = tv.kind else {
+                continue;
+            };
+            saw_range = true;
+
+            let mut next = Vec::new();
+            for partial in partials.into_iter() {
+                let eval_ctx = Self::eval_context_for_partial(sizes, &partial);
+
+                let concrete_range = r
+                    .clone()
+                    .traverse1(&mut |s| s.eval(&eval_ctx))
+                    .map_err(|e| SubstError::Eval(tv.id.clone(), e))?;
+
+                if let Some(&pinned) = sizes.get(&tv.id) {
+                    if concrete_range.contains(pinned) {
+                        let mut pinned_partial = partial;
+                        pinned_partial.insert(&tv.id, &pinned);
+                        next.push(pinned_partial);
                     } else {
-                        Err(SubstError::OutOfRange(tid, pinned))
+                        return Err(SubstError::OutOfRange(tv.id.clone(), pinned));
                     }
                 } else {
-                    Ok((tid, range))
+                    for value in concrete_range {
+                        let mut expanded = partial.clone();
+                        expanded.insert(&tv.id, &value);
+                        next.push(expanded);
+                    }
                 }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            }
+            partials = next;
+        }
 
-        // If there are no type variables, return the empty substitution
-        if pinned_ranges.is_empty() {
+        // If there are no range type variables, return the empty substitution.
+        if !saw_range {
             return Ok(Set::from(vec![SizeSubsts::new()]));
         }
 
-        // Take the multi_cartesian_product of all ranges to get all possible size
-        // substitutions
-        Ok(pinned_ranges
-            .into_iter()
-            .map(|(tid, r)| r.into_iter().map(|i| (tid.clone(), i)).collect::<Vec<_>>())
-            .multi_cartesian_product()
-            .map(Substs::from)
-            .collect::<Set<SizeSubsts>>())
+        Ok(partials.into_iter().map(Substs).collect())
+    }
+
+    fn eval_context_for_partial(
+        sizes: &Ctx<Tid, usize>,
+        partial: &Ctx<Tid, usize>,
+    ) -> Ctx<Tid, usize> {
+        let mut eval_ctx = sizes.clone();
+        for (k, v) in partial.iter() {
+            eval_ctx.insert(k, v);
+        }
+        eval_ctx
     }
 }
 
@@ -218,6 +233,25 @@ fn size_substs_pinning() {
             SizeSubsts::from(vec![(Tid::from("N"), 2), (Tid::from("M"), 2)]),
         ])
     );
+}
+
+#[test]
+fn size_substs_dependent_range_from_singleton_typevar() {
+    let decl = Decl::from_str(
+        "fn test<F: Field, NUM_VARS_CONST: 10, V: 2..NUM_VARS_CONST>(public a: [F; V]) -> F { a[0] }",
+    )
+    .unwrap();
+
+    let substs = SizeSubsts::from_typevars(&decl.sig.typevars, &Ctx::new()).unwrap();
+    let v_values: Set<usize> = substs
+        .iter()
+        .map(|subst| *subst.get(&Tid::from("V")).unwrap())
+        .collect();
+
+    assert_eq!(v_values, Set::from(vec![2, 3, 4, 5, 6, 7, 8, 9]));
+    assert!(substs
+        .iter()
+        .all(|subst| subst.get(&Tid::from("NUM_VARS_CONST")) == Some(&10)));
 }
 
 #[test]

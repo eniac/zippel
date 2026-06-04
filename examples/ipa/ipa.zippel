@@ -14,12 +14,14 @@ fn ipa_recursive<G: Group, F: Scalar<G>>(
         // BASE CASE (n=1)
         // Prover sends the final folded a, b scalars — these are the proof
         // elements that close out the protocol (BBB+18 Protocol 2 line 8).
+        // In the non-interactive setting, they are the final prover results
+        // used for the verifier's final check.
         final_a_scalar <- a_vec_k_private[0];
         final_b_scalar <- b_vec_k_private[0];
 
         // Verifier recomputes these locally using its public bases and the
         // proof-supplied final scalars. Soundness depends on it: ga, hb,
-        // and ip_val_at_base are NOT proof elements.
+        // and ip_val_at_base/c = a*b are NOT proof elements.
         let ga = g_vec_k[0] * final_a_scalar;
         let hb = h_vec_k[0] * final_b_scalar;
         let ip_val_at_base = final_a_scalar * final_b_scalar;

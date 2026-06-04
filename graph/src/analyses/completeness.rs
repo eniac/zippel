@@ -532,6 +532,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn materialized_partial_mle_eval_keeps_inferred_uni_shape() {
+        let ex = r#"
+            proto materialized_partial<F: Field>(public vals: [F; 4]) where vals == vals {
+                x <- challenge<F>;
+                let q = eval(mle(vals), [x]);
+                let z = q + poly([0, 0]);
+                verify(z == z)
+            }"#;
+
+        let sizes = Ctx::new();
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run::<8>().is_ok(),
+            "materialized partial MLE eval consumed as Uni(1) should be complete"
+        );
+    }
+
+    #[test]
+    fn trans_clos_partial_mle_eval_boundary_is_uni() {
+        let ex = r#"
+            proto trans_clos_eval_shape<F: Field>(public vals: [F; 4]) where vals == vals {
+                x <- challenge<F>;
+                let q = eval(mle(vals), [x]);
+                let z = q + poly([0, 0]);
+                verify(z == z)
+            }"#;
+
+        let sizes = Ctx::new();
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let tc = crate::analyses::trans_clos::TransClos::verifier(&g);
+
+        assert!(
+            tc.clos
+                .iter()
+                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(_, _, typ) if *typ == backend::ATyp::Uni(1))),
+            "transitive closure should preserve materialized partial MLE eval as Uni(1)"
+        );
+        assert!(
+            !tc.clos
+                .iter()
+                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(_, _, typ) if *typ == backend::ATyp::Mle(1))),
+            "transitive closure should not recompute the same eval as Mle(1)"
+        );
+    }
+
     /// Part B.5 regression #4: named-let binding a univariate eval.
     ///
     /// Covers the `Uni(_) | VPoly(1, _)` branch of `eval_to_poly` when
@@ -617,6 +671,7 @@ mod tests {
     #[test]
     fn op_eval_typ_dispatch() {
         use crate::{GOp, Op as BOp, Ref, mk};
+        use backend::op::eval_typ_from_operands;
         use backend::{ATyp, ArkBls12_381};
         use petgraph::graph::NodeIndex;
 
@@ -624,7 +679,8 @@ mod tests {
         let mk_eval = |p_typ: ATyp, x_typ: ATyp| -> GOp<ArkBls12_381> {
             let p: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(0)), p_typ);
             let x: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(1)), x_typ);
-            BOp::Evaluate(mk(p), mk(x))
+            let typ = eval_typ_from_operands(&p.typ(), &x.typ());
+            BOp::Evaluate(mk(p), mk(x), typ)
         };
 
         // Univariate batched: Uni(m) at Vec(scalar, k) → Vec(scalar, k).
@@ -1046,6 +1102,54 @@ mod tests {
         assert!(
             ca.run::<8>().is_ok(),
             "verify(p == d*q + r) should collapse directly to the shared identity row"
+        );
+    }
+
+    #[test]
+    fn completeness_uses_verifier_closure_excludes_prover_only_behind_transcript() {
+        let ex = r#"
+            proto transcript_boundary<F: Field>(private x: F, public y: F) where y == y {
+                t <- x;
+                verify(t == t)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let ca = CompletenessAnalysis::from_input(&g);
+
+        assert!(
+            ca.verifier
+                .vars()
+                .iter()
+                .all(|p| p.is_public() || p.from_transcript),
+            "verifier Groebner result should contain only public inputs and opaque transcript variables"
+        );
+    }
+
+    /// Regression for PR #153: a relation-side `%` and prover-side `/`
+    /// over the same source-level polynomial division should share the
+    /// quotient/remainder witnesses across closures.
+    #[test]
+    fn hadamard_div_wit_cross_closure_completeness() {
+        use lang::id::Tid;
+
+        let ex = include_str!("../../../examples/hadamard/hadamard.zippel");
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("S"), &2);
+        sizes.insert(&Tid::new("N"), &1);
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        let completeness = ca.run::<8>();
+        assert!(
+            completeness.is_ok(),
+            "relation-side remainder zero should complete verifier equation using the shared quotient witness, got {completeness:?}"
         );
     }
 
