@@ -2463,6 +2463,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             xs.len(),
             "Interpolate: points and evals must have same length"
         );
+        for i in 0..xs.len() {
+            for j in (i + 1)..xs.len() {
+                if xs[i] == xs[j] {
+                    Self::uncovered_op("duplicate-interpolate-points", &pr);
+                }
+            }
+        }
 
         let lag = lagrange_basis::<C::F>(&xs);
         let pr_slots = pr.slots();
@@ -5511,6 +5518,46 @@ mod tests {
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at duplicate-interpolate-points"
+    )]
+    fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let evals_typ = ATyp::vec_scalar(3);
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(1),
+            evals_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_evals);
+
+        let pref_result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::uni(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.ns.register(&pref_result);
+
+        let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
+        let evals = Op::Ref(crate::Ref::new(NodeIndex::new(1)), evals_typ);
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+
+        builder.add_op(pref_result, op, &mut gresult);
     }
 
     #[test]
