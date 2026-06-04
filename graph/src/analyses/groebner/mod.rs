@@ -2208,11 +2208,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 };
 
                 // Get poly type and validate it is VPoly or Uni.
-                let poly_typ = cfg_fields
-                    .get(&"poly".to_string())
-                    .unwrap_or_else(|| {
-                        panic!("Groebner Marginalize: missing 'poly' field in config record")
-                    });
+                let poly_typ = cfg_fields.get(&"poly".to_string()).unwrap_or_else(|| {
+                    panic!("Groebner Marginalize: missing 'poly' field in config record")
+                });
                 let (n, d) = match poly_typ {
                     ATyp::Uni(deg) => (1usize, *deg),
                     ATyp::VPoly(vars, deg) => (*vars, *deg),
@@ -2291,7 +2289,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     all_indices.len(),
                     poly_len,
                     "multi_indices count must match poly physical_len (n={}, d={}, poly_typ={:?})",
-                    n, d, poly_typ
+                    n,
+                    d,
+                    poly_typ
                 );
 
                 // Output record layout:
@@ -2351,8 +2351,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                          next_poly at round==0 is a clone of the input poly but VPoly({},{}) \
                          has different slot count from VPoly({},{}) and cannot be aliased \
                          without explicit projection semantics. Task 6 will handle this.",
-                        poly_typ, n, d, out_degree, n, d,
-                        n.saturating_sub(1), out_degree
+                        poly_typ,
+                        n,
+                        d,
+                        out_degree,
+                        n,
+                        d,
+                        n.saturating_sub(1),
+                        out_degree
                     );
                 }
             }
@@ -2373,9 +2379,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         let pr_slots = pr.slots();
                         for (j, pf) in pr_slots.iter().enumerate() {
                             result.pl.insert(pf, &inner_polys[offset + j]);
-                            result.basis.push(
-                                inner_polys[offset + j].clone() - SparsePolynomial::var(pf),
-                            );
+                            result
+                                .basis
+                                .push(inner_polys[offset + j].clone() - SparsePolynomial::var(pf));
                         }
                     }
                     _ => {
@@ -4807,15 +4813,17 @@ mod tests {
 
         let basis_vars = gr.basis.vars();
         assert!(
-            basis_vars
-                .iter()
-                .any(|p| p.name.as_ref().map_or(false, |n| n.0.starts_with("__zippel::gb::div_q"))),
+            basis_vars.iter().any(|p| p
+                .name
+                .as_ref()
+                .map_or(false, |n| n.0.starts_with("__zippel::gb::div_q"))),
             "basis.vars() should contain div_q witnesses"
         );
         assert!(
-            basis_vars
-                .iter()
-                .any(|p| p.name.as_ref().map_or(false, |n| n.0.starts_with("__zippel::gb::div_r"))),
+            basis_vars.iter().any(|p| p
+                .name
+                .as_ref()
+                .map_or(false, |n| n.0.starts_with("__zippel::gb::div_r"))),
             "basis.vars() should contain div_r witnesses"
         );
     }
@@ -6874,7 +6882,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
+    )]
     fn test_pow_vec_element_wise() {
         use crate::PRef;
         use lang::ast::BinOp;
@@ -7103,7 +7113,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
+    )]
     fn test_pow_vec_mixed_const_and_opaque() {
         use crate::PRef;
         use backend::op::mk;
@@ -7894,7 +7906,11 @@ mod tests {
             Distribution::Nonuniform,
         );
 
-        builder.add_op(pref.clone(), Op::Challenge(ATyp::scalar(), false), &mut result);
+        builder.add_op(
+            pref.clone(),
+            Op::Challenge(ATyp::scalar(), false),
+            &mut result,
+        );
 
         assert!(
             result.basis.is_empty(),
@@ -8061,14 +8077,8 @@ mod tests {
         builder.add_op(
             pair_result_pref.clone(),
             Op::Pair(
-                mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(300)),
-                    ATyp::g1(),
-                )),
-                mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(301)),
-                    ATyp::g2(),
-                )),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(300)), ATyp::g1())),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(301)), ATyp::g2())),
                 ATyp::gt(),
             ),
             &mut result,
@@ -8157,11 +8167,7 @@ mod tests {
             &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(2)), s.clone())),
         );
 
-        builder.add_op(
-            pref_rec.clone(),
-            Op::Record(field_ops),
-            &mut gresult,
-        );
+        builder.add_op(pref_rec.clone(), Op::Record(field_ops), &mut gresult);
 
         // Project field "a" from the record.
         let pref_proj = PRef::from_node(
@@ -8213,8 +8219,8 @@ mod tests {
         // a fake output PRef with type Vec<Scalar, 2> instead of the full record,
         // so pr.slots().len() == evaluations_len == 2 and no next_poly panic fires.)
         use crate::PRef;
-        use backend::op::mk;
         use backend::ABase;
+        use backend::op::mk;
         use lang::typ::{CRange, Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8294,10 +8300,7 @@ mod tests {
         let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
         cfg_record_fields.insert(
             &"challenge".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(12)),
-                s.clone(),
-            )),
+            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(12)), s.clone())),
         );
         cfg_record_fields.insert(
             &"max_degree".to_string(),
@@ -8399,8 +8402,8 @@ mod tests {
     #[should_panic(expected = "next_poly symbolic encoding is not supported")]
     fn marginalize_next_poly_panics_explicitly_without_np_fallback() {
         use crate::PRef;
-        use backend::op::mk;
         use backend::ABase;
+        use backend::op::mk;
         use lang::typ::{CRange, Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8487,7 +8490,11 @@ mod tests {
             &"round".to_string(),
             &mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
         );
-        builder.add_op(pref_cfg.clone(), Op::Record(cfg_record_fields), &mut gresult);
+        builder.add_op(
+            pref_cfg.clone(),
+            Op::Record(cfg_record_fields),
+            &mut gresult,
+        );
 
         // Register output PRef with full type (includes next_poly slots → triggers panic).
         let pref_out = PRef::from_node(
@@ -8519,7 +8526,9 @@ mod tests {
     /// dynamic-pow: Vec^Vec with non-const exponent must panic rather
     /// than silently weakening the ideal.
     #[test]
-    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
+    )]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
         use crate::PRef;
         use backend::op::mk;
@@ -8577,7 +8586,9 @@ mod tests {
 
     /// dynamic-pow: scalar^scalar with non-const exponent must panic.
     #[test]
-    #[should_panic(expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow")]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
+    )]
     fn uncovered_op_dynamic_pow_scalar_panics() {
         use crate::PRef;
         use backend::op::mk;
@@ -8711,8 +8722,8 @@ mod tests {
     #[should_panic(expected = "'round' field has non-static type")]
     fn marginalize_dynamic_round_panics_explicitly() {
         use crate::PRef;
-        use backend::op::mk;
         use backend::ABase;
+        use backend::op::mk;
         use lang::typ::{CRange, Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8801,7 +8812,11 @@ mod tests {
             &"round".to_string(),
             &mk::<ArkBls12_381>(Op::Value(Value::Index(0))),
         );
-        builder.add_op(pref_cfg.clone(), Op::Record(cfg_record_fields), &mut gresult);
+        builder.add_op(
+            pref_cfg.clone(),
+            Op::Record(cfg_record_fields),
+            &mut gresult,
+        );
 
         let pref_out = PRef::from_node(
             NodeIndex::new(3),
