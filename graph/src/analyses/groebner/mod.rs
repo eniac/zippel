@@ -1001,12 +1001,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    fn is_marginalize_config_record(fields: &Ctx<String, HOp<C>>) -> bool {
-        ["poly", "num_variables", "max_degree", "challenge"]
-            .into_iter()
-            .all(|field| fields.get(&field.to_string()).is_some())
-    }
-
     /// Unified Div/Rem handler for both `add_op` and `reduce_op`.
     ///
     /// Dispatches based on operand types:

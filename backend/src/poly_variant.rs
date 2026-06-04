@@ -1,4 +1,4 @@
-use ark_ff::{FftField, Field, PrimeField, Zero};
+use ark_ff::{Field, PrimeField, Zero};
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, MultilinearExtension, Polynomial,
     multivariate::{
