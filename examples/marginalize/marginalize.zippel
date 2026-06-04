@@ -31,15 +31,37 @@ proto marginalize_proto<F: Field>
     (public poly: Poly<F, 2, 2>, public num_variables: Fin<2>, public max_degree: Fin<2>, public round: Fin<3>, public challenge: F)
     where true {
 
+    let cfg = {| poly: poly, num_variables: num_variables, max_degree: max_degree, round: round, challenge: challenge |};
+    let out = marginalize(cfg);
+
+    let expected = [2, 10, 9];
+    verify(out.evaluations == expected)
+}
+
 fn marginalize_from_prefix_mle<F: Field, FIXED: 2..6, TAIL: 1..2>(
     public p: Mle<F, FIXED + 1 + TAIL>,
     public fixed_prefix: [F; FIXED]
 ) -> Poly<F, 1, 1> {
+    // Build 0/1 as field elements from the public prefix so constants have type F.
     let zero = fixed_prefix[0] - fixed_prefix[0];
     let one = zero + 1;
 
-    let expected = [2, 10, 9];
-    verify(out.evaluations == expected)
+    // Enumerate all boolean assignments for tail variables.
+    let tails = [
+        [(((i / (2^j)) % 2) * one) for j in 0..TAIL]
+        for i in 0..2^TAIL
+    ];
+
+    // g(0): keep the marginal variable fixed to 0 and sum over tail assignments.
+    let g0_terms = [eval(p, fixed_prefix ++ [zero] ++ tail) for tail in tails];
+    let g0 = reduce(+, g0_terms);
+
+    // g(1): keep the marginal variable fixed to 1 and sum over tail assignments.
+    let g1_terms = [eval(p, fixed_prefix ++ [one] ++ tail) for tail in tails];
+    let g1 = reduce(+, g1_terms);
+
+    // Interpolate the affine polynomial through values at 0 and 1.
+    poly([g0, g1 - g0])
 }
 
 fn marginalize_test_univariate<F: Field>(

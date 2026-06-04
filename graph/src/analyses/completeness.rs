@@ -1121,12 +1121,37 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let ca = CompletenessAnalysis::from_input(&g);
 
+        for p in ca.verifier.vars() {
+            assert!(
+                !p.is_private(),
+                "verifier closure must not expose a prover-only/private variable: {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn verifier_closure_excludes_private_input() {
+        let ex = r#"
+            proto transcript_boundary<F: Field>(private x: F, public y: F) where y == y {
+                t <- x;
+                verify(t == t)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let ca = CompletenessAnalysis::from_input(&g);
+        let private_x = Vid::new("x");
+        let verifier_vars = ca.verifier.vars();
+
         assert!(
-            ca.verifier
-                .vars()
+            !verifier_vars
                 .iter()
-                .all(|p| !p.qualifier.is_private() || p.from_transcript),
-            "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
+                .any(|p| p.name() == Some(&private_x) && p.is_private()),
+            "verifier closure must exclude private input x; verifier vars: {verifier_vars:?}"
         );
     }
 

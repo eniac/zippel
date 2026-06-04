@@ -111,7 +111,8 @@ impl UModule {
     /// Type aliases (`type X = T;`) are expanded inline before returning.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str<'a>(input_str: &'a str) -> Result<Self, ConversionError<InputError<'a>>> {
-        let mut pairs = ZippelParser::parse(Rule::decls, input_str).unwrap();
+        let mut pairs = ZippelParser::parse(Rule::decls, input_str)
+            .map_err(|e| ConversionError::Malformed(InputError::Parse(e)))?;
         let decls = UDecls::from_pest(&mut pairs)?;
 
         // Collect type aliases from type_decl declarations
@@ -277,6 +278,16 @@ fn from_decl_duplicate() {
         .unwrap()
         .concretize(&Ctx::new())
         .is_err());
+}
+
+#[test]
+fn parse_module_returns_err_on_malformed_input() {
+    let err = UModule::from_str("proto !!! broken")
+        .expect_err("malformed input should return an error instead of panicking");
+    assert!(
+        matches!(err, ConversionError::Malformed(InputError::Parse(_))),
+        "expected parser error for malformed module, got {err:?}"
+    );
 }
 
 #[test]

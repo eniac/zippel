@@ -1,4 +1,5 @@
 use from_pest::ConversionError;
+use pest::error::Error as PestError;
 use pest::iterators::Pair;
 use thiserror::Error;
 
@@ -12,6 +13,8 @@ use share::Set;
 
 #[derive(Error, PartialEq, Debug)]
 pub enum InputError<'pest> {
+    #[error("Parse error: {0}")]
+    Parse(PestError<Rule>),
     #[error("Duplicate declaration found: {0}")]
     DuplicateDecl(USig),
     #[error("KindError: Duplicate identifiers {0}")]
