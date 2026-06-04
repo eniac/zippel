@@ -28,6 +28,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 
+// Keep record/projection materialization bounded. Large protocol helper records
+// can contain polynomial state with enormous flattened slot counts; failing
+// explicitly is preferable to attempting an allocation that aborts the process.
+const MAX_GROEBNER_MATERIALIZED_SLOTS: usize = 1 << 20;
+
 // ---------------------------------------------------------------------------
 // PRef-slot enumeration helpers for polynomial / MLE values.
 //
@@ -2142,6 +2147,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // For each field, emit basis rows linking record slots to
             // the field's polynomial values.
             Op::Record(ref fields) => {
+                let pr_len = pr.typ.physical_len();
+                if pr_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                    panic!(
+                        "Groebner Record has {} physical slots, above materialization limit {}",
+                        pr_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                    );
+                }
                 let pr_slots = pr.slots();
                 let mut slot_offset = 0usize;
                 for (_, field_op) in fields.iter() {
@@ -2210,6 +2222,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         t
                     ),
                 };
+                let poly_len = poly_typ.physical_len();
+                if poly_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                    panic!(
+                        "Groebner Marginalize input polynomial has {} physical slots, above materialization limit {}",
+                        poly_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                    );
+                }
 
                 // Determine output degree (max_degree field if present, else d).
                 let out_degree = cfg_fields
@@ -2253,9 +2272,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
 
                 // Get the polynomial coefficient slot polynomials from inner record.
+                let inner_len = inner_typ.physical_len();
+                if inner_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                    panic!(
+                        "Groebner Marginalize config has {} physical slots, above materialization limit {}",
+                        inner_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                    );
+                }
                 let inner_polys = self.ref_vars(inner);
                 let poly_offset = Self::record_field_offset(cfg_fields, "poly");
-                let poly_len = poly_typ.physical_len();
                 let poly_polys: Vec<SparsePolynomial<C::F, T>> =
                     inner_polys[poly_offset..poly_offset + poly_len].to_vec();
 
@@ -2273,6 +2298,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 //   "evaluations": Vec<Scalar, out_degree+1>   → slots 0..out_degree (inclusive)
                 //   "next_poly":   VPoly(n-1, out_degree)      → slots after evaluations
                 // (Ctx iterates alphabetically: "evaluations" < "next_poly")
+                let pr_len = pr.typ.physical_len();
+                if pr_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                    panic!(
+                        "Groebner Marginalize output has {} physical slots, above materialization limit {}",
+                        pr_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                    );
+                }
                 let pr_slots = pr.slots();
                 let evaluations_len = out_degree + 1;
 
