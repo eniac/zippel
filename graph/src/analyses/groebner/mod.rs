@@ -1394,7 +1394,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let needs_gt = matches!(r_typ, ATyp::Base(ABase::GT))
                     || matches!(r_typ, ATyp::Vec(box ATyp::Base(ABase::GT), _));
                 if needs_gt {
-                    let gt = self.gt_pref(result);
+                    let gt = self.gt_pref();
                     let gt_var = SparsePolynomial::var(&gt);
                     let target_slots = target.slots();
                     for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
@@ -2277,7 +2277,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         inner_len, MAX_GROEBNER_MATERIALIZED_SLOTS
                     );
                 }
-                let inner_polys = self.ref_vars(inner);
+                let inner_polys = Self::ref_vars(inner, &result.prefs);
                 let poly_offset = Self::record_field_offset(cfg_fields, "poly");
                 let poly_polys: Vec<SparsePolynomial<C::F, T>> =
                     inner_polys[poly_offset..poly_offset + poly_len].to_vec();
@@ -2558,7 +2558,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_and_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone());
                     self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
                     acc = PolySource::new(
                         acc_pref
@@ -5541,7 +5541,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_evals);
+        gresult.register(&pref_evals);
 
         let pref_result = PRef::from_node(
             NodeIndex::new(2),
@@ -5550,7 +5550,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_result);
+        gresult.register(&pref_result);
 
         let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
         let evals = Op::Ref(crate::Ref::new(NodeIndex::new(1)), evals_typ);
@@ -8023,7 +8023,7 @@ mod tests {
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&challenge_pref);
+        result.register(&challenge_pref);
         builder.add_op(
             challenge_pref.clone(),
             Op::Challenge(ATyp::scalar(), false),
@@ -8038,7 +8038,7 @@ mod tests {
             Qualifier::Private,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&x_pref);
+        result.register(&x_pref);
 
         // Create a polynomial operation that uses the challenge: y = x + c
         let y_pref = PRef::from_node(
@@ -8048,7 +8048,7 @@ mod tests {
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&y_pref);
+        result.register(&y_pref);
 
         builder.add_op(
             y_pref.clone(),
@@ -8099,7 +8099,7 @@ mod tests {
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&g1_pref);
+        result.register(&g1_pref);
 
         let g2_pref = PRef::from_node(
             NodeIndex::new(301),
@@ -8108,7 +8108,7 @@ mod tests {
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&g2_pref);
+        result.register(&g2_pref);
 
         // Create a target PRef for the pairing result
         let pair_result_pref = PRef::from_node(
@@ -8118,7 +8118,7 @@ mod tests {
             Qualifier::Public,
             Distribution::Nonuniform,
         );
-        builder.ns.register(&pair_result_pref);
+        result.register(&pair_result_pref);
 
         // Execute Op::Pair which internally uses the GT sentinel
         builder.add_op(
@@ -8183,7 +8183,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_rec);
+        gresult.register(&pref_rec);
 
         // Register scalar refs for a and b.
         let pref_a = PRef::from_node(
@@ -8200,8 +8200,8 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
 
         // Build record {a: pref_a, b: pref_b}.
         let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
@@ -8224,7 +8224,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_proj);
+        gresult.register(&pref_proj);
 
         let inner_op: GOp<ArkBls12_381> =
             Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ.clone());
@@ -8305,7 +8305,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder2.ns.register(&pref_cfg2);
+        gresult2.register(&pref_cfg2);
 
         // Use an output type with ONLY the evaluations Vec<Scalar, 2> to
         // avoid triggering the next_poly panic. This tests the evaluations
@@ -8318,7 +8318,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder2.ns.register(&pref_out2);
+        gresult2.register(&pref_out2);
 
         // The config's pr_slots must be set up correctly. For the inner config record,
         // add a dummy Record op first so the fields are accessible via ref_vars.
@@ -8337,8 +8337,8 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder2.ns.register(&pref_challenge);
-        builder2.ns.register(&pref_poly);
+        gresult2.register(&pref_challenge);
+        gresult2.register(&pref_poly);
 
         // Build config record from refs.
         let _cfg_ref_for_idx = &ATyp::Base(ABase::Fin(CRange::singleton(0)));
@@ -8492,7 +8492,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_cfg);
+        gresult.register(&pref_cfg);
 
         // Register poly and challenge PRef.
         let pref_challenge = PRef::from_node(
@@ -8509,8 +8509,8 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_challenge);
-        builder.ns.register(&pref_poly);
+        gresult.register(&pref_challenge);
+        gresult.register(&pref_poly);
 
         // Build config record.
         let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
@@ -8551,7 +8551,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_out);
+        gresult.register(&pref_out);
 
         // This should panic with "next_poly symbolic encoding is not supported".
         builder.add_op(
@@ -8598,7 +8598,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         let pref_b = PRef::from_node(
             NodeIndex::new(1),
@@ -8607,7 +8607,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -8616,7 +8616,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         // Non-const exponent (a runtime Ref, not a Value::Index) must panic.
         builder.add_op(
@@ -8656,7 +8656,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_a);
+        gresult.register(&pref_a);
 
         // pref_b is a Ref, not a Value::Index → non-const exponent.
         let pref_b = PRef::from_node(
@@ -8666,7 +8666,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_b);
+        gresult.register(&pref_b);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -8675,7 +8675,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         builder.add_op(
             pref_r.clone(),
@@ -8714,7 +8714,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_arr);
+        gresult.register(&pref_arr);
 
         // Index operand is a Ref (runtime), not a Value::Index.
         let pref_idx = PRef::from_node(
@@ -8724,7 +8724,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_idx);
+        gresult.register(&pref_idx);
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
@@ -8733,7 +8733,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        builder.ns.register(&pref_r);
+        gresult.register(&pref_r);
 
         // Must not panic — dynamic RAM is admitted as a free identifier.
         builder.add_op(
@@ -8814,7 +8814,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_cfg);
+        gresult.register(&pref_cfg);
 
         let pref_challenge = PRef::from_node(
             NodeIndex::new(1),
@@ -8830,8 +8830,8 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_challenge);
-        builder.ns.register(&pref_poly);
+        gresult.register(&pref_challenge);
+        gresult.register(&pref_poly);
 
         // Build the config record.
         let mut cfg_record_fields: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
@@ -8872,7 +8872,7 @@ mod tests {
             Qualifier::Public,
             Distribution::default(),
         );
-        builder.ns.register(&pref_out);
+        gresult.register(&pref_out);
 
         // Should panic: 'round' field type is a non-singleton Fin range.
         builder.add_op(
