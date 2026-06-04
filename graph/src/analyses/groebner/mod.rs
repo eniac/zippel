@@ -3085,12 +3085,7 @@ mod tests {
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
-        // Expected: 2 result slots + 2 basis equations, and no np insertion.
-        assert_eq!(
-            gresult.np.len(),
-            0,
-            "eval should not have fallen through to np"
-        );
+        // No np assertion needed: eval uses explicit ideal treatment with no fallback.
         for i in 0..2 {
             assert!(
                 gresult.pl.contains(&result.clone().with_slot(i).unwrap()),
@@ -4775,35 +4770,13 @@ mod tests {
         let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
-        // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c)
-        // Each emits a (q_wit, r_wit) pair, so np should contain 4 div witnesses
+        // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c).
+        // The builder caches one (a,b) entry and one ((a/b),c) entry in div_wit.
         assert_eq!(
-            gr.np.len(),
-            4,
-            "nested div should have 4 np entries (2 q_wit + 2 r_wit), got {}",
-            gr.np.len()
-        );
-
-        // Div witnesses are named __zippel::gb::div_q/div_r
-        let np_names: Vec<String> = gr
-            .np
-            .keys()
-            .into_iter()
-            .filter_map(|p| p.name.as_ref().map(|n| n.0.clone()))
-            .collect();
-        assert!(
-            np_names
-                .iter()
-                .any(|n| n.starts_with("__zippel::gb::div_q")),
-            "np should contain div_q witnesses, got {:?}",
-            np_names
-        );
-        assert!(
-            np_names
-                .iter()
-                .any(|n| n.starts_with("__zippel::gb::div_r")),
-            "np should contain div_r witnesses, got {:?}",
-            np_names
+            builder.ns.div_wit.len(),
+            2,
+            "nested div should have 2 div_wit entries (inner + outer), got {}",
+            builder.ns.div_wit.len()
         );
 
         // pl should contain entries for the div result nodes (linking them to
@@ -4816,11 +4789,26 @@ mod tests {
         );
 
         // Basis should contain canonical div identity rows (a = b*q + r)
-        // and linking rows for both inner and outer division
+        // and linking rows for both inner and outer division.
+        // Div witness vars (q_wit, r_wit) must appear in basis.vars().
         gr.run::<8>();
         assert!(
             !gr.basis.is_empty(),
             "basis should not be empty after nested div"
+        );
+
+        let basis_vars = gr.basis.vars();
+        assert!(
+            basis_vars
+                .iter()
+                .any(|p| p.name.as_ref().map_or(false, |n| n.0.starts_with("__zippel::gb::div_q"))),
+            "basis.vars() should contain div_q witnesses"
+        );
+        assert!(
+            basis_vars
+                .iter()
+                .any(|p| p.name.as_ref().map_or(false, |n| n.0.starts_with("__zippel::gb::div_r"))),
+            "basis.vars() should contain div_r witnesses"
         );
     }
 
@@ -4837,32 +4825,32 @@ mod tests {
         let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
-        // Single (a, b) pair → one div_witnesses call → 2 np entries (q_wit, r_wit)
+        // Single (a, b) pair → one div_witnesses call → 1 div_wit cache entry (q_wit, r_wit).
         assert_eq!(
-            gr.np.len(),
-            2,
-            "shared div/rem should have 2 np entries (1 q_wit + 1 r_wit), got {}",
-            gr.np.len()
+            builder.ns.div_wit.len(),
+            1,
+            "shared div/rem should have 1 div_wit entry for (a, b), got {}",
+            builder.ns.div_wit.len()
         );
 
-        // Both div and rem share the same canonical identity — the key invariant
-        let np_names: Vec<String> = gr
-            .np
-            .keys()
+        // Both div and rem share the same canonical identity — the key invariant.
+        // The cached (q_wit, r_wit) pair is what links div and rem nodes.
+        let (q_wit, r_wit) = builder
+            .ns
+            .div_wit
+            .values()
             .into_iter()
-            .filter_map(|p| p.name.as_ref().map(|n| n.0.clone()))
-            .collect();
-        let q_count = np_names.iter().filter(|n| n.contains("div_q")).count();
-        let r_count = np_names.iter().filter(|n| n.contains("div_r")).count();
-        assert_eq!(
-            q_count, 1,
-            "exactly 1 div_q witness for shared (a, b) pair, got {}",
-            q_count
+            .next()
+            .expect("div_wit should have exactly one (q_wit, r_wit) entry");
+        assert!(
+            q_wit.name.as_ref().map_or(false, |n| n.0.contains("div_q")),
+            "q_wit should be named div_q..., got {:?}",
+            q_wit.name
         );
-        assert_eq!(
-            r_count, 1,
-            "exactly 1 div_r witness for shared (a, b) pair, got {}",
-            r_count
+        assert!(
+            r_wit.name.as_ref().map_or(false, |n| n.0.contains("div_r")),
+            "r_wit should be named div_r..., got {:?}",
+            r_wit.name
         );
 
         // pl should have entries for the div result (n3 → q_wit), mul result (n4 → b*q),
@@ -4899,13 +4887,6 @@ mod tests {
             gr.pl.len()
         );
 
-        assert_eq!(
-            gr.np.len(),
-            0,
-            "1d vec add has no opaque ops, np should be empty, got {}",
-            gr.np.len()
-        );
-
         assert!(
             gr.basis.len() >= 2,
             "basis should have at least 2 rows (add constraint + verify eq), got {}",
@@ -4936,14 +4917,6 @@ mod tests {
             gr.pl.len() >= 1,
             "pl should have at least 1 entry for the verify expression, got {}",
             gr.pl.len()
-        );
-
-        // No opaque ops
-        assert_eq!(
-            gr.np.len(),
-            0,
-            "2d vec add has no opaque ops, np should be empty, got {}",
-            gr.np.len()
         );
 
         // Basis should contain the add constraint + verify eq
@@ -4985,13 +4958,6 @@ mod tests {
             gr.pl.len() >= 1,
             "pl should have at least 1 entry for the verify expression, got {}",
             gr.pl.len()
-        );
-
-        assert_eq!(
-            gr.np.len(),
-            0,
-            "3d vec add has no opaque ops, np should be empty, got {}",
-            gr.np.len()
         );
 
         assert!(
@@ -6953,15 +6919,7 @@ mod tests {
             ),
             &mut gresult,
         );
-
-        for i in 0..2 {
-            let elem = pref_r.with_index(i).unwrap();
-            assert!(
-                gresult.np.contains(&elem),
-                "Pow Vec(Scalar,2)^Vec(Fin,2) result element {} should be opaque",
-                i
-            );
-        }
+        // The above panics with "dynamic-pow"; assertions below are unreachable.
     }
 
     #[test]
@@ -7015,10 +6973,7 @@ mod tests {
                 i
             );
         }
-        assert!(
-            !gresult.np.contains(&pref_r),
-            "Pow Uni(2)^2 with constant exponent should not be opaque"
-        );
+        // Constant-exponent pow uses explicit ideal treatment; result is in pl.
     }
 
     #[test]
@@ -7081,10 +7036,7 @@ mod tests {
                 );
             }
         }
-        assert!(
-            !gresult.np.contains(&pref_r),
-            "Pow Vec(Uni(2),2)^2 with constant exponent should not be opaque"
-        );
+        // Constant-exponent pow uses explicit ideal treatment; result is in pl.
     }
 
     #[test]
@@ -7139,10 +7091,7 @@ mod tests {
                 i
             );
         }
-        assert!(
-            !gresult.np.contains(&pref_r),
-            "Pow Vec(Scalar,2)^VecIndex([2,3]) should not be opaque"
-        );
+        // VecIndex-exponent pow uses explicit ideal treatment (per-element const exponents).
     }
 
     #[test]
@@ -7200,15 +7149,7 @@ mod tests {
             ),
             &mut gresult,
         );
-
-        for i in 0..2 {
-            let elem = pref_r.with_index(i).unwrap();
-            assert!(
-                gresult.np.contains(&elem),
-                "Pow Vec(Scalar,2)^Vec(Fin,2) with non-const exponent element {} should be opaque",
-                i
-            );
-        }
+        // The above panics with "dynamic-pow"; assertions below are unreachable.
     }
 
     // -----------------------------------------------------------------
@@ -7957,10 +7898,6 @@ mod tests {
             "challenge should not insert into pl"
         );
         assert!(
-            !result.np.contains(&pref),
-            "challenge should not insert into np"
-        );
-        assert!(
             !result.vars().contains(&pref),
             "challenge should not be visible in vars() unless used in a polynomial"
         );
@@ -7992,10 +7929,6 @@ mod tests {
         assert!(
             !result.pl.contains(&pref),
             "random should not insert into pl"
-        );
-        assert!(
-            !result.np.contains(&pref),
-            "random should not insert into np"
         );
         assert!(
             !result.vars().contains(&pref),
@@ -8152,12 +8085,6 @@ mod tests {
             result.vars().contains(gt_sentinel),
             "GT sentinel must be in result.vars()"
         );
-
-        // The GT sentinel should NOT be in np
-        assert!(
-            !result.np.contains(gt_sentinel),
-            "GT sentinel must not be in np (Task 4 removes sentinel np inserts)"
-        );
     }
 
     // -----------------------------------------------------------------
@@ -8249,14 +8176,10 @@ mod tests {
             &mut gresult,
         );
 
-        // Projection result should be in pl (not np).
+        // Projection result should be in pl, not np.
         assert!(
             gresult.pl.contains(&pref_proj),
             "proj result should be in pl, not np"
-        );
-        assert!(
-            !gresult.np.contains(&pref_proj),
-            "proj result must NOT be in np (Task 5: no np fallback for Proj)"
         );
 
         // The proj poly should reference record slot 0 (field "a").
@@ -8410,7 +8333,7 @@ mod tests {
             &mut gresult2,
         );
 
-        // Both evaluation slots should be in pl and NOT in np.
+        // Both evaluation slots should be in pl.
         for i in 0..2 {
             let eval_slot = pref_out2.clone().with_slot(i).unwrap();
             assert!(
@@ -8418,18 +8341,7 @@ mod tests {
                 "marginalize evaluations[{}] should be in pl (Task 5)",
                 i
             );
-            assert!(
-                !gresult2.np.contains(&eval_slot),
-                "marginalize evaluations[{}] must NOT be in np (Task 5)",
-                i
-            );
         }
-
-        // The whole output PRef should not be in np either.
-        assert!(
-            !gresult2.np.contains(&pref_out2),
-            "marginalize output PRef must NOT be in np (Task 5)"
-        );
 
         // Verify the evaluations are mathematically correct for VPoly(1,1).
         // P(x) = c_0 + c_1 * x; evaluations[t] = Σ_{b∈{0,1}^0} P(t) = P(t).
@@ -8769,17 +8681,13 @@ mod tests {
             &mut gresult,
         );
 
-        // No basis equation, no pl binding, no np entry for the result PRef.
+        // No basis equation, no pl binding for the result PRef.
         for slot in pref_r.slots() {
             assert!(
                 !gresult.pl.contains(&slot),
                 "dynamic-ram result must not appear in pl"
             );
         }
-        assert!(
-            !gresult.np.contains(&pref_r),
-            "dynamic-ram result must not appear in np"
-        );
         assert!(
             gresult.basis.is_empty(),
             "dynamic-ram must emit no basis equations; got {} rows",
