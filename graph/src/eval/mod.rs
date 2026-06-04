@@ -8,6 +8,7 @@ use lang::ast::BinOp;
 use rand::RngCore;
 use share::Ctx;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Evaluate a `GOp` against a reference environment.
 ///
@@ -32,83 +33,133 @@ use std::collections::HashMap;
 /// fallback behavior.
 pub fn eval_op<C, R>(
     op: &GOp<C>,
-    env: &HashMap<Ref, Value<C>>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
-) -> Result<Value<C>, EvalError>
+) -> Result<Arc<Value<C>>, EvalError>
 where
     C: ArkConfig,
     R: RngCore,
 {
     match op {
-        Op::Value(v) => Ok(v.clone()),
+        Op::Value(v) => Ok(Arc::new(v.clone())),
         Op::Ref(r, _) => env.get(r).cloned().ok_or(EvalError::UndefinedRef(*r)),
         Op::Bin(binop, a, b, _) => {
             let av = eval_op(a, env, rng)?;
             let bv = eval_op(b, env, rng)?;
-            Ok(match binop {
-                BinOp::Add => av + bv,
-                BinOp::Sub => av - bv,
-                BinOp::Mul => av * bv,
-                BinOp::Div => av / bv,
-                BinOp::Rem => av % bv,
-                BinOp::Pow => av ^ bv,
-                BinOp::And => av & bv,
-                BinOp::Dot => av.dot(bv),
-                BinOp::Concat => av.value_concat(bv),
-                BinOp::Equ => av.value_equ(&bv),
-            })
+            // Borrow `av` by reference (no clone of left operand); only the
+            // right operand must be materialised as owned (one inner clone
+            // when the Arc is shared, free when unique).
+            let av_ref: &Value<C> = &*av;
+            Ok(Arc::new(match binop {
+                BinOp::Add => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_add(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Sub => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_sub(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Mul => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_mul(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Div => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_div(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Rem => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_rem(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Pow => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_pow(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::And => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_and(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Dot => {
+                    let mut bv_owned = Arc::unwrap_or_clone(bv);
+                    av_ref.value_dot(&mut bv_owned);
+                    bv_owned
+                }
+                BinOp::Concat => {
+                    let av_owned = Arc::unwrap_or_clone(av);
+                    let bv_owned = Arc::unwrap_or_clone(bv);
+                    av_owned.value_concat(bv_owned)
+                }
+                BinOp::Equ => av_ref.value_equ(&*bv),
+            }))
         }
         Op::Vec(ops) => {
             let mut values = Vec::with_capacity(ops.len());
             for child in ops {
-                values.push(eval_op(child, env, rng)?);
+                values.push(Arc::unwrap_or_clone(eval_op(child, env, rng)?));
             }
-            Ok(Value::value_vec(values))
+            Ok(Arc::new(Value::value_vec(values)))
         }
         Op::Record(fields) => {
             let mut out: Ctx<String, Value<C>> = Ctx::new();
             for (name, child) in fields.iter() {
                 let v = eval_op(child, env, rng)?;
-                out.insert(name, &v);
+                out.insert(name, &*v);
             }
-            Ok(Value::Record(out))
+            Ok(Arc::new(Value::Record(out)))
         }
         Op::Ram(v, idx) => {
-            let v_val = eval_op(v, env, rng)?;
-            let idx_val = eval_op(idx, env, rng)?;
-            Ok(v_val.ram(idx_val))
+            let v_val = Arc::unwrap_or_clone(eval_op(v, env, rng)?);
+            let idx_val = Arc::unwrap_or_clone(eval_op(idx, env, rng)?);
+            Ok(Arc::new(v_val.ram(idx_val)))
         }
         Op::Check(a) => eval_op(a, env, rng),
         Op::Pair(a, b, _) => {
-            let av = eval_op(a, env, rng)?;
-            let bv = eval_op(b, env, rng)?;
-            Ok(av.pair(bv))
+            let av = Arc::unwrap_or_clone(eval_op(a, env, rng)?);
+            let bv = Arc::unwrap_or_clone(eval_op(b, env, rng)?);
+            Ok(Arc::new(av.pair(bv)))
         }
-        Op::Random(typ, _) => Ok(Value::random(rng, typ)),
-        Op::Challenge(typ, _) => Ok(Value::random(rng, typ)),
+        Op::Random(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
+        Op::Challenge(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
         Op::Evaluate(p, x) => {
-            let p_val = eval_op(p, env, rng)?;
-            let x_val = eval_op(x, env, rng)?;
-            Ok(p_val.value_eval(x_val))
+            let p_val = Arc::unwrap_or_clone(eval_op(p, env, rng)?);
+            let x_val = Arc::unwrap_or_clone(eval_op(x, env, rng)?);
+            Ok(Arc::new(p_val.value_eval(x_val)))
         }
-        Op::Coef(a) => Ok(eval_op(a, env, rng)?.value_coef()),
-        Op::Poly(a) => Ok(eval_op(a, env, rng)?.value_poly()),
+        Op::Coef(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_coef())),
+        Op::Poly(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_poly())),
         Op::Interpolate(points, evals) => {
             let points_val = eval_op(points, env, rng)?;
             let evals_val = eval_op(evals, env, rng)?;
-            Ok(evals_val.value_interpolate(Some(&points_val)))
+            Ok(Arc::new((*evals_val).value_interpolate(Some(&*points_val))))
         }
-        Op::Ifft(a) => Ok(eval_op(a, env, rng)?.value_interpolate(None)),
-        Op::Fft(a) => Ok(eval_op(a, env, rng)?.value_fft()),
-        Op::Mle(a) => Ok(eval_op(a, env, rng)?.value_mle()),
-        Op::Reduce(binop, v) => Ok(eval_op(v, env, rng)?.value_reduce(*binop)),
+        Op::Ifft(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_interpolate(None))),
+        Op::Fft(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_fft())),
+        Op::Mle(a) => {
+            // Consume the input via `value_mle_owned` to avoid a 500 MB
+            // memcpy when the operand is a fresh or unique `VecScalar`.
+            // When the Arc is shared (env still holds a strong ref), the
+            // unwrap clones once — same cost as `value_mle`.
+            let av = Arc::unwrap_or_clone(eval_op(a, env, rng)?);
+            Ok(Arc::new(av.value_mle_owned()))
+        }
+        Op::Reduce(binop, v) => {
+            let v_val = Arc::unwrap_or_clone(eval_op(v, env, rng)?);
+            Ok(Arc::new(v_val.value_reduce(*binop)))
+        }
         Op::Marginalize(a) => eval_marginalize(a, env, rng),
         Op::Proj(record_op, field_name, _) => {
             let rec_val = eval_op(record_op, env, rng)?;
-            let Value::Record(r) = rec_val else {
+            let Value::Record(r) = &*rec_val else {
                 unreachable!()
             };
-            Ok(r.get(field_name).cloned().unwrap())
+            Ok(Arc::new(r.get(field_name).cloned().unwrap()))
         }
     }
 }
@@ -117,9 +168,9 @@ where
 /// Mirrors `runtime::graph::MutexGraph::handle_op`'s Marginalize arm.
 fn eval_marginalize<C, R>(
     a: &crate::HOp<C>,
-    env: &HashMap<Ref, Value<C>>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
-) -> Result<Value<C>, EvalError>
+) -> Result<Arc<Value<C>>, EvalError>
 where
     C: ArkConfig,
     R: RngCore,
@@ -136,18 +187,18 @@ where
             let num_variables_op = fields.get(&"num_variables".to_string());
             let max_degree_op = fields.get(&"max_degree".to_string());
 
-            let poly_val = eval_op(poly_op, env, rng)?;
-            let challenge_val = eval_op(challenge_op, env, rng)?;
+            let poly_val = Arc::unwrap_or_clone(eval_op(poly_op, env, rng)?);
+            let challenge_val = Arc::unwrap_or_clone(eval_op(challenge_op, env, rng)?);
             let round_val = match round_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
+                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
                 None => None,
             };
             let num_variables_val = match num_variables_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
+                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
                 None => None,
             };
             let max_degree_val = match max_degree_op {
-                Some(op) => Some(eval_op(op, env, rng)?),
+                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
                 None => None,
             };
             (
@@ -159,7 +210,7 @@ where
             )
         }
         _ => {
-            let cfg_val = eval_op(a, env, rng)?;
+            let cfg_val = Arc::unwrap_or_clone(eval_op(a, env, rng)?);
             let Value::Record(record) = cfg_val else {
                 unreachable!()
             };
@@ -203,7 +254,7 @@ where
     let mut out_fields: Ctx<String, Value<C>> = Ctx::new();
     out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
     out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
-    Ok(Value::Record(out_fields))
+    Ok(Arc::new(Value::Record(out_fields)))
 }
 
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
@@ -267,6 +318,6 @@ mod tests {
         let env = HashMap::new();
         let mut rng = ThreadRng::default();
         let result = eval_op(&op, &env, &mut rng).unwrap();
-        assert_eq!(result, TestValue::Scalar(Fr::from(42)));
+        assert_eq!(*result, TestValue::Scalar(Fr::from(42)));
     }
 }

@@ -2640,6 +2640,33 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    /// Consuming variant of [`Value::value_mle`]: for the vector-typed
+    /// variants (`VecScalar`/`VecIndex`), moves the underlying `Vec<F>`
+    /// into the resulting `DenseMle` rather than cloning it. Other
+    /// variants fall through to the borrowing `value_mle()` path.
+    ///
+    /// Used by the runtime's `Op::Mle` arm to skip a clone when the
+    /// `Arc<Value>` is unique (via `Arc::unwrap_or_clone`).
+    pub fn value_mle_owned(self) -> Self {
+        match self {
+            Value::VecScalar(v) => {
+                let size = log2(v.len()) as usize;
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, v),
+                )))
+            }
+            Value::VecIndex(v) => {
+                let mut mle = Vec::with_capacity(v.len());
+                mle.extend(v.iter().map(|i| C::FOps::from_usize(*i)));
+                let size = log2(mle.len()) as usize;
+                Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
+                )))
+            }
+            other => other.value_mle(),
+        }
+    }
+
     pub fn value_interpolate(&self, points: Option<&Self>) -> Self {
         let evals = value_as_scalar_vec::<C>(self);
         assert!(

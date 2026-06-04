@@ -10,7 +10,7 @@ use share::Ctx;
 use spongefish::{DuplexSpongeInterface, ProverState};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::error::RuntimeError;
 use crate::queue::{SyncMessage, SyncSender, sync_channel};
@@ -48,7 +48,16 @@ pub enum ResultKind {
 /// its counter; when the counter reaches zero, the node is ready to execute.
 pub struct RuntimeInformation<C: ArkConfig> {
     /// Computed value of this node, set after execution.
-    return_value: Mutex<Option<Value<C>>>,
+    ///
+    /// Wrapped in `Arc` so that successors can cheaply share access without
+    /// cloning the inner `Value` (which may be a 500 MB matrix vector).
+    ///
+    /// Stored in a `OnceLock` rather than `Mutex<Option<…>>` because every
+    /// node is written exactly once (when its handler completes) and read
+    /// many times (by each successor's `get_value`). `OnceLock::get` is a
+    /// lock-free atomic load — much cheaper than `Mutex::lock` on the hot
+    /// path. Both have identical happy-path semantics for our use.
+    return_value: OnceLock<Arc<Value<C>>>,
     /// Number of unfinished dependencies. Atomically decremented;
     /// when it reaches zero, this node is ready to execute.
     pub remaining_deps: AtomicUsize,
@@ -57,7 +66,7 @@ pub struct RuntimeInformation<C: ArkConfig> {
 impl<C: ArkConfig> RuntimeInformation<C> {
     pub fn new() -> Self {
         RuntimeInformation {
-            return_value: Mutex::new(None),
+            return_value: OnceLock::new(),
             remaining_deps: AtomicUsize::new(0),
         }
     }
@@ -93,7 +102,7 @@ fn is_sync_node<C: ArkConfig>(g: &MutexGraph<C>, node_idx: NodeIndex) -> bool {
 /// zero, submit it to the pool manager (non-sync) or return (sync).
 fn update_successors<C: ArkConfig>(
     g: &Arc<MutexGraph<C>>,
-    inputs: &Arc<Ctx<Vid, Value<C>>>,
+    inputs: &Arc<HashMap<Vid, Arc<Value<C>>>>,
     tx: SyncSender,
     node_idx: NodeIndex,
     error_slot: &ErrorSlot,
@@ -143,7 +152,7 @@ fn update_successors<C: ArkConfig>(
                         if error_slot.lock().unwrap().is_some() {
                             return;
                         }
-                        match g_clone.handle_node(dep_idx, inputs_clone.clone()) {
+                        match g_clone.handle_node(dep_idx, &inputs_clone) {
                             Ok(()) => {
                                 update_successors(&g_clone, &inputs_clone, tx, dep_idx, &error_slot)
                             }
@@ -192,15 +201,14 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn get_value(
         &self,
         r: graph::Ref,
-        inputs: Arc<Ctx<Vid, Value<C>>>,
-    ) -> Result<Value<C>, RuntimeError> {
+        inputs: &HashMap<Vid, Arc<Value<C>>>,
+    ) -> Result<Arc<Value<C>>, RuntimeError> {
         let node = r.node();
 
         match &self.mutex_graph[node] {
             Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                let return_val = annotation.return_value.lock().unwrap();
-                match &*return_val {
-                    Some(val) => Ok(val.clone()),
+                match annotation.return_value.get() {
+                    Some(val) => Ok(Arc::clone(val)),
                     None => panic!("Value should exist for node {:?}", node),
                 }
             }
@@ -210,11 +218,8 @@ impl<C: ArkConfig> MutexGraph<C> {
                 panic!("get_value on Inp/Rel marker node {:?}", node)
             }
             Node::Arg(vid, _, _, _, _) => match inputs.get(vid) {
-                Some(v) => Ok(v.clone()),
-                None => Err(RuntimeError::missing_arg(
-                    vid,
-                    inputs.iter().map(|(k, _)| k),
-                )),
+                Some(v) => Ok(Arc::clone(v)),
+                None => Err(RuntimeError::missing_arg(vid, inputs.keys())),
             },
         }
     }
@@ -229,12 +234,18 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn handle_op(
         &self,
         operation: &GOp<C>,
-        inputs: Arc<Ctx<Vid, Value<C>>>,
-    ) -> Result<Value<C>, RuntimeError> {
-        let mut env: HashMap<graph::Ref, Value<C>> = HashMap::new();
-        for r in graph::eval::collect_refs(operation) {
+        inputs: &HashMap<Vid, Arc<Value<C>>>,
+    ) -> Result<Arc<Value<C>>, RuntimeError> {
+        let refs = graph::eval::collect_refs(operation);
+        // Pre-size the env so insertions don't trigger rehash/resize. Most
+        // Op trees have ≤ 4 distinct refs; sizing to `refs.len()` slightly
+        // over-allocates for duplicates but avoids the 0→1→2→4→… resize
+        // sequence HashMap pays when starting empty.
+        let mut env: HashMap<graph::Ref, Arc<Value<C>>> =
+            HashMap::with_capacity(refs.len());
+        for r in refs {
             if let std::collections::hash_map::Entry::Vacant(e) = env.entry(r) {
-                e.insert(self.get_value(r, Arc::clone(&inputs))?);
+                e.insert(self.get_value(r, inputs)?);
             }
         }
         let mut rng = ThreadRng::default();
@@ -245,20 +256,26 @@ impl<C: ArkConfig> MutexGraph<C> {
     pub fn handle_node(
         &self,
         node_curr: NodeIndex,
-        inputs: Arc<Ctx<Vid, Value<C>>>,
+        inputs: &HashMap<Vid, Arc<Value<C>>>,
     ) -> Result<(), RuntimeError> {
         let node = &self.mutex_graph[node_curr];
 
         match node {
             Node::Op(operation, annotation) => {
                 let return_val = self.handle_op(&**operation, inputs)?;
-                let mut return_value_lock = annotation.return_value.lock().unwrap();
-                *return_value_lock = Some(return_val);
+                annotation
+                    .return_value
+                    .set(return_val)
+                    .map_err(|_| ())
+                    .expect("runtime invariant violation: node executed twice");
             }
             Node::Transcr(operation, annotation) => {
                 let return_val = self.handle_op(&**operation, inputs)?;
-                let mut return_value_lock = annotation.return_value.lock().unwrap();
-                *return_value_lock = Some(return_val);
+                annotation
+                    .return_value
+                    .set(return_val)
+                    .map_err(|_| ())
+                    .expect("runtime invariant violation: Transcr node executed twice");
             }
             Node::Inp(_) => {}
             Node::Rel(_) => {}
@@ -302,6 +319,16 @@ impl<C: ArkConfig> MutexGraph<C> {
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
+        // Build an Arc-wrapped inputs map once. Subsequent per-handle_op
+        // accesses clone the Arc (cheap) instead of the inner `Value`
+        // (which may be a 500 MB matrix vector). This is a one-time clone
+        // per input — the price we pay to avoid per-op clones forever after.
+        let inputs: Arc<HashMap<Vid, Arc<Value<C>>>> = Arc::new(
+            inputs
+                .iter()
+                .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
+                .collect(),
+        );
         // Shared first-error slot. Rayon workers and the main loop record
         // failures here; the main loop bails after the sync channel closes.
         let error_slot: ErrorSlot = Arc::new(Mutex::new(None));
@@ -389,7 +416,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                                 if error_slot.lock().unwrap().is_some() {
                                     return;
                                 }
-                                match g_clone.handle_node(ni, inputs_clone.clone()) {
+                                match g_clone.handle_node(ni, &inputs_clone) {
                                     Ok(()) => update_successors(
                                         &g_clone,
                                         &inputs_clone,
@@ -450,17 +477,15 @@ impl<C: ArkConfig> MutexGraph<C> {
                             let value = match inputs.get(&vid) {
                                 Some(v) => v,
                                 None => {
-                                    let err = RuntimeError::missing_arg(
-                                        &vid,
-                                        inputs.iter().map(|(k, _)| k),
-                                    );
+                                    let err =
+                                        RuntimeError::missing_arg(&vid, inputs.keys());
                                     record_error(&error_slot, err.clone());
                                     // Drop tx and bail; in-flight workers
                                     // will see the slot set and short-circuit.
                                     return Err(err);
                                 }
                             };
-                            prover_state.public_message(value_to_bytes(value).unwrap().as_slice());
+                            prover_state.public_message(value_to_bytes(&**value).unwrap().as_slice());
                         }
                     }
                 }
@@ -469,17 +494,23 @@ impl<C: ArkConfig> MutexGraph<C> {
                         debug!("[run_graph] node {:?} is Challenge", node_idx);
                         // Challenge node: squeeze the sponge.
                         let return_val = Value::<C>::challenge(prover_state);
-                        *annotation.return_value.lock().unwrap() = Some(return_val);
+                        annotation
+                            .return_value
+                            .set(Arc::new(return_val))
+                            .map_err(|_| ())
+                            .expect("runtime invariant violation: Challenge node executed twice");
                     } else {
                         debug!("[run_graph] node {:?} is Transcript", node_idx);
                         // Proof transcript node: compute value and send
                         // through the sponge.
-                        if let Err(e) = g.handle_node(node_idx, Arc::clone(&inputs)) {
+                        if let Err(e) = g.handle_node(node_idx, &inputs) {
                             record_error(&error_slot, e.clone());
                             return Err(e);
                         }
-                        let return_val = annotation.return_value.lock().unwrap();
-                        let serialized = value_to_bytes(return_val.as_ref().unwrap()).unwrap();
+                        let arc_val = annotation.return_value.get().expect(
+                            "Transcr node return_value should be set after handle_node",
+                        );
+                        let serialized = value_to_bytes(&**arc_val).unwrap();
                         prover_state.public_message(serialized.as_slice());
                     }
                 }
@@ -515,7 +546,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 .into_iter()
                 .filter_map(|n| match &g.mutex_graph[n] {
                     Node::Transcr(op, annotation) if !matches!(**op, Op::Challenge(_, _)) => {
-                        annotation.return_value.lock().unwrap().clone()
+                        annotation.return_value.get().map(|arc| (**arc).clone())
                     }
                     _ => None,
                 })
@@ -524,7 +555,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                 .into_iter()
                 .filter_map(|n| match &g.mutex_graph[n] {
                     Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                        annotation.return_value.lock().unwrap().clone()
+                        annotation.return_value.get().map(|arc| (**arc).clone())
                     }
                     _ => None,
                 })
