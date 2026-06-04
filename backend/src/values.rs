@@ -1959,7 +1959,8 @@ impl<C: ArkConfig> Value<C> {
                 let n_points = b.len();
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
-                let result_poly = if poly.is_univariate() {
+                let uni_input = poly.is_univariate();
+                let result_poly = if uni_input {
                     poly.evaluate_vec(&points)
                 } else if let Ok(scalar) = poly.evaluate_mv(&points) {
                     VirtualPolynomial::from_scalar(scalar)
@@ -1968,22 +1969,26 @@ impl<C: ArkConfig> Value<C> {
                         .expect("MLE evaluation failed")
                 };
 
-                // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
                     if n_points == 1 {
                         Value::VecScalar(vec![scalar])
                     } else {
                         Value::Scalar(scalar)
                     }
-                } else if let Some(vec) = result_poly.to_vec() {
-                    Value::VecScalar(vec)
+                } else if uni_input {
+                    if let Some(vec) = result_poly.to_vec() {
+                        Value::VecScalar(vec)
+                    } else {
+                        Value::Poly(result_poly)
+                    }
                 } else {
                     Value::Poly(result_poly)
                 };
             }
             (Value::Poly(poly), Value::VecScalar(v)) => {
                 let n_points = v.len();
-                let result_poly = if poly.is_univariate() {
+                let uni_input = poly.is_univariate();
+                let result_poly = if uni_input {
                     poly.evaluate_vec(v)
                 } else if let Ok(scalar) = poly.evaluate_mv(v) {
                     VirtualPolynomial::from_scalar(scalar)
@@ -1991,15 +1996,18 @@ impl<C: ArkConfig> Value<C> {
                     poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
                 };
 
-                // Convert to most specific Value type
                 *other = if let Some(scalar) = result_poly.to_scalar() {
                     if n_points == 1 {
                         Value::VecScalar(vec![scalar])
                     } else {
                         Value::Scalar(scalar)
                     }
-                } else if let Some(vec) = result_poly.to_vec() {
-                    Value::VecScalar(vec)
+                } else if uni_input {
+                    if let Some(vec) = result_poly.to_vec() {
+                        Value::VecScalar(vec)
+                    } else {
+                        Value::Poly(result_poly)
+                    }
                 } else {
                     Value::Poly(result_poly)
                 };
