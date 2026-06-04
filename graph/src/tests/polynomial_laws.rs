@@ -104,7 +104,7 @@ fn test_addition_identity() {
     let mut rng = rand::rngs::ThreadRng::default();
     let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng).unwrap();
 
-    assert_eq!(result, p, "Adding zero should be identity");
+    assert_eq!(*result, p, "Adding zero should be identity");
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn test_multiplication_identity() {
     let mut rng = rand::rngs::ThreadRng::default();
     let result = eval_op(&mk::<ArkBn254>(op), &env, &mut rng).unwrap();
 
-    assert_eq!(result, p, "Multiplying by one should be identity");
+    assert_eq!(*result, p, "Multiplying by one should be identity");
 }
 
 #[test]

@@ -14,6 +14,7 @@ use petgraph::graph::NodeIndex;
 use rand::rngs::ThreadRng;
 use share::Ctx;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Type alias for test configuration (BLS12-381 curve)
 pub type TestConfig = ArkBls12_381;
@@ -98,7 +99,7 @@ fn execute_graph_inner<C: ArkConfig>(
     use petgraph::visit::Topo;
 
     let graph = dag.inner_graph();
-    let mut env: HashMap<Ref, Value<C>> = HashMap::new();
+    let mut env: HashMap<Ref, Arc<Value<C>>> = HashMap::new();
     let mut computed: HashMap<NodeIndex, Value<C>> = HashMap::new();
 
     // Pre-populate env with input bindings: every Arg node referenced from
@@ -107,7 +108,7 @@ fn execute_graph_inner<C: ArkConfig>(
         if let Node::Arg(vid, _, _, _, _) = &dag[node_idx]
             && let Some(val) = inputs.get(vid)
         {
-            env.insert(Ref(node_idx), val.clone());
+            env.insert(Ref(node_idx), Arc::new(val.clone()));
         }
     }
 
@@ -119,11 +120,11 @@ fn execute_graph_inner<C: ArkConfig>(
         match &dag[node_idx] {
             Node::Inp(_) | Node::Rel(_) | Node::Arg(_, _, _, _, _) => {}
             Node::Op(op, _) | Node::Transcr(op, _) => {
-                let value = eval_op(op, &env, &mut rng)
+                let value_arc = eval_op(op, &env, &mut rng)
                     .expect("execute_graph: eval_op should not fail on a well-formed DAG");
-                env.insert(Ref(node_idx), value.clone());
-                computed.insert(node_idx, value.clone());
-                last_op_value = Some(value);
+                env.insert(Ref(node_idx), Arc::clone(&value_arc));
+                computed.insert(node_idx, (*value_arc).clone());
+                last_op_value = Some((*value_arc).clone());
             }
         }
     }
