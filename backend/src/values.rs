@@ -2676,23 +2676,18 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_mle(&self) -> Self {
         match self {
             Value::VecScalar(v) => {
-                let mut mle = vec![];
-                for i in v.iter() {
-                    mle.push(*i);
-                }
-                let size = log2(mle.len());
+                let mle = v.clone();
+                let size = log2(mle.len()) as usize;
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle),
+                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
                 )))
             }
             Value::VecIndex(v) => {
-                let mut mle = vec![];
-                for i in v.iter() {
-                    mle.push(C::FOps::from_usize(*i));
-                }
-                let size = log2(mle.len());
+                let mut mle = Vec::with_capacity(v.len());
+                mle.extend(v.iter().map(|i| C::FOps::from_usize(*i)));
+                let size = log2(mle.len()) as usize;
                 Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size as usize, mle),
+                    DenseMultilinearExtension::<C::F>::from_evaluations_vec(size, mle),
                 )))
             }
             _ => panic!("Expected vec scalar or vec index, found {}", self),
@@ -3027,35 +3022,46 @@ pub fn marginalize<C: ArkConfig>(
         let mut products_sum = vec![C::F::zero(); max_degree + 1];
 
         for (coefficient, products) in &next_poly.products {
-            let mut coeff_acc = vec![C::F::zero(); max_degree + 1];
             let product_tables: Vec<&[C::F]> = products.iter().map(|&idx| tables[idx]).collect();
             let k = product_tables.len();
 
-            let partials: Vec<Vec<C::F>> = (0..total)
-                .into_par_iter()
-                .map(|b| {
-                    let v0: Vec<C::F> = product_tables.iter().map(|tab| tab[2 * b]).collect();
-                    let v1: Vec<C::F> = product_tables.iter().map(|tab| tab[2 * b + 1]).collect();
-                    // P(t) = prod_i ((1-t)*v0_i + t*v1_i); compute coeffs of P (degree k).
-                    let mut coeffs = vec![C::F::zero(); k + 1];
-                    coeffs[0] = C::F::one();
-                    for i in 0..k {
-                        let a = v0[i];
-                        let b_i = v1[i] - v0[i];
-                        for d in (1..=i + 1).rev() {
-                            coeffs[d] = coeffs[d] * a + coeffs[d - 1] * b_i;
-                        }
-                        coeffs[0] *= a;
-                    }
-                    coeffs
-                })
-                .collect();
 
-            for partial in partials {
-                for (acc, &p) in coeff_acc.iter_mut().zip(partial.iter()) {
-                    *acc += p;
-                }
-            }
+            let coeff_acc: Vec<C::F> = (0..total)
+                .into_par_iter()
+                .fold(
+                    || (vec![C::F::zero(); k + 1], vec![C::F::zero(); k + 1]),
+                    |(mut acc, mut coeffs), b| {
+                        // P(t) = prod_i ((1-t)*v0_i + t*v1_i); coeffs of P (degree k).
+                        coeffs[0] = C::F::one();
+                        for c in &mut coeffs[1..] {
+                            *c = C::F::zero();
+                        }
+                        for i in 0..k {
+                            let v0_i = product_tables[i][2 * b];
+                            let v1_i = product_tables[i][2 * b + 1];
+                            let step = v1_i - v0_i;
+                            for d in (1..=i + 1).rev() {
+                                coeffs[d] = coeffs[d] * v0_i + coeffs[d - 1] * step;
+                            }
+                            coeffs[0] *= v0_i;
+                        }
+                        for (a, &c) in acc.iter_mut().zip(coeffs.iter()) {
+                            *a += c;
+                        }
+                        (acc, coeffs)
+                    },
+                )
+                .map(|(acc, _)| acc)
+                .reduce(
+                    || vec![C::F::zero(); k + 1],
+                    |mut left, right| {
+                        for (l, &r) in left.iter_mut().zip(right.iter()) {
+                            *l += r;
+                        }
+                        left
+                    },
+                );
+
             for (ps, &acc) in products_sum.iter_mut().zip(coeff_acc.iter()) {
                 *ps += *coefficient * acc;
             }
