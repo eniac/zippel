@@ -82,6 +82,15 @@ rand = { version = "0.8", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 
+# Native Spartan baseline: Microsoft's Spartan crate (NOT Spartan2). The
+# crate is `spartan` on crates.io, with both NIZK and SNARK variants.
+# Pulls in its own curve25519-dalek stack — no arkworks dependency, so
+# it coexists with everything else here without version conflicts.
+# `merlin` (transcript) is already a dep via the bp-* native IPA baseline.
+spartan = { version = "0.9", features = ["multicore"] }
+curve25519-dalek = { version = "4", features = ["serde", "rand_core"] }
+bincode = "1.3"
+
 [dev-dependencies]
 criterion = "0.5"
 
@@ -116,6 +125,13 @@ path = "src/bin/groth16_profile.rs"
 [[bin]]
 name = "bench_all"
 path = "src/bin/bench_all.rs"
+
+[[bin]]
+# Renamed from `spartan` to avoid colliding with the `spartan` crate
+# in our deps (Rust resolves `spartan::` to the binary's empty module
+# otherwise, masking the `spartan` crate at use sites).
+name = "spartan_bench"
+path = "src/bin/spartan_bench.rs"
 
 [[bench]]
 name = "sumcheck"
