@@ -2,7 +2,7 @@ use crate::{DQDag, GOp, Node, Op, PRef, Ref, mk};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use petgraph::graph::NodeIndex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 
 fn named_pref(
@@ -22,6 +22,83 @@ fn named_pref(
         from_transcript: false,
         name,
     }
+}
+
+fn collect_reachable_forward<C: ArkConfig>(dag: &DQDag<C>, start: NodeIndex) -> HashSet<NodeIndex> {
+    let mut done: HashSet<NodeIndex> = HashSet::new();
+    let mut worklist = vec![start];
+
+    while let Some(node) = worklist.pop() {
+        if !done.insert(node) {
+            continue;
+        }
+        for neighbor in dag.nodes_from(node) {
+            if !done.contains(&neighbor) {
+                worklist.push(neighbor);
+            }
+        }
+    }
+
+    done.into_iter().filter(|&n| dag[n].is_op()).collect()
+}
+
+fn collect_reachable_backward<C: ArkConfig>(
+    dag: &DQDag<C>,
+    starts: &[NodeIndex],
+    stop_set: Option<&HashSet<NodeIndex>>,
+) -> HashSet<NodeIndex> {
+    let mut done: HashSet<NodeIndex> = HashSet::new();
+    let mut worklist: Vec<NodeIndex> = starts.to_vec();
+
+    while let Some(node) = worklist.pop() {
+        if !done.insert(node) {
+            continue;
+        }
+        if stop_set.map_or_else(|| false, |s| s.contains(&node)) {
+            continue;
+        }
+        for neighbor in dag.nodes_to(node) {
+            if !done.contains(&neighbor) {
+                worklist.push(neighbor);
+            }
+        }
+    }
+
+    done.into_iter().filter(|&n| dag[n].is_op()).collect()
+}
+
+fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> Vec<NodeIndex> {
+    let mut in_degree: HashMap<NodeIndex, usize> = HashMap::with_capacity(nodes.len());
+    for &node in nodes {
+        let deg = dag.nodes_to(node).filter(|dep| nodes.contains(dep)).count();
+        in_degree.insert(node, deg);
+    }
+
+    let mut queue: VecDeque<NodeIndex> = in_degree
+        .iter()
+        .filter(|&(_, &deg)| deg == 0)
+        .map(|(&node, _)| node)
+        .collect();
+
+    let mut result = Vec::with_capacity(nodes.len());
+    while let Some(node) = queue.pop_front() {
+        result.push(node);
+        for dependent in dag.nodes_from(node) {
+            if let Some(deg) = in_degree.get_mut(&dependent) {
+                *deg -= 1;
+                if *deg == 0 {
+                    queue.push_back(dependent);
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        result.len(),
+        nodes.len(),
+        "topo_sort_nodes: cycle detected or nodes missing"
+    );
+    result
 }
 
 /// Transitive closure on a DAG.
@@ -89,7 +166,14 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         }
 
         tc.prefs = input_prefs;
-        tc.build_from(dag, start, &mut index);
+
+        let reachable = collect_reachable_forward(dag, start);
+        let topo = topo_sort_nodes(dag, &reachable);
+        for node in topo {
+            if !index.contains_key(&node) {
+                tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
+            }
+        }
         tc
     }
 
@@ -107,24 +191,13 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             prefs,
         };
 
+        let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
+        let topo = topo_sort_nodes(dag, &reachable);
+
         let mut index: HashMap<NodeIndex, usize> = HashMap::new();
 
-        // Walk backward from transcript nodes to input args.
-        let mut done: HashSet<NodeIndex> = HashSet::new();
-        let mut worklist: Vec<NodeIndex> = transcripts_vec;
-
-        while let Some(node) = worklist.pop() {
-            if !done.insert(node) {
-                continue;
-            }
-            if dag[node].is_op() {
-                tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
-            }
-            for neighbor in dag.nodes_to(node) {
-                if !done.contains(&neighbor) {
-                    worklist.push(neighbor);
-                }
-            }
+        for node in topo {
+            tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
         }
         tc
     }
@@ -156,11 +229,12 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             prefs: input_prefs,
         };
 
+        let mut index: HashMap<NodeIndex, usize> = HashMap::new();
+
         // Pre-populate index with transcript nodes so trans_clos_op
         // doesn't recurse past them into prover-only nodes. Also add
         // transcript source PRefs to prefs — they are opaque inputs to
         // the verifier, analogous to public args.
-        let mut index: HashMap<NodeIndex, usize> = HashMap::new();
         for &n in &transcripts_vec {
             match &dag[n] {
                 Node::Op(op, (qualifier, distribution))
@@ -177,23 +251,11 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             }
         }
 
-        let mut done: HashSet<NodeIndex> = HashSet::new();
-        let mut worklist: Vec<NodeIndex> = checks;
-
-        while let Some(node) = worklist.pop() {
-            if !done.insert(node) {
-                continue;
-            }
-            if dag[node].is_op() {
+        let reachable = collect_reachable_backward(dag, &checks, Some(&transcripts_set));
+        let topo = topo_sort_nodes(dag, &reachable);
+        for node in topo {
+            if !index.contains_key(&node) {
                 tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
-            }
-            if transcripts_set.contains(&node) {
-                continue;
-            }
-            for neighbor in dag.nodes_to(node) {
-                if !done.contains(&neighbor) {
-                    worklist.push(neighbor);
-                }
             }
         }
         tc
@@ -219,30 +281,6 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         args.into_iter()
             .filter_map(|n| dag[n].arg_pref(n))
             .collect()
-    }
-
-    fn build_from(
-        &mut self,
-        dag: &DQDag<C>,
-        start: NodeIndex,
-        index: &mut HashMap<NodeIndex, usize>,
-    ) {
-        let mut done: HashSet<NodeIndex> = HashSet::new();
-        let mut worklist = vec![start];
-
-        while let Some(node) = worklist.pop() {
-            if !done.insert(node) {
-                continue;
-            }
-            if dag[node].is_op() {
-                self.trans_clos_ref(dag, dag.find_ref(node), index);
-            }
-            for neighbor in dag.nodes_from(node) {
-                if !done.contains(&neighbor) {
-                    worklist.push(neighbor);
-                }
-            }
-        }
     }
 
     fn trans_clos_op(
@@ -735,5 +773,77 @@ mod tests {
                 r.node()
             );
         }
+    }
+
+    fn verify_topo_order<C: ArkConfig>(tc: &TransClos<C>) {
+        let node_to_pos: HashMap<NodeIndex, usize> = tc
+            .clos
+            .iter()
+            .enumerate()
+            .map(|(i, (pr, _))| (pr.node(), i))
+            .collect();
+
+        for (i, (_, op)) in tc.clos.iter().enumerate() {
+            for r in op.references() {
+                if let Some(&dep_pos) = node_to_pos.get(&r.node()) {
+                    if dep_pos != i {
+                        assert!(
+                            dep_pos < i,
+                            "topo violation: dependency at clos[{}] ({:?}) appears after dependent at clos[{}]",
+                            dep_pos,
+                            r.node(),
+                            i
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn trans_clos_prover_topological_order() {
+        let g = make_qualified_dag(
+            r#"
+            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+                let r = random<F>;
+                a <- r * s[i + 2];
+                b <- r * s';
+                verify(a == b)
+            }"#,
+        );
+
+        let tc = TransClos::prover(&g);
+        verify_topo_order(&tc);
+    }
+
+    #[test]
+    fn trans_clos_verifier_topological_order() {
+        let g = make_qualified_dag(
+            r#"
+            proto foo<F: Field>(private a: F, public b: F) where a == b {
+                let r = random<F>;
+                c <- r * a;
+                verify(c == r * b)
+            }"#,
+        );
+
+        let tc = TransClos::verifier(&g);
+        verify_topo_order(&tc);
+    }
+
+    #[test]
+    fn trans_clos_relation_topological_order() {
+        let g = make_qualified_dag(
+            r#"
+            proto foo<F: Field>(private s: [F; 10], private s': F, public i: Fin<5>) where s == s {
+                let r = random<F>;
+                a <- r * s[i + 2];
+                b <- r * s';
+                verify(a == b)
+            }"#,
+        );
+
+        let tc = TransClos::relation(&g);
+        verify_topo_order(&tc);
     }
 }

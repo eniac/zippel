@@ -1125,8 +1125,8 @@ mod tests {
             ca.verifier
                 .vars()
                 .iter()
-                .all(|p| p.is_public() || p.from_transcript),
-            "verifier Groebner result should contain only public inputs and opaque transcript variables"
+                .all(|p| !p.qualifier.is_private() || p.from_transcript),
+            "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
         );
     }
 

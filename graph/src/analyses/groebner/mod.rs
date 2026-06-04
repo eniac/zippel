@@ -248,6 +248,7 @@ pub struct GroebnerResult<C: ArkConfig, T: Monomial> {
     pub basis: GroebnerBasis<C::F, T>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub prefs: HashMap<Ref, PRef>,
+    pub var_order: Vec<PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
@@ -256,6 +257,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             basis: GroebnerBasis::empty(0),
             pl: Ctx::new(),
             prefs: HashMap::new(),
+            var_order: Vec::new(),
         }
     }
 
@@ -375,6 +377,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
+        self.var_order.extend(other.var_order.iter().cloned());
     }
 }
 
@@ -847,7 +850,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             result.register(pr);
         }
         for (pr, op) in tc.clos.into_iter() {
-            self.add_op(pr, op, &mut result);
+            self.add_op(pr.clone(), op, &mut result);
+            result.var_order.push(pr);
         }
         result
     }
@@ -860,12 +864,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///   `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
     /// combined with bilinearity:
     ///   `pair(α·g1, β·g2) = α·β·gt`.
-    fn gt_pref(&mut self) -> PRef {
-        self.ns.gt_pref()
+    fn gt_pref(&mut self, result: &mut GroebnerResult<C, T>) -> PRef {
+        let was_cached = self.ns.gt_sentinel.is_some();
+        let pr = self.ns.gt_pref();
+        if !was_cached {
+            result.var_order.push(pr.clone());
+        }
+        pr
     }
 
-    fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
-        self.ns.sentinel_pref(name, typ)
+    fn sentinel_pref(&mut self, name: &str, typ: ATyp, result: &mut GroebnerResult<C, T>) -> PRef {
+        let pr = self.ns.sentinel_pref(name, typ);
+        result.var_order.push(pr.clone());
+        pr
     }
 
     /// Allocate quotient/remainder witness sentinels without registering opaque operations.
@@ -873,12 +884,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         quotient_typ: ATyp,
         remainder_typ: ATyp,
-        _result: &mut GroebnerResult<C, T>,
+        result: &mut GroebnerResult<C, T>,
     ) -> (PRef, PRef) {
         let q_name = self.ns.next_name("div_q");
         let r_name = self.ns.next_name("div_r");
-        let q_wit = self.sentinel_pref(&q_name, quotient_typ);
-        let r_wit = self.sentinel_pref(&r_name, remainder_typ);
+        let q_wit = self.sentinel_pref(&q_name, quotient_typ, result);
+        let r_wit = self.sentinel_pref(&r_name, remainder_typ, result);
         (q_wit, r_wit)
     }
 
@@ -1705,7 +1716,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let needs_gt = matches!(r_typ, ATyp::Base(ABase::GT))
                     || matches!(r_typ, ATyp::Vec(box ATyp::Base(ABase::GT), _));
                 if needs_gt {
-                    let gt = self.gt_pref();
+                    let gt = self.gt_pref(result);
                     let gt_var = SparsePolynomial::var(&gt);
                     let target_slots = target.slots();
                     for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
@@ -1747,7 +1758,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     vec![SparsePolynomial::zero(); r_elem_len];
                 for i in 0..*na {
                     let acc_name = self.ns.next_name("dot_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone());
+                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), result);
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
                     self.mul_op(&acc_pref, &a_elem, &b_elem, &pr.typ, result);
@@ -1799,7 +1810,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         b: &PolySource<C, T>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        let gt = self.gt_pref();
+        let gt = self.gt_pref(result);
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let gt_var = SparsePolynomial::var(&gt);
@@ -1942,7 +1953,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             let next_name = self.ns.next_name("pow_acc");
             let next_typ =
                 ATyp::lub_mul(acc.typ(), base.typ(), &Nothing).expect("pow_const: lub_mul");
-            let next_pref = self.sentinel_pref(&next_name, next_typ.clone());
+            let next_pref = self.sentinel_pref(&next_name, next_typ.clone(), result);
             self.mul_op(&next_pref, &acc, base, &next_typ, result);
             acc = PolySource::new(
                 next_pref
@@ -2887,7 +2898,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_and_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone());
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
                     self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
                     acc = PolySource::new(
                         acc_pref
@@ -2928,7 +2939,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         pr.clone()
                     } else {
                         let acc_name = self.ns.next_name("reduce_mul_acc");
-                        self.sentinel_pref(&acc_name, step_typ.clone())
+                        self.sentinel_pref(&acc_name, step_typ.clone(), result)
                     };
                     self.mul_op(&acc_pref, &acc, &elem, &step_typ, result);
                     acc = PolySource::from_pref_vars(&acc_pref, step_typ.clone());
@@ -2965,7 +2976,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         } else {
                             "reduce_div_acc"
                         });
-                        self.sentinel_pref(&acc_name, step_typ.clone())
+                        self.sentinel_pref(&acc_name, step_typ.clone(), result)
                     };
                     if is_poly {
                         self.div_rem_op(&target, &acc_src, &elem_src, is_rem, false, result);
