@@ -93,6 +93,20 @@ pub enum PolyVariant<F: Field> {
     DenseMle(DenseMultilinearExtension<F>),
     /// Sparse multivariate polynomial
     SparseMultivariate(SparseMultivariatePolynomial<F>),
+    /// Sparse multilinear extension in **evaluation form**: a list of
+    /// `(boolean_index, value)` pairs interpreted as the MLE of a function
+    /// `f: {0,1}^num_vars → F` with `f(i) = value` for each listed pair and
+    /// `f(i) = 0` elsewhere. Indices are LSB-first (variable 0 is the low
+    /// bit of the index). Designed for Spartan-style R1CS matrices, where
+    /// `num_vars` is `2·log(N)` but only ~3·N entries are non-zero — full
+    /// evaluation and partial-evaluation both run in `O(|evals| · num_vars)`
+    /// rather than `O(2^num_vars)`. Arithmetic ops on this variant fall
+    /// back to `to_dense` first (correct but expensive); the only fast
+    /// paths are `evaluate` and `evaluate_or_fix_mle`.
+    SparseMle {
+        num_vars: usize,
+        evals: Vec<(usize, F)>,
+    },
 }
 
 /// Parallel replacement for `ark_poly::DenseMultilinearExtension::fix_variables`.
@@ -131,7 +145,73 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseUni(p) => p.degree(),
             PolyVariant::DenseMle(_) => 1,
             PolyVariant::SparseMultivariate(p) => p.degree(),
+            PolyVariant::SparseMle { .. } => 1,
         }
+    }
+
+    /// Densify a `SparseMle`: instantiate the `2^num_vars` evaluation vector
+    /// by scattering the listed `(index, value)` pairs. O(`2^num_vars + |evals|`).
+    fn sparse_mle_to_dense_mle(num_vars: usize, evals: &[(usize, F)]) -> DenseMultilinearExtension<F> {
+        let len = 1usize << num_vars;
+        let mut dense = vec![F::zero(); len];
+        for (idx, val) in evals {
+            debug_assert!(*idx < len, "SparseMle index out of range");
+            dense[*idx] += *val;
+        }
+        DenseMultilinearExtension::from_evaluations_vec(num_vars, dense)
+    }
+
+    /// Evaluate a `SparseMle` at a full point of length `num_vars`.
+    ///
+    /// Uses the multilinear-Lagrange (eq) formula on each non-zero entry:
+    /// `f(r) = Σ_{(i, v) ∈ evals} v · eq(r, i_bits)` where
+    /// `eq(r, b) = Π_k (r_k if b_k=1 else 1 - r_k)`.
+    /// Total cost: `O(|evals| · num_vars)`.
+    fn evaluate_sparse_mle_full(num_vars: usize, evals: &[(usize, F)], point: &[F]) -> F {
+        debug_assert_eq!(point.len(), num_vars);
+        // Precompute (1 - r_k) so eq lookups are O(1) per bit.
+        let one_minus: Vec<F> = point.iter().map(|r| F::one() - *r).collect();
+        evals
+            .par_iter()
+            .map(|(idx, v)| {
+                let mut acc = *v;
+                for k in 0..num_vars {
+                    let bit = (*idx >> k) & 1;
+                    acc *= if bit == 1 { point[k] } else { one_minus[k] };
+                }
+                acc
+            })
+            .reduce(F::zero, |a, b| a + b)
+    }
+
+    /// Partial-evaluate a `SparseMle` at the first `point.len()` variables,
+    /// emitting a `DenseMle` in the remaining `num_vars - point.len()`
+    /// variables. Cost: `O(|evals| · num_vars + 2^(num_vars - point.len()))`.
+    fn fix_first_vars_sparse_mle(
+        num_vars: usize,
+        evals: &[(usize, F)],
+        point: &[F],
+    ) -> DenseMultilinearExtension<F> {
+        let fixed = point.len();
+        debug_assert!(fixed <= num_vars);
+        let remaining = num_vars - fixed;
+        let out_len = 1usize << remaining;
+        let low_mask = if fixed == 0 { 0 } else { (1usize << fixed) - 1 };
+        // Precompute (1 - r_k) for the fixed point.
+        let one_minus: Vec<F> = point.iter().map(|r| F::one() - *r).collect();
+        let mut dense = vec![F::zero(); out_len];
+        for (idx, v) in evals {
+            let low = *idx & low_mask;
+            let high = *idx >> fixed;
+            // eq(r, low_bits) factor:
+            let mut factor = *v;
+            for k in 0..fixed {
+                let bit = (low >> k) & 1;
+                factor *= if bit == 1 { point[k] } else { one_minus[k] };
+            }
+            dense[high] += factor;
+        }
+        DenseMultilinearExtension::from_evaluations_vec(remaining, dense)
     }
 
     /// Evaluate polynomial at a point (convenience method)
@@ -162,6 +242,16 @@ impl<F: Field> PolyVariant<F> {
                     p.evaluate(point)
                 }
             }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                if point.len() != *num_vars {
+                    panic!(
+                        "Evaluation point dimension mismatch:\n\t SparseMle expected {}, got {}",
+                        num_vars,
+                        point.len()
+                    );
+                }
+                Self::evaluate_sparse_mle_full(*num_vars, evals, point)
+            }
         }
     }
 
@@ -170,6 +260,7 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseMle(mle) => mle.num_vars(),
             PolyVariant::SparseMultivariate(p) => p.num_vars,
+            PolyVariant::SparseMle { num_vars, .. } => *num_vars,
             PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => 1,
         }
     }
@@ -184,6 +275,7 @@ impl<F: Field> PolyVariant<F> {
         match self {
             PolyVariant::DenseMle(_mle) => true,
             PolyVariant::SparseMultivariate(p) => p.degree() == 1,
+            PolyVariant::SparseMle { .. } => true,
             PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => false,
         }
     }
@@ -192,7 +284,9 @@ impl<F: Field> PolyVariant<F> {
     pub fn is_multivariate(&self) -> bool {
         matches!(
             self,
-            PolyVariant::DenseMle(_) | PolyVariant::SparseMultivariate(_)
+            PolyVariant::DenseMle(_)
+                | PolyVariant::SparseMultivariate(_)
+                | PolyVariant::SparseMle { .. }
         )
     }
 
@@ -240,6 +334,9 @@ impl<F: Field> PolyVariant<F> {
                 Some(dense.coeffs)
             }
             PolyVariant::SparseMultivariate(_) => None,
+            PolyVariant::SparseMle { num_vars, evals } => {
+                Some(Self::sparse_mle_to_dense_mle(*num_vars, evals).evaluations)
+            }
         }
     }
 
@@ -263,6 +360,7 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseUni(p) => p.is_zero(),
             PolyVariant::DenseMle(mle) => mle.is_zero(),
             PolyVariant::SparseMultivariate(p) => p.is_zero(),
+            PolyVariant::SparseMle { evals, .. } => evals.iter().all(|(_, v)| v.is_zero()),
         }
     }
 
@@ -313,6 +411,9 @@ impl<F: Field> PolyVariant<F> {
                 PolyVariant::DenseUni(dense)
             }
             PolyVariant::SparseMultivariate(_) => self.clone(), // Already sparse, no dense equivalent
+            PolyVariant::SparseMle { num_vars, evals } => {
+                PolyVariant::DenseMle(Self::sparse_mle_to_dense_mle(*num_vars, evals))
+            }
         }
     }
 
@@ -363,6 +464,16 @@ impl<F: Field> PolyVariant<F> {
                     });
                 }
                 Ok(p.evaluate(&point[0]))
+            }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                if point.len() != *num_vars {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: *num_vars,
+                        actual: point.len(),
+                    });
+                }
+                Ok(Self::evaluate_sparse_mle_full(*num_vars, evals, point))
             }
         }
     }
@@ -484,6 +595,7 @@ impl<F: Field> PolyVariant<F> {
                     added_evals,
                 ))
             }
+            PolyVariant::SparseMle { .. } => self.to_dense().poly_add_scalar(scalar),
         }
     }
 
@@ -517,6 +629,14 @@ impl<F: Field> PolyVariant<F> {
                     num_vars: p.num_vars,
                     terms: neg_terms,
                 })
+            }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                let neg_evals: Vec<(usize, F)> =
+                    evals.iter().map(|(i, v)| (*i, -*v)).collect();
+                PolyVariant::SparseMle {
+                    num_vars: *num_vars,
+                    evals: neg_evals,
+                }
             }
         }
     }
@@ -618,6 +738,14 @@ impl<F: Field> PolyVariant<F> {
                     terms: scaled_terms,
                 })
             }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                let scaled: Vec<(usize, F)> =
+                    evals.iter().map(|(i, v)| (*i, *v * scalar)).collect();
+                PolyVariant::SparseMle {
+                    num_vars: *num_vars,
+                    evals: scaled,
+                }
+            }
         }
     }
 
@@ -706,6 +834,17 @@ impl<F: Field> PolyVariant<F> {
                         terms: scaled_terms,
                     },
                 ))
+            }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                let inv_scalar = scalar
+                    .inverse()
+                    .ok_or(PolyError::DivisionByZero { v: self.clone() })?;
+                let scaled: Vec<(usize, F)> =
+                    evals.iter().map(|(i, v)| (*i, *v * inv_scalar)).collect();
+                Ok(PolyVariant::SparseMle {
+                    num_vars: *num_vars,
+                    evals: scaled,
+                })
             }
         }
     }
@@ -809,6 +948,27 @@ impl<F: Field> PolyVariant<F> {
                     })
                 }
             }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                if points.len() < *num_vars {
+                    // Sparse partial-eval: emit a DenseMle in the
+                    // remaining variables. Cost O(|evals| · num_vars +
+                    // 2^remaining) — for a Spartan R1CS matrix at M=12
+                    // with ~3·2^M = ~12K non-zeros, this is ~150K ops
+                    // versus a dense fold's ~16M ops.
+                    Ok(PolyVariant::DenseMle(Self::fix_first_vars_sparse_mle(
+                        *num_vars, evals, points,
+                    )))
+                } else if points.len() == *num_vars {
+                    let val = Self::evaluate_sparse_mle_full(*num_vars, evals, points);
+                    Ok(Self::from_scalar(val))
+                } else {
+                    Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: *num_vars,
+                        actual: points.len(),
+                    })
+                }
+            }
             _ => Err(PolyError::RequiresMle),
         }
     }
@@ -833,6 +993,16 @@ impl<F: Field> PolyVariant<F> {
             PolyVariant::SparseMultivariate(p) => {
                 3u8.serialize_compressed(&mut writer)?;
                 p.serialize_compressed(&mut writer)
+            }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                4u8.serialize_compressed(&mut writer)?;
+                (*num_vars as u64).serialize_compressed(&mut writer)?;
+                (evals.len() as u64).serialize_compressed(&mut writer)?;
+                for (idx, val) in evals {
+                    (*idx as u64).serialize_compressed(&mut writer)?;
+                    val.serialize_compressed(&mut writer)?;
+                }
+                Ok(())
             }
         }
     }
@@ -944,6 +1114,9 @@ impl<F: Field> fmt::Display for PolyVariant<F> {
                 p.num_vars,
                 p.terms.len()
             ),
+            PolyVariant::SparseMle { num_vars, evals } => {
+                write!(f, "SparseMle(nvars={}, nnz={})", num_vars, evals.len())
+            }
         }
     }
 }

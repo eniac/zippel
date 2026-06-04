@@ -5,9 +5,48 @@ use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::ops::{Add, Mul, Sub};
 use std::sync::Arc;
+
+/// Wrapper around `Arc<PolyVariant<F>>` that hashes and compares by
+/// **pointer identity** instead of by content. The default derived
+/// `Hash` on `PolyVariant` walks the entire `DenseMle.evaluations`
+/// vector, which is O(N²) work for our R1CS matrices (a 16M-entry
+/// MLE hashes 16M field elements — ~1.7s at M=12 per `from_poly` call).
+/// In practice, `flattened_polys` is deduped by identity: zippel reuses
+/// the same `Arc` via clone when the same poly appears in multiple
+/// products, never by re-constructing identical content. So pointer
+/// hashing gives the same dedupe behavior for all realistic cases at
+/// near-zero cost.
+struct ArcPtr<F: Field>(Arc<PolyVariant<F>>);
+
+impl<F: Field> Clone for ArcPtr<F> {
+    fn clone(&self) -> Self {
+        ArcPtr(Arc::clone(&self.0))
+    }
+}
+
+impl<F: Field> PartialEq for ArcPtr<F> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<F: Field> Eq for ArcPtr<F> {}
+
+impl<F: Field> Hash for ArcPtr<F> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.0) as usize).hash(state);
+    }
+}
+
+impl<F: Field> fmt::Debug for ArcPtr<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ArcPtr({:p})", Arc::as_ptr(&self.0))
+    }
+}
 
 /// Virtual Polynomial - represents a polynomial as a sum of products of base polynomials.
 /// This is useful for sum-check protocols and allows flexible representation
@@ -28,8 +67,11 @@ pub struct VirtualPolynomial<F: Field> {
     pub products: Vec<(F, Vec<usize>)>,
     /// Flattened list of all unique polynomials referenced by products
     pub flattened_polys: Vec<Arc<PolyVariant<F>>>,
-    /// Lookup table mapping polynomial Arc to their indices
-    poly_pointers_lookup: HashMap<Arc<PolyVariant<F>>, usize>,
+    /// Lookup table mapping polynomial Arc to their indices.
+    /// Hashed by Arc pointer (see `ArcPtr`) — content hashing on the
+    /// DenseMle variant would walk the full 2^n-entry evaluation vector
+    /// every insert/lookup, blowing up for matrix-sized MLEs.
+    poly_pointers_lookup: HashMap<ArcPtr<F>, usize>,
     /// Number of variables (for multivariate polynomials)
     pub num_variables: Option<usize>,
 }
@@ -49,7 +91,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     pub fn from_poly(poly: PolyVariant<F>) -> Self {
         let poly_arc = Arc::new(poly);
         let mut hm = HashMap::new();
-        hm.insert(Arc::clone(&poly_arc), 0);
+        hm.insert(ArcPtr(Arc::clone(&poly_arc)), 0);
 
         VirtualPolynomial {
             products: vec![(F::one(), vec![0])],
@@ -94,7 +136,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
         let mut new_lookup = HashMap::new();
         for (idx, poly) in new_flattened.iter().enumerate() {
-            new_lookup.insert(Arc::clone(poly), idx);
+            new_lookup.insert(ArcPtr(Arc::clone(poly)), idx);
         }
 
         let mut result = VirtualPolynomial {
@@ -128,12 +170,13 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         }
 
         for poly in poly_list {
-            if let Some(&index) = self.poly_pointers_lookup.get(&poly) {
+            let key = ArcPtr(Arc::clone(&poly));
+            if let Some(&index) = self.poly_pointers_lookup.get(&key) {
                 indexed_product.push(index)
             } else {
                 let curr_index = self.flattened_polys.len();
-                self.flattened_polys.push(poly.clone());
-                self.poly_pointers_lookup.insert(poly, curr_index);
+                self.flattened_polys.push(poly);
+                self.poly_pointers_lookup.insert(key, curr_index);
                 indexed_product.push(curr_index);
             }
         }
@@ -149,11 +192,12 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         coefficient: F,
     ) -> Result<(), PolyError<F>> {
         // Check if this polynomial already exists
-        let poly_index = match self.poly_pointers_lookup.get(&poly) {
+        let key = ArcPtr(Arc::clone(&poly));
+        let poly_index = match self.poly_pointers_lookup.get(&key) {
             Some(&p) => p,
             None => {
                 self.poly_pointers_lookup
-                    .insert(poly.clone(), self.flattened_polys.len());
+                    .insert(key, self.flattened_polys.len());
                 self.flattened_polys.push(poly);
                 self.flattened_polys.len() - 1
             }
@@ -540,6 +584,15 @@ impl<F: ark_ff::PrimeField> CanonicalSerialize for VirtualPolynomial<F> {
                         PolyVariant::SparseMultivariate(p) => {
                             3u8.serialize_compressed(&mut writer)?;
                             p.serialize_compressed(&mut writer)?;
+                        }
+                        PolyVariant::SparseMle { num_vars, evals } => {
+                            4u8.serialize_compressed(&mut writer)?;
+                            (*num_vars as u64).serialize_compressed(&mut writer)?;
+                            (evals.len() as u64).serialize_compressed(&mut writer)?;
+                            for (idx, val) in evals {
+                                (*idx as u64).serialize_compressed(&mut writer)?;
+                                val.serialize_compressed(&mut writer)?;
+                            }
                         }
                     }
                 }
