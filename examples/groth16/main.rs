@@ -210,41 +210,7 @@ fn run_and_verify(
     );
 }
 
-fn build_dense_matrix_a(
-    sparse: &ark_relations::gr1cs::Matrix<F>,
-    num_constraints: usize,
-    num_inputs: usize,
-    domain_size: usize,
-    n: usize,
-) -> Vec<F> {
-    let mut dense = vec![F::zero(); domain_size * n];
-    for (i, row) in sparse.iter().enumerate() {
-        for (coeff, col) in row {
-            dense[i * n + col] = *coeff;
-        }
-    }
-    for i in 0..num_inputs {
-        let row = num_constraints + i;
-        dense[row * n + i] = F::one();
-    }
-    dense
-}
-
-fn build_dense_matrix_bc(
-    sparse: &ark_relations::gr1cs::Matrix<F>,
-    domain_size: usize,
-    n: usize,
-) -> Vec<F> {
-    let mut dense = vec![F::zero(); domain_size * n];
-    for (i, row) in sparse.iter().enumerate() {
-        for (coeff, col) in row {
-            dense[i * n + col] = *coeff;
-        }
-    }
-    dense
-}
-
-fn run_opt(
+fn run_groth16(
     pk: &ark_groth16::ProvingKey<E>,
     vk: &ark_groth16::VerifyingKey<E>,
     h_coeffs: &[F],
@@ -291,73 +257,6 @@ fn run_opt(
     sizes.insert(&Tid::new("H"), &h_size);
 
     run_and_verify(
-        "examples/groth16/groth16-opt.zippel",
-        &sizes,
-        inputs,
-        &public_input_names,
-        vk,
-        instance_assignment,
-    );
-}
-
-fn run_noh(
-    pk: &ark_groth16::ProvingKey<E>,
-    vk: &ark_groth16::VerifyingKey<E>,
-    matrices: &[ark_relations::gr1cs::Matrix<F>],
-    instance_assignment: &[F],
-    witness_assignment: &[F],
-    num_constraints: usize,
-) {
-    let params = Groth16Params::from_keys(pk, vk);
-    let n = pk.a_query.len();
-    let m = vk.gamma_abc_g1.len();
-    let l = pk.l_query.len();
-    let num_inputs = instance_assignment.len();
-
-    type Dm<FF> = GeneralEvaluationDomain<FF>;
-    let domain = Dm::<F>::new(num_constraints + num_inputs).unwrap();
-    let domain_size = domain.size();
-
-    let mat_a_flat =
-        build_dense_matrix_a(&matrices[0], num_constraints, num_inputs, domain_size, n);
-    let mat_b_flat = build_dense_matrix_bc(&matrices[1], domain_size, n);
-    let mat_c_flat = build_dense_matrix_bc(&matrices[2], domain_size, n);
-    let coset_offset = F::GENERATOR;
-
-    let mut entries = params.common_inputs(instance_assignment, witness_assignment);
-    entries.push((Vid("mat_a".to_string()), Value::VecScalar(mat_a_flat)));
-    entries.push((Vid("mat_b".to_string()), Value::VecScalar(mat_b_flat)));
-    entries.push((Vid("mat_c".to_string()), Value::VecScalar(mat_c_flat)));
-    entries.push((Vid("coset_offset".to_string()), Value::Scalar(coset_offset)));
-    let inputs: Ctx<Vid, Value<ArkBls12_381>> = Ctx::from_iter(entries);
-
-    let public_input_names = [
-        "alpha_g1",
-        "beta_g2",
-        "gamma_g2",
-        "delta_g2",
-        "gamma_abc_g1",
-        "beta_g1",
-        "delta_g1",
-        "a_query",
-        "b_g1_query",
-        "b_g2_query",
-        "h_query",
-        "l_query",
-        "instance_assignment",
-        "mat_a",
-        "mat_b",
-        "mat_c",
-        "coset_offset",
-    ];
-
-    let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("M"), &m);
-    sizes.insert(&Tid::new("L"), &l);
-    sizes.insert(&Tid::new("C"), &num_constraints);
-    sizes.insert(&Tid::new("D"), &domain_size);
-
-    run_and_verify(
         "examples/groth16/groth16.zippel",
         &sizes,
         inputs,
@@ -368,8 +267,7 @@ fn run_noh(
 }
 
 fn main() {
-    let mode = std::env::args().nth(1).unwrap_or_else(|| "noh".to_string());
-    println!("=== Groth16 (ArkBls12_381) — mode: {mode}, constraints: {CONSTRAINT_SIZE} ===");
+    println!("=== Groth16 (ArkBls12_381) — constraints: {CONSTRAINT_SIZE} ===");
 
     let circuit = BenchCircuit {
         num_constraints: CONSTRAINT_SIZE,
@@ -410,32 +308,21 @@ fn main() {
 
     type D<FF> = GeneralEvaluationDomain<FF>;
 
-    if mode == "opt" {
-        let full_assignment: Vec<F> =
-            [instance_assignment.clone(), witness_assignment.clone()].concat();
-        let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
-            &matrices,
-            num_inputs,
-            num_constraints,
-            &full_assignment,
-        )
-        .unwrap();
+    let full_assignment: Vec<F> =
+        [instance_assignment.clone(), witness_assignment.clone()].concat();
+    let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<F, D<F>>(
+        &matrices,
+        num_inputs,
+        num_constraints,
+        &full_assignment,
+    )
+    .unwrap();
 
-        run_opt(
-            &pk,
-            &vk,
-            &h_coeffs,
-            &instance_assignment,
-            &witness_assignment,
-        );
-    } else {
-        run_noh(
-            &pk,
-            &vk,
-            &matrices,
-            &instance_assignment,
-            &witness_assignment,
-            num_constraints,
-        );
-    }
+    run_groth16(
+        &pk,
+        &vk,
+        &h_coeffs,
+        &instance_assignment,
+        &witness_assignment,
+    );
 }
