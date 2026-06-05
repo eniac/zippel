@@ -1,11 +1,11 @@
 //! Side-by-side Groth16 timing: zippel vs. ark-groth16 v0.5
 //! (BLS12-381).
 //!
-//! Both sides prove the same R1CS instance (`BenchCircuit`: each row is
-//! `w1 * w2 = out`, with `out` a public input). Shared setup lives in
+//! Both sides prove the same R1CS instance (`BenchCircuit`: squaring
+//! chain `w[i+1] = w[i] * w[i]` with a single public output). Shared setup lives in
 //! `benchmarks::groth16::shared`; the zippel side byte-translates the
 //! v0.5 proving/verifying keys into git-main types and runs against
-//! `examples/groth16/groth16-opt.zippel`.
+//! `examples/groth16/groth16.zippel`.
 
 use benchmarks::groth16::{DEFAULT_LOG_CONSTRAINTS, build_translated, native_side, zippel_side};
 use clap::Parser;
@@ -26,9 +26,9 @@ fn main() {
     let log_sizes = args.sweep.unwrap_or_else(|| vec![args.log_size]);
 
     println!("=== Groth16: zippel vs. vendored native (BLS12-381, git-main arkworks) ===");
-    println!("statement: BenchCircuit — N multiplication constraints w1*w2 = out");
+    println!("statement: BenchCircuit — squaring chain w[i+1]=w[i]*w[i], single public output");
     println!("native side  = vendored Groth16 prover/verifier (git-main ark_ec + multi_pairing)");
-    println!("zippel side  = examples/groth16/groth16-opt.zippel\n");
+    println!("zippel side  = examples/groth16/groth16.zippel\n");
     println!(
         "  log |    C    |  M  |  L  | zippel prove   zippel verify | native prove   native verify | prove ratio  verify ratio"
     );

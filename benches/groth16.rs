@@ -275,7 +275,7 @@ fn groth16_bench(c: &mut Criterion) {
 
             // Zippel opt prover (includes h_coeffs computation)
             {
-                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &m);
@@ -313,7 +313,7 @@ fn groth16_bench(c: &mut Criterion) {
 
             // Zippel opt verifier
             {
-                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+                let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
                 let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
                 let mut sizes = Ctx::new();
                 sizes.insert(&Tid::new("M"), &m);

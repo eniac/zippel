@@ -7,7 +7,7 @@
 //! ```
 //!
 //! Parity decisions:
-//!   - The zippel side uses `examples/groth16/groth16-opt.zippel`
+//!   - The zippel side uses `examples/groth16/groth16.zippel`
 //!     (h_coeffs supplied externally) and folds the witness-map
 //!     `h_coeffs` computation into its prove timer, matching the
 //!     vendored native prover which does the same.
@@ -23,9 +23,14 @@
 //!     doesn't affect the comparison.
 //!
 //! Size knob: `log_constraints = log_2(num_constraints)`. The bench
-//! circuit emits one multiplication constraint per "row" and one new
-//! input variable per row, so `num_inputs = num_constraints + 1` and
-//! `num_witnesses = 2 * num_constraints`.
+//! circuit is a squaring chain (`w[i+1] = w[i] * w[i]`) emitting one
+//! constraint per row, one witness per row, and a single public output
+//! (the final value). So `num_inputs = 2` (constant 1 + the output)
+//! and `num_witnesses = num_constraints`, giving near-square R1CS
+//! matrices N × (N+2). Fixed M means the verifier's public-input
+//! absorption cost is O(1) in N, matching how Groth16 is used in
+//! practice (e.g., proving knowledge of a preimage with a fixed-size
+//! digest as the public statement).
 
 use crate::Timing;
 
@@ -50,11 +55,20 @@ pub mod shared {
     pub type E = Bls12_381;
     pub type F = Fr;
 
-    /// Bench circuit: each row consumes two private witness variables,
-    /// adds one public input set to their product, and emits the R1CS
-    /// constraint `w1 * w2 = out`. With `num_constraints = N` rows we
-    /// get `N` constraints, `N + 1` instance variables (the constant 1
-    /// plus the N outputs), and `2N` witness variables.
+    /// Bench circuit: a squaring chain producing one public output.
+    ///
+    /// Layout with `num_constraints = N`:
+    ///   * 1 public input  (`y` = final squared value, M=2 incl. constant 1)
+    ///   * N witness vars  (`w[0..N]`, with `w[0]` a random seed)
+    ///   * N constraints:
+    ///       row i in [0, N-2]:  w[i] * w[i] = w[i+1]
+    ///       row N-1:            w[N-1] * w[N-1] = y
+    ///
+    /// R1CS matrices are N × (N+2) — near-square (vs. the prior
+    /// N × (3N+1) shape). Crucially, **M is constant in N** so the
+    /// verifier's public-input absorption cost is O(1), making the
+    /// verify-side numbers reflect "Groth16 as actually deployed"
+    /// rather than the degenerate "every output is public" case.
     #[derive(Clone)]
     pub struct BenchCircuit {
         pub num_constraints: usize,
@@ -64,25 +78,42 @@ pub mod shared {
         fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
             // Deterministic randomness so the assignment is reproducible
             // across the two `generate_constraints` calls (setup + matrix
-            // capture). Using OsRng (like the criterion bench) would yield
-            // different witness values each call, which breaks the
-            // shared-assignment contract between native and zippel sides.
+            // capture).
             let mut rng = ark_std_test_rng_seeded(self.num_constraints as u64);
-            let mut witness_vars = Vec::with_capacity(2 * self.num_constraints);
-            for _ in 0..(2 * self.num_constraints) {
-                let val = F::rand(&mut rng);
-                let w = cs.new_witness_variable(|| Ok(val))?;
-                witness_vars.push((w, val));
+            let n = self.num_constraints;
+
+            // Compute witness values up-front so we can allocate the
+            // single public output before declaring witnesses (matches
+            // ark-relations' convention: instance vars come first).
+            let w0 = F::rand(&mut rng);
+            let mut wit_vals = Vec::with_capacity(n);
+            let mut cur = w0;
+            for _ in 0..n {
+                wit_vals.push(cur);
+                cur = cur * cur;
             }
-            for i in 0..self.num_constraints {
-                let (w1, v1) = witness_vars[2 * i];
-                let (w2, v2) = witness_vars[2 * i + 1];
-                let out_val = v1 * v2;
-                let out = cs.new_input_variable(|| Ok(out_val))?;
+            let y_val = cur; // = w0^(2^N)
+
+            // 1 public output.
+            let y = cs.new_input_variable(|| Ok(y_val))?;
+
+            // N witness vars.
+            let mut wit_vars = Vec::with_capacity(n);
+            for v in &wit_vals {
+                wit_vars.push(cs.new_witness_variable(|| Ok(*v))?);
+            }
+
+            // N squaring constraints, the last one binding to `y`.
+            for i in 0..n {
+                let next = if i + 1 < n {
+                    LinearCombination::from(wit_vars[i + 1])
+                } else {
+                    LinearCombination::from(y)
+                };
                 cs.enforce_constraint(
-                    LinearCombination::from(w1),
-                    LinearCombination::from(w2),
-                    LinearCombination::from(out),
+                    LinearCombination::from(wit_vars[i]),
+                    LinearCombination::from(wit_vars[i]),
+                    next,
                 )?;
             }
             Ok(())
@@ -371,7 +402,7 @@ pub mod bridge {
 }
 
 // ---------------------------------------------------------------------------
-// Zippel side: compile groth16-opt.zippel, feed translated inputs, time
+// Zippel side: compile groth16.zippel, feed translated inputs, time
 // prove + verify. Prove timer includes `bridge::witness_map` to match the
 // vendored native prover.
 // ---------------------------------------------------------------------------
@@ -379,7 +410,8 @@ pub mod bridge {
 pub mod zippel_side {
     use super::Timing;
     use super::bridge::{Translated, witness_map};
-    use ark_bls12_381::Fr as GitFr;
+    use ark_bls12_381::{Fr as GitFr, G1Projective, G2Projective};
+    use ark_ec::CurveGroup;
     use ark_ff::Zero;
     use backend::{ArkBls12_381, Value};
     use lang::id::{Tid, Vid};
@@ -397,58 +429,53 @@ pub mod zippel_side {
 
     impl<'a> Setup<'a> {
         pub fn new(translated: &'a Translated) -> Self {
-            // Build the input context up-front so prove only pays for
-            // h_coeffs + the zippel run itself. Group elements are cloned
-            // out of `translated` into Value variants here (one-time cost
-            // outside the timer).
+            // Pre-affinize the query vectors ONCE here, then feed them as
+            // `Value::VecG{1,2}Affine`. The `dot(VecG_, VecScalar)` arms
+            // in backend/src/values.rs have separate dispatch paths:
+            //   - VecG_       → calls `normalize_batch` every prove call
+            //                   (1 inv + ~3N muls, scales with circuit size)
+            //   - VecG_Affine → skips conversion entirely, straight to MSM
+            // Native already pays this cost once via `AffineKeys::from`
+            // outside its timer; this mirrors that to keep the comparison
+            // honest (prove-timer measures the SNARK, not affine setup).
+            let keys = &translated.keys;
+            let a_query_aff = G1Projective::normalize_batch(&keys.a_query);
+            let b_g1_query_aff = G1Projective::normalize_batch(&keys.b_g1_query);
+            let b_g2_query_aff = G2Projective::normalize_batch(&keys.b_g2_query);
+            let h_query_aff = G1Projective::normalize_batch(&keys.h_query);
+            let l_query_aff = G1Projective::normalize_batch(&keys.l_query);
+            let gamma_abc_aff = G1Projective::normalize_batch(&keys.gamma_abc_g1);
+
             let inputs_base = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-                (
-                    Vid("alpha_g1".to_string()),
-                    Value::G1(translated.keys.alpha_g1),
-                ),
-                (
-                    Vid("beta_g2".to_string()),
-                    Value::G2(translated.keys.beta_g2),
-                ),
-                (
-                    Vid("gamma_g2".to_string()),
-                    Value::G2(translated.keys.gamma_g2),
-                ),
-                (
-                    Vid("delta_g2".to_string()),
-                    Value::G2(translated.keys.delta_g2),
-                ),
+                (Vid("alpha_g1".to_string()), Value::G1(keys.alpha_g1)),
+                (Vid("beta_g2".to_string()), Value::G2(keys.beta_g2)),
+                (Vid("gamma_g2".to_string()), Value::G2(keys.gamma_g2)),
+                (Vid("delta_g2".to_string()), Value::G2(keys.delta_g2)),
                 (
                     Vid("gamma_abc_g1".to_string()),
-                    Value::VecG1(translated.keys.gamma_abc_g1.clone()),
+                    Value::VecG1Affine(gamma_abc_aff),
                 ),
-                (
-                    Vid("beta_g1".to_string()),
-                    Value::G1(translated.keys.beta_g1),
-                ),
-                (
-                    Vid("delta_g1".to_string()),
-                    Value::G1(translated.keys.delta_g1),
-                ),
+                (Vid("beta_g1".to_string()), Value::G1(keys.beta_g1)),
+                (Vid("delta_g1".to_string()), Value::G1(keys.delta_g1)),
                 (
                     Vid("a_query".to_string()),
-                    Value::VecG1(translated.keys.a_query.clone()),
+                    Value::VecG1Affine(a_query_aff),
                 ),
                 (
                     Vid("b_g1_query".to_string()),
-                    Value::VecG1(translated.keys.b_g1_query.clone()),
+                    Value::VecG1Affine(b_g1_query_aff),
                 ),
                 (
                     Vid("b_g2_query".to_string()),
-                    Value::VecG2(translated.keys.b_g2_query.clone()),
+                    Value::VecG2Affine(b_g2_query_aff),
                 ),
                 (
                     Vid("h_query".to_string()),
-                    Value::VecG1(translated.keys.h_query.clone()),
+                    Value::VecG1Affine(h_query_aff),
                 ),
                 (
                     Vid("l_query".to_string()),
-                    Value::VecG1(translated.keys.l_query.clone()),
+                    Value::VecG1Affine(l_query_aff),
                 ),
                 (
                     Vid("instance_assignment".to_string()),
@@ -460,19 +487,19 @@ pub mod zippel_side {
                 ),
             ]);
 
+            // Only verifier-relevant inputs: alpha_g1, beta_g2, gamma_g2,
+            // delta_g2 appear in the pairing equation; gamma_abc_g1 + the
+            // public instance_assignment build IC. beta_g1, delta_g1,
+            // a_query, b_g1_query, b_g2_query, h_query, l_query are
+            // prover-only (now `private` in the proto), so they must NOT
+            // be in the verifier's input ctx — absorbing them into FS
+            // would dominate verify time at large M+L.
             let public_input_names = [
                 "alpha_g1",
                 "beta_g2",
                 "gamma_g2",
                 "delta_g2",
                 "gamma_abc_g1",
-                "beta_g1",
-                "delta_g1",
-                "a_query",
-                "b_g1_query",
-                "b_g2_query",
-                "h_query",
-                "l_query",
                 "instance_assignment",
             ];
             let public_inputs: Ctx<Vid, Value<ArkBls12_381>> = inputs_base
@@ -481,7 +508,7 @@ pub mod zippel_side {
                 .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                 .collect();
 
-            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16-opt.zippel"));
+            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &translated.m);
@@ -840,7 +867,7 @@ mod cross_tests {
     fn zippel_handler(t: &Translated) -> ZippelHandler<ArkBls12_381> {
         let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("examples/groth16/groth16-opt.zippel");
+            .join("examples/groth16/groth16.zippel");
         let args = ZippelArgs::new(zippel_path);
         let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
         let mut sizes = Ctx::new();
@@ -948,7 +975,7 @@ mod cross_tests {
             .expect("zippel run_prover (priming handler state)");
 
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
-        // (lines 38, 39, 44 of groth16-opt.zippel).
+        // (lines 38, 39, 44 of groth16.zippel).
         let cross_proof: Vec<Value<ArkBls12_381>> = vec![
             Value::G1(proof_n.a),
             Value::G2(proof_n.b),

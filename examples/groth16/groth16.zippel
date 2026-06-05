@@ -1,107 +1,63 @@
-// Groth16 zkSNARK Protocol — Full QAP computation inside zippel
+// Groth16 zkSNARK Protocol (h-coefficients provided externally)
 // Reference: Groth, J. (2016). "On the Size of Pairing-Based Non-interactive Arguments."
 //
-// The entire h(X) = (A(X)·B(X) - C(X)) / Z_H(X) computation is done in zippel:
-//   1. Dense matvec: a_evals[i] = Σ_j mat_A[i,j] * assignment[j]
-//   2. IFFT evals → coefficients
-//   3. Coset FFT: coeffs * [coset_offset^i] → eval → coset evals
-//   4. Pointwise: (A*B - C) / Z_H in coset domain
-//   5. Inverse coset IFFT → h coefficients
-//   6. Trim trailing zero coefficient
-//
-// R1CS matrices are passed as flat D×N arrays (row-major). The matrix rows
-// encode: constraint rows (0..C), identity rows for inputs (C..C+M), zero-padded (C+M..D)
-// where C=num_constraints, M=num_inputs, D=domain_size.
-//
-// mat_a, mat_b, mat_c are public since they encode the circuit structure
-// (not the witness) and coset_offset is the multiplicative generator used as the
-// coset offset for the coset FFT. Random blinding factors r and s are
-// sampled internally via random<F>.
+// This variant accepts h_coeffs as a private input, computed externally
+// by the Rust R1CS-to-QAP conversion. Compare with groth16.zippel which
+// computes h_coeffs inside zippel via FFT-based evaluation-domain arithmetic.
+// Random blinding factors r and s are sampled internally via random<F>.
 //
 // Size parameters (following Groth16 paper):
 //   M: number of public inputs (including the constant 1)
 //   L: number of private witness variables
-//   C: number of R1CS constraints
-//   D: domain size (power of 2)
-//   H: length of h_query (= D - 1)
+//   H: length of h_query and h_coeffs (= domain_size - 1)
 //   Total QAP variables = M + L
 
-proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: Size, L: Size, C: Size, D: Size, H: D-1>(
+proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: Size, L: Size, H: Size>(
     public alpha_g1: G1,
     public beta_g2: G2,
     public gamma_g2: G2,
     public delta_g2: G2,
     public gamma_abc_g1: [G1; M],
-    public beta_g1: G1,
-    public delta_g1: G1,
-    public a_query: [G1; M+L],
-    public b_g1_query: [G1; M+L],
-    public b_g2_query: [G2; M+L],
-    public h_query: [G1; H],
-    public l_query: [G1; L],
+    private beta_g1: G1,
+    private delta_g1: G1,
+    private a_query: [G1; M+L],
+    private b_g1_query: [G1; M+L],
+    private b_g2_query: [G2; M+L],
+    private h_query: [G1; H],
+    private l_query: [G1; L],
     public instance_assignment: [F; M],
-    public mat_a: [F; D*(M+L)],
-    public mat_b: [F; D*(M+L)],
-    public mat_c: [F; D*(M+L)],
-    public coset_offset: F,
-    private witness_assignment: [F; L]
-) where
-    // TODO: update relation — currently only encodes constraint rows (0..C).
-    // Missing: identity rows for public inputs (C..C+M) that `build_dense_matrix_a`
-    // adds, and trailing zero-padded rows (C+M..D). Re-enabling analysis without
-    // these will produce incorrect completeness/zk results. Do not re-enable until
-    // the full QAP relation (including h(X) trim) is specified here.
-    let full_assignment = instance_assignment ++ witness_assignment;
-    let a_evals = [reduce(+, [mat_a[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
-    let b_evals = [reduce(+, [mat_b[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
-    let c_evals = [reduce(+, [mat_c[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..C];
-    a_evals * b_evals == c_evals
+    private witness_assignment: [F; L],
+    private h_coeffs: [F; H]
+) where alpha_g1 == alpha_g1
 {
     let r = random<F>;
     let s = random<F>;
     let full_assignment = instance_assignment ++ witness_assignment;
-
-    // Full D-length evaluation vectors (all matrix rows)
-    let a_evals_full = [reduce(+, [mat_a[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..D];
-    let b_evals_full = [reduce(+, [mat_b[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..D];
-    let c_evals_full = [reduce(+, [mat_c[i*(M+L) + j] * full_assignment[j] for j in 0..(M+L)]) for i in 0..D];
-
-    // Step 2: IFFT evaluations → polynomial coefficients
-    let a_coeff = coef(interpolate(a_evals_full));
-    let b_coeff = coef(interpolate(b_evals_full));
-    let c_coeff = coef(interpolate(c_evals_full));
-
-    // Step 3: Coset FFT — multiply coefficients by shift_fwd, then FFT
-    let shift_fwd = [coset_offset^i for i in 0..D];
-    let offset_inv = 1/coset_offset;
-    let shift_inv = [offset_inv^i for i in 0..D];
-
-    let a_coset = eval(poly(a_coeff * shift_fwd));
-    let b_coset = eval(poly(b_coeff * shift_fwd));
-    let c_coset = eval(poly(c_coeff * shift_fwd));
-
-    // Step 4: Pointwise computation in coset domain
-    // Z_H(h·coset_offset^i) = h^D - 1 is constant in the coset
-    let v_inv = 1/(coset_offset^D - 1);
-    let h_coset = (a_coset * b_coset - c_coset) * v_inv;
-
-    // Step 5: Inverse coset IFFT → h coefficients (trim trailing zero)
-    let h_coeffs = coef(interpolate(h_coset)) * shift_inv;
-    let h_trimmed = h_coeffs[0..H];
 
     let a_val = alpha_g1 + dot(a_query, full_assignment) + delta_g1 * r;
     a_proof <- a_val;
     b_proof <- beta_g2 + dot(b_g2_query, full_assignment) + delta_g2 * s;
 
     let b_g1_val = beta_g1 + dot(b_g1_query, full_assignment) + delta_g1 * s;
-    let c_h = dot(h_query, h_trimmed);
+    let c_h = dot(h_query, h_coeffs);
     let c_l = dot(l_query, witness_assignment);
     c_proof <- c_h + c_l + a_val * s + b_g1_val * r - delta_g1 * (r * s);
 
     let ic = dot(gamma_abc_g1, instance_assignment);
 
-    let lhs = pair(a_proof, b_proof);
-    let rhs = pair(alpha_g1, beta_g2) + pair(ic, gamma_g2) + pair(c_proof, delta_g2);
+    // Fold the 4-pair check into a single `multi_miller_loop +
+    // final_exponentiation`. The native verifier does this via
+    // `Pairing::multi_pairing`; zippel exposes the same fast path
+    // through `dot(VecG1, VecG2) -> GT` (backend/src/config.rs:357).
+    // Rearrange  e(A,B) == e(α,β) + e(IC,γ) + e(C,δ)
+    //         ⟺  e(A,B) + e(-α,β) + e(-IC,γ) + e(-C,δ) == 0_GT.
+    // Negate G1 points via binary subtraction (zero - x).
+    let zero_g1 = alpha_g1 - alpha_g1;
+    let neg_alpha = zero_g1 - alpha_g1;
+    let neg_ic = zero_g1 - ic;
+    let neg_c = zero_g1 - c_proof;
 
-    verify(lhs == rhs)
+    let result = dot([a_proof, neg_alpha, neg_ic, neg_c], [b_proof, beta_g2, gamma_g2, delta_g2]);
+    // `result - result` is GT additive identity — no extra pairing.
+    verify(result == result - result)
 }
