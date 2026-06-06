@@ -1,0 +1,115 @@
+// Publicly-Verifiable Pari variant — the non-DV Glock SNARK.
+// (Derived from Appendix A of Eagen, "Garbled Locks for Bitcoin", 2025)
+//
+// Same relation and proof structure as glock.zippel (DV-Pari) but replaces
+// the designated-verifier scalar-multiplication check with a standard
+// pairing check, so any party with the public verifier key can verify.
+//
+// Proof: (P: G1, a: F, Q: G1) — 2 G1 + 1 F.  Same size as DV-Pari.
+// Verifier key: (delta_g: G1, tau_h: G2, h_g2: G2) — all public.
+//
+// The SRS omits the ε toxic-waste factor present in the DV version:
+//   σ_M[i]  = (a_i(τ) + b_i(τ)·δ)·G          (no ε)
+//   σ_Q[j]  = z_K(τ)·τ^j·δ·G                  (no ε)
+//   σ_Ka[i] = τ^i · G
+//   σ_Kr[j] = τ^j · δ · G
+//
+// Verifier equation:
+//   e(P_full − a·G − a²·δG,  H)  =  e(Q,  τH − α·H)
+//
+// P_full = P_priv + P_pub, where P_pub = dot(x, σ_M_pub) is the public
+// commitment contribution (added by the verifier).
+
+proto pv_pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
+              M: Size, K: 2^M, N: Size, KMN: Size>(
+
+    // ── Prover inputs ────────────────────────────────────────────────────────
+    private z_a_evals: [F; K],
+    private z_b_evals: [F; K],
+    private w:         [F; KMN],
+
+    // ── Instance ─────────────────────────────────────────────────────────────
+    public  x:         [F; N],
+
+    // ── SRS (private, kept off FS transcript) ────────────────────────────────
+    private sigma_m:     [G1; KMN],
+    public  sigma_m_pub: [G1; N],      // public so verifier can form P_full
+    private sigma_q:     [G1; K],
+    private sigma_ka:    [G1; K],
+    private sigma_kr:    [G1; K+K],
+
+    private v_k_coeffs: [F; K+1],
+
+    // ── Verifier key (all public) ─────────────────────────────────────────────
+    public delta_g: G1,   // δ·G
+    public tau_h:   G2,   // τ·H
+    public h_g2:    G2,   // H (G2 generator)
+    public g_g1:    G1,   // G (G1 generator)
+    public f_one:   F
+
+) where
+    reduce(&&, [z_a_evals[i] * z_a_evals[i] == z_b_evals[i] for i in 0..K])
+{
+    let f_zero    = f_one - f_one;
+    let f_neg_one = f_zero - f_one;
+
+    // ── Prover: quotient polynomial ──────────────────────────────────────────
+    let z_a_poly = interpolate(z_a_evals);
+    let z_b_poly = interpolate(z_b_evals);
+    let v_k_poly = poly(v_k_coeffs);
+
+    let z_a_sq   = z_a_poly * z_a_poly;
+    let num_poly = z_a_sq - z_b_poly;
+    let q_poly   = num_poly / v_k_poly;
+    let q_coeffs = coef(q_poly);
+    let sigma_q_trunc = sigma_q[0..K-1];
+
+    // ── Prover: commitment P_priv ────────────────────────────────────────────
+    let p_value = dot(w, sigma_m) + dot(q_coeffs, sigma_q_trunc);
+    p_proof <- p_value;
+
+    // ── Fiat-Shamir ──────────────────────────────────────────────────────────
+    alpha <- challenge<F>;
+
+    // ── Prover: opening a = a(α) ─────────────────────────────────────────────
+    let a_vec  = eval(z_a_poly, [alpha]);
+    let a_open = a_vec[0];
+
+    // ── Prover: r(X) = a(X)^2 and k_r opening ───────────────────────────────
+    // r(X) = z_a_sq  (since b + z_K·q = a^2 by the SR1CS identity)
+    let r_poly  = z_a_sq;
+    let r_at_v  = eval(r_poly, [alpha]);
+    let r_at_alpha = r_at_v[0];  // = a_open^2; verifier recomputes this
+
+    let alpha_neg = f_zero - alpha;
+    let x_minus_a = poly([alpha_neg, f_one]);
+
+    let k_a_poly   = (z_a_poly - a_open) / x_minus_a;
+    let k_a_coeffs = coef(k_a_poly);
+    let sigma_ka_trunc = sigma_ka[0..K-1];
+
+    let k_r_poly   = (r_poly - r_at_alpha) / x_minus_a;
+    let k_r_coeffs = coef(k_r_poly);
+    let sigma_kr_trunc = sigma_kr[0..K+K-2];
+
+    let q_open = dot(k_a_coeffs, sigma_ka_trunc) + dot(k_r_coeffs, sigma_kr_trunc);
+
+    a_proof <- a_open;
+    q_proof <- q_open;
+
+    // ── Verifier: P_full = P_priv + P_pub ────────────────────────────────────
+    let p_full = p_proof + dot(x, sigma_m_pub);
+
+    // ── Verifier: pairing check (batched into one multi-miller loop) ─────────
+    // e(P_full − a·G − a²·δG, H) = e(Q, τH − α·H)
+    // ⟺ e(lhs, H) + e(−Q, τH − α·H) = 0_GT
+    // ⟺ dot([lhs, −Q], [H, τH − αH]) = identity
+    //
+    // This is one multi-miller loop + one final exponentiation (same cost
+    // as Pari's three-pair batched check), rather than two separate pairings.
+    let lhs_g1   = p_full - g_g1 * a_proof - delta_g * (a_proof * a_proof);
+    let neg_q    = q_proof * f_neg_one;
+    let rhs_g2   = tau_h - h_g2 * alpha;
+    let result   = dot([lhs_g1, neg_q], [h_g2, rhs_g2]);
+    verify(result == result - result)
+}
