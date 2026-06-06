@@ -151,7 +151,10 @@ impl<F: Field> PolyVariant<F> {
 
     /// Densify a `SparseMle`: instantiate the `2^num_vars` evaluation vector
     /// by scattering the listed `(index, value)` pairs. O(`2^num_vars + |evals|`).
-    fn sparse_mle_to_dense_mle(num_vars: usize, evals: &[(usize, F)]) -> DenseMultilinearExtension<F> {
+    fn sparse_mle_to_dense_mle(
+        num_vars: usize,
+        evals: &[(usize, F)],
+    ) -> DenseMultilinearExtension<F> {
         let len = 1usize << num_vars;
         let mut dense = vec![F::zero(); len];
         for (idx, val) in evals {
@@ -631,8 +634,7 @@ impl<F: Field> PolyVariant<F> {
                 })
             }
             PolyVariant::SparseMle { num_vars, evals } => {
-                let neg_evals: Vec<(usize, F)> =
-                    evals.iter().map(|(i, v)| (*i, -*v)).collect();
+                let neg_evals: Vec<(usize, F)> = evals.iter().map(|(i, v)| (*i, -*v)).collect();
                 PolyVariant::SparseMle {
                     num_vars: *num_vars,
                     evals: neg_evals,

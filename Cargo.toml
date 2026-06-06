@@ -277,3 +277,11 @@ path = "examples/groth16/main.rs"
 name = "dekart"
 path = "examples/dekart/main.rs"
 
+[[example]]
+name = "glock"
+path = "examples/glock/main.rs"
+
+[[example]]
+name = "glock_pub"
+path = "examples/glock_pub/main.rs"
+

@@ -1,0 +1,158 @@
+// DV-Pari: Designated-Verifier variant of PARI, used as the SNARK in Glock25
+// (Eagen, "Garbled Locks for Bitcoin", 2025 — Appendix A)
+//
+// Relation: Same Square R1CS as Pari — matrices A, B ∈ F^{K×n} with
+//   (x,w) ∈ R  ⟺  (Aw)_i^2 = (Bw)_i   for all i ∈ [K].
+//
+// Public inputs are encoded in the monomial polynomial
+//   i(X) = Σ_{j=0}^{N-1} x_j · X^j
+// and supplied via `x` (prover & verifier know them). In the instance-
+// outliner layout (same as Pari) the public contribution is already
+// absorbed into z_a_evals, so for soundness i(α) enters only the
+// verification equation — not the quotient computation.
+//
+// Key differences from Pari:
+//   1. Proof: (P, a, Q) — 2 G1 elements + 1 scalar field element.
+//      Pari sends (T, U, v_a, v_b) — 2 G1 + 2 scalars.
+//      Saving: one field element, by folding b(X) and z·q(X) into
+//      r(X) = b(X) + z_K(X)·q(X) = a(X)^2 (no need to open r separately:
+//      verifier recomputes r(α) = a^2 − i(α) from the opening a).
+//   2. Verifier: scalar multiplications using toxic waste (τ, δ, ε)
+//      as the designated-verifier key — no pairings.
+//   3. SRS: no α, β Groth16 toxic waste. Generators:
+//        σ_M[i]  = (a_i(τ) + b_i(τ)·δ)·ε · G
+//        σ_Q[j]  = z_K(τ)·τ^j·δ·ε · G   (z_K(τ) baked in)
+//        σ_Ka[i] = τ^i · G
+//        σ_Kr[j] = τ^j · δ · G
+//
+// Verifier equation (paper eq. 1 / Appendix A, DV SNARK box):
+//   P − (a + (a² + i(α))·δ)·ε·G  =  (τ − α)·ε·Q
+//
+// Security: knowledge-sound in the AGM (same reduction as Pari/Garuda).
+// This is a Designated-Verifier SNARK: (τ,δ,ε) are the verifier's secret key.
+
+proto dv_pari<G1: Group, F: Scalar<G1>,
+              M: Size, K: 2^M, N: Size, KMN: Size>(
+
+    // ── Prover inputs (private) ─────────────────────────────────────────────
+    private z_a_evals: [F; K],       // A·z evaluated on the K-point domain
+    private z_b_evals: [F; K],       // B·z evaluated on the K-point domain
+    private w:         [F; KMN],     // private witness portion of z (size k−N)
+
+    // ── Instance (public to both prover and verifier) ────────────────────────
+    public  x:         [F; N],       // public inputs x[0..N)
+
+    // ── SRS generators (private: kept off the FS transcript) ────────────────
+    // σ_M[i] = (a_i(τ) + b_i(τ)·δ)·ε · G   for private witness positions
+    private sigma_m:   [G1; KMN],
+    // σ_M_pub[i] = (a_i(τ) + b_i(τ)·δ)·ε · G   for public input positions
+    // Marked public so the verifier can add the public commitment contribution.
+    public  sigma_m_pub: [G1; N],
+    // σ_Q[j] = z_K(τ)·τ^j·δ·ε · G   for the quotient r(X)=b(X)+z_K·q(X)
+    private sigma_q:   [G1; K],
+    // σ_Ka[i] = τ^i · G   for the k_a(X) opening quotient
+    private sigma_ka:  [G1; K],
+    // σ_Kr[j] = τ^j · δ · G   for the k_r(X) opening quotient
+    // k_r has degree 2K−3 so we need 2K−2 coefficients; allocate K+K.
+    private sigma_kr:  [G1; K+K],
+
+    // v_K(X) = X^K − 1 coefficient vector (length K+1)
+    private v_k_coeffs: [F; K+1],
+
+    // ── Designated-verifier key (toxic waste, scalar) ────────────────────────
+    // These are the verifier's private key in the DV SNARK sense.
+    // Marked `public` so the verifier can use them in the verify() check;
+    // the prover also sees them here to keep the Zippel model uniform, but
+    // in practice the prover only needs the SRS group elements derived from them.
+    public tau:   F,     // τ — used for (τ − α)
+    public delta: F,     // δ — controls r(X) folding into P
+    public eps:   F,     // ε — replaces pairings with scalar mult
+
+    public g_g1:  G1,    // generator G
+    public f_one: F      // the scalar 1 (passed to avoid literal coercions)
+
+) where
+    // Prover precondition: witness satisfies SR1CS on every constraint.
+    // In the DV-Pari matrix layout the public contribution enters via i(X)
+    // separately; using z_a_evals = A·z (full) and z_b_evals = B·z (full)
+    // the check reduces to the same element-wise square condition as Pari.
+    reduce(&&, [z_a_evals[i] * z_a_evals[i] == z_b_evals[i] for i in 0..K])
+{
+    let f_zero    = f_one - f_one;
+    let f_neg_one = f_zero - f_one;
+
+    // ── Prover: quotient polynomial ──────────────────────────────────────────
+    // q(X) = (ẑ_A(X)^2 − ẑ_B(X)) / v_K(X).
+    let z_a_poly = interpolate(z_a_evals);
+    let z_b_poly = interpolate(z_b_evals);
+    let v_k_poly = poly(v_k_coeffs);
+
+    let z_a_sq   = z_a_poly * z_a_poly;
+    let num_poly = z_a_sq - z_b_poly;
+    let q_poly   = num_poly / v_k_poly;         // degree K−2
+    let q_coeffs = coef(q_poly);                // length K−1
+    let sigma_q_trunc = sigma_q[0..K-1];
+
+    // ── Prover: commitment P = dot(w, σ_M) + dot(q, σ_Q) ───────────────────
+    // P = (a(τ) + r(τ)·δ)·ε·G   where r = b + z_K·q = a^2
+    let p_witness = dot(w, sigma_m);
+    let p_quotient = dot(q_coeffs, sigma_q_trunc);
+    let p_value = p_witness + p_quotient;
+    p_proof <- p_value;
+
+    // ── Fiat-Shamir challenge ────────────────────────────────────────────────
+    alpha <- challenge<F>;
+
+    // ── Prover: opening a = a(α) ─────────────────────────────────────────────
+    let a_vec  = eval(z_a_poly, [alpha]);
+    let a_open = a_vec[0];
+
+    // ── Prover: r(X) = a(X)^2 − i(X), opening r(α) = a^2 − i(α) ───────────
+    // i(X) = Σ x_j X^j  (monomial public input polynomial)
+    let i_poly     = poly(x);
+    let r_poly     = z_a_sq - i_poly;           // degree 2K−2
+
+    let r_at_alpha_v = eval(r_poly, [alpha]);
+    let r_at_alpha   = r_at_alpha_v[0];
+    // Note: the verifier independently computes r(α) = a² − i(α), so we
+    // do not include r(α) in the proof — this is the savings vs. Pari.
+
+    // ── Prover: opening quotients k_a and k_r ───────────────────────────────
+    let alpha_neg   = f_zero - alpha;
+    let x_minus_a   = poly([alpha_neg, f_one]);  // (X − α)
+
+    // k_a(X) = (a(X) − a) / (X − α),  degree K−2  →  K−1 coefficients
+    let k_a_poly   = (z_a_poly - a_open) / x_minus_a;
+    let k_a_coeffs = coef(k_a_poly);
+    let sigma_ka_trunc = sigma_ka[0..K-1];
+
+    // k_r(X) = (r(X) − r(α)) / (X − α),  degree 2K−3  →  2K−2 coefficients
+    let k_r_poly   = (r_poly - r_at_alpha) / x_minus_a;
+    let k_r_coeffs = coef(k_r_poly);
+    let sigma_kr_trunc = sigma_kr[0..K+K-2];
+
+    // Q = dot(k_a, σ_Ka) + dot(k_r, σ_Kr)
+    // = k_a(τ)·G + k_r(τ)·δ·G  = (k_a(τ) + k_r(τ)·δ)·G
+    let q_open = dot(k_a_coeffs, sigma_ka_trunc) + dot(k_r_coeffs, sigma_kr_trunc);
+
+    a_proof <- a_open;
+    q_proof <- q_open;
+
+    // ── Verifier: reconstruct the full commitment P_full ────────────────────
+    // The prover sends P_priv = dot(w, σ_M) (private witness part only).
+    // The verifier adds the public-input contribution using σ_M_pub so that:
+    //   P_full = P_priv + dot(x, σ_M_pub) = (a_full(τ) + r_full(τ)·δ)·ε·G.
+    let p_pub  = dot(x, sigma_m_pub);
+    let p_full = p_proof + p_pub;
+
+    // ── Verifier: DV check (no pairings — scalar multiplications only) ───────
+    // P_full − (a + a²·δ)·ε·G  =  (τ − α)·ε·Q
+    //
+    // Derivation: p_full = (a(τ) + r(τ)δ)εG,  r(τ) = a(τ)^2  (instance-outliner)
+    //             (τ−α)εQ = ((a(τ)−a) + (r(τ)−a²)δ)εG
+    //             => p_full − (a + a²δ)εG = (τ−α)εQ  ✓
+    let inner_scalar = (a_proof + a_proof * a_proof * delta) * eps;
+    let lhs = p_full - g_g1 * inner_scalar;
+    let rhs = q_proof * ((tau - alpha) * eps);
+    verify(lhs == rhs)
+}

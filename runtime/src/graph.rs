@@ -39,10 +39,8 @@ const FS_DIGEST_DOMAIN: &[u8] = b"zippel-fs-pubinp-digest-v1";
 /// (preserves transcript bytes for existing small-input protocols). For
 /// large values, stream the serialized bytes through a Blake3 hasher and
 /// absorb the 32-byte digest — symmetric on prover and verifier sides.
-fn absorb_public_input<C: ArkConfig, H>(
-    prover_state: &mut ProverState<H>,
-    value: &Value<C>,
-) where
+fn absorb_public_input<C: ArkConfig, H>(prover_state: &mut ProverState<H>, value: &Value<C>)
+where
     H: DuplexSpongeInterface<U = u8>,
 {
     let bytes = value_to_bytes(value).expect("value serialization should not fail");
@@ -283,8 +281,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         // Op trees have ≤ 4 distinct refs; sizing to `refs.len()` slightly
         // over-allocates for duplicates but avoids the 0→1→2→4→… resize
         // sequence HashMap pays when starting empty.
-        let mut env: HashMap<graph::Ref, Arc<Value<C>>> =
-            HashMap::with_capacity(refs.len());
+        let mut env: HashMap<graph::Ref, Arc<Value<C>>> = HashMap::with_capacity(refs.len());
         for r in refs {
             if let std::collections::hash_map::Entry::Vacant(e) = env.entry(r) {
                 e.insert(self.get_value(r, inputs)?);
@@ -519,8 +516,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                             let value = match inputs.get(&vid) {
                                 Some(v) => v,
                                 None => {
-                                    let err =
-                                        RuntimeError::missing_arg(&vid, inputs.keys());
+                                    let err = RuntimeError::missing_arg(&vid, inputs.keys());
                                     record_error(&error_slot, err.clone());
                                     // Drop tx and bail; in-flight workers
                                     // will see the slot set and short-circuit.
@@ -549,9 +545,10 @@ impl<C: ArkConfig> MutexGraph<C> {
                             record_error(&error_slot, e.clone());
                             return Err(e);
                         }
-                        let arc_val = annotation.return_value.get().expect(
-                            "Transcr node return_value should be set after handle_node",
-                        );
+                        let arc_val = annotation
+                            .return_value
+                            .get()
+                            .expect("Transcr node return_value should be set after handle_node");
                         let serialized = value_to_bytes(&**arc_val).unwrap();
                         prover_state.public_message(serialized.as_slice());
                     }

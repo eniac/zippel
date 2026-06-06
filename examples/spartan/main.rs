@@ -183,7 +183,10 @@ fn run() {
 }
 
 fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
-    assert!(m >= 2, "M must be >= 2 (Spartan needs at least 2 sum-check rounds)");
+    assert!(
+        m >= 2,
+        "M must be >= 2 (Spartan needs at least 2 sum-check rounds)"
+    );
 
     let zippel_path = if let Some(path) = manual_zippel {
         // Skip codegen, use the hand-written proto as-is.
@@ -365,8 +368,16 @@ where
         let b_vals: Vec<F> = (0..b_cols.len()).map(|_| F::rand(rng)).collect();
         let mut c_vals: Vec<F> = (0..c_cols.len()).map(|_| F::rand(rng)).collect();
 
-        let az_i: F = a_cols.iter().zip(a_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
-        let bz_i: F = b_cols.iter().zip(b_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
+        let az_i: F = a_cols
+            .iter()
+            .zip(a_vals.iter())
+            .map(|(c, v)| z[*c] * *v)
+            .sum();
+        let bz_i: F = b_cols
+            .iter()
+            .zip(b_vals.iter())
+            .map(|(c, v)| z[*c] * *v)
+            .sum();
         let target = az_i * bz_i;
 
         let const_col_pos_in_c = c_cols
@@ -444,7 +455,11 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         cz[i] += v * z[c];
     }
     for i in 0..num_cons {
-        assert_eq!(az[i] * bz[i], cz[i], "row {i} of random R1CS is unsatisfied");
+        assert_eq!(
+            az[i] * bz[i],
+            cz[i],
+            "row {i} of random R1CS is unsatisfied"
+        );
     }
 
     // Build the 2M-variable MLEs for A, B, C in SPARSE evaluation form,
@@ -506,7 +521,10 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_gen".to_string()), Value::G1(g_gen)),
         (Vid("h_gen".to_string()), Value::G2(h_gen)),
         (Vid("alpha_h_w".to_string()), Value::VecG2(alpha_h_w)),
-        (Vid("placeholder_tau".to_string()), Value::VecScalar(placeholder_tau)),
+        (
+            Vid("placeholder_tau".to_string()),
+            Value::VecScalar(placeholder_tau),
+        ),
         (Vid("f_one".to_string()), Value::Scalar(one)),
     ])
 }
@@ -539,7 +557,8 @@ fn generate_proto(m: usize) -> String {
     };
     let _ = pst13_helpers;
 
-    format!(r#"// Auto-generated Spartan-NIZK proto for M = {m_lit}.
+    format!(
+        r#"// Auto-generated Spartan-NIZK proto for M = {m_lit}.
 // num_constraints = num_vars = {two_m}; |w| = {two_nw}; |io| = {io_len}.
 // Composition: info-theoretic Spartan PIOP + PST13 multilinear PCS,
 // the NIZK column of Fig. 5 in Setty CRYPTO 2020.

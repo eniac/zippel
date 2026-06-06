@@ -2998,7 +2998,6 @@ pub fn marginalize<C: ArkConfig>(
             let product_tables: Vec<&[C::F]> = products.iter().map(|&idx| tables[idx]).collect();
             let k = product_tables.len();
 
-
             let coeff_acc: Vec<C::F> = (0..total)
                 .into_par_iter()
                 .fold(
