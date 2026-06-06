@@ -1,7 +1,11 @@
 use crate::PRef;
-use crate::analyses::groebner::monomial::{LexElimMono, LexElimStrategy, Monomial};
+use crate::analyses::groebner::ark_gb_adapter::{
+    ArgNodeGuard, LocalRankGuard, get_local_rank, is_arg_node,
+};
+use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
 use crate::analyses::groebner::{GroebnerBuilder, SparsePolynomial};
 use crate::analyses::trans_clos::TransClos;
+use ark_ff::Zero;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use core::cmp::Ordering;
@@ -13,12 +17,18 @@ pub struct ExtractLocal;
 
 impl LexElimStrategy for ExtractLocal {
     fn eliminate_var(v: &PRef) -> bool {
-        v.is_local()
+        !is_arg_node(v)
     }
 
     fn cmp_vars(a: &PRef, b: &PRef) -> Ordering {
-        match (a.is_local(), b.is_local()) {
-            (true, true) => b.reference.node().cmp(&a.reference.node()),
+        let a_elim = !is_arg_node(a);
+        let b_elim = !is_arg_node(b);
+        match (a_elim, b_elim) {
+            (true, true) => {
+                let ra = get_local_rank(a);
+                let rb = get_local_rank(b);
+                rb.cmp(&ra).then_with(|| a.cmp(b))
+            }
             (true, false) => Ordering::Less,
             (false, true) => Ordering::Greater,
             (false, false) => a.cmp(b),
@@ -29,26 +39,52 @@ impl LexElimStrategy for ExtractLocal {
 pub type ExtractLocalTerm = LexElimMono<ExtractLocal>;
 
 type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, ExtractLocalTerm>;
+type GPoly<C> = SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
 
+pub(crate) fn convert_poly<C: ArkConfig>(p: &Poly<C>) -> GPoly<C> {
+    let mut terms: share::Ctx<GrevLexTerm, C::F> = share::Ctx::new();
+    for (term, coeff) in p.terms.iter() {
+        let pairs: Vec<(PRef, usize)> = term.vars().into_iter().zip(term.powers()).collect();
+        let new_term: GrevLexTerm = pairs.into();
+        *terms.entry(new_term).or_insert(C::F::zero()) += *coeff;
+    }
+    SparsePolynomial { terms }
+}
 /// Best-effort extraction of local variables from the relation TC.
 ///
 /// Computes a Gröbner basis with a pure-lex elimination ordering that
-/// prioritises local variables, then scans the basis for polynomials whose
-/// leading term is a single local variable with all remaining variables
-/// visible (public or already extracted).  Each such polynomial is an
-/// *extractor* for that local variable.
+/// prioritises non-arg variables, then scans the basis for polynomials whose
+/// leading term is a single non-arg variable with all remaining variables
+/// visible (args or already extracted).  Each such polynomial is an
+/// *extractor* for that variable.
 ///
 /// Candidates are processed in ascending NodeIndex order so that
-/// earlier-introduced locals are extracted first and become visible
+/// earlier-introduced variables are extracted first and become visible
 /// when checking later ones.
 ///
-/// This is best-effort: if no extractor exists for a given local variable
+/// This is best-effort: if no extractor exists for a given variable
 /// (e.g. the leading term is not a single variable, or the remainder
 /// contains invisible variables), the variable is simply skipped.  The
-/// caller decides how to handle unextracted locals.
+/// caller decides how to handle unextracted variables.
 pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PRef, Poly<C>)> {
+    let arg_nodes: std::collections::HashSet<usize> = tc
+        .prefs
+        .iter()
+        .map(|pr| pr.reference.node().index())
+        .collect();
+    let _arg_guard = ArgNodeGuard::install(arg_nodes);
+
     let mut builder: GroebnerBuilder<C, ExtractLocalTerm> = GroebnerBuilder::new();
     let mut result = builder.build(tc.clone());
+
+    let rank_map: std::collections::HashMap<usize, usize> = result
+        .var_order
+        .iter()
+        .enumerate()
+        .filter(|(_, pr)| !is_arg_node(pr))
+        .map(|(i, pr)| (pr.reference.node().index(), i))
+        .collect();
+    let _rank_guard = LocalRankGuard::install(rank_map);
 
     result.run::<128>();
 
@@ -61,13 +97,13 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
                 continue;
             }
             let var = &lt_vars[0];
-            if !var.is_local() {
+            if is_arg_node(var) {
                 continue;
             }
             candidates.push((var.clone(), poly.clone()));
         }
     }
-    candidates.sort_by_key(|(v, _)| v.reference.node());
+    candidates.sort_by_key(|(v, _)| get_local_rank(v));
 
     let mut extracted: Set<PRef> = Set::new();
     let mut found_extractors: Vec<(PRef, Poly<C>)> = Vec::new();
@@ -90,7 +126,7 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
 
         let all_visible = remainder_vars
             .iter()
-            .all(|v| (!v.is_private() && !v.is_local()) || extracted.contains(v));
+            .all(|v| is_arg_node(v) || extracted.contains(v));
         if !all_visible {
             warn!(
                 "Local extractor for {:?} has invisible remainder vars, skipping",

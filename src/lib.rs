@@ -331,7 +331,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
-        let result = completeness.run::<DEFAULT_GB_W>();
+        let result = completeness.run();
         match &result {
             Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
             Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),

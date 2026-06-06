@@ -50,7 +50,8 @@
 //! thread-local ordering state and still uses ark-gb's env-dispatched
 //! `compute_gb`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ark_ff::Field;
@@ -596,6 +597,85 @@ fn sort_basis_by_zippel_lt<F: Field, T: ZipMonomial>(basis: &mut [SparsePolynomi
 }
 
 // ---------------------------------------------------------------------------
+// Thread-local local-rank map for ExtractLocal::cmp_vars.
+//
+// Maps NodeIndex.index() → rank (position in var_order) for non-arg
+// PRefs only. Keyed by node index alone because all slots of the same
+// node share the same rank (introduced at the same TC position).
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static LOCAL_RANK: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
+}
+
+pub(crate) fn get_local_rank(pref: &PRef) -> usize {
+    LOCAL_RANK.with(|m| {
+        m.borrow()
+            .get(&pref.reference.node().index())
+            .copied()
+            .unwrap_or(usize::MAX)
+    })
+}
+
+pub(crate) struct LocalRankGuard {
+    prev: HashMap<usize, usize>,
+}
+
+impl LocalRankGuard {
+    pub fn install(rank_map: HashMap<usize, usize>) -> Self {
+        let prev = LOCAL_RANK.with(|m| {
+            let mut m = m.borrow_mut();
+            std::mem::take(&mut *m)
+        });
+        LOCAL_RANK.with(|m| *m.borrow_mut() = rank_map);
+        Self { prev }
+    }
+}
+
+impl Drop for LocalRankGuard {
+    fn drop(&mut self) {
+        LOCAL_RANK.with(|m| *m.borrow_mut() = std::mem::take(&mut self.prev));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thread-local arg-node set for ExtractLocal::eliminate_var.
+//
+// Stores the set of node indices that are argument (input/relation) nodes.
+// Any variable NOT in this set is considered "local" (a computation
+// intermediate) and should be eliminated by the lex GB.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static ARG_NODES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+}
+
+pub(crate) fn is_arg_node(pref: &PRef) -> bool {
+    ARG_NODES.with(|m| m.borrow().contains(&pref.reference.node().index()))
+}
+
+pub(crate) struct ArgNodeGuard {
+    prev: HashSet<usize>,
+}
+
+impl ArgNodeGuard {
+    pub fn install(arg_nodes: HashSet<usize>) -> Self {
+        let prev = ARG_NODES.with(|m| {
+            let mut m = m.borrow_mut();
+            std::mem::take(&mut *m)
+        });
+        ARG_NODES.with(|m| *m.borrow_mut() = arg_nodes);
+        Self { prev }
+    }
+}
+
+impl Drop for ArgNodeGuard {
+    fn drop(&mut self) {
+        ARG_NODES.with(|m| *m.borrow_mut() = std::mem::take(&mut self.prev));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pure-lex elimination path (for LexElimMono<E> / local-variable extraction).
 // ---------------------------------------------------------------------------
 
@@ -603,6 +683,9 @@ thread_local! {
     static LEX_NVAR_W8: Cell<usize> = const { Cell::new(0) };
     static LEX_NVAR_W16: Cell<usize> = const { Cell::new(0) };
     static LEX_NVAR_W128: Cell<usize> = const { Cell::new(0) };
+    static LEX_FLIP_W8: Cell<[u64; 8]> = const { Cell::new([0u64; 8]) };
+    static LEX_FLIP_W16: Cell<[u64; 16]> = const { Cell::new([0u64; 16]) };
+    static LEX_FLIP_W128: Cell<[u64; 128]> = const { Cell::new([0u64; 128]) };
 }
 
 fn get_lex_nvar<const W: usize>() -> usize {
@@ -623,21 +706,76 @@ fn set_lex_nvar<const W: usize>(n: usize) {
     }
 }
 
+fn get_lex_flip<const W: usize>() -> [u64; W] {
+    let mut result = [0u64; W];
+    match W {
+        8 => LEX_FLIP_W8.with(|c| result.copy_from_slice(&c.get())),
+        16 => LEX_FLIP_W16.with(|c| result.copy_from_slice(&c.get())),
+        128 => LEX_FLIP_W128.with(|c| result.copy_from_slice(&c.get())),
+        _ => panic!("Unsupported W={W} for lex flip"),
+    }
+    result
+}
+
+fn set_lex_flip<const W: usize>(mask: [u64; W]) {
+    match W {
+        8 => LEX_FLIP_W8.with(|c| {
+            let mut m = [0u64; 8];
+            m.copy_from_slice(&mask);
+            c.set(m)
+        }),
+        16 => LEX_FLIP_W16.with(|c| {
+            let mut m = [0u64; 16];
+            m.copy_from_slice(&mask);
+            c.set(m)
+        }),
+        128 => LEX_FLIP_W128.with(|c| {
+            let mut m = [0u64; 128];
+            m.copy_from_slice(&mask);
+            c.set(m)
+        }),
+        _ => panic!("Unsupported W={W} for lex flip"),
+    }
+}
+
 struct LexNvarGuard<const W: usize> {
-    prev: usize,
+    prev_nvar: usize,
+    prev_flip: [u64; W],
+}
+
+/// Compute the cmp_flip_mask for a given nvars, matching ark-gb's
+/// `compute_packing_masks`.  For each variable byte position, flips
+/// the lower 7 bits (0x7F) so that larger exponents become "smaller"
+/// in the comparison key.
+fn compute_lex_flip_mask<const W: usize>(nvars: usize) -> [u64; W] {
+    let mut flip = [0u64; W];
+    let first_var_byte = W * 8 - 1 - nvars;
+    let last_var_byte = W * 8 - 2;
+    for byte_idx in first_var_byte..=last_var_byte {
+        let word = byte_idx / 8;
+        let shift = ((byte_idx % 8) * 8) as u32;
+        flip[word] |= 0x7Fu64 << shift;
+    }
+    flip
 }
 
 impl<const W: usize> LexNvarGuard<W> {
-    fn install(n: usize) -> Self {
-        let prev = get_lex_nvar::<W>();
-        set_lex_nvar::<W>(n);
-        Self { prev }
+    fn install(nvars: usize) -> Self {
+        let prev_nvar = get_lex_nvar::<W>();
+        let prev_flip = get_lex_flip::<W>();
+        set_lex_nvar::<W>(nvars);
+        set_lex_flip::<W>(compute_lex_flip_mask::<W>(nvars));
+        Self {
+            prev_nvar,
+            prev_flip,
+        }
     }
 }
 
 impl<const W: usize> Drop for LexNvarGuard<W> {
     fn drop(&mut self) {
-        set_lex_nvar::<W>(self.prev);
+        set_lex_nvar::<W>(self.prev_nvar);
+        set_lex_flip::<W>(self.prev_flip);
     }
 }
 
@@ -682,24 +820,13 @@ impl<const W: usize> PartialOrd for ZippelLexElimMono<W> {
 /// convention).
 impl<const W: usize> Ord for ZippelLexElimMono<W> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Compare lexicographically per-variable, from index 0 (highest
-        // priority) to the last index.  At the first position where
-        // exponents differ, the monomial with the larger exponent is
-        // leading (Ord::Less).
-        let nvars = get_lex_nvar::<W>();
-        // Retrieve exponents via the packed representation. Each variable
-        // occupies one byte in ark-gb's packed layout; byte position for
-        // variable i = i + W*8 - 1 - nvars.
-        for i in 0..nvars {
-            let byte_idx = i + W * 8 - 1 - nvars;
-            let word = byte_idx / 8;
-            let shift = (byte_idx % 8) * 8;
-            let e_self = ((self.0.packed()[word] >> shift) & 0xFF) as u8;
-            let e_other = ((other.0.packed()[word] >> shift) & 0xFF) as u8;
-            match e_self.cmp(&e_other) {
+        let flip = get_lex_flip::<W>();
+        for i in (0..W).rev() {
+            let ka = self.0.packed()[i] ^ flip[i];
+            let kb = other.0.packed()[i] ^ flip[i];
+            match ka.cmp(&kb) {
                 std::cmp::Ordering::Equal => continue,
-                std::cmp::Ordering::Greater => return std::cmp::Ordering::Less,
-                std::cmp::Ordering::Less => return std::cmp::Ordering::Greater,
+                ord => return ord,
             }
         }
         std::cmp::Ordering::Equal

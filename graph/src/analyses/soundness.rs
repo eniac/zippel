@@ -408,7 +408,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         self.validity_result.inline();
         self.validity_result.run::<128>();
-        factor_group_gcd(&mut self.validity_result);
 
         for r in self.relation_polys.iter() {
             if r.is_zero() {
@@ -912,6 +911,8 @@ mod tests {
             );
         }
 
-        assert!(analysis.run().is_ok());
+        let result = analysis.run();
+        eprintln!("vec_witness result: {:?}", result);
+        assert!(result.is_ok());
     }
 }

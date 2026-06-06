@@ -167,7 +167,7 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
     basis
 }
 
-const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
+pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
 
 /// Canonical polynomial shape used when comparing division witness operands.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

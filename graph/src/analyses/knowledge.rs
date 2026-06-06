@@ -141,9 +141,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             // prover/Groebner-builder computations that the verifier cannot observe.
             // Keep private-uniform handling as-is: mixed uniform-mask polynomials
             // are classified by `is_leak` below rather than dropped here.
-            let contains_internal_variable = vars
-                .iter()
-                .any(|v| v.is_local() || ElimTerm::is_generated_internal(v));
+            let contains_internal_variable = vars.iter().any(|v| v.is_local());
             !contains_internal_variable
         });
     }
@@ -624,7 +622,7 @@ fn knowledge_relation_basis_div_wit_cache_is_clean() {
             .unwrap()
             .vars()
             .iter()
-            .any(ElimTerm::is_generated_internal),
+            .any(|v| v.is_local()),
         "relation-only basis should contain polynomial div/rem witness variables"
     );
     let result = kz.run::<8>();
