@@ -119,6 +119,10 @@ name = "groth16"
 path = "src/bin/groth16.rs"
 
 [[bin]]
+name = "pst13"
+path = "src/bin/pst13.rs"
+
+[[bin]]
 name = "groth16_profile"
 path = "src/bin/groth16_profile.rs"
 
