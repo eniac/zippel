@@ -27,8 +27,8 @@ type G1 = <C as ArkConfig>::G1;
 
 const M_LOG: usize = 4;
 const K: usize = 1 << M_LOG; // 16 constraints
-const N_PUB: usize = 1;      // public inputs (includes constant 1 at z[0])
-const M_WIT: usize = 1;      // "real" witness variables
+const N_PUB: usize = 1; // public inputs (includes constant 1 at z[0])
+const M_WIT: usize = 1; // "real" witness variables
 // Instance-outliner layout: z = [1, x[1..N], w[0..M_WIT], aux[0..N]], aux[i] = z[i]^2
 const K_VARS: usize = 2 * N_PUB + M_WIT;
 const KMN: usize = K_VARS - N_PUB;
@@ -93,14 +93,13 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let mut rng = test_rng();
 
     // ── Witness: z = [1, x[1..N], w[0..M_WIT], aux[0..N]], aux[i] = z[i]^2 ──
-    let mut z = vec![F::zero(); K_VARS];
+    let mut z = [F::zero(); K_VARS];
     z[0] = F::one();
-    #[allow(clippy::reversed_empty_ranges)]
-    for i in 1..N_PUB {
-        z[i] = nonzero(&mut rng);
+    for v in z[1..N_PUB].iter_mut() {
+        *v = nonzero(&mut rng);
     }
-    for j in N_PUB..N_PUB + M_WIT {
-        z[j] = nonzero(&mut rng);
+    for v in z[N_PUB..N_PUB + M_WIT].iter_mut() {
+        *v = nonzero(&mut rng);
     }
     for i in 0..N_PUB {
         z[N_PUB + M_WIT + i] = z[i] * z[i];
@@ -138,9 +137,9 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     }
 
     // ── DV-Pari SRS: sample toxic waste (τ, δ, ε) ──────────────────────────
-    let tau   = F::rand(&mut rng);
+    let tau = F::rand(&mut rng);
     let delta = F::rand(&mut rng);
-    let eps   = F::rand(&mut rng);
+    let eps = F::rand(&mut rng);
     let g_g1: G1 = G1::rand(&mut rng);
 
     let domain = GeneralEvaluationDomain::<F>::new(K).expect("domain");
@@ -158,7 +157,13 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     // τ powers: τ^0, τ^1, ..., τ^{K−1}
     let tau_powers: Vec<F> = {
         let mut acc = F::one();
-        (0..K).map(|_| { let v = acc; acc *= tau; v }).collect()
+        (0..K)
+            .map(|_| {
+                let v = acc;
+                acc *= tau;
+                v
+            })
+            .collect()
     };
     // τ^K (needed for z_K(τ) = τ^K − 1)
     let tau_k = tau_powers[K - 1] * tau;
@@ -194,7 +199,11 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let sigma_kr_vec: Vec<G1> = {
         let mut acc = F::one();
         (0..K + K)
-            .map(|_| { let v = acc; acc *= tau; g_g1 * (v * delta) })
+            .map(|_| {
+                let v = acc;
+                acc *= tau;
+                g_g1 * (v * delta)
+            })
             .collect()
     };
 
@@ -213,7 +222,10 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("w".into()), Value::VecScalar(w_vec)),
         (Vid("x".into()), Value::VecScalar(x_vec.clone())),
         (Vid("sigma_m".into()), Value::VecG1(sigma_m_vec)),
-        (Vid("sigma_m_pub".into()), Value::VecG1(sigma_m_pub_vec.clone())),
+        (
+            Vid("sigma_m_pub".into()),
+            Value::VecG1(sigma_m_pub_vec.clone()),
+        ),
         (Vid("sigma_q".into()), Value::VecG1(sigma_q_vec)),
         (Vid("sigma_ka".into()), Value::VecG1(sigma_ka_vec)),
         (Vid("sigma_kr".into()), Value::VecG1(sigma_kr_vec)),
@@ -241,6 +253,8 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
 fn nonzero<R: rand::Rng>(rng: &mut R) -> F {
     loop {
         let v = F::rand(rng);
-        if !v.is_zero() { return v; }
+        if !v.is_zero() {
+            return v;
+        }
     }
 }

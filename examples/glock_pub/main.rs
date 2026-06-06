@@ -86,14 +86,13 @@ fn main() {
 fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let mut rng = test_rng();
 
-    let mut z = vec![F::zero(); K_VARS];
+    let mut z = [F::zero(); K_VARS];
     z[0] = F::one();
-    #[allow(clippy::reversed_empty_ranges)]
-    for i in 1..N_PUB {
-        z[i] = nonzero(&mut rng);
+    for v in z[1..N_PUB].iter_mut() {
+        *v = nonzero(&mut rng);
     }
-    for j in N_PUB..N_PUB + M_WIT {
-        z[j] = nonzero(&mut rng);
+    for v in z[N_PUB..N_PUB + M_WIT].iter_mut() {
+        *v = nonzero(&mut rng);
     }
     for i in 0..N_PUB {
         z[N_PUB + M_WIT + i] = z[i] * z[i];
@@ -130,7 +129,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     }
 
     // ── SRS: sample τ, δ (no ε — publicly verifiable uses pairings) ──────────
-    let tau   = F::rand(&mut rng);
+    let tau = F::rand(&mut rng);
     let delta = F::rand(&mut rng);
     let g_g1: G1 = G1::rand(&mut rng);
     let h_g2: G2 = G2::rand(&mut rng);
@@ -148,7 +147,13 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
 
     let tau_powers: Vec<F> = {
         let mut acc = F::one();
-        (0..K).map(|_| { let v = acc; acc *= tau; v }).collect()
+        (0..K)
+            .map(|_| {
+                let v = acc;
+                acc *= tau;
+                v
+            })
+            .collect()
     };
     let tau_k = tau_powers[K - 1] * tau;
     let z_k_at_tau = tau_k - F::one();
@@ -182,7 +187,11 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let sigma_kr_vec: Vec<G1> = {
         let mut acc = F::one();
         (0..K + K)
-            .map(|_| { let v = acc; acc *= tau; g_g1 * (v * delta) })
+            .map(|_| {
+                let v = acc;
+                acc *= tau;
+                g_g1 * (v * delta)
+            })
             .collect()
     };
 
@@ -192,7 +201,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
 
     // Verifier key: δG (G1), τH (G2), H (G2)
     let delta_g_val: G1 = g_g1 * delta;
-    let tau_h_val: G2   = h_g2 * tau;
+    let tau_h_val: G2 = h_g2 * tau;
 
     let x_vec: Vec<F> = z[..N_PUB].to_vec();
     let w_vec: Vec<F> = z[N_PUB..].to_vec();
@@ -203,7 +212,10 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
         (Vid("w".into()), Value::VecScalar(w_vec)),
         (Vid("x".into()), Value::VecScalar(x_vec.clone())),
         (Vid("sigma_m".into()), Value::VecG1(sigma_m_vec)),
-        (Vid("sigma_m_pub".into()), Value::VecG1(sigma_m_pub_vec.clone())),
+        (
+            Vid("sigma_m_pub".into()),
+            Value::VecG1(sigma_m_pub_vec.clone()),
+        ),
         (Vid("sigma_q".into()), Value::VecG1(sigma_q_vec)),
         (Vid("sigma_ka".into()), Value::VecG1(sigma_ka_vec)),
         (Vid("sigma_kr".into()), Value::VecG1(sigma_kr_vec)),
@@ -231,6 +243,8 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
 fn nonzero<R: rand::Rng>(rng: &mut R) -> F {
     loop {
         let v = F::rand(rng);
-        if !v.is_zero() { return v; }
+        if !v.is_zero() {
+            return v;
+        }
     }
 }
