@@ -6,7 +6,6 @@ use crate::DQDag;
 use crate::PRef;
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::extractor::convert_poly;
 use crate::analyses::extractor::extract_locals;
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 
@@ -57,7 +56,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let local_extractors = extract_locals(&self.verifier_tc);
 
         for (_, lex_poly) in &local_extractors {
-            self.prover.basis.push(convert_poly::<C>(lex_poly));
+            self.prover.basis.push(lex_poly.clone());
         }
 
         self.prover.run::<128>();
@@ -99,7 +98,7 @@ mod tests {
                 verify(a == b)
             }"#;
 
-        debug!("Parsing example: {}", ex);
+        log::debug!("Parsing example: {}", ex);
         let m = UModule::from_str(ex)
             .unwrap()
             .concretize(&Ctx::new())

@@ -267,6 +267,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         self.prefs.insert(pr.reference, pr.clone())
     }
 
+    pub fn reconstruct_from<T2: Monomial>(source: &GroebnerResult<C, T2>) -> Self
+    where
+        T: From<Vec<(PRef, usize)>>,
+    {
+        let basis = GroebnerBasis::reconstruct_from(&source.basis);
+        let mut pl = Ctx::new();
+        for (k, v) in source.pl.iter() {
+            let new_poly = SparsePolynomial::reconstruct_from(v);
+            pl.insert(k, &new_poly);
+        }
+        Self {
+            basis,
+            pl,
+            prefs: source.prefs.clone(),
+            var_order: source.var_order.clone(),
+        }
+    }
+
     /// Look up a Ref in the namespace. Panics if not found.
     pub fn find_ref(&self, r: &Ref) -> PRef {
         if let Some(v) = self.prefs.get(r) {

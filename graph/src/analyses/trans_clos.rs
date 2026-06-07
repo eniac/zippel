@@ -148,21 +148,22 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             clos: Vec::new(),
             prefs: Vec::new(),
         };
-        let mut index: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
 
         // Insert input args as canonical entries, then alias relation args
         for input_pref in &input_prefs {
-            let idx = tc.clos.len();
             tc.clos.push((
                 input_pref.clone(),
                 Op::Ref(input_pref.reference, input_pref.typ.clone()),
             ));
-            index.insert(input_pref.node(), idx);
+            seen.insert(input_pref.node(), input_pref.clone());
         }
         for rel_pref in &rel_prefs {
-            if let Some(input_pref) = input_prefs.iter().find(|ip| ip.name() == rel_pref.name()) {
-                index.insert(rel_pref.node(), index[&input_pref.node()]);
-            }
+            let input_pref = input_prefs
+                .iter()
+                .find(|ip| ip.name() == rel_pref.name())
+                .expect("relation arg must also exist in input arg");
+            seen.insert(rel_pref.node(), input_pref.clone());
         }
 
         tc.prefs = input_prefs;
@@ -170,8 +171,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let reachable = collect_reachable_forward(dag, start);
         let topo = topo_sort_nodes(dag, &reachable);
         for node in topo {
-            if !index.contains_key(&node) {
-                tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
+            if !seen.contains_key(&node) {
+                tc.trans_clos_ref(dag, dag.find_ref(node), &mut seen);
             }
         }
         tc
@@ -194,10 +195,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let reachable = collect_reachable_backward(dag, &transcripts_vec, None);
         let topo = topo_sort_nodes(dag, &reachable);
 
-        let mut index: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
 
         for node in topo {
-            tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
+            tc.trans_clos_ref(dag, dag.find_ref(node), &mut seen);
         }
         tc
     }
@@ -229,12 +230,13 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             prefs: input_prefs,
         };
 
-        let mut index: HashMap<NodeIndex, usize> = HashMap::new();
+        let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
 
-        // Pre-populate index with transcript nodes so trans_clos_op
+        // Pre-populate seen with transcript source nodes so trans_clos_ref
         // doesn't recurse past them into prover-only nodes. Also add
         // transcript source PRefs to prefs — they are opaque inputs to
-        // the verifier, analogous to public args.
+        // the verifier, analogous to public args. These are leaf nodes
+        // and are NOT added to clos.
         for &n in &transcripts_vec {
             match &dag[n] {
                 Node::Op(op, (qualifier, distribution))
@@ -242,10 +244,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                     let inner = op.get();
                     let pref = named_pref(dag, Ref::new(n), inner.typ(), *qualifier, *distribution);
                     tc.prefs.push(pref.clone());
-                    let idx = tc.clos.len();
-                    tc.clos
-                        .push((pref.clone(), Op::Ref(pref.reference, pref.typ.clone())));
-                    index.insert(n, idx);
+                    seen.insert(n, pref);
                 }
                 _ => {}
             }
@@ -254,8 +253,8 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         let reachable = collect_reachable_backward(dag, &checks, Some(&transcripts_set));
         let topo = topo_sort_nodes(dag, &reachable);
         for node in topo {
-            if !index.contains_key(&node) {
-                tc.trans_clos_ref(dag, dag.find_ref(node), &mut index);
+            if !seen.contains_key(&node) {
+                tc.trans_clos_ref(dag, dag.find_ref(node), &mut seen);
             }
         }
         tc
@@ -287,90 +286,86 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         &mut self,
         dag: &DQDag<C>,
         op: GOp<C>,
-        index: &mut HashMap<NodeIndex, usize>,
+        seen: &mut HashMap<NodeIndex, PRef>,
     ) -> GOp<C> {
         match op {
-            Op::Ref(r, _) => self.trans_clos_ref(dag, r, index),
+            Op::Ref(r, _) => self.trans_clos_ref(dag, r, seen),
             Op::Bin(op, a, b, typ) => {
-                let oa = self.trans_clos_op(dag, a.get().clone(), index);
-                let ob = self.trans_clos_op(dag, b.get().clone(), index);
+                let oa = self.trans_clos_op(dag, a.get().clone(), seen);
+                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
                 Op::bin(op, oa, ob, typ.clone())
             }
             Op::Ram(a, b) => {
-                let oa = self.trans_clos_op(dag, a.get().clone(), index);
-                let ob = self.trans_clos_op(dag, b.get().clone(), index);
+                let oa = self.trans_clos_op(dag, a.get().clone(), seen);
+                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
                 Op::Ram(mk::<C>(oa), mk::<C>(ob))
             }
             Op::Value(v) => Op::Value(v),
             Op::Vec(vs) => Op::Vec(
                 vs.into_iter()
-                    .map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone(), index)))
+                    .map(|v| mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)))
                     .collect::<Vec<_>>(),
             ),
-            Op::Check(op) => self.trans_clos_op(dag, op.get().clone(), index),
+            Op::Check(op) => self.trans_clos_op(dag, op.get().clone(), seen),
             Op::Interpolate(points, evals) => Op::Interpolate(
-                mk::<C>(self.trans_clos_op(dag, points.get().clone(), index)),
-                mk::<C>(self.trans_clos_op(dag, evals.get().clone(), index)),
+                mk::<C>(self.trans_clos_op(dag, points.get().clone(), seen)),
+                mk::<C>(self.trans_clos_op(dag, evals.get().clone(), seen)),
             ),
-            Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
-            Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
+            Op::Ifft(v) => Op::Ifft(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
+            Op::Fft(v) => Op::Fft(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
             Op::Reduce(op, v) => {
-                Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone(), index)))
+                Op::Reduce(op, mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)))
             }
             Op::Evaluate(p, xs, typ) => {
-                let p = self.trans_clos_op(dag, p.get().clone(), index);
-                let xs = self.trans_clos_op(dag, xs.get().clone(), index);
+                let p = self.trans_clos_op(dag, p.get().clone(), seen);
+                let xs = self.trans_clos_op(dag, xs.get().clone(), seen);
                 GOp::evaluate_typed(p, xs, typ.clone())
             }
-            Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
-            Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
-            Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
+            Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
+            Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
+            Op::Coef(v) => Op::Coef(mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen))),
             Op::Record(fields) => Op::Record(
                 fields
                     .into_iter()
                     .map(|(k, v)| {
                         (
                             k.clone(),
-                            mk::<C>(self.trans_clos_op(dag, v.get().clone(), index)),
+                            mk::<C>(self.trans_clos_op(dag, v.get().clone(), seen)),
                         )
                     })
                     .collect(),
             ),
             Op::Pair(a, b, t) => {
-                let oa = self.trans_clos_op(dag, a.get().clone(), index);
-                let ob = self.trans_clos_op(dag, b.get().clone(), index);
+                let oa = self.trans_clos_op(dag, a.get().clone(), seen);
+                let ob = self.trans_clos_op(dag, b.get().clone(), seen);
                 Op::Pair(mk::<C>(oa), mk::<C>(ob), t)
             }
             Op::Random(t, b) => Op::Random(t, b),
             Op::Challenge(t, b) => Op::Challenge(t, b),
             Op::Marginalize(op) => {
-                Op::Marginalize(mk::<C>(self.trans_clos_op(dag, op.get().clone(), index)))
+                Op::Marginalize(mk::<C>(self.trans_clos_op(dag, op.get().clone(), seen)))
             }
             Op::Proj(op, field, typ) => Op::Proj(
-                mk::<C>(self.trans_clos_op(dag, op.get().clone(), index)),
+                mk::<C>(self.trans_clos_op(dag, op.get().clone(), seen)),
                 field.clone(),
                 typ.clone(),
             ),
         }
     }
 
-    fn find(&self, r: &Ref, index: &HashMap<NodeIndex, usize>) -> Option<(&PRef, &GOp<C>)> {
-        index
-            .get(&r.node())
-            .map(|&idx| (&self.clos[idx].0, &self.clos[idx].1))
+    fn find<'a>(seen: &'a HashMap<NodeIndex, PRef>, r: &Ref) -> Option<&'a PRef> {
+        seen.get(&r.node())
     }
 
-    fn insert(&mut self, r: PRef, op: GOp<C>, index: &mut HashMap<NodeIndex, usize>) -> GOp<C> {
-        if let Some(&idx) = index.get(&r.node()) {
-            let canonical = &self.clos[idx].0;
-            Op::Ref(canonical.reference, self.clos[idx].1.typ())
+    fn insert(&mut self, r: PRef, op: GOp<C>, seen: &mut HashMap<NodeIndex, PRef>) -> GOp<C> {
+        if let Some(canonical) = seen.get(&r.node()) {
+            Op::Ref(canonical.reference, op.typ())
         } else {
-            let idx = self.clos.len();
             let typ = op.typ();
             let node = r.node();
             let reference = r.reference;
-            self.clos.push((r, op));
-            index.insert(node, idx);
+            self.clos.push((r.clone(), op));
+            seen.insert(node, r);
             Op::Ref(reference, typ)
         }
     }
@@ -379,10 +374,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         &mut self,
         dag: &DQDag<C>,
         r: Ref,
-        index: &mut HashMap<NodeIndex, usize>,
+        seen: &mut HashMap<NodeIndex, PRef>,
     ) -> GOp<C> {
-        if let Some((canonical, op)) = self.find(&r, index) {
-            return Op::Ref(canonical.reference, op.typ());
+        if let Some(canonical) = Self::find(seen, &r) {
+            return Op::Ref(canonical.reference, canonical.typ.clone());
         }
         match &dag[r.node()] {
             Node::Op(op, (qualifier, distribution))
@@ -391,15 +386,15 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             {
                 let inner = op.get();
                 let pref = named_pref(dag, r, inner.typ(), *qualifier, *distribution);
-                self.insert(pref, inner.clone(), index)
+                self.insert(pref, inner.clone(), seen)
             }
             Node::Op(op, (qualifier, distribution))
             | Node::Transcr(op, (qualifier, distribution)) => {
-                let obin = self.trans_clos_op(dag, op.get().clone(), index);
+                let obin = self.trans_clos_op(dag, op.get().clone(), seen);
                 self.insert(
                     named_pref(dag, r, obin.typ(), *qualifier, *distribution),
                     obin,
-                    index,
+                    seen,
                 )
             }
             Node::Arg(_, t, _, _, _) => Op::Ref(r, t.clone()),

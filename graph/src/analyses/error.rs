@@ -5,6 +5,46 @@ use crate::{GraphError, PRef};
 use backend::ArkConfig;
 use thiserror::Error;
 
+/// Reason why no valid extractor was found for a witness slot.
+pub enum ExtractorRejection<C: ArkConfig> {
+    /// No basis polynomial has this witness as leading term.
+    NoExtractor,
+    /// Extractor depends on variables not visible to the verifier.
+    NotVisible(SparsePolynomial<C::F, SoundnessElimTerm>),
+    /// Field witness extractor depends on group variables.
+    FieldDependsOnGroup(SparsePolynomial<C::F, SoundnessElimTerm>),
+    /// Group witness extractor has a monomial with >1 group variable.
+    MultiGroupTerm(SparsePolynomial<C::F, SoundnessElimTerm>),
+}
+
+impl<C: ArkConfig> std::fmt::Debug for ExtractorRejection<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExtractorRejection::NoExtractor => write!(f, "NoExtractor"),
+            ExtractorRejection::NotVisible(p) => write!(f, "NotVisible({})", p),
+            ExtractorRejection::FieldDependsOnGroup(p) => {
+                write!(f, "FieldDependsOnGroup({})", p)
+            }
+            ExtractorRejection::MultiGroupTerm(p) => {
+                write!(f, "MultiGroupTerm({})", p)
+            }
+        }
+    }
+}
+
+impl<C: ArkConfig> Clone for ExtractorRejection<C> {
+    fn clone(&self) -> Self {
+        match self {
+            ExtractorRejection::NoExtractor => ExtractorRejection::NoExtractor,
+            ExtractorRejection::NotVisible(p) => ExtractorRejection::NotVisible(p.clone()),
+            ExtractorRejection::FieldDependsOnGroup(p) => {
+                ExtractorRejection::FieldDependsOnGroup(p.clone())
+            }
+            ExtractorRejection::MultiGroupTerm(p) => ExtractorRejection::MultiGroupTerm(p.clone()),
+        }
+    }
+}
+
 /// Errors from static protocol analyses.
 #[derive(Error, Debug)]
 pub enum AnalysisError<C: ArkConfig> {
@@ -34,15 +74,11 @@ pub enum AnalysisError<C: ArkConfig> {
     )]
     Not2nPlus1MoveProtocol { expected: usize, found: usize },
 
-    /// No extractor polynomial found for witness variable.
-    #[error("No extractor for witness: {0}")]
-    NoExtractor(PRef),
-
-    /// Extractor polynomial depends on non-transcript-visible variables.
-    #[error("Extractor for witness {witness} is not transcript-computable: {poly}")]
-    ExtractorNotVisible {
+    /// No valid extractor found for a witness slot.
+    #[error("No valid extractor for witness {witness}: {reason:?}")]
+    NoValidExtractor {
         witness: PRef,
-        poly: SparsePolynomial<C::F, SoundnessElimTerm>,
+        reason: Box<ExtractorRejection<C>>,
     },
 
     /// Extractor invalid; relation remainder is non-zero.

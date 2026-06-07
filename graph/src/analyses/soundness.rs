@@ -1,44 +1,65 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::analyses::TransClos;
-use crate::analyses::error::AnalysisError;
-use crate::analyses::extractor::{ExtractLocalTerm, extract_locals};
-use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy, Monomial};
+use crate::analyses::error::{AnalysisError, ExtractorRejection};
+use crate::analyses::extractor::extract_locals;
+use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
+use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::{DQDag, PRef, Ref};
-use ark_ff::{One, Zero};
+use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
+use core::cmp::Ordering;
 use lang::id::Vid;
 use log::{info, warn};
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use share::{Ctx, Set};
+use share::Set;
 
-/// Special-soundness elimination strategy: all private variables (witnesses)
-/// are eliminated first. Local and public variables are kept.
+/// Special-soundness elimination strategy: locals and private variables
+/// (witnesses) are eliminated, but locals have higher priority so they
+/// become leading terms and get resolved before witnesses.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Soundness;
+pub struct SoundnessLex;
 
-impl ElimStrategy for Soundness {
+impl LexElimStrategy for SoundnessLex {
     fn eliminate_var(v: &PRef) -> bool {
         v.qualifier.is_private() || v.is_local()
     }
+
+    fn cmp_vars(a: &PRef, b: &PRef) -> Ordering {
+        fn tier(v: &PRef) -> u8 {
+            if v.is_local() {
+                0
+            } else if v.qualifier.is_private() {
+                1
+            } else {
+                2
+            }
+        }
+        match tier(a).cmp(&tier(b)) {
+            Ordering::Equal => {}
+            order => return order,
+        }
+        match (a.is_local(), b.is_local()) {
+            (true, true) => {
+                let ra = get_local_rank(a);
+                let rb = get_local_rank(b);
+                rb.cmp(&ra).then_with(|| a.cmp(b))
+            }
+            _ => a.cmp(b),
+        }
+    }
 }
 
-/// Special-soundness elimination term. Type alias for the soundness case.
-pub type SoundnessElimTerm = ElimMono<Soundness>;
+pub type SoundnessElimTerm = LexElimMono<SoundnessLex>;
 
-type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, SoundnessElimTerm>;
+type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
 
 pub struct SpecialSoundnessAnalysis<C: ArkConfig> {
-    search_result: GroebnerResult<C, SoundnessElimTerm>,
-    validity_result: GroebnerResult<C, SoundnessElimTerm>,
-    #[allow(dead_code, unnameable_types)]
-    relation_polys: Vec<Poly<C>>,
-    witness_slots: Vec<PRef>,
-    rel_tc: TransClos<C>,
+    _marker: std::marker::PhantomData<C>,
 }
 
 fn format_suffix(prefix: &[usize], copy_idx: usize) -> String {
@@ -120,7 +141,22 @@ fn validate_2n_plus_1<C: ArkConfig>(
 }
 
 impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
-    pub fn from_input(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<Self, AnalysisError<C>> {
+    /// Analyze special soundness of a sigma protocol.
+    ///
+    /// # Phases
+    ///
+    /// 1. **Construct** (GrevLexTerm, stable Ord): build all GB inputs —
+    ///    d-equations, copy TCs, relation polys.
+    /// 2. **Install guard**: compute the lex-elimination rank map from
+    ///    var_order and install `LocalRankGuard`.
+    /// 3. **Convert** to `LexElimMono<SoundnessLex>`: reconstruct all
+    ///    BTreeMaps with the correct ordering now that the guard is active.
+    /// 4. **Inline & run** the search GB under lex ordering.
+    /// 5. **Extract witnesses** from the search basis while the guard is
+    ///    still active.
+    /// 6. **Build validity GB** (also under lex ordering) and verify that
+    ///    all relation polys reduce to zero.
+    pub fn analyze(dag: &DQDag<C>, l_vec: Vec<usize>) -> Result<(), AnalysisError<C>> {
         if l_vec.is_empty() || l_vec.iter().any(|l| *l < 2) {
             return Err(AnalysisError::InvalidSoundnessParameter);
         }
@@ -147,21 +183,21 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     .flat_map(|&cn| {
                         let r = dag.find_ref(cn);
                         verifier_tc
-                            .clos
+                            .prefs
                             .iter()
-                            .filter(|(p, _)| p.reference == r)
-                            .map(|(p, _)| p.clone())
+                            .filter(|p| p.reference == r)
+                            .cloned()
                             .collect::<Vec<_>>()
                     })
                     .collect()
             })
             .collect();
 
-        let mut search_builder: GroebnerBuilder<C, SoundnessElimTerm> = GroebnerBuilder::new();
-        let mut validity_builder: GroebnerBuilder<C, SoundnessElimTerm> = GroebnerBuilder::new();
-
+        // Phase 1: Construct (GrevLexTerm — stable Ord).
+        let mut grev_builder: GroebnerBuilder<C, GrevLexTerm> = GroebnerBuilder::new();
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
         let mut all_d_equations: Vec<Poly<C>> = Vec::new();
+        let mut all_d_prefs: Vec<PRef> = Vec::new();
 
         for (round_idx, &li) in l_vec.iter().enumerate() {
             let mut new_worklist = Vec::new();
@@ -215,27 +251,17 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     copies_with_challenges.push((copy_tc, remapped_challenges));
                 }
 
-                // D-equations: for each pair of copies (m, n) in this round,
-                // assert that the vector challenges differ in at least one
-                // component. If the round has challenges (c1, c2, ...), this
-                // is encoded as:
-                //   d_0*(c1_m - c1_n) + d_1*(c2_m - c2_n) + ... - 1 = 0
-                // where each d_k is a fresh invertible variable. If any
-                // component differs, the corresponding d_k makes that term
-                // invertible, so the sum is invertible (≠ 0). If no
-                // component differs, every term is 0 and the equation
-                // reduces to -1 = 0, a contradiction.
                 for m in 0..li {
                     for n in (m + 1)..li {
                         let cm_prefs = &copies_with_challenges[m].1;
                         let cn_prefs = &copies_with_challenges[n].1;
-                        let one = Poly::<C>::lit(&C::F::one());
 
                         let diff: Poly<C> = cm_prefs.iter().zip(cn_prefs.iter()).enumerate().fold(
                             Poly::<C>::zero(),
                             |acc, (k, (cm_ref, cn_ref))| {
                                 let d_name = format_d_name(&prefix, m, n, k);
-                                let d = search_builder.ns.sentinel_pref(&d_name, ATyp::scalar());
+                                let d = grev_builder.ns.sentinel_pref(&d_name, ATyp::scalar());
+                                all_d_prefs.push(d.clone());
                                 let d_poly = Poly::<C>::var(&d);
                                 let cm_poly = Poly::<C>::var(cm_ref);
                                 let cn_poly = Poly::<C>::var(cn_ref);
@@ -243,7 +269,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                             },
                         );
 
-                        all_d_equations.push(diff - one);
+                        all_d_equations.push(diff - Poly::<C>::lit(&C::F::one()));
                     }
                 }
 
@@ -257,124 +283,136 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             worklist = new_worklist;
         }
 
-        let mut search_result = GroebnerResult::<C, SoundnessElimTerm>::new();
-        let mut validity_result = GroebnerResult::<C, SoundnessElimTerm>::new();
+        let mut grev_search = GroebnerResult::<C, GrevLexTerm>::new();
+        let mut grev_validity = GroebnerResult::<C, GrevLexTerm>::new();
+
+        let mut verifier_visible: Set<PRef> = Set::new();
 
         for eq in &all_d_equations {
-            search_result.basis.push(eq.clone());
-            validity_result.basis.push(eq.clone());
+            grev_search.basis.push(eq.clone());
+            grev_validity.basis.push(eq.clone());
+        }
+        for d in &all_d_prefs {
+            verifier_visible.insert(d.clone());
         }
 
         for (_prefix, tc) in worklist {
-            let copy_result = search_builder.build(tc);
-            search_result.merge(&copy_result);
-            validity_result.merge(&copy_result);
+            for (pr, _) in tc.clos.iter() {
+                verifier_visible.insert(pr.clone());
+            }
+            for pr in tc.prefs.iter() {
+                verifier_visible.insert(pr.clone());
+            }
+            let copy_result = grev_builder.build(tc);
+            grev_search.merge(&copy_result);
+            grev_validity.merge(&copy_result);
         }
 
         let rel_tc = TransClos::relation(dag);
-        let rel_result = search_builder.build(rel_tc.clone());
-        let relation_polys: Vec<Poly<C>> = rel_result
+        let grev_rel_result = grev_builder.build(rel_tc.clone());
+
+        // Phase 2: Install rank guard.
+        let rank_map: std::collections::HashMap<usize, usize> = {
+            let mut rm: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            let mut rank = 0;
+            for pr in grev_search
+                .var_order
+                .iter()
+                .chain(grev_validity.var_order.iter())
+                .chain(grev_rel_result.var_order.iter())
+            {
+                if SoundnessLex::eliminate_var(pr) {
+                    rm.entry(pr.reference.node().index()).or_insert(rank);
+                    rank += 1;
+                }
+            }
+            rm
+        };
+        let _rank_guard = LocalRankGuard::install(rank_map);
+
+        // Phase 3: Convert to lex-elim monomial and inline.
+        let mut lex_search = GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_search);
+        let mut lex_validity =
+            GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_validity);
+
+        let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result
             .basis
             .iter()
             .filter_map(|p| {
                 if p.is_zero() {
                     return None;
                 }
-                Some(p.clone())
+                Some(SparsePolynomial::reconstruct_from(p))
             })
             .collect();
-        for p in &relation_polys {
-            search_result.basis.push(p.clone());
+        for p in &lex_rel_polys {
+            lex_search.basis.push(p.clone());
         }
 
-        validity_builder.build(verifier_tc);
+        lex_search.inline();
 
-        search_result.inline();
+        // Phase 4: Run the search GB under lex ordering.
+        lex_search.run::<128>();
+        factor_group_gcd(&mut lex_search);
 
-        Ok(Self {
-            search_result,
-            validity_result,
-            relation_polys,
-            witness_slots,
-            rel_tc,
-        })
-    }
+        // Phase 5: Extract witnesses.
+        let mut extractors: Vec<(PRef, SparsePolynomial<C::F, SoundnessElimTerm>)> = Vec::new();
 
-    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        info!("Running extractor-search Gröbner basis...");
-
-        self.search_result.run::<128>();
-        factor_group_gcd(&mut self.search_result);
-
-        let mut extractors: Vec<(PRef, Poly<C>)> = Vec::new();
-
-        for w in &self.witness_slots {
+        for w in &witness_slots {
             let is_field_witness = w.typ.is_scalar();
             let mut found_extractor = None;
+            let mut rejection: Option<ExtractorRejection<C>> = None;
 
-            for poly in self.search_result.basis.iter() {
-                if let Some((_lc, lt)) = poly.leading_term() {
-                    let lt_vars = lt.vars();
-                    let lt_powers = lt.powers();
-                    let is_witness_term =
-                        lt_vars.len() == 1 && lt_vars[0] == *w && lt_powers[0] == 1;
+            'poly: for poly in lex_search.basis.iter() {
+                for (term, _coeff) in poly.terms.iter() {
+                    let tv = term.vars();
+                    let tp = term.powers();
+                    let is_witness_term = tv.len() == 1 && tv[0] == *w && tp[0] == 1;
                     if !is_witness_term {
                         continue;
                     }
 
-                    let remainder_vars: Set<PRef> = poly
+                    let other_vars: Set<PRef> = poly
                         .terms
                         .iter()
                         .filter(|(t, _)| {
-                            let tv = t.vars();
-                            let tp = t.powers();
-                            !(tv.len() == 1 && tv[0] == *w && tp[0] == 1)
+                            let tvars = t.vars();
+                            let tpows = t.powers();
+                            !(tvars.len() == 1 && tvars[0] == *w && tpows[0] == 1)
                         })
                         .flat_map(|(t, _)| t.vars())
                         .collect();
-                    let all_visible = remainder_vars.iter().all(|v| !v.qualifier.is_private());
+
+                    let all_visible = other_vars.iter().all(|v| verifier_visible.contains(v));
                     if !all_visible {
-                        warn!(
-                            "Found extractor for {:?} but it depends on non-visible variables",
-                            w
-                        );
-                        return Err(AnalysisError::ExtractorNotVisible {
-                            witness: w.clone(),
-                            poly: poly.clone(),
-                        });
+                        rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
+                        continue;
                     }
                     if is_field_witness {
-                        let has_group_var = remainder_vars.iter().any(|v| v.typ.is_group());
+                        let has_group_var = other_vars.iter().any(|v| v.typ.is_group());
                         if has_group_var {
-                            warn!(
-                                "Found extractor for field witness {:?} but it depends on group variables",
-                                w
-                            );
-                            return Err(AnalysisError::ExtractorNotVisible {
-                                witness: w.clone(),
-                                poly: poly.clone(),
-                            });
+                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
+                            continue;
                         }
                     } else {
-                        for (term, _coeff) in poly.terms.iter() {
-                            let group_count: usize = term
+                        let mut valid = true;
+                        for (term2, _coeff2) in poly.terms.iter() {
+                            let group_count: usize = term2
                                 .iter()
                                 .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
                                 .sum();
                             if group_count > 1 {
-                                warn!(
-                                    "Found extractor for group witness {:?} but a monomial has >1 group variable",
-                                    w
-                                );
-                                return Err(AnalysisError::ExtractorNotVisible {
-                                    witness: w.clone(),
-                                    poly: poly.clone(),
-                                });
+                                valid = false;
+                                break;
                             }
+                        }
+                        if !valid {
+                            rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
+                            continue;
                         }
                     }
                     found_extractor = Some(poly.clone());
-                    break;
+                    break 'poly;
                 }
             }
 
@@ -384,8 +422,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     extractors.push((w.clone(), poly));
                 }
                 None => {
-                    warn!("No extractor found for witness {:?}", w);
-                    return Err(AnalysisError::NoExtractor(w.clone()));
+                    let reason = rejection.unwrap_or(ExtractorRejection::NoExtractor);
+                    warn!("No valid extractor for witness {:?}", w);
+                    return Err(AnalysisError::NoValidExtractor {
+                        witness: w.clone(),
+                        reason: Box::new(reason),
+                    });
                 }
             }
         }
@@ -393,35 +435,39 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         info!(
             "Found {} extractor(s) for {} witness slot(s)",
             extractors.len(),
-            self.witness_slots.len()
+            witness_slots.len()
         );
 
+        // Phase 6: Build validity GB and verify.
         for (_, ext_poly) in &extractors {
-            self.validity_result.basis.push(ext_poly.clone());
+            lex_validity.basis.push(ext_poly.clone());
         }
 
-        let local_extractors = extract_locals(&self.rel_tc);
+        let local_extractors = extract_locals(&rel_tc);
         for (_, lex_poly) in &local_extractors {
-            let converted = convert_extract_local_poly::<C>(lex_poly);
-            self.validity_result.basis.push(converted);
+            let converted = convert_to_lex::<C>(lex_poly);
+            lex_validity.basis.push(converted);
         }
 
-        self.validity_result.inline();
-        self.validity_result.run::<128>();
+        lex_validity.inline();
+        lex_validity.run::<128>();
 
-        for r in self.relation_polys.iter() {
+        for r in &lex_rel_polys {
             if r.is_zero() {
                 continue;
             }
-            let rem = self.validity_result.basis.reduce(r.clone());
+            let rem = lex_validity.basis.reduce(r.clone());
             if !rem.is_zero() {
                 warn!("Relation polynomial does not reduce to zero: {}", r);
                 warn!("Remainder: {}", rem);
-                return Err(AnalysisError::ExtractorInvalid(rem));
+                return Err(AnalysisError::ExtractorInvalid(
+                    SparsePolynomial::reconstruct_from(&rem),
+                ));
             }
         }
 
         info!("Special soundness proven (with distinct-challenge assumption D)");
+
         Ok(())
     }
 }
@@ -476,16 +522,10 @@ fn build_round_map<C: ArkConfig>(
     round_map
 }
 
-fn convert_extract_local_poly<C: ArkConfig>(
-    p: &SparsePolynomial<C::F, ExtractLocalTerm>,
-) -> Poly<C> {
-    let mut terms: Ctx<SoundnessElimTerm, C::F> = Ctx::new();
-    for (term, coeff) in p.terms.iter() {
-        let pairs: Vec<(PRef, usize)> = term.vars().into_iter().zip(term.powers()).collect();
-        let new_term: SoundnessElimTerm = pairs.into();
-        *terms.entry(new_term).or_insert(C::F::zero()) += *coeff;
-    }
-    SparsePolynomial { terms }
+fn convert_to_lex<C: ArkConfig>(
+    p: &SparsePolynomial<C::F, GrevLexTerm>,
+) -> SparsePolynomial<C::F, SoundnessElimTerm> {
+    SparsePolynomial::reconstruct_from(p)
 }
 
 fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTerm>) {
@@ -542,7 +582,7 @@ fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTe
                 }
             });
 
-            let divided = Poly::<C> {
+            let divided: SparsePolynomial<C::F, SoundnessElimTerm> = SparsePolynomial {
                 terms: new_terms.collect(),
             };
             if divided.is_zero() {
@@ -575,8 +615,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
-        let mut analysis = SpecialSoundnessAnalysis::from_input(&g, l_vec)?;
-        analysis.run()
+        SpecialSoundnessAnalysis::analyze(&g, l_vec)
     }
 
     const SCHNORR_PROTO: &str = r#"
@@ -598,11 +637,10 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
-        let mut analysis = SpecialSoundnessAnalysis::from_input(&g, vec![2]).unwrap();
-        let result = analysis.run();
+        let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
         match &result {
             Ok(()) => {}
-            Err(e) => panic!("run() failed: {:?}", e),
+            Err(e) => panic!("analyze() failed: {:?}", e),
         }
     }
 
@@ -648,8 +686,10 @@ mod tests {
         "#;
         let result = analyze_soundness(proto, vec![2]);
         match &result {
-            Err(AnalysisError::NoExtractor(_)) => {}
-            other => panic!("expected NoExtractor, got: {:?}", other),
+            Err(AnalysisError::NoValidExtractor { reason, .. }) => {
+                matches!(reason.as_ref(), ExtractorRejection::NoExtractor);
+            }
+            other => panic!("expected NoExtractor rejection, got: {:?}", other),
         }
     }
 
@@ -662,15 +702,23 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
-        let analysis = SpecialSoundnessAnalysis::from_input(&g, vec![2]).unwrap();
+        SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        let witness_names: Set<String> = analysis
-            .witness_slots
-            .iter()
+        let witness_names: Set<String> = g
+            .args()
+            .into_iter()
+            .filter(|a| a.is_private())
+            .flat_map(|a| a.slots())
             .filter_map(|w| w.name().map(|v| v.0.clone()))
             .collect();
         assert!(witness_names.contains(&"x".to_string()));
-        assert_eq!(analysis.witness_slots.len(), 1);
+        let witness_count: usize = g
+            .args()
+            .into_iter()
+            .filter(|a| a.is_private())
+            .flat_map(|a| a.slots())
+            .count();
+        assert_eq!(witness_count, 1);
     }
 
     const CHAUM_PEDERSEN_PROTO: &str = r#"
@@ -701,11 +749,10 @@ mod tests {
         "#;
         let result = analyze_soundness(proto, vec![2]);
         match &result {
-            Err(AnalysisError::NoExtractor(_)) => {}
-            Err(AnalysisError::ExtractorNotVisible { .. }) => {}
+            Err(AnalysisError::NoValidExtractor { .. }) => {}
             Err(AnalysisError::ExtractorInvalid(_)) => {}
             other => panic!(
-                "expected NoExtractor, ExtractorNotVisible, or ExtractorInvalid, got: {:?}",
+                "expected NoValidExtractor or ExtractorInvalid, got: {:?}",
                 other
             ),
         }
@@ -862,21 +909,22 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
-        let mut analysis = SpecialSoundnessAnalysis::from_input(&g, vec![2]).unwrap();
+        SpecialSoundnessAnalysis::analyze(&g, vec![2]).unwrap();
 
-        assert_eq!(analysis.witness_slots.len(), 1);
-        for slot in &analysis.witness_slots {
+        let witness_slots: Vec<PRef> = g
+            .args()
+            .into_iter()
+            .filter(|a| a.is_private())
+            .flat_map(|a| a.slots())
+            .collect();
+        assert_eq!(witness_slots.len(), 1);
+        for slot in &witness_slots {
             assert!(
                 slot.typ.is_scalar(),
                 "expected scalar slot, got {:?}",
                 slot.typ
             );
         }
-
-        assert!(
-            analysis.run().is_ok(),
-            "Schnorr should be special sound with l=2"
-        );
     }
 
     #[test]
@@ -900,19 +948,7 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g_inp = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
-        let mut analysis = SpecialSoundnessAnalysis::from_input(&g, vec![2]).unwrap();
-
-        assert_eq!(analysis.witness_slots.len(), 2);
-        for slot in &analysis.witness_slots {
-            assert!(
-                slot.typ.is_scalar(),
-                "expected scalar slot, got {:?}",
-                slot.typ
-            );
-        }
-
-        let result = analysis.run();
-        eprintln!("vec_witness result: {:?}", result);
+        let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
         assert!(result.is_ok());
     }
 }

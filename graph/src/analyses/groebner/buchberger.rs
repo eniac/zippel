@@ -79,6 +79,21 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         self.basis.push(poly);
     }
 
+    pub fn reconstruct_from<T2: Monomial>(source: &GroebnerBasis<F, T2>) -> Self
+    where
+        T: From<Vec<(PRef, usize)>>,
+    {
+        let basis: Vec<SparsePolynomial<F, T>> = source
+            .basis
+            .iter()
+            .map(SparsePolynomial::reconstruct_from)
+            .collect();
+        Self {
+            basis,
+            num_vars: source.num_vars,
+        }
+    }
+
     pub fn eliminate_var<FF: Fn(&PRef) -> bool>(&mut self, f: &FF) {
         self.basis.retain(|p| p.vars().find(|v| f(v)).is_none());
     }

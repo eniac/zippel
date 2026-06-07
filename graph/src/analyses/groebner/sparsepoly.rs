@@ -179,6 +179,20 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         SparsePolynomial { terms: Ctx::new() }
     }
 
+    pub fn reconstruct_from<T2: Monomial>(source: &SparsePolynomial<F, T2>) -> Self
+    where
+        T: From<Vec<(PRef, usize)>>,
+    {
+        let mut poly = SparsePolynomial::zero();
+        for (term, coeff) in source.terms.iter() {
+            let pairs: Vec<(PRef, usize)> = term.vars().into_iter().zip(term.powers()).collect();
+            let new_term: T = pairs.into();
+            *poly.terms.entry(new_term).or_insert(F::zero()) += *coeff;
+        }
+        poly.terms.retain(|_, c| !c.is_zero());
+        poly
+    }
+
     pub fn is_zero(&self) -> bool {
         self.terms.is_empty()
     }
