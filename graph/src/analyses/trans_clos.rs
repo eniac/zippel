@@ -113,12 +113,27 @@ fn topo_sort_nodes<C: ArkConfig>(dag: &DQDag<C>, nodes: &HashSet<NodeIndex>) -> 
 ///
 /// `prefs` holds the protocol-parameter PRefs.
 ///
-/// An internal `index: HashMap<NodeIndex, usize>` maps node indices to their
-/// position in `clos` for O(1) lookup and deduplication. Constructors can
-/// pre-populate this index to establish canonical mappings:
-/// - `relation()` inserts input-arg entries and maps relation-arg nodes to
-///   them, ensuring a single namespace.
-/// - `verifier()` inserts transcript-source entries so `trans_clos_op`
+/// # Invariants
+///
+/// - **`prefs`** contains exactly the leaf/source nodes — variables that are
+///   opaque inputs to the computation (e.g. protocol arguments, transcript
+///   challenges/randomness). These are never the result of an operation.
+///
+/// - **`clos`** contains exactly the result nodes — PRefs that are the output
+///   of some operation (`GOp`). Every entry `(pr, op)` satisfies: `pr` is the
+///   result of applying `op` to its operands.
+///
+/// - **Disjointness**: `prefs` and `clos` are disjoint. A PRef that is a leaf
+///   (source/input) appears only in `prefs`; a PRef that is a computation
+///   result appears only in `clos`. This invariant is maintained by the
+///   internal `seen` map — leaf nodes are inserted into `seen` before the
+///   traversal, so `trans_clos_ref` skips them when encountered later.
+///
+/// Constructors pre-populate the internal `seen` map to establish canonical
+/// mappings before traversal:
+/// - `relation()` maps both input-arg and relation-arg nodes to the same
+///   input-arg PRef, ensuring a single namespace.
+/// - `verifier()` pre-populates transcript-source nodes so `trans_clos_op`
 ///   doesn't recurse past the transcript boundary.
 #[derive(Clone)]
 pub struct TransClos<C: ArkConfig> {
@@ -150,12 +165,9 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
         };
         let mut seen: HashMap<NodeIndex, PRef> = HashMap::new();
 
-        // Insert input args as canonical entries, then alias relation args
+        // Insert input args as canonical entries in seen (not clos — they're
+        // leaf/source nodes, not results of ops), then alias relation args.
         for input_pref in &input_prefs {
-            tc.clos.push((
-                input_pref.clone(),
-                Op::Ref(input_pref.reference, input_pref.typ.clone()),
-            ));
             seen.insert(input_pref.node(), input_pref.clone());
         }
         for rel_pref in &rel_prefs {

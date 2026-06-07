@@ -45,8 +45,8 @@ impl LexElimStrategy for SoundnessLex {
         }
         match (a.is_local(), b.is_local()) {
             (true, true) => {
-                let ra = get_local_rank(a);
-                let rb = get_local_rank(b);
+                let ra = get_local_rank(a).unwrap();
+                let rb = get_local_rank(b).unwrap();
                 rb.cmp(&ra).then_with(|| a.cmp(b))
             }
             _ => a.cmp(b),
@@ -198,6 +198,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut worklist: Vec<(Vec<usize>, TransClos<C>)> = vec![(vec![], verifier_tc.clone())];
         let mut all_d_equations: Vec<Poly<C>> = Vec::new();
         let mut all_d_prefs: Vec<PRef> = Vec::new();
+        let mut grev_search = GroebnerResult::<C, GrevLexTerm>::new();
+        let mut grev_validity = GroebnerResult::<C, GrevLexTerm>::new();
 
         for (round_idx, &li) in l_vec.iter().enumerate() {
             let mut new_worklist = Vec::new();
@@ -256,18 +258,27 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         let cm_prefs = &copies_with_challenges[m].1;
                         let cn_prefs = &copies_with_challenges[n].1;
 
-                        let diff: Poly<C> = cm_prefs.iter().zip(cn_prefs.iter()).enumerate().fold(
-                            Poly::<C>::zero(),
-                            |acc, (k, (cm_ref, cn_ref))| {
-                                let d_name = format_d_name(&prefix, m, n, k);
-                                let d = grev_builder.ns.sentinel_pref(&d_name, ATyp::scalar());
-                                all_d_prefs.push(d.clone());
-                                let d_poly = Poly::<C>::var(&d);
-                                let cm_poly = Poly::<C>::var(cm_ref);
-                                let cn_poly = Poly::<C>::var(cn_ref);
-                                acc + d_poly * (cm_poly - cn_poly)
-                            },
-                        );
+                        let mut diff = Poly::<C>::zero();
+                        for (k, (cm_ref, cn_ref)) in
+                            cm_prefs.iter().zip(cn_prefs.iter()).enumerate()
+                        {
+                            let d_name = format_d_name(&prefix, m, n, k);
+                            // Use builder.sentinel_pref (not ns.sentinel_pref)
+                            // so the d-var is added to grev_search.var_order.
+                            // Also push to grev_validity.var_order since the
+                            // d-equations appear in both bases.
+                            let d = grev_builder.sentinel_pref(
+                                &d_name,
+                                ATyp::scalar(),
+                                &mut grev_search,
+                            );
+                            grev_validity.var_order.push(d.clone());
+                            all_d_prefs.push(d.clone());
+                            let d_poly = Poly::<C>::var(&d);
+                            let cm_poly = Poly::<C>::var(cm_ref);
+                            let cn_poly = Poly::<C>::var(cn_ref);
+                            diff += d_poly * (cm_poly - cn_poly);
+                        }
 
                         all_d_equations.push(diff - Poly::<C>::lit(&C::F::one()));
                     }
@@ -282,9 +293,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
             worklist = new_worklist;
         }
-
-        let mut grev_search = GroebnerResult::<C, GrevLexTerm>::new();
-        let mut grev_validity = GroebnerResult::<C, GrevLexTerm>::new();
 
         let mut verifier_visible: Set<PRef> = Set::new();
 

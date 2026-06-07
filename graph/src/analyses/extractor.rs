@@ -1,7 +1,5 @@
 use crate::PRef;
-use crate::analyses::groebner::ark_gb_adapter::{
-    ArgNodeGuard, LocalRankGuard, get_local_rank, is_arg_node,
-};
+use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
 use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::analyses::trans_clos::TransClos;
@@ -17,21 +15,17 @@ pub struct ExtractLocal;
 
 impl LexElimStrategy for ExtractLocal {
     fn eliminate_var(v: &PRef) -> bool {
-        !is_arg_node(v)
+        get_local_rank(v).is_some()
     }
 
     fn cmp_vars(a: &PRef, b: &PRef) -> Ordering {
-        let a_elim = !is_arg_node(a);
-        let b_elim = !is_arg_node(b);
-        match (a_elim, b_elim) {
-            (true, true) => {
-                let ra = get_local_rank(a);
-                let rb = get_local_rank(b);
-                rb.cmp(&ra).then_with(|| a.cmp(b))
-            }
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            (false, false) => a.cmp(b),
+        let a_rank = get_local_rank(a);
+        let b_rank = get_local_rank(b);
+        match (a_rank, b_rank) {
+            (Some(ra), Some(rb)) => rb.cmp(&ra).then_with(|| a.cmp(b)),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.cmp(b),
         }
     }
 }
@@ -82,12 +76,11 @@ pub(crate) fn convert_poly<C: ArkConfig>(p: &Poly<C>) -> GPoly<C> {
 /// after the guard is in place, every BTreeMap is constructed with the
 /// correct ordering from the start.
 pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PRef, GPoly<C>)> {
-    let arg_nodes: std::collections::HashSet<usize> = tc
+    let arg_node_set: std::collections::HashSet<usize> = tc
         .prefs
         .iter()
         .map(|pr| pr.reference.node().index())
         .collect();
-    let _arg_guard = ArgNodeGuard::install(arg_nodes);
 
     let mut builder: GroebnerBuilder<C, GrevLexTerm> = GroebnerBuilder::new();
     let grev_result = builder.build(tc.clone());
@@ -96,71 +89,40 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
         .var_order
         .iter()
         .enumerate()
-        .filter(|(_, pr)| !is_arg_node(pr))
         .map(|(i, pr)| (pr.reference.node().index(), i))
         .collect();
+
+    debug_assert!(
+        !rank_map.keys().any(|k| arg_node_set.contains(k)),
+        "rank_map contains arg nodes: {:?}",
+        rank_map
+            .keys()
+            .filter(|k| arg_node_set.contains(k))
+            .collect::<Vec<_>>()
+    );
+
     let _rank_guard = LocalRankGuard::install(rank_map);
 
     let mut result = GroebnerResult::<C, ExtractLocalTerm>::reconstruct_from(&grev_result);
 
-    eprintln!(
-        "EXTRACT_LOCALS basis BEFORE run ({} polys):",
-        result.basis.len()
-    );
-    for (i, p) in result.basis.iter().enumerate() {
-        eprintln!("  [{}] {}", i, p);
-    }
-
     result.run::<128>();
-
-    eprintln!(
-        "EXTRACT_LOCALS var_order ({} vars):",
-        result.var_order.len()
-    );
-    for (i, pr) in result.var_order.iter().enumerate() {
-        eprintln!(
-            "  [{}] {} elim={} is_arg={}",
-            i,
-            pr.verbose(),
-            ExtractLocal::eliminate_var(pr),
-            is_arg_node(pr)
-        );
-    }
-    eprintln!("EXTRACT_LOCALS basis ({} polys):", result.basis.len());
-    for (i, p) in result.basis.iter().enumerate() {
-        eprintln!("  [{}] {}", i, p);
-    }
 
     let mut candidates: Vec<(PRef, Poly<C>)> = Vec::new();
     for poly in result.basis.iter() {
         if let Some((_lc, lt)) = poly.leading_term() {
             let lt_vars = lt.vars();
             let lt_powers = lt.powers();
-            eprintln!(
-                "  CANDIDATE SCAN: poly={} lt_vars={:?} lt_powers={:?}",
-                poly,
-                lt_vars.iter().map(|v| v.verbose()).collect::<Vec<_>>(),
-                lt_powers
-            );
             if lt_vars.len() != 1 || lt_powers[0] != 1 {
-                eprintln!("    SKIP: not single var power 1");
                 continue;
             }
             let var = &lt_vars[0];
-            if is_arg_node(var) {
-                eprintln!("    SKIP: {} is arg node", var.verbose());
+            if get_local_rank(var).is_none() {
                 continue;
             }
-            eprintln!("    ACCEPT: {}", var.verbose());
             candidates.push((var.clone(), poly.clone()));
         }
     }
-    candidates.sort_by_key(|(v, _)| get_local_rank(v));
-
-    eprintln!("  CANDIDATES sorted:");
-    for (v, p) in &candidates {
-        eprintln!("    {} rank={} => {}", v.verbose(), get_local_rank(v), p);
-    }
+    candidates.sort_by_key(|(v, _)| get_local_rank(v).unwrap());
 
     let mut extracted: Set<PRef> = Set::new();
     let mut found_extractors: Vec<(PRef, GPoly<C>)> = Vec::new();
@@ -183,12 +145,8 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
 
         let all_visible = remainder_vars
             .iter()
-            .all(|v| is_arg_node(v) || extracted.contains(v));
+            .all(|v| get_local_rank(v).is_none() || extracted.contains(v));
         if !all_visible {
-            eprintln!(
-                "Local extractor for {:?} has invisible remainder vars {:?}, skipping",
-                var, remainder_vars
-            );
             continue;
         }
 
@@ -209,7 +167,6 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
                     .iter()
                     .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
                     .sum();
-                eprintln!("    GROUP CHECK: {} group_count={}", term, group_count);
                 if group_count > 1 {
                     valid = false;
                     break;
@@ -224,7 +181,6 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
             }
         }
 
-        eprintln!("    EXTRACTOR FOUND: {} => {}", var.verbose(), poly);
         info!("Found local extractor for {:?}", var);
         extracted.insert(var.clone());
         found_extractors.push((var.clone(), convert_poly::<C>(&poly)));

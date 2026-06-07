@@ -14,7 +14,7 @@ use std::ops::Index;
 
 use crate::PRef;
 use crate::analyses::groebner::{Monomial, SparsePolynomial};
-use rayon::prelude::*;
+
 use share::Set;
 
 /// A struct representing a Gröbner basis.
@@ -125,7 +125,7 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
         // While p is not zero
         while let Some((p_lc, p_lt)) = p.leading_term() {
-            let found_divisor = reducers.par_iter().find_any(|g| {
+            let found_divisor = reducers.iter().find(|g| {
                 if let Some((_g_lc, g_lt)) = g.leading_term() {
                     p_lt.is_divided(&g_lt)
                 } else {

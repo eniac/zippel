@@ -51,7 +51,7 @@
 //! `compute_gb`.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ark_ff::Field;
@@ -608,13 +608,8 @@ thread_local! {
     static LOCAL_RANK: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
 }
 
-pub(crate) fn get_local_rank(pref: &PRef) -> usize {
-    LOCAL_RANK.with(|m| {
-        m.borrow()
-            .get(&pref.reference.node().index())
-            .copied()
-            .unwrap_or(usize::MAX)
-    })
+pub(crate) fn get_local_rank(pref: &PRef) -> Option<usize> {
+    LOCAL_RANK.with(|m| m.borrow().get(&pref.reference.node().index()).copied())
 }
 
 pub(crate) struct LocalRankGuard {
@@ -635,43 +630,6 @@ impl LocalRankGuard {
 impl Drop for LocalRankGuard {
     fn drop(&mut self) {
         LOCAL_RANK.with(|m| *m.borrow_mut() = std::mem::take(&mut self.prev));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Thread-local arg-node set for ExtractLocal::eliminate_var.
-//
-// Stores the set of node indices that are argument (input/relation) nodes.
-// Any variable NOT in this set is considered "local" (a computation
-// intermediate) and should be eliminated by the lex GB.
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    static ARG_NODES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
-}
-
-pub(crate) fn is_arg_node(pref: &PRef) -> bool {
-    ARG_NODES.with(|m| m.borrow().contains(&pref.reference.node().index()))
-}
-
-pub(crate) struct ArgNodeGuard {
-    prev: HashSet<usize>,
-}
-
-impl ArgNodeGuard {
-    pub fn install(arg_nodes: HashSet<usize>) -> Self {
-        let prev = ARG_NODES.with(|m| {
-            let mut m = m.borrow_mut();
-            std::mem::take(&mut *m)
-        });
-        ARG_NODES.with(|m| *m.borrow_mut() = arg_nodes);
-        Self { prev }
-    }
-}
-
-impl Drop for ArgNodeGuard {
-    fn drop(&mut self) {
-        ARG_NODES.with(|m| *m.borrow_mut() = std::mem::take(&mut self.prev));
     }
 }
 

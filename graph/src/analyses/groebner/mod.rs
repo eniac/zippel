@@ -891,7 +891,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         pr
     }
 
-    fn sentinel_pref(&mut self, name: &str, typ: ATyp, result: &mut GroebnerResult<C, T>) -> PRef {
+    pub(crate) fn sentinel_pref(
+        &mut self,
+        name: &str,
+        typ: ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) -> PRef {
         let pr = self.ns.sentinel_pref(name, typ);
         result.var_order.push(pr.clone());
         pr
