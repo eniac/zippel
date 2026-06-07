@@ -146,6 +146,18 @@ impl ATyp {
         matches!(self, ATyp::Base(ABase::G1 | ABase::G2 | ABase::GT))
     }
 
+    pub fn is_g1(&self) -> bool {
+        matches!(self, ATyp::Base(ABase::G1))
+    }
+
+    pub fn is_g2(&self) -> bool {
+        matches!(self, ATyp::Base(ABase::G2))
+    }
+
+    pub fn is_gt(&self) -> bool {
+        matches!(self, ATyp::Base(ABase::GT))
+    }
+
     pub fn into_inner(&self) -> ATyp {
         match self {
             ATyp::Vec(box t, _) => t.into_inner(),

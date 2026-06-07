@@ -4,6 +4,7 @@ use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrat
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::analyses::trans_clos::TransClos;
 use ark_ff::Zero;
+use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use core::cmp::Ordering;
@@ -44,6 +45,55 @@ pub(crate) fn convert_poly<C: ArkConfig>(p: &Poly<C>) -> GPoly<C> {
     }
     SparsePolynomial { terms }
 }
+
+/// Check whether a polynomial's group-variable terms are compatible with
+/// extracting a witness of the given type:
+///
+/// - **Scalar**: must have no group variables at all.
+/// - **G1**: each term may contain at most one G1 var; no G2 or GT vars.
+/// - **G2**: each term may contain at most one G2 var; no G1 or GT vars.
+/// - **GT**: each term may contain either at most one GT var (no G1/G2),
+///   or at most one G1 and one G2 var (no GT).
+pub(crate) fn valid_extractor<C: ArkConfig, T: Monomial>(
+    witness_typ: &ATyp,
+    poly: &SparsePolynomial<C::F, T>,
+) -> bool {
+    for (term, _coeff) in poly.terms.iter() {
+        let vars = term.vars();
+        let pows = term.powers();
+        let g1: usize = vars
+            .iter()
+            .zip(pows.iter())
+            .filter_map(|(v, &i)| if v.typ.is_g1() { Some(i) } else { None })
+            .sum();
+        let g2: usize = vars
+            .iter()
+            .zip(pows.iter())
+            .filter_map(|(v, &i)| if v.typ.is_g2() { Some(i) } else { None })
+            .sum();
+        let gt: usize = vars
+            .iter()
+            .zip(pows.iter())
+            .filter_map(|(v, &i)| if v.typ.is_gt() { Some(i) } else { None })
+            .sum();
+        let valid = if witness_typ.is_scalar() {
+            g1 == 0 && g2 == 0 && gt == 0
+        } else if witness_typ.is_g1() {
+            g1 == 1 && g2 == 0 && gt == 0
+        } else if witness_typ.is_g2() {
+            g2 == 1 && g1 == 0 && gt == 0
+        } else if witness_typ.is_gt() {
+            (gt == 1 && g1 == 0 && g2 == 0) || (gt == 0 && g1 == 1 && g2 == 1)
+        } else {
+            true
+        };
+        if !valid {
+            return false;
+        }
+    }
+    true
+}
+
 /// Best-effort extraction of local variables from the relation TC.
 ///
 /// Computes a Gröbner basis with a pure-lex elimination ordering that
@@ -150,35 +200,9 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
             continue;
         }
 
-        let is_field_var = var.typ.is_scalar();
-        if is_field_var {
-            let has_group_var = remainder_vars.iter().any(|v| v.typ.is_group());
-            if has_group_var {
-                warn!(
-                    "Local extractor for field var {:?} depends on group vars, skipping",
-                    var
-                );
-                continue;
-            }
-        } else {
-            let mut valid = true;
-            for (term, _coeff) in poly.terms.iter() {
-                let group_count: usize = term
-                    .iter()
-                    .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
-                    .sum();
-                if group_count > 1 {
-                    valid = false;
-                    break;
-                }
-            }
-            if !valid {
-                warn!(
-                    "Local extractor for {:?} has multi-group term, skipping",
-                    var
-                );
-                continue;
-            }
+        if !valid_extractor::<C, _>(&var.typ, &poly) {
+            warn!("Local extractor for {:?} has invalid term, skipping", var);
+            continue;
         }
 
         info!("Found local extractor for {:?}", var);

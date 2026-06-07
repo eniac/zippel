@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::analyses::TransClos;
 use crate::analyses::error::{AnalysisError, ExtractorRejection};
-use crate::analyses::extractor::extract_locals;
+use crate::analyses::extractor::{extract_locals, valid_extractor};
 use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
 use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
@@ -367,7 +367,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut extractors: Vec<(PRef, SparsePolynomial<C::F, SoundnessElimTerm>)> = Vec::new();
 
         for w in &witness_slots {
-            let is_field_witness = w.typ.is_scalar();
             let mut found_extractor = None;
             let mut rejection: Option<ExtractorRejection<C>> = None;
 
@@ -396,28 +395,13 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                         rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
                         continue;
                     }
-                    if is_field_witness {
-                        let has_group_var = other_vars.iter().any(|v| v.typ.is_group());
-                        if has_group_var {
+                    if !valid_extractor::<C, _>(&w.typ, poly) {
+                        if w.typ.is_scalar() {
                             rejection = Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
-                            continue;
-                        }
-                    } else {
-                        let mut valid = true;
-                        for (term2, _coeff2) in poly.terms.iter() {
-                            let group_count: usize = term2
-                                .iter()
-                                .filter_map(|(v, i)| if v.typ.is_group() { Some(*i) } else { None })
-                                .sum();
-                            if group_count > 1 {
-                                valid = false;
-                                break;
-                            }
-                        }
-                        if !valid {
+                        } else {
                             rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
-                            continue;
                         }
+                        continue;
                     }
                     found_extractor = Some(poly.clone());
                     break 'poly;
