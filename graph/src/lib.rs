@@ -616,10 +616,15 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         }
 
         // Add edges to prover graph using the mapped node indices
+        let source_input_node = self.input_node();
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = *edge_ref.weight();
+
+            if old_source_idx == source_input_node {
+                continue;
+            }
 
             if let (Some(new_source_idx), Some(new_target_idx)) =
                 (node_map.get(&old_source_idx), node_map.get(&old_target_idx))
@@ -826,10 +831,15 @@ impl<C: HasOpFactory, A> Dag<C, A> {
         }
 
         // Add edges to verifier graph using the mapped node indices
+        let source_input_node = self.input_node();
         for edge_ref in self.graph.edge_references() {
             let old_source_idx = edge_ref.source();
             let old_target_idx = edge_ref.target();
             let weight = *edge_ref.weight();
+
+            if old_source_idx == source_input_node {
+                continue;
+            }
 
             if let Some(new_node) = node_map_self.get(&old_target_idx) {
                 if verifier[*new_node].is_input() {
