@@ -158,7 +158,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         let challenge_rounds = validate_2n_plus_1(dag, &l_vec)?;
-        let challenge_nodes: Vec<NodeIndex> = challenge_rounds.iter().flatten().copied().collect();
 
         let witness_slots: Vec<PRef> = dag
             .args()
@@ -169,7 +168,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let verifier_tc = TransClos::verifier(dag);
 
-        let round_map = build_round_map(dag, &challenge_nodes);
+        let round_map = build_round_map(dag, &challenge_rounds);
 
         let challenge_prefs_per_round: Vec<Vec<PRef>> = challenge_rounds
             .iter()
@@ -253,8 +252,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     for n in (m + 1)..li {
                         let cm_prefs = &copies_with_challenges[m].1;
                         let cn_prefs = &copies_with_challenges[n].1;
-
-                        let mut diff = Poly::<C>::zero();
+                        let mut product = Poly::<C>::lit(&C::F::one());
                         for (k, (cm_ref, cn_ref)) in
                             cm_prefs.iter().zip(cn_prefs.iter()).enumerate()
                         {
@@ -273,10 +271,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                             let d_poly = Poly::<C>::var(&d);
                             let cm_poly = Poly::<C>::var(cm_ref);
                             let cn_poly = Poly::<C>::var(cn_ref);
-                            diff += d_poly * (cm_poly - cn_poly);
+                            let factor =
+                                d_poly * (cm_poly - cn_poly) - Poly::<C>::lit(&C::F::one());
+                            product *= factor;
                         }
 
-                        all_d_equations.push(diff - Poly::<C>::lit(&C::F::one()));
+                        all_d_equations.push(product);
                     }
                 }
 
@@ -410,14 +410,20 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
                     let all_visible = other_vars.iter().all(|v| verifier_visible.contains(v));
                     if !all_visible {
-                        rejection = Some(ExtractorRejection::NotVisible(poly.clone()));
+                        rejection = Some(ExtractorRejection::NotVisible(
+                            SparsePolynomial::reconstruct_from(poly),
+                        ));
                         continue;
                     }
                     if !valid_extractor::<C, _>(&w.typ, poly) {
                         if w.typ.is_scalar() {
-                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
+                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(
+                                SparsePolynomial::reconstruct_from(poly),
+                            ));
                         } else {
-                            rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
+                            rejection = Some(ExtractorRejection::MultiGroupTerm(
+                                SparsePolynomial::reconstruct_from(poly),
+                            ));
                         }
                         continue;
                     }
@@ -484,19 +490,25 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
 fn build_round_map<C: ArkConfig>(
     dag: &DQDag<C>,
-    challenge_nodes: &[NodeIndex],
+    challenge_rounds: &[Vec<NodeIndex>],
 ) -> HashMap<(Ref, usize), usize> {
     let mut round_map: HashMap<(Ref, usize), usize> = HashMap::new();
+    let challenge_nodes: Vec<NodeIndex> = challenge_rounds.iter().flatten().copied().collect();
     let challenge_set: HashSet<NodeIndex> = challenge_nodes.iter().copied().collect();
 
-    for (round_idx, &challenge_node) in challenge_nodes.iter().enumerate() {
-        let next_challenge_set: HashSet<NodeIndex> =
-            challenge_nodes[round_idx + 1..].iter().copied().collect();
+    for (round_idx, nodes) in challenge_rounds.iter().enumerate() {
+        let next_challenge_set: HashSet<NodeIndex> = challenge_rounds[round_idx + 1..]
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
 
-        let mut queue = VecDeque::new();
-        let mut visited = HashSet::new();
-        queue.push_back(challenge_node);
-        visited.insert(challenge_node);
+        let mut queue: VecDeque<NodeIndex> = VecDeque::new();
+        let mut visited: HashSet<NodeIndex> = HashSet::new();
+        for &node in nodes {
+            queue.push_back(node);
+            visited.insert(node);
+        }
 
         while let Some(node) = queue.pop_front() {
             if let Some(typ) = dag[node].typ() {
@@ -774,7 +786,12 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_challenges_grouped_as_vector() {
+    /// Not special sound as a vector challenge with l=2: z = r + x(c1 + c2)
+    /// gives Δz = x(Δc₁ + Δc₂). The product d-equation guarantees one of
+    /// Δc₁, Δc₂ is individually invertible, but we need their *sum* to be
+    /// invertible, which the GB cannot establish.
+    #[test]
+    fn consecutive_challenges_not_sound_as_vector() {
         let proto = r#"
             proto vec_challenge<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
                 let r = random<F>;
@@ -785,15 +802,16 @@ mod tests {
                 verify(g*z == u + h*c1 + h*c2)
             }
         "#;
-        let result = analyze_soundness(proto, vec![2]);
-        match &result {
-            Ok(()) => {}
-            Err(e) => panic!("expected Ok, got: {:?}", e),
-        }
+        assert!(analyze_soundness(proto, vec![2]).is_err());
     }
 
+    /// Not special sound with a single vector challenge round: if two
+    /// accepting transcripts differ only in c2 (same c1), the first
+    /// response z1 = r1 + x*c1 is identical, so x cannot be extracted.
+    /// With `vec![2]` (1 round, 2 copies), both c1 and c2 are treated
+    /// as a single vector, which is not sound for this protocol.
     #[test]
-    fn schnorr_two_challenge_special_soundness() {
+    fn schnorr_two_challenge_not_sound_as_vector() {
         let proto = r#"
             proto schnorr<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
                 let r1 = random<F>;
@@ -807,7 +825,7 @@ mod tests {
                 verify(g*z1 == u1 + h*c1 && g*z2 == u2 + u1*c2 + h*(c1*c2))
             }
         "#;
-        assert!(analyze_soundness(proto, vec![2]).is_ok());
+        assert!(analyze_soundness(proto, vec![2]).is_err());
     }
 
     #[test]
@@ -960,5 +978,47 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g_inp).annotate_dag(&g_inp);
         let result = SpecialSoundnessAnalysis::analyze(&g, vec![2]);
         assert!(result.is_ok());
+    }
+
+    /// Not special sound for extracting both x1 and x2: z = r + x1*c1 + x2*c2
+    /// with a single vector challenge round. The product d-equation guarantees
+    /// at least one slot's challenge difference is invertible per pair, but
+    /// cannot guarantee both slots are invertible simultaneously.
+    #[test]
+    fn consecutive_vec_challenge_two_witnesses_not_sound() {
+        let proto = r#"
+            proto vec_two_wit<G: Group, F: Scalar<G>>(private x1: F, private x2: F, public g: G, public h1: G, public h2: G) where h1 == g*x1 && h2 == g*x2 {
+                let r = random<F>;
+                u <- g*r;
+                c1 <- challenge<F*>;
+                c2 <- challenge<F*>;
+                z <- r + x1*c1 + x2*c2;
+                verify(g*z == u + h1*c1 + h2*c2)
+            }
+        "#;
+        assert!(analyze_soundness(proto, vec![3]).is_err());
+    }
+
+    /// Vector challenge with independent response per slot:
+    /// z1 = r + x*c1, z2 = s + x*c2. Each slot independently
+    /// gives x = d_k * (z_k::0 - z_k::1). The product d-equation
+    /// guarantees at least one slot is extractable, and since both
+    /// slots use the same witness x, either one suffices.
+    #[test]
+    fn vector_challenge_independent_responses() {
+        let proto = r#"
+            proto vec_indep<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+                let r = random<F>;
+                let s = random<F>;
+                u1 <- g*r;
+                u2 <- g*s;
+                c1 <- challenge<F*>;
+                c2 <- challenge<F*>;
+                z1 <- r + x*c1;
+                z2 <- s + x*c2;
+                verify(g*z1 == u1 + h*c1 && g*z2 == u2 + h*c2)
+            }
+        "#;
+        assert!(analyze_soundness(proto, vec![2]).is_ok());
     }
 }

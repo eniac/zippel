@@ -609,6 +609,8 @@ thread_local! {
 }
 
 pub(crate) fn get_local_rank(pref: &PRef) -> Option<usize> {
+    // NOTE: `index` by `pref.reference` to ensure multi-slot and renamed pref
+    // get the same local rank (and they tie break by other fields in `PRef`).
     LOCAL_RANK.with(|m| m.borrow().get(&pref.reference.node().index()).copied())
 }
 
@@ -1122,6 +1124,7 @@ where
         tier0_vars.sort_by(|a, b| {
             let ra = E::lex_rank(a);
             let rb = E::lex_rank(b);
+            // NOTE: `then_with` to tie break multi-slot and renamed variables
             rb.cmp(&ra).then_with(|| a.cmp(b))
         });
     }

@@ -1,6 +1,5 @@
 use crate::analyses::groebner::{GrevLexTerm, SparsePolynomial};
 use crate::analyses::knowledge::ElimTerm;
-use crate::analyses::soundness::SoundnessElimTerm;
 use crate::{GraphError, PRef};
 use backend::ArkConfig;
 use thiserror::Error;
@@ -10,11 +9,11 @@ pub enum ExtractorRejection<C: ArkConfig> {
     /// No basis polynomial has this witness as leading term.
     NoExtractor,
     /// Extractor depends on variables not visible to the verifier.
-    NotVisible(SparsePolynomial<C::F, SoundnessElimTerm>),
+    NotVisible(SparsePolynomial<C::F, GrevLexTerm>),
     /// Field witness extractor depends on group variables.
-    FieldDependsOnGroup(SparsePolynomial<C::F, SoundnessElimTerm>),
+    FieldDependsOnGroup(SparsePolynomial<C::F, GrevLexTerm>),
     /// Group witness extractor has a monomial with >1 group variable.
-    MultiGroupTerm(SparsePolynomial<C::F, SoundnessElimTerm>),
+    MultiGroupTerm(SparsePolynomial<C::F, GrevLexTerm>),
 }
 
 impl<C: ArkConfig> std::fmt::Debug for ExtractorRejection<C> {
@@ -83,5 +82,5 @@ pub enum AnalysisError<C: ArkConfig> {
 
     /// Extractor invalid; relation remainder is non-zero.
     #[error("Extractor invalid; relation remainder: {0}")]
-    ExtractorInvalid(SparsePolynomial<C::F, SoundnessElimTerm>),
+    ExtractorInvalid(SparsePolynomial<C::F, GrevLexTerm>),
 }
