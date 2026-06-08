@@ -19,17 +19,34 @@ use petgraph::visit::EdgeRef;
 use share::Set;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+/// Elimination strategy for special soundness analysis.
+///
+/// Currently uses a single tier-0 (pure lex) ordering for all variables. This
+/// is correct but may be slower than a multi-tier approach for large instances.
+///
+/// A better strategy (currently disabled for correctness reasons with the GB
+/// reducer's default `cmp_key`) is:
+/// ```ignore
+/// fn tier(v: &PRef) -> Option<usize> {
+///     if v.is_local()         { Some(0) }
+///     else if v.qualifier.is_private() { Some(1) }
+///     else                   { Some(2) }
+/// }
+/// ```
+/// This gives a 3-tier ordering: locals (lex), private witnesses (grevlex),
+/// public args (grevlex). Locals are eliminated first via lex, then the
+/// remaining tiers are reduced via grevlex which is more efficient but
+/// produces the same elimination ideal.
+///
+/// TODO: Once the GB reducer's `cmp_key` becomes efficient, switch back to the
+/// 3-tier strategy and simplify the `rank_map` construction to only include
+/// locals (tier 0) in `get_local_rank`, removing the need to rank-sort public
+/// and private args.
 pub struct SoundnessLex;
 
 impl TieredElimStrategy for SoundnessLex {
-    fn tier(v: &PRef) -> Option<usize> {
-        if v.is_local() {
-            Some(0)
-        } else if v.qualifier.is_private() {
-            Some(1)
-        } else {
-            Some(2)
-        }
+    fn tier(_: &PRef) -> Option<usize> {
+        Some(0)
     }
 }
 
@@ -274,6 +291,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         }
 
         let mut verifier_visible: Set<PRef> = Set::new();
+        let mut pub_prefs: Vec<PRef> = Vec::new();
+        let mut priv_prefs: Vec<PRef> = Vec::new();
 
         for eq in &all_d_equations {
             grev_search.basis.push(eq.clone());
@@ -290,30 +309,50 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             for pr in tc.prefs.iter() {
                 verifier_visible.insert(pr.clone());
             }
+            for pr in tc.prefs.iter() {
+                if pr.qualifier.is_private() {
+                    priv_prefs.push(pr.clone());
+                } else {
+                    pub_prefs.push(pr.clone());
+                }
+            }
             let copy_result = grev_builder.build(tc);
             grev_search.merge(&copy_result);
             grev_validity.merge(&copy_result);
         }
 
         let rel_tc = TransClos::relation(dag);
+        for pr in rel_tc.prefs.iter() {
+            if pr.qualifier.is_private() {
+                priv_prefs.push(pr.clone());
+            } else {
+                pub_prefs.push(pr.clone());
+            }
+        }
         let grev_rel_result = grev_builder.build(rel_tc.clone());
 
-        // Phase 2: Install rank guard.
+        // Phase 2: Install rank guard assigning lex priority to every variable.
+        // Public args get lowest ranks (lowest elimination priority), private args
+        // next, and all other variables (locals, d-vars, etc.) get highest ranks
+        // (highest elimination priority).
         let rank_map: std::collections::HashMap<usize, usize> = {
-            let mut rm: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-            let mut rank = 0;
+            let mut locals: Vec<PRef> = Vec::new();
             for pr in grev_search
                 .var_order
                 .iter()
                 .chain(grev_validity.var_order.iter())
                 .chain(grev_rel_result.var_order.iter())
             {
-                if SoundnessLex::tier(pr) == Some(0) {
-                    rm.entry(pr.reference.node().index()).or_insert(rank);
-                    rank += 1;
-                }
+                locals.push(pr.clone());
             }
-            rm
+
+            pub_prefs
+                .iter()
+                .chain(priv_prefs.iter())
+                .chain(locals.iter())
+                .enumerate()
+                .map(|(i, pr)| (pr.reference.node().index(), i))
+                .collect()
         };
         let _rank_guard = LocalRankGuard::install(rank_map);
 

@@ -24,10 +24,10 @@ pub trait TieredElimStrategy: Sized + Send + Sync {
     /// Which tier the variable belongs to, or `None` to exclude it.
     fn tier(v: &PRef) -> Option<usize>;
 
-    /// Lexicographic rank *within* tier 0.  Smaller rank → variable is
-    /// "larger" → appears earlier in the lex order.  Defaults to
-    /// [`get_local_rank`], which reflects the order in which locals were
-    /// bound.
+    /// Lexicographic rank *within* tier 0.  Larger rank → variable is
+    /// compared first in the lex order (higher elimination priority).
+    /// Defaults to [`get_local_rank`], which reflects the order in which
+    /// locals were bound.
     fn lex_rank(v: &PRef) -> usize {
         get_local_rank(v).unwrap()
     }

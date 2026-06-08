@@ -398,6 +398,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             self.pl.insert(k, v);
         }
         self.var_order.extend(other.var_order.iter().cloned());
+        for (k, v) in other.prefs.iter() {
+            self.prefs.entry(k.clone()).or_insert_with(|| v.clone());
+        }
     }
 }
 
