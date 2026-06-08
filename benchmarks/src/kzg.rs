@@ -50,8 +50,8 @@ fn render_zippel_source_no_srs_check() -> &'static str {
 
 pub mod zippel_side {
     use super::*;
-    use ark_ec::CurveGroup;
-    use ark_ff::Field;
+    use ark_ec::scalar_mul::ScalarMul;
+    use ark_ff::One;
     use ark_std::UniformRand;
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
@@ -121,17 +121,13 @@ pub mod zippel_side {
             let z = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
             let tau_input = F::rand(&mut rng);
 
-            // Build the SRS in projective once, then batch-normalize to
-            // affine via Montgomery's trick (one inversion + 3(N-1) muls).
-            // Native KZG10 produces its SRS in affine form via the same
-            // np_ark_ec batch path; feeding zippel a projective vector would
-            // trigger an N-inversion fallback at the MSM call site
-            // (backend/src/values.rs:1552-1559). Match the input shape so
-            // the comparison isn't penalizing zippel for input format.
-            let srs_proj: Vec<G1> = (0..n)
-                .map(|i| g_input * tau_input.pow([i as u64]))
-                .collect();
-            let srs_affine = <G1 as CurveGroup>::normalize_batch(&srs_proj);
+            let mut powers_of_tau: Vec<F> = Vec::with_capacity(n);
+            let mut acc = F::one();
+            for _ in 0..n {
+                powers_of_tau.push(acc);
+                acc *= tau_input;
+            }
+            let srs_affine = g_input.batch_mul(&powers_of_tau);
             let ss = Value::VecG1Affine(srs_affine);
 
             let z_val: Value<ArkBls12_381> =
