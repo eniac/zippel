@@ -1,47 +1,6 @@
-//! Spartan-NIZK example.
-//!
-//! Composes the info-theoretic Spartan PIOP with the PST13 multilinear
-//! PCS, runs prove + verify against a random *square* satisfying R1CS
-//! instance with
-//!
-//!     num_constraints = num_vars = 2^M
-//!     |w|  = 2^(M-1)
-//!     |io| = 2^(M-1) - 1
-//!
-//! R1CS matrices are stored sparsely as `Vec<(row, col, F)>` triples
-//! and lifted into `PolyVariant::SparseMle` for the partial-eval inside
-//! SC #2 (`eval(mat_a_t, rx)` etc.). `az` / `bz` / `cz` are computed in
-//! Rust and passed in as **private inputs**, since zippel has no
-//! first-class `Mv` primitive that could express the matvec inside the
-//! proto. Soundness binding between `az/bz/cz` and the public matrices
-//! lives in SC #2: it verifies that v_a/v_b/v_c (which come from SC #1
-//! over `mle(az/bz/cz)`) equal Σ_y M_x(rx, y) · z(y), with the final
-//! `(ra·M_a + rb·M_b + rc·M_c)·v_z` check at random ry. A prover lying
-//! about az/bz/cz can't satisfy that check w.h.p.
-//!
-//! The proto is generated *per M* by `generate_proto(m)` and written to
-//! a temp file before each run, because zippel's helper-function overload
-//! resolution can't (currently) bind `[F; K]` overloads of recursive
-//! helpers like `eq_weights` / `draw_taus` when the call site has an
-//! abstract `[F; M]` argument. Substituting M as a literal sidesteps
-//! that limitation: each per-M file is fully concrete and the recursive
-//! helpers resolve unambiguously.
-//!
-//! Args:
-//!   --m N        run a single size M = N (default 2)
-//!   --sweep A B  iterate M from A through B inclusive
-//!   --invalid    corrupt mat_a after the satisfiability check, expect
-//!                Verification ✗ FAILED
-//!   --csv P      append `m,prover_ms,verifier_ms,proof_bytes,passed`
-//!                rows to file P (or "-" for stdout)
-//!
-//! Scales to M=16+ on a single machine. The native Microsoft Spartan
-//! baseline lives at `benchmarks/src/bin/spartan_bench.rs` (NIZK +
-//! SNARK variants over the same M range).
-
 use ark_ff::{Field, Zero};
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, PolyVariant, Value, VirtualPolynomial};
+use backend::{ArkCurve25519, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
@@ -61,12 +20,6 @@ struct RunOpts {
     sweep: Vec<usize>,
     invalid: bool,
     csv_path: Option<String>,
-    /// If set, use this hand-written .zippel file for the M values in
-    /// `sweep` (and skip codegen). The harness still supplies the same
-    /// `mat_a / mat_b / mat_c / io / w / ck_n_w / g_gen / h_gen /
-    /// alpha_h_w / placeholder_tau / f_one` inputs sized for that M, so
-    /// the file's proto signature has to match. Used for localising
-    /// codegen bugs by hand-unrolling a specific M (e.g. M=3).
     manual_zippel: Option<String>,
 }
 
@@ -117,7 +70,7 @@ fn parse_args() -> RunOpts {
     }
 
     if sweep.is_empty() {
-        sweep.push(2);
+        sweep.push(3);
     }
 
     RunOpts {
@@ -130,7 +83,7 @@ fn parse_args() -> RunOpts {
 
 fn main() {
     thread::Builder::new()
-        .name("spartan-full-main".into())
+        .name("spartan-main".into())
         .stack_size(WORKER_STACK_BYTES)
         .spawn(run)
         .expect("failed to spawn worker thread")
@@ -150,7 +103,7 @@ struct RunResult {
 fn run() {
     let opts = parse_args();
 
-    println!("=== Spartan-NIZK sparse-inputs (PIOP + PST13 PCS, ArkBls12_381) ===");
+    println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");
     println!(
         "sweep: {:?}{}",
         opts.sweep,
@@ -165,11 +118,12 @@ fn run() {
     for &m in &opts.sweep {
         let r = run_one(m, opts.invalid, opts.manual_zippel.as_deref());
         results.push(r.clone());
+        let (l, m_h) = hyrax_split(m);
         println!(
-            "M={m:>2}  num_cons={n:>8}  |w|={w:>8}  |io|={io:>8}  prover={prover:>10.2?}  verifier={verifier:>10.2?}  proof={bytes:>7}B  verdict={verdict}",
+            "M={m:>2}  num_cons={n:>8}  |w|={w:>8}  |io|={io:>8}  hyrax=(L={l},M_h={m_h})  prover={prover:>10.2?}  verifier={verifier:>10.2?}  proof={bytes:>7}B  verdict={verdict}",
             n = 1usize << m,
-            w = if m >= 1 { 1usize << (m - 1) } else { 0 },
-            io = if m >= 1 { (1usize << (m - 1)) - 1 } else { 0 },
+            w = 1usize << (m - 1),
+            io = (1usize << (m - 1)) - 1,
             prover = r.prover,
             verifier = r.verifier,
             bytes = r.proof_bytes,
@@ -182,11 +136,17 @@ fn run() {
     }
 }
 
+fn hyrax_split(m: usize) -> (usize, usize) {
+    let nw = m - 1;
+    let l = nw / 2;
+    let m_h = nw - l;
+    (l, m_h)
+}
+
 fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
-    assert!(m >= 2, "M must be >= 2 (Spartan needs at least 2 sum-check rounds)");
+    assert!(m >= 3, "M must be >= 3 (Hyrax needs NW = M-1 >= 2 to split L,M_h both >= 1)");
 
     let zippel_path = if let Some(path) = manual_zippel {
-        // Skip codegen, use the hand-written proto as-is.
         std::path::PathBuf::from(path)
     } else {
         let proto = generate_proto(m);
@@ -198,24 +158,16 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
     };
 
     let args = ZippelArgs::new(zippel_path);
-    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
+    let (_l_h, m_h) = hyrax_split(m);
     let mut sizes = Ctx::new();
-    // sc_recurse_d{2,3} has a free `SC: Size` generic that the compiler
-    // can't solve from `[F; SC - V]` at the call site (only one
-    // arg-shape constraint, two unknowns). Pin it externally; for
-    // Spartan, SC = M (both sum-checks run M rounds).
     sizes.insert(&Tid::new("SC"), &m);
+    sizes.insert(&Tid::new("S"), &m_h);
     handler.compile(&sizes);
 
     let mut inputs = prover_create_inputs(m);
     if invalid {
-        // Corrupt `az` (the prover's claimed A·z). The verifier's
-        // SC #2 closing check `e_y == (ra·M_a + rb·M_b + rc·M_c)·v_z`
-        // independently re-derives M_a(rx, ry) from the public mat_a_t
-        // and ry, so a corrupted az breaks the link and the proof fails
-        // — exactly the soundness binding between the (private) az/bz/cz
-        // and the (public) matrices.
-        type F = <ArkBls12_381 as ArkConfig>::F;
+        type F = <ArkCurve25519 as ArkConfig>::F;
         if let Some(v) = inputs.get(&Vid("az".to_string())) {
             if let Value::VecScalar(mut a) = v.clone() {
                 a[0] = a[0] + F::from(7u64);
@@ -230,7 +182,7 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
         .run_prover(prover_scheduled, inputs)
         .expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
+    let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
 
     let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
@@ -238,7 +190,6 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
         .run_verifier(verifier_scheduled, proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
-    // Set SPARTAN_DEBUG_VERIFIES=1 to print per-verify status.
     if std::env::var("SPARTAN_DEBUG_VERIFIES").is_ok() {
         for (i, v) in verifier_result.iter().enumerate() {
             if let Value::Bool(b) = v {
@@ -302,10 +253,6 @@ fn emit_csv(path: &str, results: &[RunResult]) {
     }
 }
 
-/// Sparse R1CS instance: each matrix is stored as a list of `(row, col, val)`
-/// triples. Dense storage was O(N²) — at M=15 (N=32K) that's 32 GB per
-/// matrix, well past the allocation limit. With K-sparse rows the triple
-/// list is O(K · N).
 struct R1csInstance<F> {
     mat_a: Vec<(usize, usize, F)>,
     mat_b: Vec<(usize, usize, F)>,
@@ -314,12 +261,6 @@ struct R1csInstance<F> {
     w: Vec<F>,
 }
 
-/// Build a random satisfying square R1CS instance of size m × m, with
-/// z = w ++ io ++ [1] of length m. |w| = m/2, |io| = m/2 - 1.
-///
-/// Strategy: sample A and B fully randomly, sample most of each C row,
-/// then solve C's constant column so the row's R1CS holds. Same scheme
-/// as the original (pinned) spartan harness; just made parametric.
 fn random_r1cs<F, R>(rng: &mut R, m: usize, w: &[F], io: &[F]) -> R1csInstance<F>
 where
     F: Field,
@@ -334,10 +275,6 @@ where
     z.push(F::from(1u64));
 
     let const_col = m - 1;
-    // K non-zeros per row, matching `microsoft/spartan`'s synthetic
-    // R1CS baseline of `nnz = num_cons` (≈ 1 non-zero per row).
-    // The constant column `const_col` is always among the K active
-    // columns of row C so we can solve for satisfiability.
     const K_NNZ_PER_ROW: usize = 1;
     let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
         let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
@@ -402,15 +339,16 @@ where
     }
 }
 
-fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
-    type F = <ArkBls12_381 as ArkConfig>::F;
-    type G1 = <ArkBls12_381 as ArkConfig>::G1;
-    type G2 = <ArkBls12_381 as ArkConfig>::G2;
+fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
+    type F = <ArkCurve25519 as ArkConfig>::F;
+    type G1 = <ArkCurve25519 as ArkConfig>::G1;
+    use ark_ec::CurveGroup;
 
     let num_cons = 1usize << m;
     let witness_len = 1usize << (m - 1);
     let io_len = witness_len - 1;
-    let n_w = m - 1;
+    let (_l, m_h) = hyrax_split(m);
+    let ncols = 1usize << m_h;
 
     let mut rng = rand::rngs::OsRng;
     let one = F::from(1u64);
@@ -420,17 +358,11 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let r1cs = random_r1cs::<F, _>(&mut rng, num_cons, &witness, &instance);
 
-    // Build z = w ++ io ++ [1] and compute az = A·z, bz = B·z, cz = C·z
-    // natively. These are passed to the proto as PRIVATE inputs so the
-    // body doesn't have to unroll the dense MVM into ~N² mul-nodes.
-    // We still also do the belt-and-suspenders satisfiability check.
     let mut z: Vec<F> = Vec::with_capacity(num_cons);
     z.extend_from_slice(&witness);
     z.extend_from_slice(&instance);
     z.push(one);
 
-    // Sparse Mv: for each row, accumulate Σ_{(i,c,v) ∈ mat_x : i = row} v·z[c].
-    // O(|nnz|) per matrix.
     let mut az: Vec<F> = vec![F::from(0u64); num_cons];
     let mut bz: Vec<F> = vec![F::from(0u64); num_cons];
     let mut cz: Vec<F> = vec![F::from(0u64); num_cons];
@@ -447,11 +379,6 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         assert_eq!(az[i] * bz[i], cz[i], "row {i} of random R1CS is unsatisfied");
     }
 
-    // Build the 2M-variable MLEs for A, B, C in SPARSE evaluation form,
-    // directly from the (row, col, val) triples. Column-major LSB-first
-    // index `k = c * N + i` puts the row-bits in the low variables,
-    // matching zippel's MLE layout. `eval(mat_x_t, rx)` then fixes the
-    // low M vars, leaving the col-bits free → exactly partial_x.
     let triples_to_mle_evals = |triples: &[(usize, usize, F)]| -> Vec<(usize, F)> {
         triples
             .iter()
@@ -470,30 +397,20 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let mat_b_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_b));
     let mat_c_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_c));
 
-    // PST13.Setup over N_w variables.
-    let g_gen = G1::rand(&mut rng);
-    let h_gen = G2::rand(&mut rng);
-    let alpha: Vec<F> = (0..n_w).map(|_| F::rand(&mut rng)).collect();
+    let g_vec_proj: Vec<G1> = (0..ncols).map(|_| G1::rand(&mut rng)).collect();
+    let g_vec_aff = G1::normalize_batch(&g_vec_proj);
+    let g_base_w = G1::rand(&mut rng);
+    let h_base_w = G1::rand(&mut rng);
 
-    let ck_scalars: Vec<F> = (0..(1usize << n_w))
-        .map(|i| {
-            (0..n_w).fold(one, |acc, j| {
-                let bit = (i >> j) & 1;
-                let factor = if bit == 1 { alpha[j] } else { one - alpha[j] };
-                acc * factor
-            })
-        })
-        .collect();
-    let ck_n_w: Vec<G1> = ck_scalars.iter().map(|s| g_gen * s).collect();
-    let alpha_h_w: Vec<G2> = alpha.iter().map(|a| h_gen * a).collect();
+    let g_evs_d3_proj: Vec<G1> = (0..4).map(|_| G1::rand(&mut rng)).collect();
+    let g_evs_d3_aff = G1::normalize_batch(&g_evs_d3_proj);
+    let g_evs_d2_proj: Vec<G1> = (0..3).map(|_| G1::rand(&mut rng)).collect();
+    let g_evs_d2_aff = G1::normalize_batch(&g_evs_d2_proj);
+    let h_evs = G1::rand(&mut rng);
 
-    // `placeholder_tau`: a length-M zero array used purely to give the
-    // `draw_taus` recursive helper a concretely-sized argument that
-    // resolves unambiguously to its [F; M] specialization. The actual
-    // τ challenges are still drawn from the transcript by `draw_taus`.
     let placeholder_tau: Vec<F> = vec![F::from(0u64); m];
 
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
+    Ctx::<Vid, Value<ArkCurve25519>>::from_iter([
         (Vid("mat_a_t".to_string()), mat_a_t),
         (Vid("mat_b_t".to_string()), mat_b_t),
         (Vid("mat_c_t".to_string()), mat_c_t),
@@ -502,21 +419,17 @@ fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("az".to_string()), Value::VecScalar(az)),
         (Vid("bz".to_string()), Value::VecScalar(bz)),
         (Vid("cz".to_string()), Value::VecScalar(cz)),
-        (Vid("ck_n_w".to_string()), Value::VecG1(ck_n_w)),
-        (Vid("g_gen".to_string()), Value::G1(g_gen)),
-        (Vid("h_gen".to_string()), Value::G2(h_gen)),
-        (Vid("alpha_h_w".to_string()), Value::VecG2(alpha_h_w)),
+        (Vid("g_vec_w".to_string()), Value::VecG1Affine(g_vec_aff)),
+        (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
+        (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
+        (Vid("g_evs_d3".to_string()), Value::VecG1Affine(g_evs_d3_aff)),
+        (Vid("g_evs_d2".to_string()), Value::VecG1Affine(g_evs_d2_aff)),
+        (Vid("h_evs".to_string()), Value::G1(h_evs)),
         (Vid("placeholder_tau".to_string()), Value::VecScalar(placeholder_tau)),
         (Vid("f_one".to_string()), Value::Scalar(one)),
     ])
 }
 
-/// Build the per-M Spartan-NIZK zippel proto as a string. All sizes are
-/// substituted as integer literals (no `M`-typed proto generic), so the
-/// recursive helpers `eq_weights` / `draw_taus` / `sc_recurse_d{2,3}` /
-/// `pst13_open_rounds` resolve unambiguously at the call sites. The
-/// only remaining free generic is the sum-check helper's `SC: Size`,
-/// which the harness pins via `Ctx::insert("SC", &m)`.
 fn generate_proto(m: usize) -> String {
     let m_lit = m;
     let two_m = 1usize << m;
@@ -524,62 +437,40 @@ fn generate_proto(m: usize) -> String {
     let nw = m - 1;
     let two_nw = 1usize << nw;
     let io_len = two_nw - 1;
+    let (l, m_h) = hyrax_split(m);
+    let nrows = 1usize << l;
+    let ncols = 1usize << m_h;
+    assert_eq!(nrows * ncols, two_nw);
 
-    // Recursive helper for the dimensional-Lagrange basis at r_x and r_y.
-    // For M = 2, the EK = 2..20 recursive case at K = 2 isn't strictly
-    // needed (we only call eq_weights at [F; 2] which then descends into
-    // the [F; 1] base) — but the compiler is happy to monomorphize it
-    // and we don't pay anything at runtime.
-    let pst13_helpers = if nw == 1 {
-        // NW = 1 → only the PST13 open BASE case is reachable.
-        String::from("")
-    } else {
-        // NW >= 2 → recursive case is needed.
-        String::from("")
-    };
-    let _ = pst13_helpers;
-
-    format!(r#"// Auto-generated Spartan-NIZK proto for M = {m_lit}.
-// num_constraints = num_vars = {two_m}; |w| = {two_nw}; |io| = {io_len}.
-// Composition: info-theoretic Spartan PIOP + PST13 multilinear PCS,
-// the NIZK column of Fig. 5 in Setty CRYPTO 2020.
-//
-// This file is regenerated per M by examples/spartan/main.rs.
-
-// ===== Lagrange basis at point x ∈ F^K (LSB-first), recursive over K. =====
-// All helpers carry the same `F: Scalar<G1, G2>` bound as the outer
-// proto — using `F: Field` here would create a subtype mismatch that
-// zippel's overload resolution can't disambiguate (multiple [F; K]
-// specs match a Scalar-typed [F; M] argument).
-fn eq_weights<G1: Group, G2: Group, F: Scalar<G1, G2>>(public x: [F; 1]) -> [F; 2] {{
+    format!(r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
 }}
-fn eq_weights<G1: Group, G2: Group, F: Scalar<G1, G2>, EK: 2..20>(public x: [F; EK]) -> [F; 2^EK] {{
+fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(public x: [F; EK]) -> [F; 2^EK] {{
     let x_lo = x[0..(EK-1)];
     let a    = x[EK-1];
     let prev = eq_weights(x_lo);
     (prev * (1 - a)) ++ (prev * a)
 }}
 
-// ===== Draw K Fiat-Shamir challenges, recursive over K. =====
-fn draw_taus<G1: Group, G2: Group, F: Scalar<G1, G2>>(public placeholder: [F; 1]) -> [F; 1] {{
+fn draw_taus<G: Group, F: Scalar<G>>(public placeholder: [F; 1]) -> [F; 1] {{
     t <- challenge<F>;
     [t]
 }}
-fn draw_taus<G1: Group, G2: Group, F: Scalar<G1, G2>, DK: 2..20>(public placeholder: [F; DK]) -> [F; DK] {{
+fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(public placeholder: [F; DK]) -> [F; DK] {{
     let prev = draw_taus(placeholder[0..(DK-1)]);
     t <- challenge<F>;
     prev ++ [t]
 }}
 
-// ===== Sum-check rounds 1..SC-1 plus the base round, deg 3. =====
-fn sc_recurse_d3<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size, V: 2..SC>(
+fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     public curr_poly:       Poly<F, V, 3>,
     public points:          [F; 4],
     public prev_challenges: [F; SC - V],
     public prev_eval:       F,
     public round_challenge: F,
-    public curr_round:      Fin<SC>
+    public curr_round:      Fin<SC>,
+    public g_evs_d3:        [G; 4],
+    public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -590,15 +481,35 @@ fn sc_recurse_d3<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size, V: 2..SC>(
     let next_vec = eval(g, [r_next]);
     let next_prev = next_vec[0];
     let new_challenges = prev_challenges ++ [r_next];
-    sc_recurse_d3(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
+
+    let r_poly_sc = random<F>;
+    comm_evs <- dot(g_evs_d3, evs) + h_evs * r_poly_sc;
+    let r_eval_sc = random<F>;
+    comm_eval_sc <- g_evs_d3[0] * next_prev + h_evs * r_eval_sc;
+    let d_vec_sc = [random<F> for i in 0..4];
+    let r_delta_sc = random<F>;
+    let r_beta_sc = random<F>;
+    delta_sc <- dot(g_evs_d3, d_vec_sc) + h_evs * r_delta_sc;
+    let a_d_dot_sc = dot(d_vec_sc, evs);
+    beta_sc <- g_evs_d3[0] * a_d_dot_sc + h_evs * r_beta_sc;
+    c_sc <- challenge<F>;
+    z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..4];
+    z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
+    z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
+    let zk_check_sc = dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
+    verify(zk_check_sc);
+
+    sc_recurse_d3(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
 }}
-fn sc_recurse_d3<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size>(
+fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
     public curr_poly:       Poly<F, 1, 3>,
     public points:          [F; 4],
     public prev_challenges: [F; SC - 1],
     public prev_eval:       F,
     public round_challenge: F,
-    public curr_round:      Fin<SC>
+    public curr_round:      Fin<SC>,
+    public g_evs_d3:        [G; 4],
+    public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -608,17 +519,36 @@ fn sc_recurse_d3<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size>(
     r_final <- challenge<F>;
     let final_vec = eval(g, [r_final]);
     let final_eval = final_vec[0];
+
+    let r_poly_sc = random<F>;
+    comm_evs <- dot(g_evs_d3, evs) + h_evs * r_poly_sc;
+    let r_eval_sc = random<F>;
+    comm_eval_sc <- g_evs_d3[0] * final_eval + h_evs * r_eval_sc;
+    let d_vec_sc = [random<F> for i in 0..4];
+    let r_delta_sc = random<F>;
+    let r_beta_sc = random<F>;
+    delta_sc <- dot(g_evs_d3, d_vec_sc) + h_evs * r_delta_sc;
+    let a_d_dot_sc = dot(d_vec_sc, evs);
+    beta_sc <- g_evs_d3[0] * a_d_dot_sc + h_evs * r_beta_sc;
+    c_sc <- challenge<F>;
+    z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..4];
+    z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
+    z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
+    let zk_check_sc = dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
+    verify(zk_check_sc);
+
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
 
-// ===== Sum-check rounds 1..SC-1 plus the base round, deg 2. =====
-fn sc_recurse_d2<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size, V: 2..SC>(
+fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     public curr_poly:       Poly<F, V, 2>,
     public points:          [F; 3],
     public prev_challenges: [F; SC - V],
     public prev_eval:       F,
     public round_challenge: F,
-    public curr_round:      Fin<SC>
+    public curr_round:      Fin<SC>,
+    public g_evs_d2:        [G; 3],
+    public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -629,15 +559,35 @@ fn sc_recurse_d2<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size, V: 2..SC>(
     let next_vec = eval(g, [r_next]);
     let next_prev = next_vec[0];
     let new_challenges = prev_challenges ++ [r_next];
-    sc_recurse_d2(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1)
+
+    let r_poly_sc = random<F>;
+    comm_evs <- dot(g_evs_d2, evs) + h_evs * r_poly_sc;
+    let r_eval_sc = random<F>;
+    comm_eval_sc <- g_evs_d2[0] * next_prev + h_evs * r_eval_sc;
+    let d_vec_sc = [random<F> for i in 0..3];
+    let r_delta_sc = random<F>;
+    let r_beta_sc = random<F>;
+    delta_sc <- dot(g_evs_d2, d_vec_sc) + h_evs * r_delta_sc;
+    let a_d_dot_sc = dot(d_vec_sc, evs);
+    beta_sc <- g_evs_d2[0] * a_d_dot_sc + h_evs * r_beta_sc;
+    c_sc <- challenge<F>;
+    z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..3];
+    z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
+    z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
+    let zk_check_sc = dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
+    verify(zk_check_sc);
+
+    sc_recurse_d2(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
 }}
-fn sc_recurse_d2<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size>(
+fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
     public curr_poly:       Poly<F, 1, 2>,
     public points:          [F; 3],
     public prev_challenges: [F; SC - 1],
     public prev_eval:       F,
     public round_challenge: F,
-    public curr_round:      Fin<SC>
+    public curr_round:      Fin<SC>,
+    public g_evs_d2:        [G; 3],
+    public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
     let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
     let out = marginalize(cfg);
@@ -647,68 +597,121 @@ fn sc_recurse_d2<G1: Group, G2: Group, F: Scalar<G1, G2>, SC: Size>(
     r_final <- challenge<F>;
     let final_vec = eval(g, [r_final]);
     let final_eval = final_vec[0];
+
+    let r_poly_sc = random<F>;
+    comm_evs <- dot(g_evs_d2, evs) + h_evs * r_poly_sc;
+    let r_eval_sc = random<F>;
+    comm_eval_sc <- g_evs_d2[0] * final_eval + h_evs * r_eval_sc;
+    let d_vec_sc = [random<F> for i in 0..3];
+    let r_delta_sc = random<F>;
+    let r_beta_sc = random<F>;
+    delta_sc <- dot(g_evs_d2, d_vec_sc) + h_evs * r_delta_sc;
+    let a_d_dot_sc = dot(d_vec_sc, evs);
+    beta_sc <- g_evs_d2[0] * a_d_dot_sc + h_evs * r_beta_sc;
+    c_sc <- challenge<F>;
+    z_vec_sc <- [c_sc * evs[i] + d_vec_sc[i] for i in 0..3];
+    z_delta_sc <- c_sc * r_poly_sc + r_delta_sc;
+    z_beta_sc <- c_sc * r_eval_sc + r_beta_sc;
+    let zk_check_sc = dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
+    verify(zk_check_sc);
+
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
 
-// ===== PST13 commit (single call, fixed size). =====
-fn pst13_commit_w<G1: Group, G2: Group, F: Scalar<G1, G2>>(
-    private p:    [F; {two_nw}],
-    public ck_n:  [G1; {two_nw}]
-) -> G1 {{
-    dot(p, ck_n)
+fn compute_s_vec<G: Group, F: Scalar<G>>(public c: [F; 1], public c_inv: [F; 1]) -> [F; 2] {{
+    [c_inv[0], c[0]]
+}}
+fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(public c: [F; K], public c_inv: [F; K]) -> [F; 2^K] {{
+    let curr_c = c[0];
+    let curr_c_inv = c_inv[0];
+    let c_rest = c[1..K];
+    let c_inv_rest = c_inv[1..K];
+    let prev = compute_s_vec(c_rest, c_inv_rest);
+    (prev * curr_c_inv) ++ (prev * curr_c)
 }}
 
-// ===== PST13 open: recursive over the witness-MLE variable count. =====
-fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    private p_curr:        [F; 2],
-    public ck_curr:        [G1; 2],
-    public z_curr:         [F; 1],
-    public alpha_H_curr:   [G2; 1],
-    public h_gen:          G2,
-    public rem:            GT
-) -> Bool {{
-    let ck_lo = ck_curr[0..1];
-    let ck_hi = ck_curr[1..2];
-    let ck_0  = ck_lo + ck_hi;
-    let p_lo = p_curr[0..1];
-    let p_hi = p_curr[1..2];
-    let q    = p_hi - p_lo;
-    pi_last <- dot(q, ck_0);
-    rem == pair(pi_last, alpha_H_curr[0] - (h_gen * z_curr[0]))
-}}
-fn pst13_open_rounds<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, PK: 2..20>(
-    private p_curr:        [F; 2^PK],
-    public ck_curr:        [G1; 2^PK],
-    public z_curr:         [F; PK],
-    public alpha_H_curr:   [G2; PK],
-    public h_gen:          G2,
-    public rem:            GT
-) -> Bool {{
-    let ck_lo  = ck_curr[0..2^(PK-1)];
-    let ck_hi  = ck_curr[2^(PK-1)..2^PK];
-    let ck_nxt = ck_lo + ck_hi;
-    let p_lo = p_curr[0..2^(PK-1)];
-    let p_hi = p_curr[2^(PK-1)..2^PK];
-    let q    = p_hi - p_lo;
-    pi_curr <- dot(q, ck_nxt);
-    let p_red    = p_lo + (q * z_curr[0]);
-    let rem_next = rem - pair(pi_curr, alpha_H_curr[0] - (h_gen * z_curr[0]));
-    pst13_open_rounds(p_red, ck_nxt, z_curr[1..PK], alpha_H_curr[1..PK], h_gen, rem_next)
+fn bullet_collect<G: Group, F: Scalar<G>>(
+    public g_base: G,
+    public h_base: G,
+    private g_folded: [G; 2],
+    private a_folded: [F; 2],
+    private x_folded: [F; 2],
+    private y_folded: F,
+    private r_Upsilon_folded: F
+) -> {{ challenges: [F; 1], challenges_inv: [F; 1], Ls: [G; 1], Rs: [G; 1], final_x: F, final_y: F, final_r: F }} {{
+    let x_1 = x_folded[0..1];
+    let x_2 = x_folded[1..2];
+    let a_1 = a_folded[0..1];
+    let a_2 = a_folded[1..2];
+    let g_1 = g_folded[0..1];
+    let g_2 = g_folded[1..2];
+    let r_L = random<F>;
+    let r_R = random<F>;
+    let dot_x1_a2 = dot(x_1, a_2);
+    let dot_x2_a1 = dot(x_2, a_1);
+    upsilon_neg1 <- h_base * r_L + g_base * dot_x1_a2 + dot(g_2, x_1);
+    upsilon_1 <- h_base * r_R + g_base * dot_x2_a1 + dot(g_1, x_2);
+    c <- challenge<F>;
+    let c_inv = 1 / c;
+    let c_sq = c * c;
+    let c_inv_sq = c_inv * c_inv;
+    let next_x = x_1 * c + x_2 * c_inv;
+    let next_y = dot_x1_a2 * c_sq + y_folded + dot_x2_a1 * c_inv_sq;
+    let next_r = r_L * c_sq + r_Upsilon_folded + r_R * c_inv_sq;
+    {{|
+        challenges: [c],
+        challenges_inv: [c_inv],
+        Ls: [upsilon_neg1],
+        Rs: [upsilon_1],
+        final_x: next_x[0],
+        final_y: next_y,
+        final_r: next_r
+    |}}
 }}
 
-// ===== Spartan-NIZK proto (M = {m_lit} hardcoded).
-//
-// `az` / `bz` / `cz` are PRIVATE inputs — the harness pre-computes
-// A·z, B·z, C·z natively in Rust (since zippel has no `Mv` primitive
-// that could express the matvec inside the proto) and feeds them in.
-// Matrices are still public because `partial_a/b/c` (for SC #2) and
-// the SC #2 final R1CS-shape check both need them — but the partial
-// eval dispatches to the sparse fast path in PolyVariant::SparseMle,
-// so it's O(|nz|·M) rather than O(2^(2M)). =====
-proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
-    // 2M-variable MLEs for A, B, C in column-major (LSB-first) layout.
-    // Built natively as SparseMle on the Rust side, so `eval(mat_x_t, rx)`
-    // dispatches to a sparse partial-eval (O(|nz|·M) vs O(2^(2M)) dense).
+fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
+    public g_base: G,
+    public h_base: G,
+    private g_folded: [G; 2^N],
+    private a_folded: [F; 2^N],
+    private x_folded: [F; 2^N],
+    private y_folded: F,
+    private r_Upsilon_folded: F
+) -> {{ challenges: [F; N], challenges_inv: [F; N], Ls: [G; N], Rs: [G; N], final_x: F, final_y: F, final_r: F }} {{
+    let x_1 = x_folded[0..2^(N-1)];
+    let x_2 = x_folded[2^(N-1)..2^N];
+    let a_1 = a_folded[0..2^(N-1)];
+    let a_2 = a_folded[2^(N-1)..2^N];
+    let g_1 = g_folded[0..2^(N-1)];
+    let g_2 = g_folded[2^(N-1)..2^N];
+    let r_L = random<F>;
+    let r_R = random<F>;
+    let dot_x1_a2 = dot(x_1, a_2);
+    let dot_x2_a1 = dot(x_2, a_1);
+    upsilon_neg1 <- h_base * r_L + g_base * dot_x1_a2 + dot(g_2, x_1);
+    upsilon_1 <- h_base * r_R + g_base * dot_x2_a1 + dot(g_1, x_2);
+    c <- challenge<F>;
+    let c_inv = 1 / c;
+    let c_sq = c * c;
+    let c_inv_sq = c_inv * c_inv;
+    let next_g = g_1 * c_inv + g_2 * c;
+    let next_a = a_1 * c_inv + a_2 * c;
+    let next_x = x_1 * c + x_2 * c_inv;
+    let next_y = dot_x1_a2 * c_sq + y_folded + dot_x2_a1 * c_inv_sq;
+    let next_r = r_L * c_sq + r_Upsilon_folded + r_R * c_inv_sq;
+    let inner = bullet_collect(g_base, h_base, next_g, next_a, next_x, next_y, next_r);
+    {{|
+        challenges: [c] ++ inner.challenges,
+        challenges_inv: [c_inv] ++ inner.challenges_inv,
+        Ls: [upsilon_neg1] ++ inner.Ls,
+        Rs: [upsilon_1] ++ inner.Rs,
+        final_x: inner.final_x,
+        final_y: inner.final_y,
+        final_r: inner.final_r
+    |}}
+}}
+
+proto spartan<G: Group, F: Scalar<G>>(
     public mat_a_t:   Poly<F, {two_m_vars}, 1>,
     public mat_b_t:   Poly<F, {two_m_vars}, 1>,
     public mat_c_t:   Poly<F, {two_m_vars}, 1>,
@@ -717,53 +720,40 @@ proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     private az:       [F; {two_m}],
     private bz:       [F; {two_m}],
     private cz:       [F; {two_m}],
-    // SRS / proving key: ~6 MB of G1Affine commitment-key points at M=16.
-    // Marked `private` so it isn't re-absorbed into the FS sponge on every
-    // prove — only the prover graph references it (inside `pst13_commit_w`
-    // and the prover branches of `pst13_open_rounds`; the verifier reads
-    // `pi_*` from the transcript via `<-` and never touches `ck_n_w`).
-    // Soundness binding to the prover's matrices/commitment-key is via the
-    // small verification-key items below + the witness commitment c_w that
-    // both sides absorb.
-    private ck_n_w:   [G1; {two_nw}],
-    public g_gen:     G1,
-    public h_gen:     G2,
-    public alpha_h_w: [G2; {nw}],
-    // Concretely-typed placeholder for `draw_taus` — zippel's overload
-    // resolution can't disambiguate `draw_taus([F; M])` for an [F; M]
-    // built inline from a comprehension, so the harness ships a sized
-    // zero array as a proto input. The actual τ challenges are still
-    // drawn from the transcript inside `draw_taus`.
+    public g_vec_w:   [G; {ncols}],
+    public g_base_w:  G,
+    public h_base_w:  G,
+    public g_evs_d3:  [G; 4],
+    public g_evs_d2:  [G; 3],
+    public h_evs:     G,
     public placeholder_tau: [F; {m_lit}],
     public f_one:     F
 ) where
     az * bz == cz
 {{
     let one  = f_one;
-    // Typed zero seeded from f_one (matrices are now Poly, no scalar
-    // indexable element available).
     let zero = f_one - f_one;
 
-    // ===== Witness commitment (first prover move). =====
-    c_w <- pst13_commit_w(w, ck_n_w);
+    let r_rows = [random<F> for i in 0..{nrows}];
+    c_rows <- [
+        h_base_w * r_rows[i] + dot(g_vec_w, [w[i*{ncols} + j] for j in 0..{ncols}])
+        for i in 0..{nrows}
+    ];
 
-    // `az`, `bz`, `cz` are private inputs — no dense MVM in body.
-    let z  = w ++ io ++ [one];
+    let z = w ++ io ++ [one];
 
     let f_a = mle(az);
     let f_b = mle(bz);
     let f_c = mle(cz);
 
-    // ===== V draws τ ∈ F^{m_lit} (via FS inside `draw_taus`). =====
-    let tau = draw_taus(placeholder_tau);
-    let eq_tau_evs      = eq_weights(tau);
-    let eq_tau          = mle(eq_tau_evs);
+    let tau_vec = draw_taus(placeholder_tau);
+    let eq_tau_evs = eq_weights(tau_vec);
+    let eq_tau     = mle(eq_tau_evs);
 
     let neg_one = zero - one;
     let g_sub   = f_a * f_b + f_c * neg_one;
     let g_poly  = g_sub * eq_tau;
 
-    // ===== Sum-check #1: claimed sum = 0, {m_lit} rounds, degree 3. =====
     let pts3   = [i for i in 0..4];
     let cfg1_0 = {{| poly: g_poly, num_variables: {m_lit}, max_degree: 3, round: 0, challenge: zero |}};
     let out1_0 = marginalize(cfg1_0);
@@ -773,35 +763,87 @@ proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     rx0           <- challenge<F>;
     let prev1_vec = eval(g1_r1, [rx0]);
     let prev1     = prev1_vec[0];
-    let sc1 = sc_recurse_d3(out1_0.next_poly, pts3, [rx0], prev1, rx0, 1);
+
+    let r_poly_10 = random<F>;
+    comm_evs_10 <- dot(g_evs_d3, evs1_0) + h_evs * r_poly_10;
+    let r_eval_10 = random<F>;
+    comm_eval_10 <- g_evs_d3[0] * prev1 + h_evs * r_eval_10;
+    let d_vec_10 = [random<F> for i in 0..4];
+    let r_delta_10 = random<F>;
+    let r_beta_10  = random<F>;
+    delta_10 <- dot(g_evs_d3, d_vec_10) + h_evs * r_delta_10;
+    let a_d_dot_10 = dot(d_vec_10, evs1_0);
+    beta_10  <- g_evs_d3[0] * a_d_dot_10 + h_evs * r_beta_10;
+    c_10     <- challenge<F>;
+    z_vec_10   <- [c_10 * evs1_0[i] + d_vec_10[i] for i in 0..4];
+    z_delta_10 <- c_10 * r_poly_10 + r_delta_10;
+    z_beta_10  <- c_10 * r_eval_10 + r_beta_10;
+    let zk_check_10 = dot(g_evs_d3, z_vec_10) + h_evs * z_delta_10 == comm_evs_10 * c_10 + delta_10;
+    verify(zk_check_10);
+
+    let sc1 = sc_recurse_d3(out1_0.next_poly, pts3, [rx0], prev1, rx0, 1, g_evs_d3, h_evs);
     let rx  = sc1.challenges;
     let e_x = sc1.final_eval;
 
     let lx = eq_weights(rx);
-    // v_a, v_b, v_c are derived from az/bz/cz (private), so they must be
-    // logged to the transcript so the verifier can use them in the
-    // linking check below.
     v_a <- dot(lx, az);
     v_b <- dot(lx, bz);
     v_c <- dot(lx, cz);
     let eq_tau_at_rx = dot(lx, eq_tau_evs);
     verify(e_x == (v_a * v_b - v_c) * eq_tau_at_rx);
 
+    let r_va = random<F>;
+    let r_vb = random<F>;
+    let r_vc = random<F>;
+    let r_prod = random<F>;
+    comm_va_phase1 <- g_evs_d3[0] * v_a + h_evs * r_va;
+    comm_vb_phase1 <- g_evs_d3[0] * v_b + h_evs * r_vb;
+    comm_vc_phase1 <- g_evs_d3[0] * v_c + h_evs * r_vc;
+    comm_prod_phase1 <- g_evs_d3[0] * (v_a * v_b) + h_evs * r_prod;
+    let d1_phase1 = random<F>;
+    let d2_phase1 = random<F>;
+    let r_d_phase1 = random<F>;
+    let r_e_phase1 = random<F>;
+    let r_f_phase1 = random<F>;
+    alpha_phase1 <- g_evs_d3[0] * d1_phase1 + h_evs * r_d_phase1;
+    beta_p1_phase1 <- g_evs_d3[0] * d2_phase1 + h_evs * r_e_phase1;
+    delta_phase1 <- comm_va_phase1 * d2_phase1 + h_evs * r_f_phase1;
+    c_phase1 <- challenge<F>;
+    z1_phase1 <- c_phase1 * v_a + d1_phase1;
+    z2_phase1 <- c_phase1 * r_va + r_d_phase1;
+    z3_phase1 <- c_phase1 * v_b + d2_phase1;
+    z4_phase1 <- c_phase1 * r_vb + r_e_phase1;
+    z5_phase1 <- c_phase1 * (r_prod - r_va * v_b) + r_f_phase1;
+    let prod_check1 = g_evs_d3[0] * z1_phase1 + h_evs * z2_phase1 == comm_va_phase1 * c_phase1 + alpha_phase1;
+    let prod_check2 = g_evs_d3[0] * z3_phase1 + h_evs * z4_phase1 == comm_vb_phase1 * c_phase1 + beta_p1_phase1;
+    let prod_check3 = comm_va_phase1 * z3_phase1 + h_evs * z5_phase1 == comm_prod_phase1 * c_phase1 + delta_phase1;
+    verify(prod_check1);
+    verify(prod_check2);
+    verify(prod_check3);
+    let t1_pok_vc = random<F>;
+    let t2_pok_vc = random<F>;
+    alpha_pok_vc <- g_evs_d3[0] * t1_pok_vc + h_evs * t2_pok_vc;
+    c_pok_vc <- challenge<F>;
+    z1_pok_vc <- v_c * c_pok_vc + t1_pok_vc;
+    z2_pok_vc <- r_vc * c_pok_vc + t2_pok_vc;
+    let pok_vc_check = g_evs_d3[0] * z1_pok_vc + h_evs * z2_pok_vc == comm_vc_phase1 * c_pok_vc + alpha_pok_vc;
+    verify(pok_vc_check);
+    let r_postsc_blind = random<F>;
+    let r_eq_p1 = random<F>;
+    let derived_blind_p1 = eq_tau_at_rx * (r_prod - r_vc);
+    comm_postsc_p1 <- g_evs_d3[0] * e_x + h_evs * r_postsc_blind;
+    let comm_derived_p1 = (comm_prod_phase1 - comm_vc_phase1) * eq_tau_at_rx;
+    alpha_eq_p1 <- h_evs * r_eq_p1;
+    c_eq_p1 <- challenge<F>;
+    z_eq_p1 <- c_eq_p1 * (r_postsc_blind - derived_blind_p1) + r_eq_p1;
+    let eq_check_p1 = h_evs * z_eq_p1 == (comm_postsc_p1 - comm_derived_p1) * c_eq_p1 + alpha_eq_p1;
+    verify(eq_check_p1);
+
     ra <- challenge<F>;
     rb <- challenge<F>;
     rc <- challenge<F>;
     let t2 = ra * v_a + rb * v_b + rc * v_c;
 
-    // partial_x is the partial-evaluation of M_x's 2M-var MLE at rx
-    // — i.e., the polynomial f(y) = M_x(rx, y) over the col-bits y.
-    // Computing each entry y as `dot(lx, [mat[i*N+y] for i in 0..N])`
-    // unrolls into N² mul-nodes per matrix; doing `eval(mle, rx)` with
-    // col-major storage collapses it to a single backend op (one
-    // DenseMle fix-prefix call). Both halves of zippel (prover and
-    // verifier) execute this, so this lift cuts both. We then carry
-    // partial_x as a Poly and never materialise the dense vector —
-    // `l_mle` is just the poly linear combination, and v1/v2/v3 at
-    // the final check are full evaluations at ry.
     let partial_a = eval(mat_a_t, rx);
     let partial_b = eval(mat_b_t, rx);
     let partial_c = eval(mat_c_t, rx);
@@ -810,7 +852,6 @@ proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     let z_mle  = mle(z);
     let m_poly = l_mle * z_mle;
 
-    // ===== Sum-check #2: claimed sum = T_2, {m_lit} rounds, degree 2. =====
     let pts2   = [i for i in 0..3];
     let cfg2_0 = {{| poly: m_poly, num_variables: {m_lit}, max_degree: 2, round: 0, challenge: zero |}};
     let out2_0 = marginalize(cfg2_0);
@@ -820,48 +861,98 @@ proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
     ry0           <- challenge<F>;
     let prev2_vec = eval(g2_r1, [ry0]);
     let prev2     = prev2_vec[0];
-    let sc2 = sc_recurse_d2(out2_0.next_poly, pts2, [ry0], prev2, ry0, 1);
+
+    let r_poly_20 = random<F>;
+    comm_evs_20 <- dot(g_evs_d2, evs2_0) + h_evs * r_poly_20;
+    let r_eval_20 = random<F>;
+    comm_eval_20 <- g_evs_d2[0] * prev2 + h_evs * r_eval_20;
+    let d_vec_20 = [random<F> for i in 0..3];
+    let r_delta_20 = random<F>;
+    let r_beta_20  = random<F>;
+    delta_20 <- dot(g_evs_d2, d_vec_20) + h_evs * r_delta_20;
+    let a_d_dot_20 = dot(d_vec_20, evs2_0);
+    beta_20  <- g_evs_d2[0] * a_d_dot_20 + h_evs * r_beta_20;
+    c_20     <- challenge<F>;
+    z_vec_20   <- [c_20 * evs2_0[i] + d_vec_20[i] for i in 0..3];
+    z_delta_20 <- c_20 * r_poly_20 + r_delta_20;
+    z_beta_20  <- c_20 * r_eval_20 + r_beta_20;
+    let zk_check_20 = dot(g_evs_d2, z_vec_20) + h_evs * z_delta_20 == comm_evs_20 * c_20 + delta_20;
+    verify(zk_check_20);
+
+    let sc2 = sc_recurse_d2(out2_0.next_poly, pts2, [ry0], prev2, ry0, 1, g_evs_d2, h_evs);
     let ry  = sc2.challenges;
     let e_y = sc2.final_eval;
 
-    let ly = eq_weights(ry);
-
-    // ===== PCS open at pcs_z = ry first NW entries. =====
-    //
-    // eq_weights / dot are LSB-first (pcs_z[k] = value of x_k), so
-    // sent_v_w = w_mle(pcs_z[0], ..., pcs_z[NW-1]). The PST13 recursion
-    // below splits ck/p on contiguous halves, which peels the HIGH bit
-    // first, so its round 0 needs the value for the highest variable.
-    // Reverse pcs_z and alpha_h_w before passing so the helper's
-    // z_curr[0] / alpha_H_curr[0] align with the high-bit fold. At M=2
-    // (NW=1) these arrays are length 1 so the reversal is a no-op — which
-    // is why the same call site worked at M=2 and failed silently at M>=3.
-    let pcs_z       = ry[0..{nw}];
-    let pcs_z_rev   = [pcs_z[{nw} - 1 - i] for i in 0..{nw}];
-    let alpha_h_rev = [alpha_h_w[{nw} - 1 - i] for i in 0..{nw}];
+    let pcs_z   = ry[0..{nw}];
     let ly_lo   = eq_weights(pcs_z);
+    let z_col   = pcs_z[0..{m_h}];
+    let z_row   = pcs_z[{m_h}..{nw}];
+    let l_vec   = eq_weights(z_row);
+    let r_vec   = eq_weights(z_col);
+
+    let big_t   = dot(l_vec, c_rows);
+    let r_big_t = dot(l_vec, r_rows);
+    let u_vec = [
+        dot(l_vec, [w[i*{ncols} + j] for i in 0..{nrows}])
+        for j in 0..{ncols}
+    ];
+
     let v_w_val = dot(ly_lo, w);
     sent_v_w    <- v_w_val;
 
-    let pcs_lhs = pair(c_w - (g_gen * sent_v_w), h_gen);
-    let pcs_ok  = pst13_open_rounds(w, ck_n_w, pcs_z_rev, alpha_h_rev, h_gen, pcs_lhs);
+    let r_tau = random<F>;
+    tau_pcs <- g_base_w * sent_v_w + h_base_w * r_tau;
+    rho_pcs <- challenge<F>;
+    let upsilon_pcs = big_t + tau_pcs * rho_pcs;
+    let r_upsilon_pcs = r_big_t + r_tau * rho_pcs;
+    let a_rho_pcs = [r_vec[j] * rho_pcs for j in 0..{ncols}];
+    let y_rho_pcs = sent_v_w * rho_pcs;
+    let bullet = bullet_collect(g_base_w, h_base_w, g_vec_w, a_rho_pcs, u_vec, y_rho_pcs, r_upsilon_pcs);
+    let b_challenges = bullet.challenges;
+    let b_challenges_inv = bullet.challenges_inv;
+    let b_Ls = bullet.Ls;
+    let b_Rs = bullet.Rs;
+    let b_final_y = bullet.final_y;
+    let b_final_r = bullet.final_r;
+    let s_vec = compute_s_vec(b_challenges, b_challenges_inv);
+    let g_hat = dot(g_vec_w, s_vec);
+    let a_hat = dot(a_rho_pcs, s_vec);
+    let c_sq_vec = [b_challenges[i] * b_challenges[i] for i in 0..{m_h}];
+    let c_inv_sq_vec = [b_challenges_inv[i] * b_challenges_inv[i] for i in 0..{m_h}];
+    let upsilon_combined = upsilon_pcs + dot(b_Ls, c_sq_vec) + dot(b_Rs, c_inv_sq_vec);
+    let d_ipa = random<F>;
+    let r_delta_ipa = random<F>;
+    let r_beta_ipa = random<F>;
+    delta_ipa <- g_hat * d_ipa + h_base_w * r_delta_ipa;
+    beta_ipa <- g_base_w * d_ipa + h_base_w * r_beta_ipa;
+    c_ipa <- challenge<F>;
+    z1_ipa <- d_ipa + c_ipa * b_final_y;
+    z2_ipa <- a_hat * (c_ipa * b_final_r + r_beta_ipa) + r_delta_ipa;
+    let lhs_ipa = (upsilon_combined * c_ipa + beta_ipa) * a_hat + delta_ipa;
+    let rhs_ipa = (g_hat + g_base_w * a_hat) * z1_ipa + h_base_w * z2_ipa;
+    let ipa_ok = lhs_ipa == rhs_ipa;
 
-    // ===== Final R1CS-shape check. =====
     let io_block = io ++ [one];
     let v_io     = dot(ly_lo, io_block);
     let ry_top   = ry[{m_lit} - 1];
     let v_z      = (one - ry_top) * sent_v_w + ry_top * v_io;
 
-    // v_x = M_x(rx, ry) = full eval of partial_x at ry. (`dot(ly, partial_x)`
-    // computes the same value via Lagrange weights over the dense vector,
-    // but partial_x is a Poly here, so we go through `eval` instead. Full
-    // eval (len(points) == num_vars) returns a scalar directly — no [0]
-    // indexing.)
     let v1 = eval(partial_a, ry);
     let v2 = eval(partial_b, ry);
     let v3 = eval(partial_c, ry);
 
-    verify(pcs_ok);
+    let r_ey   = random<F>;
+    let d_p2   = random<F>;
+    let r_d_p2 = random<F>;
+    comm_ey_p2 <- g_evs_d2[0] * e_y + h_evs * r_ey;
+    alpha_p2   <- g_evs_d2[0] * d_p2 + h_evs * r_d_p2;
+    c_p2       <- challenge<F>;
+    z1_p2 <- c_p2 * e_y + d_p2;
+    z2_p2 <- c_p2 * r_ey + r_d_p2;
+    let eq_check_p2 = g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2;
+    verify(eq_check_p2);
+
+    verify(ipa_ok);
     verify(e_y == (ra * v1 + rb * v2 + rc * v3) * v_z)
 }}
 "#,
@@ -871,5 +962,8 @@ proto spartan<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
         nw = nw,
         two_nw = two_nw,
         io_len = io_len,
+        m_h = m_h,
+        nrows = nrows,
+        ncols = ncols,
     )
 }
