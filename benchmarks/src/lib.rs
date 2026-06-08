@@ -21,4 +21,5 @@ pub mod pari;
 pub mod pari_native;
 pub mod pst13;
 pub mod schnorr;
+pub mod spartan;
 pub mod sumcheck;
