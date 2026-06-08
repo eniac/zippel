@@ -623,7 +623,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             let old_target_idx = edge_ref.target();
             let weight = *edge_ref.weight();
 
-            if old_source_idx == source_input_node {
+            if old_source_idx == source_input_node && self[old_target_idx].is_input_arg() {
                 continue;
             }
 
@@ -838,7 +838,7 @@ impl<C: HasOpFactory, A> Dag<C, A> {
             let old_target_idx = edge_ref.target();
             let weight = *edge_ref.weight();
 
-            if old_source_idx == source_input_node {
+            if old_source_idx == source_input_node && self[old_target_idx].is_input_arg() {
                 continue;
             }
 
