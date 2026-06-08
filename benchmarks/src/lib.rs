@@ -14,6 +14,7 @@ pub struct Timing {
 }
 
 pub mod groth16;
+pub mod hyrax;
 pub mod ipa;
 pub mod kzg;
 pub mod pari;
