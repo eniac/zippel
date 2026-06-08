@@ -5,3 +5,5 @@ target
 *.lic
 gurobi.log
 target-small
+cargo-flamegraph.trace/
+flamegraph.svg
