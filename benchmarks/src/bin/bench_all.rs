@@ -24,9 +24,10 @@ use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan
 use clap::Parser;
 use libspartan::{Instance, NIZK, NIZKGens};
 use merlin::Transcript;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ALL_SYSTEMS: &[&str] = &[
@@ -67,29 +68,182 @@ fn ms(t: std::time::Duration) -> f64 {
     t.as_secs_f64() * 1000.0
 }
 
-fn write_csv(path: &PathBuf, rows: &[Row], header: bool) -> std::io::Result<()> {
-    let f = File::create(path)?;
+const ZIPPEL_SCHNORR: &str = include_str!("../../../examples/schnorr/schnorr.zippel");
+const ZIPPEL_SUMCHECK: &str = include_str!("../../../examples/sumcheck/sumcheck.zippel");
+const ZIPPEL_IPA: &str = include_str!("../../../examples/ipa/ipa.zippel");
+const ZIPPEL_KZG: &str = include_str!("../../../examples/kzg/kzg.zippel");
+const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
+const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
+const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
+const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
+const SPARTAN_WRAPPER_RS: &str = include_str!("../../src/spartan.rs");
+
+const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
+const NATIVE_PARI_RS: &str = include_str!("../../src/pari_native.rs");
+const NATIVE_HYRAX_RS: &str = include_str!("../../src/hyrax.rs");
+
+// For systems delegating to external crates, native = prover + verifier code
+// in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
+// to the version in benchmarks/Cargo.lock at the time these were measured).
+// Update when bumping crate versions.
+const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.5.0 src/signature/schnorr/mod.rs
+const SUMCHECK_EXT_NCLOC: usize = 703;  // hyperplonk subroutines src/poly_iop/sum_check/{mod,prover,verifier}.rs
+const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.5.0 src/kzg10/mod.rs
+const GROTH16_EXT_NCLOC: usize = 440;   // ark-groth16-0.5.0 src/{prover,verifier,r1cs_to_qap}.rs
+const PST13_EXT_NCLOC: usize = 494;     // hyperplonk subroutines src/pcs/multilinear_kzg/{mod,srs,util}.rs
+const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
+
+fn count_ncloc_line_comments(src: &str) -> usize {
+    src.lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with("//")
+        })
+        .count()
+}
+
+fn count_ncloc_rust(src: &str) -> usize {
+    let mut count = 0usize;
+    let mut in_block = false;
+    for line in src.lines() {
+        let trimmed = line.trim();
+        if in_block {
+            if let Some(after) = trimmed.split_once("*/") {
+                in_block = false;
+                let rest = after.1.trim();
+                if !rest.is_empty() && !rest.starts_with("//") {
+                    count += 1;
+                }
+            }
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.starts_with("/*") && !trimmed.contains("*/") {
+            in_block = true;
+            continue;
+        }
+        count += 1;
+    }
+    count
+}
+
+fn extract_braced_block<'a>(src: &'a str, header: &str) -> &'a str {
+    let Some(start) = src.find(header) else {
+        return "";
+    };
+    let after = &src[start..];
+    let Some(brace) = after.find('{') else {
+        return "";
+    };
+    let mut depth: i32 = 1;
+    let body = &after[brace + 1..];
+    for (i, c) in body.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &body[..i];
+                }
+            }
+            _ => {}
+        }
+    }
+    body
+}
+
+fn extract_raw_string<'a>(src: &'a str, header: &str) -> &'a str {
+    let Some(start) = src.find(header) else {
+        return "";
+    };
+    let after = &src[start..];
+    let Some(rs) = after.find("r#\"") else {
+        return "";
+    };
+    let body_start = rs + 3;
+    let body = &after[body_start..];
+    let Some(end) = body.find("\"#") else {
+        return body;
+    };
+    &body[..end]
+}
+
+fn spartan_zippel_ncloc() -> usize {
+    let proto = extract_raw_string(SPARTAN_WRAPPER_RS, "fn generate_proto");
+    count_ncloc_line_comments(proto)
+}
+
+
+fn zippel_ncloc(sys: &str) -> usize {
+    match sys {
+        "schnorr" => count_ncloc_line_comments(ZIPPEL_SCHNORR),
+        "sumcheck" => count_ncloc_line_comments(ZIPPEL_SUMCHECK),
+        "ipa" => count_ncloc_line_comments(ZIPPEL_IPA),
+        "kzg" => count_ncloc_line_comments(ZIPPEL_KZG),
+        "pari" => count_ncloc_line_comments(ZIPPEL_PARI),
+        "groth16" => count_ncloc_line_comments(ZIPPEL_GROTH16),
+        "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
+        "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
+        "spartan" => spartan_zippel_ncloc(),
+        _ => 0,
+    }
+}
+
+fn native_ncloc(sys: &str) -> usize {
+    match sys {
+        "schnorr" => SCHNORR_EXT_NCLOC,
+        "sumcheck" => SUMCHECK_EXT_NCLOC,
+        "kzg" => KZG_EXT_NCLOC,
+        "groth16" => GROTH16_EXT_NCLOC,
+        "pst13" => PST13_EXT_NCLOC,
+        "spartan" => SPARTAN_EXT_NCLOC,
+        "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
+        "hyrax" => count_ncloc_rust(extract_braced_block(NATIVE_HYRAX_RS, "pub mod native_side")),
+        "pari" => count_ncloc_rust(NATIVE_PARI_RS),
+        _ => 0,
+    }
+}
+
+static CSV_WRITER: OnceLock<Mutex<BufWriter<std::fs::File>>> = OnceLock::new();
+
+fn init_csv(path: &PathBuf, header: bool) -> std::io::Result<()> {
+    if header {
+        std::fs::write(path, "")?;
+    }
+    let f = OpenOptions::new().create(true).append(true).open(path)?;
     let mut w = BufWriter::new(f);
     if header {
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms"
+            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc"
         )?;
+        w.flush()?;
     }
-    for r in rows {
-        writeln!(
-            w,
-            "{},{},{},{:.3},{:.3},{:.3},{:.3}",
-            r.system,
-            r.threads,
-            r.log_size,
-            ms(r.zippel.prove),
-            ms(r.zippel.verify),
-            ms(r.native.prove),
-            ms(r.native.verify),
-        )?;
-    }
-    w.flush()
+    CSV_WRITER
+        .set(Mutex::new(w))
+        .map_err(|_| std::io::Error::other("CSV_WRITER already initialized"))
+}
+
+fn write_row(r: &Row) {
+    let Some(m) = CSV_WRITER.get() else { return };
+    let mut w = m.lock().unwrap();
+    writeln!(
+        w,
+        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{}",
+        r.system,
+        r.threads,
+        r.log_size,
+        ms(r.zippel.prove),
+        ms(r.zippel.verify),
+        ms(r.native.prove),
+        ms(r.native.verify),
+        zippel_ncloc(r.system),
+        native_ncloc(r.system),
+    )
+    .expect("write csv row");
+    w.flush().expect("flush csv row");
 }
 
 fn print_row(r: &Row) {
@@ -103,6 +257,7 @@ fn print_row(r: &Row) {
         ms(r.zippel.verify),
         ms(r.native.verify),
     );
+    write_row(r);
 }
 
 fn run_schnorr(threads: usize) -> Vec<Row> {
@@ -409,6 +564,13 @@ fn main() {
     eprintln!("threads : {} (RAYON_NUM_THREADS or default)", threads);
     eprintln!("out     : {}", args.out.display());
     eprintln!();
+    eprintln!("source NCLOC (zippel proto vs native_side Rust module):");
+    for sys in ALL_SYSTEMS {
+        eprintln!("  {:<8} zippel={:>4}  native={:>4}", sys, zippel_ncloc(sys), native_ncloc(sys));
+    }
+    eprintln!();
+
+    init_csv(&args.out, !args.no_header).expect("open csv for streaming writes");
 
     let mut all_rows: Vec<Row> = Vec::new();
     let started = Instant::now();
@@ -435,7 +597,6 @@ fn main() {
         all_rows.extend(chunk);
     }
 
-    write_csv(&args.out, &all_rows, !args.no_header).expect("write csv");
     eprintln!();
     eprintln!(
         "wrote {} rows to {} in {:.1}s",

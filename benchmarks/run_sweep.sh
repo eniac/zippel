@@ -25,6 +25,10 @@ set -euo pipefail
 
 # Resolve script dir so the script works regardless of where it's invoked from.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Bench wrappers hard-code `examples/<system>/<proto>.zippel` as a path
+# relative to CWD. Those files live at the workspace root, not under
+# benchmarks/, so we run from the workspace root.
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OUT="${SCRIPT_DIR}/sweep.csv"
 THREADS_LIST="1,2,4"
@@ -79,6 +83,13 @@ if [[ ! -x "$BIN" ]]; then
     exit 1
 fi
 
+# Resolve OUT to an absolute path BEFORE cd-ing into the workspace root, so a
+# relative --out resolves against the user's CWD, not the workspace root.
+case "$OUT" in
+    /*) ;;
+    *) OUT="$(pwd)/$OUT" ;;
+esac
+
 # Reset output file so a re-run doesn't append onto stale data.
 : > "$OUT"
 
@@ -93,7 +104,9 @@ for T in "${THREADS[@]}"; do
     echo "  threads = $T"
     echo "============================================================"
 
-    args=(--out "$OUT.part" --threads-label "$T")
+    # Write directly to the final CSV — bench_all flushes per-row, so a
+    # Ctrl+C mid-iteration leaves a usable partial CSV.
+    args=(--out "$OUT" --threads-label "$T")
     if [[ -n "$SYSTEMS" ]]; then
         args+=(--systems "$SYSTEMS")
     fi
@@ -104,13 +117,10 @@ for T in "${THREADS[@]}"; do
         args+=(--no-header)
     fi
 
-    RAYON_NUM_THREADS="$T" "$BIN" "${args[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
+    ( cd "$WORKSPACE_ROOT" && RAYON_NUM_THREADS="$T" "$BIN" "${args[@]}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} )
 
-    cat "$OUT.part" >> "$OUT"
     FIRST=0
 done
-
-rm -f "$OUT.part"
 
 echo
 echo "=== done ==="
