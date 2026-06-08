@@ -154,6 +154,10 @@ name = "pst13"
 path = "examples/pst13/main.rs"
 
 [[example]]
+name = "hyrax"
+path = "examples/hyrax/main.rs"
+
+[[example]]
 name = "benchmark"
 path = "examples/tests/benchmark/main.rs"
 

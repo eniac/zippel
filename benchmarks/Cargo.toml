@@ -123,6 +123,10 @@ name = "pst13"
 path = "src/bin/pst13.rs"
 
 [[bin]]
+name = "hyrax"
+path = "src/bin/hyrax.rs"
+
+[[bin]]
 name = "groth16_profile"
 path = "src/bin/groth16_profile.rs"
 
