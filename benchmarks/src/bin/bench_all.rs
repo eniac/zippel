@@ -20,14 +20,18 @@
 //! single-thread pool installed mid-process — running with the global pool
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
-use benchmarks::{Timing, groth16, ipa, kzg, pari, schnorr, sumcheck};
+use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck};
 use clap::Parser;
+use libspartan::{Instance, NIZK, NIZKGens};
+use merlin::Transcript;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-const ALL_SYSTEMS: &[&str] = &["schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16"];
+const ALL_SYSTEMS: &[&str] = &[
+    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan",
+];
 
 #[derive(Parser, Debug)]
 #[command(about = "Run every benchmark at the current rayon thread count and emit a CSV")]
@@ -227,6 +231,114 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
+    ns.iter()
+        .map(|&n| {
+            let shared = pst13::shared::build(n);
+            let mut z = pst13::zippel_side::Setup::new(&shared);
+            let np = pst13::native_side::Setup::new(&shared);
+            let zippel = z.time_protocol();
+            let native = np.time_protocol();
+            let r = Row {
+                system: "pst13",
+                threads,
+                log_size: n,
+                zippel,
+                native,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
+fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
+    ns.iter()
+        .map(|&n| {
+            let mut z = hyrax::zippel_side::Setup::new(n);
+            let np = hyrax::native_side::Setup::new(n);
+            let zippel = z.time_protocol();
+            let native = np.time_protocol();
+            let r = Row {
+                system: "hyrax",
+                threads,
+                log_size: n,
+                zippel,
+                native,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
+fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
+    ms.iter()
+        .map(|&m| {
+            let mut z = spartan::Setup::new(m);
+            let zippel = z.timing();
+
+            let num_cons = 1usize << m;
+            let num_vars = 1usize << (m - 1);
+            let num_inputs = num_vars - 1;
+            let (inst, vars, inputs) =
+                Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+
+            let n_matvec = {
+                let mut best = Duration::MAX;
+                for _ in 0..3 {
+                    let t0 = Instant::now();
+                    let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
+                    let dt = t0.elapsed();
+                    assert!(sat);
+                    if dt < best {
+                        best = dt;
+                    }
+                }
+                best
+            };
+
+            let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+            let inst_bytes = vec![0u8; 3 * num_cons * 40];
+            let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
+
+            let mut pt = Transcript::new(b"bench_all_spartan");
+            let t = Instant::now();
+            {
+                let mut bind = Transcript::new(b"matrix_bind");
+                bind.append_message(b"inst", &inst_bytes);
+                bind.append_message(b"io", &inputs_bytes);
+            }
+            let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
+            let native_prove = t.elapsed().saturating_sub(n_matvec);
+
+            let mut vt = Transcript::new(b"bench_all_spartan");
+            let t = Instant::now();
+            {
+                let mut bind = Transcript::new(b"matrix_bind");
+                bind.append_message(b"inst", &inst_bytes);
+                bind.append_message(b"io", &inputs_bytes);
+            }
+            proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
+            let native_verify = t.elapsed();
+
+            let native = Timing {
+                prove: native_prove,
+                verify: native_verify,
+            };
+            let r = Row {
+                system: "spartan",
+                threads,
+                log_size: m,
+                zippel,
+                native,
+            };
+            print_row(&r);
+            r
+        })
+        .collect()
+}
+
 fn main() {
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {
@@ -262,23 +374,30 @@ fn main() {
     // b_query, h_query are each Vec<G1Projective> of length ≥
     // num_constraints), and single-thread prove already runs in
     // tens of seconds at log_size=14.
-    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns) = if args.quick {
-        (
-            vec![4usize, 8],
-            vec![4usize, 8],
-            vec![4usize, 6],
-            vec![16usize, 256],
-            vec![4usize, 8],
-        )
-    } else {
-        (
-            (2..=20).collect::<Vec<_>>(),
-            (3..=20).collect::<Vec<_>>(),
-            (1..=14).collect::<Vec<_>>(),
-            (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
-            (1..=14).collect::<Vec<_>>(),
-        )
-    };
+    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
+        if args.quick {
+            (
+                vec![4usize, 8],
+                vec![4usize, 8],
+                vec![4usize, 6],
+                vec![16usize, 256],
+                vec![4usize, 8],
+                vec![4usize, 8],
+                vec![4usize, 8],
+                vec![4usize, 8],
+            )
+        } else {
+            (
+                (2..=20).collect::<Vec<_>>(),
+                (3..=20).collect::<Vec<_>>(),
+                (1..=14).collect::<Vec<_>>(),
+                (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
+                (1..=14).collect::<Vec<_>>(),
+                (1..=20).collect::<Vec<_>>(),
+                (2..=20).step_by(2).collect::<Vec<_>>(),
+                (3..=20).collect::<Vec<_>>(),
+            )
+        };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
     // pari n_pub=1 / k_vars=3 mirrors the sweep we've been running by hand.
     let sumcheck_degree = 3usize;
@@ -308,6 +427,9 @@ fn main() {
             "kzg" => run_kzg(threads, &kzg_ns),
             "pari" => run_pari(threads, &pari_ms, pari_n_pub, pari_k_vars),
             "groth16" => run_groth16(threads, &groth16_log_ns),
+            "pst13" => run_pst13(threads, &pst13_ns),
+            "hyrax" => run_hyrax(threads, &hyrax_ns),
+            "spartan" => run_spartan(threads, &spartan_ms),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);
