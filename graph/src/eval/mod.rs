@@ -115,9 +115,9 @@ where
             Ok(Arc::new(Value::Record(out)))
         }
         Op::Ram(v, idx) => {
-            let v_val = Arc::unwrap_or_clone(eval_op(v, env, rng)?);
-            let idx_val = Arc::unwrap_or_clone(eval_op(idx, env, rng)?);
-            Ok(Arc::new(v_val.ram(idx_val)))
+            let v_val = eval_op(v, env, rng)?;
+            let idx_val = eval_op(idx, env, rng)?;
+            Ok(Arc::new(v_val.ram_ref(&*idx_val)))
         }
         Op::Check(a) => eval_op(a, env, rng),
         Op::Pair(a, b, _) => {

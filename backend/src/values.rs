@@ -1853,41 +1853,45 @@ impl<C: ArkConfig> Value<C> {
         }
     }
     pub fn ram(self, r: Self) -> Self {
+        self.ram_ref(&r)
+    }
+
+    pub fn ram_ref(&self, r: &Self) -> Self {
         match (self, r) {
             (Value::VecIndex(a), Value::VecIndex(b)) => {
                 Value::VecIndex(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecIndex(a), Value::Index(b)) => Value::Index(a[b]),
+            (Value::VecIndex(a), Value::Index(b)) => Value::Index(a[*b]),
             (Value::VecScalar(a), Value::VecIndex(b)) => {
                 Value::VecScalar(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecScalar(a), Value::Index(b)) => Value::Scalar(a[b]),
+            (Value::VecScalar(a), Value::Index(b)) => Value::Scalar(a[*b]),
             (Value::VecG1(a), Value::VecIndex(b)) => {
                 Value::VecG1(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG1(a), Value::Index(b)) => Value::G1(a[b]),
+            (Value::VecG1(a), Value::Index(b)) => Value::G1(a[*b]),
             (Value::VecG2(a), Value::VecIndex(b)) => {
                 Value::VecG2(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG2(a), Value::Index(b)) => Value::G2(a[b]),
+            (Value::VecG2(a), Value::Index(b)) => Value::G2(a[*b]),
             (Value::VecGT(a), Value::VecIndex(b)) => {
                 Value::VecGT(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecGT(a), Value::Index(b)) => Value::GT(a[b]),
+            (Value::VecGT(a), Value::Index(b)) => Value::GT(a[*b]),
             (Value::VecG1Affine(a), Value::VecIndex(b)) => {
                 Value::VecG1Affine(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG1Affine(a), Value::Index(b)) => Value::G1Affine(a[b]),
+            (Value::VecG1Affine(a), Value::Index(b)) => Value::G1Affine(a[*b]),
             (Value::VecG2Affine(a), Value::VecIndex(b)) => {
                 Value::VecG2Affine(b.par_iter().map(|i| a[*i]).collect())
             }
-            (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[b]),
+            (Value::VecG2Affine(a), Value::Index(b)) => Value::G2Affine(a[*b]),
             (Value::Vec(a), Value::VecIndex(b)) => {
                 Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect())
             }
-            (Value::Vec(a), Value::Index(b)) => a[b].clone(),
+            (Value::Vec(a), Value::Index(b)) => a[*b].clone(),
             (Value::Vec(a), Value::Vec(b)) => {
-                Value::Vec(b.par_iter().map(|i| a[i.into_index()].clone()).collect())
+                Value::Vec(b.par_iter().map(|i| a[i.clone().into_index()].clone()).collect())
             }
             (Value::Record(_), _) => {
                 panic!(
