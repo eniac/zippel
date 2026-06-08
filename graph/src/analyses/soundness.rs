@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::analyses::TransClos;
 use crate::analyses::error::{AnalysisError, ExtractorRejection};
 use crate::analyses::extractor::{extract_locals, valid_extractor};
-use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
-use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
+use crate::analyses::groebner::ark_gb_adapter::LocalRankGuard;
+use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::{DQDag, PRef, Ref};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
-use core::cmp::Ordering;
 use lang::id::Vid;
 use log::{info, warn};
 use petgraph::Direction;
@@ -18,43 +18,22 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use share::Set;
 
-/// Special-soundness elimination strategy: locals and private variables
-/// (witnesses) are eliminated, but locals have higher priority so they
-/// become leading terms and get resolved before witnesses.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SoundnessLex;
 
-impl LexElimStrategy for SoundnessLex {
-    fn eliminate_var(v: &PRef) -> bool {
-        v.qualifier.is_private() || v.is_local()
-    }
-
-    fn cmp_vars(a: &PRef, b: &PRef) -> Ordering {
-        fn tier(v: &PRef) -> u8 {
-            if v.is_local() {
-                0
-            } else if v.qualifier.is_private() {
-                1
-            } else {
-                2
-            }
-        }
-        match tier(a).cmp(&tier(b)) {
-            Ordering::Equal => {}
-            order => return order,
-        }
-        match (a.is_local(), b.is_local()) {
-            (true, true) => {
-                let ra = get_local_rank(a).unwrap();
-                let rb = get_local_rank(b).unwrap();
-                rb.cmp(&ra).then_with(|| a.cmp(b))
-            }
-            _ => a.cmp(b),
+impl TieredElimStrategy for SoundnessLex {
+    fn tier(v: &PRef) -> Option<usize> {
+        if v.is_local() {
+            Some(0)
+        } else if v.qualifier.is_private() {
+            Some(1)
+        } else {
+            Some(2)
         }
     }
 }
 
-pub type SoundnessElimTerm = LexElimMono<SoundnessLex>;
+pub type SoundnessElimTerm = TieredElimMono<SoundnessLex>;
 
 type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
 
@@ -149,7 +128,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
     ///    d-equations, copy TCs, relation polys.
     /// 2. **Install guard**: compute the lex-elimination rank map from
     ///    var_order and install `LocalRankGuard`.
-    /// 3. **Convert** to `LexElimMono<SoundnessLex>`: reconstruct all
+    /// 3. **Convert** to `TieredElimMono<SoundnessLex>`: reconstruct all
     ///    BTreeMaps with the correct ordering now that the guard is active.
     /// 4. **Inline & run** the search GB under lex ordering.
     /// 5. **Extract witnesses** from the search basis while the guard is
@@ -329,7 +308,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 .chain(grev_validity.var_order.iter())
                 .chain(grev_rel_result.var_order.iter())
             {
-                if SoundnessLex::eliminate_var(pr) {
+                if SoundnessLex::tier(pr) == Some(0) {
                     rm.entry(pr.reference.node().index()).or_insert(rank);
                     rank += 1;
                 }

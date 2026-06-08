@@ -1,37 +1,30 @@
 use crate::PRef;
 use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
-use crate::analyses::groebner::monomial::{GrevLexTerm, LexElimMono, LexElimStrategy, Monomial};
+use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
 use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::analyses::trans_clos::TransClos;
 use ark_ff::Zero;
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use core::cmp::Ordering;
 use log::{info, warn};
 use share::Set;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ExtractLocal;
 
-impl LexElimStrategy for ExtractLocal {
-    fn eliminate_var(v: &PRef) -> bool {
-        get_local_rank(v).is_some()
-    }
-
-    fn cmp_vars(a: &PRef, b: &PRef) -> Ordering {
-        let a_rank = get_local_rank(a);
-        let b_rank = get_local_rank(b);
-        match (a_rank, b_rank) {
-            (Some(ra), Some(rb)) => rb.cmp(&ra).then_with(|| a.cmp(b)),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => a.cmp(b),
+impl TieredElimStrategy for ExtractLocal {
+    fn tier(v: &PRef) -> Option<usize> {
+        if get_local_rank(v).is_some() {
+            Some(0)
+        } else {
+            Some(1)
         }
     }
 }
 
-pub type ExtractLocalTerm = LexElimMono<ExtractLocal>;
+pub type ExtractLocalTerm = TieredElimMono<ExtractLocal>;
 
 type Poly<C> = SparsePolynomial<<C as ArkConfig>::F, ExtractLocalTerm>;
 type GPoly<C> = SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;

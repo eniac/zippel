@@ -66,7 +66,7 @@ pub trait Monomial:
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Debug)]
-pub struct MonoTerm(Ctx<PRef, usize>); // (var index, power)
+pub struct MonoTerm(pub(crate) Ctx<PRef, usize>); // (var index, power)
 
 /// Strategy for deciding which variables to eliminate in a block-elimination order.
 ///
@@ -77,22 +77,6 @@ pub trait ElimStrategy: Sized + Send + Sync {
     /// Returns `true` if `v` belongs to the elimination block (compared first
     /// in the two-level block-elimination monomial order).
     fn eliminate_var(v: &PRef) -> bool;
-}
-
-/// Strategy for pure lexicographic elimination ordering with total variable priority.
-///
-/// Unlike `ElimStrategy` (which produces a two-block grevlex order), this trait
-/// defines a **pure lex** order where each variable in the elimination set has
-/// its own priority level. This is needed for local-variable extraction, where
-/// later-introduced locals must be eliminated before earlier ones.
-pub trait LexElimStrategy: Sized + Send + Sync {
-    /// True for variables that should appear in the elimination (high-priority) block.
-    fn eliminate_var(v: &PRef) -> bool;
-
-    /// Compare two variables in pure lex priority order.
-    /// `Ordering::Less` means `a` has higher monomial priority than `b`
-    /// (i.e., `a` is eliminated first).
-    fn cmp_vars(a: &PRef, b: &PRef) -> Ordering;
 }
 
 /// A monomial term with grevlex ordering
@@ -140,20 +124,20 @@ impl<E: ElimStrategy> From<MonoTerm> for ElimMono<E> {
 }
 
 impl MonoTerm {
-    fn vars(&self) -> Vec<PRef> {
+    pub(crate) fn vars(&self) -> Vec<PRef> {
         self.0.keys().into_iter().collect()
     }
-    fn powers(&self) -> Vec<usize> {
+    pub(crate) fn powers(&self) -> Vec<usize> {
         self.0.values().into_iter().collect()
     }
-    fn degree(&self) -> usize {
+    pub(crate) fn degree(&self) -> usize {
         self.powers().iter().sum()
     }
-    fn is_constant(&self) -> bool {
-        self.0.is_empty() // Empty vec means the term is 1 (constant)
+    pub(crate) fn is_constant(&self) -> bool {
+        self.0.is_empty()
     }
 
-    fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
+    pub(crate) fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
         let mut result = F::one();
         for (var, power) in self.0.iter() {
             // Missing variables contribute multiplicative identity.
@@ -165,7 +149,7 @@ impl MonoTerm {
         }
         result
     }
-    fn is_divided(&self, other: &Self) -> bool {
+    pub(crate) fn is_divided(&self, other: &Self) -> bool {
         for (var, power2) in other.0.iter() {
             match self.0.get(var) {
                 Some(power1) => {
@@ -179,7 +163,7 @@ impl MonoTerm {
         true // All variables in other are in self with sufficient power
     }
 
-    fn lcm(&self, other: &Self) -> Self {
+    pub(crate) fn lcm(&self, other: &Self) -> Self {
         let mut lcm_powers: Vec<(PRef, usize)> =
             self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
         for (var, power2) in other.0.iter() {
@@ -191,7 +175,7 @@ impl MonoTerm {
         MonoTerm(lcm_powers.into_iter().collect())
     }
 
-    fn gcd(&self, other: &Self) -> Self {
+    pub(crate) fn gcd(&self, other: &Self) -> Self {
         let mut gcd_powers: Vec<(PRef, usize)> = Vec::new();
         for (var1, power1) in self.0.iter() {
             if let Some((_, power2)) = other.0.iter().find(|(v, _p)| v == &var1) {
@@ -204,7 +188,7 @@ impl MonoTerm {
         MonoTerm(gcd_powers.into_iter().collect())
     }
 
-    fn div(self, other: Self) -> Option<Self> {
+    pub(crate) fn div(self, other: Self) -> Option<Self> {
         if !self.is_divided(&other) {
             return None;
         }
@@ -226,7 +210,7 @@ impl MonoTerm {
         ))
     }
 
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub(crate) fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_constant() {
             write!(f, "1")
         } else {
@@ -262,7 +246,7 @@ impl MonoTerm {
     // Concretely, for vars a < b < c (PRef order), "rightmost" = c:
     //   `a^2 > b*c` because `b*c` has a larger exponent (1) than `a^2` (0) on
     //   the rightmost var c; `a^2` is leading, so `a^2.cmp(&b*c) = Less`.
-    fn grevlex(&self, other: &Self) -> Ordering {
+    pub(crate) fn grevlex(&self, other: &Self) -> Ordering {
         // 1. Total degree first — higher degree is leading (Ord::Less).
         match self.degree().cmp(&other.degree()) {
             Ordering::Equal => {}
@@ -294,7 +278,7 @@ impl MonoTerm {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
         self.0.iter()
     }
 }
@@ -620,211 +604,6 @@ impl GrevLexTerm {
     /// Borrow the underlying `MonoTerm` (variable → exponent map).
     pub(crate) fn as_mono_term(&self) -> &MonoTerm {
         &self.0
-    }
-}
-
-/// A monomial term with pure lexicographic elimination ordering, parameterized
-/// by the lex elimination strategy `E`.
-///
-/// The `Ord` implementation compares exponent vectors lexicographically using
-/// `E::cmp_vars` for variable ordering, rather than splitting into grevlex blocks.
-/// This produces a pure-lex ordering where each eliminated variable has its own
-/// priority level, which is needed for local-variable extractor computation.
-pub struct LexElimMono<E: LexElimStrategy>(MonoTerm, std::marker::PhantomData<E>);
-
-impl<E: LexElimStrategy> Clone for LexElimMono<E> {
-    fn clone(&self) -> Self {
-        LexElimMono(self.0.clone(), std::marker::PhantomData)
-    }
-}
-
-impl<E: LexElimStrategy> PartialEq for LexElimMono<E> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<E: LexElimStrategy> Eq for LexElimMono<E> {}
-
-impl<E: LexElimStrategy> Debug for LexElimMono<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("LexElimMono").field(&self.0).finish()
-    }
-}
-
-impl<E: LexElimStrategy> From<MonoTerm> for LexElimMono<E> {
-    fn from(t: MonoTerm) -> Self {
-        LexElimMono(t, std::marker::PhantomData)
-    }
-}
-
-impl<E: LexElimStrategy> LexElimMono<E> {
-    pub fn new(vars: Ctx<PRef, usize>) -> Self {
-        LexElimMono(MonoTerm(vars), std::marker::PhantomData)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&PRef, &usize)> {
-        self.0.iter()
-    }
-
-    pub(crate) fn as_mono_term(&self) -> &MonoTerm {
-        &self.0
-    }
-}
-
-impl<E: LexElimStrategy> Default for LexElimMono<E> {
-    fn default() -> Self {
-        LexElimMono(MonoTerm(Ctx::new()), std::marker::PhantomData)
-    }
-}
-
-#[allow(clippy::suspicious_op_assign_impl)]
-impl<E: LexElimStrategy> MulAssign for LexElimMono<E> {
-    fn mul_assign(&mut self, other: Self) {
-        for (var, power) in other.0.iter() {
-            *self.0.0.entry(var.clone()).or_insert(0) += power;
-        }
-    }
-}
-
-impl<E: LexElimStrategy> Mul for LexElimMono<E> {
-    type Output = Self;
-
-    fn mul(self, other: Self) -> Self {
-        let mut result = self.clone();
-        result *= other;
-        result
-    }
-}
-
-impl<'a, E: LexElimStrategy> Mul for &'a LexElimMono<E> {
-    type Output = LexElimMono<E>;
-
-    fn mul(self, other: &'a LexElimMono<E>) -> LexElimMono<E> {
-        self.clone() * other.clone()
-    }
-}
-
-impl<E: LexElimStrategy> fmt::Display for LexElimMono<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<E: LexElimStrategy> Div for LexElimMono<E> {
-    type Output = Option<Self>;
-
-    fn div(self, other: Self) -> Option<Self> {
-        self.0.div(other.0).map(LexElimMono::from)
-    }
-}
-
-impl<'a, E: LexElimStrategy> Div for &'a LexElimMono<E> {
-    type Output = Option<LexElimMono<E>>;
-
-    fn div(self, other: &'a LexElimMono<E>) -> Option<LexElimMono<E>> {
-        self.clone() / other.clone()
-    }
-}
-
-impl<E: LexElimStrategy> From<Vec<(PRef, usize)>> for LexElimMono<E> {
-    fn from(vars: Vec<(PRef, usize)>) -> Self {
-        LexElimMono::new(vars.into_iter().collect())
-    }
-}
-
-impl<E: LexElimStrategy> Monomial for LexElimMono<E> {
-    fn vars(&self) -> Vec<PRef> {
-        self.0.vars()
-    }
-
-    fn powers(&self) -> Vec<usize> {
-        self.0.powers()
-    }
-
-    fn is_constant(&self) -> bool {
-        self.0.is_constant()
-    }
-
-    fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
-        self.0.evaluate(p)
-    }
-
-    fn is_divided(&self, other: &Self) -> bool {
-        self.0.is_divided(&other.0)
-    }
-
-    fn lcm(&self, other: &Self) -> Self {
-        LexElimMono(self.0.lcm(&other.0), std::marker::PhantomData)
-    }
-
-    fn gcd(&self, other: &Self) -> Self {
-        LexElimMono(self.0.gcd(&other.0), std::marker::PhantomData)
-    }
-
-    fn compute_reduced_gb<F: Field, const W: usize>(
-        num_vars: usize,
-        input: Vec<SparsePolynomial<F, Self>>,
-    ) -> Vec<SparsePolynomial<F, Self>>
-    where
-        Self: Sized,
-    {
-        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_with_lex_elim;
-        compute_reduced_gb_with_lex_elim::<F, Self, E, W>(num_vars, input)
-    }
-}
-
-/// Pure lex elimination order: compare monomials lexicographically using
-/// `E::cmp_vars` for variable priority.
-///
-/// Convention (same as `ElimMono`): the `BTreeMap` sorts leading terms first,
-/// so `Ordering::Less` means "higher priority / leading".
-///
-/// For two monomials, we walk their combined variable set in `E::cmp_vars`
-/// order (highest priority first), comparing exponents. At the first position
-/// where exponents differ, the monomial with the **larger** exponent is the
-/// **leading** one (Ord::Less).
-impl<E: LexElimStrategy> Ord for LexElimMono<E> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let all_vars: Vec<PRef> = {
-            let mut vs: Vec<PRef> = self
-                .0
-                .iter()
-                .chain(other.0.iter())
-                .map(|(v, _)| v.clone())
-                .collect();
-            vs.sort_by(|a, b| E::cmp_vars(a, b));
-            vs.dedup();
-            vs
-        };
-
-        for v in &all_vars {
-            let e_self: usize = self
-                .0
-                .iter()
-                .find(|(vv, _)| *vv == v)
-                .map(|(_, &p)| p)
-                .unwrap_or(0);
-            let e_other: usize = other
-                .0
-                .iter()
-                .find(|(vv, _)| *vv == v)
-                .map(|(_, &p)| p)
-                .unwrap_or(0);
-            match e_self.cmp(&e_other) {
-                Ordering::Equal => continue,
-                Ordering::Greater => return Ordering::Less,
-                Ordering::Less => return Ordering::Greater,
-            }
-        }
-
-        Ordering::Equal
-    }
-}
-
-impl<E: LexElimStrategy> PartialOrd for LexElimMono<E> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 

@@ -3,6 +3,8 @@ pub use buchberger::GroebnerBasis;
 
 pub mod monomial;
 pub use monomial::{ElimMono, ElimStrategy, GrevLexTerm, Monomial};
+pub mod tiered;
+pub use tiered::{TieredElimMono, TieredElimStrategy};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 

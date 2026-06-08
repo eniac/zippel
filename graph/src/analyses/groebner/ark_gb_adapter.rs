@@ -62,10 +62,10 @@ use share::{Ctx, Set};
 
 use crate::PRef;
 use crate::analyses::groebner::monomial::{
-    ElimMono, ElimStrategy, GrevLexTerm, LexElimMono, LexElimStrategy, MonoTerm as ZipMonoTerm,
-    Monomial as ZipMonomial,
+    ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial,
 };
 use crate::analyses::groebner::sparsepoly::SparsePolynomial;
+use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
 const MAX_EXPONENT: usize = 127;
@@ -105,10 +105,10 @@ impl<E: ElimStrategy> HasMonoTerm for ElimMono<E> {
     }
 }
 
-impl<E: LexElimStrategy> HasMonoTerm for LexElimMono<E> {
+impl<E: TieredElimStrategy> HasMonoTerm for TieredElimMono<E> {
     #[inline]
     fn as_mono_term(&self) -> &ZipMonoTerm {
-        LexElimMono::as_mono_term(self)
+        TieredElimMono::as_mono_term(self)
     }
 }
 
@@ -634,171 +634,409 @@ impl Drop for LocalRankGuard {
 }
 
 // ---------------------------------------------------------------------------
-// Pure-lex elimination path (for LexElimMono<E> / local-variable extraction).
+// Tiered elimination path (for TieredElimMono<E>).
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static LEX_NVAR_W8: Cell<usize> = const { Cell::new(0) };
-    static LEX_NVAR_W16: Cell<usize> = const { Cell::new(0) };
-    static LEX_NVAR_W128: Cell<usize> = const { Cell::new(0) };
-    static LEX_FLIP_W8: Cell<[u64; 8]> = const { Cell::new([0u64; 8]) };
-    static LEX_FLIP_W16: Cell<[u64; 16]> = const { Cell::new([0u64; 16]) };
-    static LEX_FLIP_W128: Cell<[u64; 128]> = const { Cell::new([0u64; 128]) };
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TierKind {
+    Lex,
+    GrevLex,
 }
 
-fn get_lex_nvar<const W: usize>() -> usize {
-    match W {
-        8 => LEX_NVAR_W8.with(|c| c.get()),
-        16 => LEX_NVAR_W16.with(|c| c.get()),
-        128 => LEX_NVAR_W128.with(|c| c.get()),
-        _ => panic!("Unsupported W={W} for lex nvar"),
+#[derive(Clone)]
+#[allow(dead_code)]
+struct TierBlock {
+    raw_tier: usize,
+    start: usize,
+    len: usize,
+    kind: TierKind,
+    counts: Option<BoundedCompositionTable>,
+}
+
+impl TierBlock {
+    fn indices(&self) -> impl Iterator<Item = usize> {
+        self.start..self.start + self.len
     }
 }
 
-fn set_lex_nvar<const W: usize>(n: usize) {
-    match W {
-        8 => LEX_NVAR_W8.with(|c| c.set(n)),
-        16 => LEX_NVAR_W16.with(|c| c.set(n)),
-        128 => LEX_NVAR_W128.with(|c| c.set(n)),
-        _ => panic!("Unsupported W={W} for lex nvar"),
+#[derive(Clone)]
+#[allow(dead_code)]
+struct TierLayout {
+    nvars: usize,
+    tiers: Vec<TierBlock>,
+    key_bits: usize,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+struct BoundedCompositionTable {
+    k: usize,
+    max_sum: usize,
+    table_u64: Option<Vec<Vec<u64>>>,
+    table_biguint: Option<Vec<Vec<num_bigint::BigUint>>>,
+}
+
+impl BoundedCompositionTable {
+    fn new(k: usize, max_entry: usize) -> Self {
+        let max_sum = max_entry * k;
+        let mut table = vec![vec![0u64; max_sum + 1]; k + 1];
+        table[0][0] = 1;
+        for slot in table[1].iter_mut().take(max_sum.min(max_entry) + 1) {
+            *slot = 1;
+        }
+        let mut overflow = false;
+        for n in 2..=k {
+            let mut prefix = vec![0u64; max_sum + 2];
+            prefix[0] = table[n - 1][0];
+            for s in 1..=max_sum {
+                prefix[s] = match prefix[s - 1].checked_add(table[n - 1][s]) {
+                    Some(v) => v,
+                    None => {
+                        overflow = true;
+                        u64::MAX
+                    }
+                };
+            }
+            for s in 0..=max_sum {
+                let lo = s.saturating_sub(max_entry);
+                if lo == 0 {
+                    table[n][s] = prefix[s];
+                } else {
+                    table[n][s] = prefix[s].saturating_sub(prefix[lo - 1]);
+                }
+            }
+        }
+        if overflow {
+            return Self::new_biguint(k, max_entry);
+        }
+        BoundedCompositionTable {
+            k,
+            max_sum,
+            table_u64: Some(table),
+            table_biguint: None,
+        }
     }
-}
 
-fn get_lex_flip<const W: usize>() -> [u64; W] {
-    let mut result = [0u64; W];
-    match W {
-        8 => LEX_FLIP_W8.with(|c| result.copy_from_slice(&c.get())),
-        16 => LEX_FLIP_W16.with(|c| result.copy_from_slice(&c.get())),
-        128 => LEX_FLIP_W128.with(|c| result.copy_from_slice(&c.get())),
-        _ => panic!("Unsupported W={W} for lex flip"),
+    fn new_biguint(k: usize, max_entry: usize) -> Self {
+        use num_bigint::BigUint;
+        let max_sum = max_entry * k;
+        let mut table = vec![vec![BigUint::ZERO; max_sum + 1]; k + 1];
+        table[0][0] = BigUint::from(1u64);
+        for slot in table[1].iter_mut().take(max_sum.min(max_entry) + 1) {
+            *slot = BigUint::from(1u64);
+        }
+        let mut prefix = vec![BigUint::ZERO; max_sum + 2];
+        for n in 2..=k {
+            prefix[0] = table[n - 1][0].clone();
+            for s in 1..=max_sum {
+                prefix[s] = &prefix[s - 1] + &table[n - 1][s];
+            }
+            for s in 0..=max_sum {
+                let lo = s.saturating_sub(max_entry);
+                if lo == 0 {
+                    table[n][s] = prefix[s].clone();
+                } else {
+                    table[n][s] = &prefix[s] - &prefix[lo - 1];
+                }
+            }
+        }
+        BoundedCompositionTable {
+            k,
+            max_sum,
+            table_u64: None,
+            table_biguint: Some(table),
+        }
     }
-    result
-}
 
-fn set_lex_flip<const W: usize>(mask: [u64; W]) {
-    match W {
-        8 => LEX_FLIP_W8.with(|c| {
-            let mut m = [0u64; 8];
-            m.copy_from_slice(&mask);
-            c.set(m)
-        }),
-        16 => LEX_FLIP_W16.with(|c| {
-            let mut m = [0u64; 16];
-            m.copy_from_slice(&mask);
-            c.set(m)
-        }),
-        128 => LEX_FLIP_W128.with(|c| {
-            let mut m = [0u64; 128];
-            m.copy_from_slice(&mask);
-            c.set(m)
-        }),
-        _ => panic!("Unsupported W={W} for lex flip"),
-    }
-}
-
-struct LexNvarGuard<const W: usize> {
-    prev_nvar: usize,
-    prev_flip: [u64; W],
-}
-
-/// Compute the cmp_flip_mask for a given nvars, matching ark-gb's
-/// `compute_packing_masks`.  For each variable byte position, flips
-/// the lower 7 bits (0x7F) so that larger exponents become "smaller"
-/// in the comparison key.
-fn compute_lex_flip_mask<const W: usize>(nvars: usize) -> [u64; W] {
-    let mut flip = [0u64; W];
-    let first_var_byte = W * 8 - 1 - nvars;
-    let last_var_byte = W * 8 - 2;
-    for byte_idx in first_var_byte..=last_var_byte {
-        let word = byte_idx / 8;
-        let shift = ((byte_idx % 8) * 8) as u32;
-        flip[word] |= 0x7Fu64 << shift;
-    }
-    flip
-}
-
-impl<const W: usize> LexNvarGuard<W> {
-    fn install(nvars: usize) -> Self {
-        let prev_nvar = get_lex_nvar::<W>();
-        let prev_flip = get_lex_flip::<W>();
-        set_lex_nvar::<W>(nvars);
-        set_lex_flip::<W>(compute_lex_flip_mask::<W>(nvars));
-        Self {
-            prev_nvar,
-            prev_flip,
+    fn count(&self, n: usize, sum: usize) -> num_bigint::BigUint {
+        if sum > self.max_sum {
+            return num_bigint::BigUint::ZERO;
+        }
+        if let Some(ref table) = self.table_u64 {
+            num_bigint::BigUint::from(table[n][sum])
+        } else {
+            self.table_biguint.as_ref().unwrap()[n][sum].clone()
         }
     }
 }
 
-impl<const W: usize> Drop for LexNvarGuard<W> {
+fn build_tier_layout<const W: usize>(group_lens: &[(usize, usize)], nvars: usize) -> TierLayout {
+    let mut start = 0;
+    let mut tiers = Vec::new();
+
+    for (normalized_idx, &(raw_tier, len)) in group_lens.iter().enumerate() {
+        if len == 0 {
+            continue;
+        }
+
+        let kind = if normalized_idx == 0 && raw_tier == 0 {
+            TierKind::Lex
+        } else {
+            TierKind::GrevLex
+        };
+
+        let counts = (kind == TierKind::GrevLex).then(|| BoundedCompositionTable::new(len, 127));
+
+        tiers.push(TierBlock {
+            raw_tier,
+            start,
+            len,
+            kind,
+            counts,
+        });
+        start += len;
+    }
+
+    let key_bits = tiers.iter().map(|t| 7 * t.len).sum();
+    debug_assert_eq!(start, nvars);
+    debug_assert!(key_bits <= 64 * (W + 1));
+
+    TierLayout {
+        nvars,
+        tiers,
+        key_bits,
+    }
+}
+
+thread_local! {
+    static TIER_LAYOUT_W8: RefCell<Option<TierLayout>> = const { RefCell::new(None) };
+    static TIER_LAYOUT_W16: RefCell<Option<TierLayout>> = const { RefCell::new(None) };
+    static TIER_LAYOUT_W128: RefCell<Option<TierLayout>> = const { RefCell::new(None) };
+}
+
+fn get_tier_layout<const W: usize>() -> TierLayout {
+    match W {
+        8 => TIER_LAYOUT_W8.with(|c| c.borrow().clone().unwrap()),
+        16 => TIER_LAYOUT_W16.with(|c| c.borrow().clone().unwrap()),
+        128 => TIER_LAYOUT_W128.with(|c| c.borrow().clone().unwrap()),
+        _ => panic!("Unsupported W={W} for tiered elim"),
+    }
+}
+
+fn replace_tier_layout<const W: usize>(layout: Option<TierLayout>) -> Option<TierLayout> {
+    match W {
+        8 => TIER_LAYOUT_W8.with(|c| std::mem::replace(&mut *c.borrow_mut(), layout)),
+        16 => TIER_LAYOUT_W16.with(|c| std::mem::replace(&mut *c.borrow_mut(), layout)),
+        128 => TIER_LAYOUT_W128.with(|c| std::mem::replace(&mut *c.borrow_mut(), layout)),
+        _ => panic!("Unsupported W={W} for tiered elim"),
+    }
+}
+
+struct TierLayoutGuard<const W: usize> {
+    prev: Option<TierLayout>,
+}
+
+impl<const W: usize> TierLayoutGuard<W> {
+    fn install(layout: TierLayout) -> Self {
+        let prev = replace_tier_layout::<W>(Some(layout));
+        Self { prev }
+    }
+}
+
+impl<const W: usize> Drop for TierLayoutGuard<W> {
     fn drop(&mut self) {
-        set_lex_nvar::<W>(self.prev_nvar);
-        set_lex_flip::<W>(self.prev_flip);
+        replace_tier_layout::<W>(self.prev.take());
     }
 }
 
-/// ark-gb monomial wrapper implementing zippel's pure-lex elimination order.
-/// Generic over W to support W=8, W=16, and W=128 layouts.
-///
-/// Variables are assigned ark-gb indices in `E::cmp_vars` order:
-/// index 0 = highest priority (eliminated first). With ark-gb's packing,
-/// index 0 occupies the MSB byte position. A pure-lex comparison of the
-/// packed bytes from MSB to LSB gives the correct ordering.
-///
-/// `cmp` and `cmp_key`:
-/// * `cmp` compares the packed bytes lexicographically from the highest
-///   priority variable to the lowest, without any total-degree pre-comparison.
-///   This gives a true lexicographic order.
-/// * `cmp_key` puts 0 as the pre_key (no degree comparison) and the XOR-
-///   flipped packed bytes as the suffix. Since highest-priority variables
-///   are at MSB positions, the natural byte-order comparison gives lex order.
+struct OrderedKey<const W: usize> {
+    pre_key: u64,
+    cmp_key: [u64; W],
+    bit_len: usize,
+}
+
+impl<const W: usize> OrderedKey<W> {
+    fn new() -> Self {
+        OrderedKey {
+            pre_key: 0,
+            cmp_key: [0u64; W],
+            bit_len: 0,
+        }
+    }
+
+    fn push_bit(&mut self, bit: bool) {
+        let chunk = self.bit_len / 64;
+        let offset = self.bit_len % 64;
+        debug_assert!(chunk <= W);
+        if bit {
+            let mask = 1u64 << (63 - offset);
+            if chunk == 0 {
+                self.pre_key |= mask;
+            } else {
+                self.cmp_key[W - chunk] |= mask;
+            }
+        }
+        self.bit_len += 1;
+    }
+
+    fn push_7bit(&mut self, value: u8) {
+        debug_assert!(value < 128);
+        for shift in (0..7).rev() {
+            self.push_bit(((value >> shift) & 1) != 0);
+        }
+    }
+
+    fn push_bits(&mut self, words: &[u64], bits: usize) {
+        if bits == 0 {
+            return;
+        }
+        let total_words = bits.div_ceil(64);
+        debug_assert!(words.len() >= total_words);
+        let leading_zeros = total_words * 64 - bits;
+        for bi in 0..bits {
+            let abs_bit = leading_zeros + bi;
+            let wi = abs_bit / 64;
+            let shift = 63 - (abs_bit % 64);
+            let bit_val = ((words[wi] >> shift) & 1) != 0;
+            self.push_bit(bit_val);
+        }
+    }
+
+    fn finish(self) -> (u64, [u64; W]) {
+        (self.pre_key, self.cmp_key)
+    }
+}
+
+fn push_grevlex_rank_bits<const W: usize>(
+    key: &mut OrderedKey<W>,
+    packed: &ArkMono<W>,
+    ring: &Ring<impl Field, W>,
+    tier: &TierBlock,
+) {
+    let exps: Vec<u8> = tier
+        .indices()
+        .map(|i| packed.exponent(ring, i as u32).unwrap() as u8)
+        .collect();
+    let k = exps.len();
+    let rank_bits = 7 * k;
+    if k == 0 {
+        return;
+    }
+
+    let degree: usize = exps.iter().map(|&e| e as usize).sum();
+    let max_degree = 127 * k;
+
+    let mut rank = num_bigint::BigUint::ZERO;
+
+    let counts = tier.counts.as_ref().unwrap();
+
+    for d in (degree + 1)..=max_degree {
+        rank += counts.count(k, d);
+    }
+
+    let mut fixed_right_sum = 0usize;
+    for j in (0..k).rev() {
+        let ej = exps[j] as usize;
+        for candidate in 0..ej {
+            let used = fixed_right_sum + candidate;
+            if degree >= used {
+                let remaining = degree - used;
+                rank += counts.count(j, remaining);
+            }
+        }
+        fixed_right_sum += ej;
+    }
+
+    let mut digits = rank.to_u64_digits();
+    let needed_words = rank_bits.div_ceil(64);
+    digits.resize(needed_words, 0);
+    let complement_words: Vec<u64> = digits.into_iter().rev().map(|w| !w).collect();
+    key.push_bits(&complement_words, rank_bits);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ZippelLexElimMono<const W: usize>(ArkMono<W>);
+pub(crate) struct ZippelTieredElimMono<const W: usize>(ArkMono<W>);
 
-impl<const W: usize> From<ArkMono<W>> for ZippelLexElimMono<W> {
+impl<const W: usize> From<ArkMono<W>> for ZippelTieredElimMono<W> {
     fn from(m: ArkMono<W>) -> Self {
-        ZippelLexElimMono(m)
+        ZippelTieredElimMono(m)
     }
 }
 
-impl<const W: usize> PartialOrd for ZippelLexElimMono<W> {
+impl<const W: usize> PartialOrd for ZippelTieredElimMono<W> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-/// Pure lexicographic comparison: compare packed bytes from MSB to LSB.
-///
-/// With variables assigned so that index 0 = highest priority, and ark-gb's
-/// packing putting index 0 at MSB, comparing packed words from word 0 to
-/// word W-1 gives a lex comparison from highest-priority variable to lowest.
-///
-/// We Xor with the flip mask so that larger exponents map to "smaller"
-/// bytes (making higher-exponent monomials = leading = Less in the BTreeMap
-/// convention).
-impl<const W: usize> Ord for ZippelLexElimMono<W> {
+impl<const W: usize> Ord for ZippelTieredElimMono<W> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let flip = get_lex_flip::<W>();
-        for i in (0..W).rev() {
-            let ka = self.0.packed()[i] ^ flip[i];
-            let kb = other.0.packed()[i] ^ flip[i];
-            match ka.cmp(&kb) {
-                std::cmp::Ordering::Equal => continue,
-                ord => return ord,
+        use std::cmp::Ordering;
+        let layout = get_tier_layout::<W>();
+        let nvars = layout.nvars;
+        let first_byte = W * 8 - 1 - nvars;
+
+        let a_packed = self.0.packed();
+        let b_packed = other.0.packed();
+
+        for tier in &layout.tiers {
+            match tier.kind {
+                TierKind::Lex => {
+                    for i in tier.indices() {
+                        let byte_pos = first_byte + i;
+                        let word = byte_pos / 8;
+                        let shift = ((byte_pos % 8) * 8) as u32;
+                        let ea = ((a_packed[word] >> shift) & 0x7F) as u32;
+                        let eb = ((b_packed[word] >> shift) & 0x7F) as u32;
+                        match ea.cmp(&eb) {
+                            Ordering::Equal => continue,
+                            ord => return ord,
+                        }
+                    }
+                }
+                TierKind::GrevLex => {
+                    let mut a_deg: u32 = 0;
+                    let mut b_deg: u32 = 0;
+                    for i in tier.indices() {
+                        let byte_pos = first_byte + i;
+                        let word = byte_pos / 8;
+                        let shift = ((byte_pos % 8) * 8) as u32;
+                        a_deg += ((a_packed[word] >> shift) & 0x7F) as u32;
+                        b_deg += ((b_packed[word] >> shift) & 0x7F) as u32;
+                    }
+                    match a_deg.cmp(&b_deg) {
+                        Ordering::Equal => {}
+                        ord => return ord,
+                    }
+                    let a_exps: Vec<u32> = tier
+                        .indices()
+                        .map(|i| {
+                            let byte_pos = first_byte + i;
+                            let word = byte_pos / 8;
+                            let shift = ((byte_pos % 8) * 8) as u32;
+                            ((a_packed[word] >> shift) & 0x7F) as u32
+                        })
+                        .collect();
+                    let b_exps: Vec<u32> = tier
+                        .indices()
+                        .map(|i| {
+                            let byte_pos = first_byte + i;
+                            let word = byte_pos / 8;
+                            let shift = ((byte_pos % 8) * 8) as u32;
+                            ((b_packed[word] >> shift) & 0x7F) as u32
+                        })
+                        .collect();
+                    for j in (0..a_exps.len()).rev() {
+                        match a_exps[j].cmp(&b_exps[j]) {
+                            Ordering::Equal => continue,
+                            ord => return ord.reverse(),
+                        }
+                    }
+                }
             }
         }
-        std::cmp::Ordering::Equal
+        Ordering::Equal
     }
 }
 
-impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelLexElimMono<W> {
+impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelTieredElimMono<W> {
     #[inline]
     fn one(ring: &Ring<F, W>) -> Self {
-        ZippelLexElimMono(ArkMono::<W>::one(ring))
+        ZippelTieredElimMono(ArkMono::<W>::one(ring))
     }
     #[inline]
     fn from_exponents(ring: &Ring<F, W>, exps: &[u32]) -> Option<Self> {
-        ArkMono::<W>::from_exponents(ring, exps).map(ZippelLexElimMono)
+        ArkMono::<W>::from_exponents(ring, exps).map(ZippelTieredElimMono)
     }
     #[inline]
     fn exponent(&self, ring: &Ring<F, W>, i: u32) -> Option<u32> {
@@ -814,7 +1052,7 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelLexElimMono<W> {
     }
     #[inline]
     fn mul(&self, other: &Self, ring: &Ring<F, W>) -> Self {
-        ZippelLexElimMono(self.0.mul(&other.0, ring))
+        ZippelTieredElimMono(self.0.mul(&other.0, ring))
     }
     #[inline]
     fn divides(&self, other: &Self, ring: &Ring<F, W>) -> bool {
@@ -822,11 +1060,11 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelLexElimMono<W> {
     }
     #[inline]
     fn div(&self, other: &Self, ring: &Ring<F, W>) -> Option<Self> {
-        self.0.div(&other.0, ring).map(ZippelLexElimMono)
+        self.0.div(&other.0, ring).map(ZippelTieredElimMono)
     }
     #[inline]
     fn lcm(&self, other: &Self, ring: &Ring<F, W>) -> Self {
-        ZippelLexElimMono(self.0.lcm(&other.0, ring))
+        ZippelTieredElimMono(self.0.lcm(&other.0, ring))
     }
     #[inline]
     fn as_mono_term(&self) -> &ArkMono<W> {
@@ -834,25 +1072,35 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelLexElimMono<W> {
     }
 
     fn cmp_key(packed: &ArkMono<W>, ring: &Ring<F, W>) -> (u64, [u64; W]) {
-        // No pre_key (0) — pure lex, no total degree comparison.
-        // XOR-flip packed bytes so that larger exponents → smaller bytes
-        // → leading terms sorted first in the BTreeMap.
-        let flip = ring.cmp_flip_mask();
-        let key: [u64; W] = std::array::from_fn(|i| packed.packed()[i] ^ flip[i]);
-        (0, key)
+        let layout = get_tier_layout::<W>();
+        let mut key = OrderedKey::<W>::new();
+
+        for tier in &layout.tiers {
+            match tier.kind {
+                TierKind::Lex => {
+                    for i in tier.indices() {
+                        let exp = packed.exponent(ring, i as u32).unwrap() as u8;
+                        key.push_7bit(exp);
+                    }
+                }
+                TierKind::GrevLex => {
+                    push_grevlex_rank_bits(&mut key, packed, ring, tier);
+                }
+            }
+        }
+
+        key.finish()
     }
 }
 
-/// Pure-lex elimination backend, parametric on W and the zippel term type.
-/// Routes to ark-gb with a pure-lex monomial ordering.
-pub(crate) fn compute_reduced_gb_with_lex_elim<F, T, E, const W: usize>(
+pub(crate) fn compute_reduced_gb_with_tiered_elim<F, T, E, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, T>>,
 ) -> Vec<SparsePolynomial<F, T>>
 where
     F: Field,
     T: ZipMonomial + HasMonoTerm,
-    E: LexElimStrategy,
+    E: TieredElimStrategy,
 {
     let (vars, exponents_fit) = collect_and_validate(&input);
 
@@ -860,20 +1108,255 @@ where
         return constant_only_basis(&input);
     }
 
-    // Sort variables by E::cmp_vars: highest priority first (smallest in
-    // the Ord sense, since Less = higher priority in our convention).
-    let mut var_order: Vec<PRef> = vars.iter().cloned().collect();
-    var_order.sort_by(|a, b| E::cmp_vars(a, b));
+    let mut tier_map: HashMap<usize, Vec<PRef>> = HashMap::new();
+    for v in vars.iter().cloned() {
+        if let Some(t) = E::tier(&v) {
+            tier_map.entry(t).or_default().push(v);
+        }
+    }
+
+    let mut sorted_tiers: Vec<usize> = tier_map.keys().copied().collect();
+    sorted_tiers.sort();
+
+    if let Some(tier0_vars) = tier_map.get_mut(&0) {
+        tier0_vars.sort_by(|a, b| {
+            let ra = E::lex_rank(a);
+            let rb = E::lex_rank(b);
+            rb.cmp(&ra).then_with(|| a.cmp(b))
+        });
+    }
+
+    for t in &sorted_tiers {
+        if *t > 0
+            && let Some(tier_vars) = tier_map.get_mut(t)
+        {
+            tier_vars.sort();
+        }
+    }
+
+    let mut var_order: Vec<PRef> = Vec::new();
+    let mut group_lens: Vec<(usize, usize)> = Vec::new();
+
+    for &raw_tier in &sorted_tiers {
+        if let Some(tier_vars) = tier_map.get(&raw_tier) {
+            let len = tier_vars.len();
+            group_lens.push((raw_tier, len));
+            var_order.extend(tier_vars.iter().cloned());
+        }
+    }
 
     let actual_nvars = var_order.len();
+
+    if actual_nvars == 0 {
+        return constant_only_basis(&input);
+    }
+
     assert_fits_in_ark_gb::<W>(actual_nvars, exponents_fit);
 
-    let _nvar_guard = LexNvarGuard::<W>::install(actual_nvars);
+    let layout = build_tier_layout::<W>(&group_lens, actual_nvars);
+    let _layout_guard = TierLayoutGuard::<W>::install(layout);
 
-    compute_gb_pipeline::<F, T, ZippelLexElimMono<W>, W, _>(
+    compute_gb_pipeline::<F, T, ZippelTieredElimMono<W>, W, _>(
         input,
         var_order,
         exponents_fit,
-        |ring, polys| ark_gb::bba::compute_gb_serial::<F, ZippelLexElimMono<W>, W>(ring, polys),
+        |ring, polys| ark_gb::bba::compute_gb_serial::<F, ZippelTieredElimMono<W>, W>(ring, polys),
     )
+}
+
+#[cfg(test)]
+mod tiered_consistency_test {
+    use super::*;
+    use ark_bls12_381::Fr;
+
+    fn make_layout_and_ring<const W: usize>(
+        group_lens: &[(usize, usize)],
+    ) -> (TierLayout, Arc<Ring<Fr, W>>) {
+        let nvars: usize = group_lens.iter().map(|(_, len)| *len).sum();
+        let layout = build_tier_layout::<W>(group_lens, nvars);
+        let ring = Arc::new(Ring::<Fr, W>::new(nvars as u32).unwrap());
+        (layout, ring)
+    }
+
+    fn check_consistency<const W: usize>(
+        _layout: &TierLayout,
+        ring: &Arc<Ring<Fr, W>>,
+        monos: &[ZippelTieredElimMono<W>],
+    ) {
+        for i in 0..monos.len() {
+            for j in 0..monos.len() {
+                let ord_result = monos[i].cmp(&monos[j]);
+                let key_i = <ZippelTieredElimMono<W> as ArkMonomial<Fr, W>>::cmp_key(
+                    <ZippelTieredElimMono<W> as ArkMonomial<Fr, W>>::as_mono_term(&monos[i]),
+                    ring,
+                );
+                let key_j = <ZippelTieredElimMono<W> as ArkMonomial<Fr, W>>::cmp_key(
+                    <ZippelTieredElimMono<W> as ArkMonomial<Fr, W>>::as_mono_term(&monos[j]),
+                    ring,
+                );
+                let key_ord = key_i.cmp(&key_j);
+                assert_eq!(
+                    ord_result, key_ord,
+                    "Mismatch at i={}, j={}: Ord={:?}, key_cmp={:?}\n  key_i={:?}\n  key_j={:?}",
+                    i, j, ord_result, key_ord, key_i, key_j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_cmp_key_ord_consistency_w8() {
+        let (layout, ring) = make_layout_and_ring::<8>(&[(0, 2), (1, 2)]);
+        let _guard = TierLayoutGuard::<8>::install(layout.clone());
+
+        let exps_list: Vec<Vec<u32>> = vec![
+            vec![0, 0, 0, 0],
+            vec![1, 0, 0, 0],
+            vec![0, 1, 0, 0],
+            vec![0, 0, 1, 0],
+            vec![0, 0, 0, 1],
+            vec![1, 1, 0, 0],
+            vec![0, 0, 1, 1],
+            vec![2, 0, 0, 0],
+            vec![0, 2, 0, 0],
+            vec![0, 0, 2, 0],
+            vec![0, 0, 0, 2],
+            vec![1, 0, 1, 0],
+            vec![0, 1, 0, 1],
+        ];
+
+        let monos: Vec<ZippelTieredElimMono<8>> = exps_list
+            .iter()
+            .map(|exps| ZippelTieredElimMono::from_exponents(&ring, exps).unwrap())
+            .collect();
+
+        check_consistency(&layout, &ring, &monos);
+    }
+
+    #[test]
+    fn test_cmp_key_ord_consistency_3_tiers() {
+        let (layout, ring) = make_layout_and_ring::<8>(&[(0, 1), (1, 2), (2, 1)]);
+        let _guard = TierLayoutGuard::<8>::install(layout.clone());
+
+        let mut exps_list: Vec<Vec<u32>> = Vec::new();
+        for e0 in 0..=2u32 {
+            for e1 in 0..=2u32 {
+                for e2 in 0..=2u32 {
+                    for e3 in 0..=2u32 {
+                        exps_list.push(vec![e0, e1, e2, e3]);
+                    }
+                }
+            }
+        }
+
+        let monos: Vec<ZippelTieredElimMono<8>> = exps_list
+            .iter()
+            .map(|exps| ZippelTieredElimMono::from_exponents(&ring, exps).unwrap())
+            .collect();
+
+        check_consistency(&layout, &ring, &monos);
+    }
+
+    #[test]
+    fn test_cmp_key_ord_consistency_w128_3_tiers() {
+        let (layout, ring) = make_layout_and_ring::<128>(&[(0, 2), (1, 3), (2, 2)]);
+        let _guard = TierLayoutGuard::<128>::install(layout.clone());
+
+        let mut exps_list: Vec<Vec<u32>> = Vec::new();
+        for e0 in 0..=2u32 {
+            for e1 in 0..=2u32 {
+                for e2 in 0..=2u32 {
+                    for e3 in 0..=2u32 {
+                        for e4 in 0..=0u32 {
+                            for e5 in 0..=0u32 {
+                                for e6 in 0..=0u32 {
+                                    exps_list.push(vec![e0, e1, e2, e3, e4, e5, e6]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let monos: Vec<ZippelTieredElimMono<128>> = exps_list
+            .iter()
+            .map(|exps| ZippelTieredElimMono::from_exponents(&ring, exps).unwrap())
+            .collect();
+
+        check_consistency(&layout, &ring, &monos);
+    }
+
+    #[test]
+    fn test_cmp_key_ord_consistency_w128_large_grevlex() {
+        let (layout, ring) = make_layout_and_ring::<128>(&[(0, 1), (1, 5)]);
+        let _guard = TierLayoutGuard::<128>::install(layout.clone());
+
+        let sample_exps: Vec<Vec<u32>> = vec![
+            vec![0, 0, 0, 0, 0, 0],
+            vec![1, 0, 0, 0, 0, 0],
+            vec![0, 1, 0, 0, 0, 0],
+            vec![0, 0, 1, 0, 0, 0],
+            vec![0, 0, 0, 1, 0, 0],
+            vec![0, 0, 0, 0, 1, 0],
+            vec![0, 0, 0, 0, 0, 1],
+            vec![3, 0, 0, 0, 0, 0],
+            vec![0, 3, 0, 0, 0, 0],
+            vec![0, 0, 3, 0, 0, 0],
+            vec![0, 0, 0, 3, 0, 0],
+            vec![0, 0, 0, 0, 3, 0],
+            vec![0, 0, 0, 0, 0, 3],
+            vec![1, 1, 1, 1, 1, 0],
+            vec![0, 1, 1, 1, 1, 1],
+            vec![2, 2, 2, 0, 0, 0],
+            vec![0, 0, 0, 2, 2, 2],
+            vec![127, 0, 0, 0, 0, 0],
+            vec![0, 127, 0, 0, 0, 0],
+            vec![5, 5, 5, 5, 5, 5],
+        ];
+
+        let monos: Vec<ZippelTieredElimMono<128>> = sample_exps
+            .iter()
+            .map(|exps| ZippelTieredElimMono::from_exponents(&ring, exps).unwrap())
+            .collect();
+
+        check_consistency(&layout, &ring, &monos);
+    }
+
+    #[test]
+    fn test_schnorr_layout_key_injection() {
+        let (layout, ring) = make_layout_and_ring::<128>(&[(0, 5), (1, 1), (2, 7)]);
+        let _guard = TierLayoutGuard::<128>::install(layout.clone());
+
+        let mut key_to_mono: std::collections::HashMap<(u64, [u64; 128]), Vec<u32>> =
+            std::collections::HashMap::new();
+        let mut exps_list: Vec<Vec<u32>> = Vec::new();
+        for e0 in 0..=5u32 {
+            for e5 in 0..=5u32 {
+                for e6 in 0..=5u32 {
+                    for e9 in 0..=5u32 {
+                        exps_list.push(vec![e0, 0, 0, 0, 0, e5, e6, 0, 0, e9, 0, 0, 0]);
+                    }
+                }
+            }
+        }
+
+        for exps in &exps_list {
+            let m = ZippelTieredElimMono::<128>::from_exponents(&ring, exps).unwrap();
+            let key = <ZippelTieredElimMono<128> as ArkMonomial<Fr, 128>>::cmp_key(
+                <ZippelTieredElimMono<128> as ArkMonomial<Fr, 128>>::as_mono_term(&m),
+                &ring,
+            );
+            if let Some(prev) = key_to_mono.get(&key) {
+                if prev != exps {
+                    panic!(
+                        "KEY COLLISION: key={:?} prev={:?} curr={:?}",
+                        key, prev, exps
+                    );
+                }
+            } else {
+                key_to_mono.insert(key, exps.clone());
+            }
+        }
+    }
 }
