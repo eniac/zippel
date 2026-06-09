@@ -54,6 +54,12 @@ struct Args {
     /// Don't write the CSV header row (for concatenating across runs).
     #[arg(long)]
     no_header: bool,
+    /// Override every system's log_size grid with this comma-separated
+    /// list. For kzg the entries are converted to n_coeffs = 1 << log_size.
+    /// Useful for re-running a single failing point, e.g.
+    /// `--systems spartan --sizes 7`.
+    #[arg(long, value_delimiter = ',')]
+    sizes: Option<Vec<usize>>,
 }
 
 struct Row {
@@ -530,7 +536,19 @@ fn main() {
     // num_constraints), and single-thread prove already runs in
     // tens of seconds at log_size=14.
     let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
-        if args.quick {
+        if let Some(ls) = &args.sizes {
+            let kzg = ls.iter().map(|&s| 1usize << s).collect::<Vec<_>>();
+            (
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+                kzg,
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+            )
+        } else if args.quick {
             (
                 vec![4usize, 8],
                 vec![4usize, 8],
