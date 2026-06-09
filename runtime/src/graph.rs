@@ -218,6 +218,22 @@ fn update_successors<C: ArkConfig>(
     }
 }
 
+/// Global counter of detected double-execute attempts. Incremented by
+/// `log_double_execute` whenever `handle_node` is reached for an Op/Transcr
+/// whose `return_value` is already populated (or whose `set` lost the race).
+/// `run_graph` snapshots and prints this after the main loop so the user
+/// can see whether the run was clean.
+pub static DOUBLE_EXECUTE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn log_double_execute(kind: &str, node: NodeIndex, op_disc: usize) {
+    DOUBLE_EXECUTE_COUNT.fetch_add(1, Ordering::SeqCst);
+    let bt = std::backtrace::Backtrace::capture();
+    eprintln!(
+        "[RUNTIME-RACE] {} node {:?} double-execute attempt; op discriminant = {}\n{}",
+        kind, node, op_disc, bt,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // MutexGraph implementation
 // ---------------------------------------------------------------------------
@@ -304,23 +320,23 @@ impl<C: ArkConfig> MutexGraph<C> {
 
         match node {
             Node::Op(operation, annotation) => {
+                if annotation.return_value.get().is_some() {
+                    log_double_execute("Op", node_curr, operation.discriminant_order());
+                    return Ok(());
+                }
                 let return_val = self.handle_op(&**operation, inputs)?;
                 if annotation.return_value.set(return_val).is_err() {
-                    panic!(
-                        "runtime invariant violation: Op node {:?} executed twice; op discriminant = {}",
-                        node_curr,
-                        operation.discriminant_order(),
-                    );
+                    log_double_execute("Op (set-race)", node_curr, operation.discriminant_order());
                 }
             }
             Node::Transcr(operation, annotation) => {
+                if annotation.return_value.get().is_some() {
+                    log_double_execute("Transcr", node_curr, operation.discriminant_order());
+                    return Ok(());
+                }
                 let return_val = self.handle_op(&**operation, inputs)?;
                 if annotation.return_value.set(return_val).is_err() {
-                    panic!(
-                        "runtime invariant violation: Transcr node {:?} executed twice; op discriminant = {}",
-                        node_curr,
-                        operation.discriminant_order(),
-                    );
+                    log_double_execute("Transcr (set-race)", node_curr, operation.discriminant_order());
                 }
             }
             Node::Inp(_) => {}
@@ -365,6 +381,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
+        let race_count_at_start = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst);
         // Build an Arc-wrapped inputs map once. Subsequent per-handle_op
         // accesses clone the Arc (cheap) instead of the inner `Value`
         // (which may be a 500 MB matrix vector). This is a one-time clone
@@ -580,6 +597,14 @@ impl<C: ArkConfig> MutexGraph<C> {
             "[run_graph] main loop completed after {} iterations",
             loop_count
         );
+
+        let race_count = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst) - race_count_at_start;
+        if race_count > 0 {
+            eprintln!(
+                "[RUNTIME-RACE] run_graph completed with {} double-execute attempt(s) (see [RUNTIME-RACE] lines above)",
+                race_count,
+            );
+        }
 
         // A worker may have recorded an error; surface it before collecting.
         if let Some(err) = error_slot.lock().unwrap().take() {
