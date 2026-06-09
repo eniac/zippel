@@ -305,19 +305,23 @@ impl<C: ArkConfig> MutexGraph<C> {
         match node {
             Node::Op(operation, annotation) => {
                 let return_val = self.handle_op(&**operation, inputs)?;
-                annotation
-                    .return_value
-                    .set(return_val)
-                    .map_err(|_| ())
-                    .expect("runtime invariant violation: node executed twice");
+                if annotation.return_value.set(return_val).is_err() {
+                    panic!(
+                        "runtime invariant violation: Op node {:?} executed twice; op discriminant = {}",
+                        node_curr,
+                        operation.discriminant_order(),
+                    );
+                }
             }
             Node::Transcr(operation, annotation) => {
                 let return_val = self.handle_op(&**operation, inputs)?;
-                annotation
-                    .return_value
-                    .set(return_val)
-                    .map_err(|_| ())
-                    .expect("runtime invariant violation: Transcr node executed twice");
+                if annotation.return_value.set(return_val).is_err() {
+                    panic!(
+                        "runtime invariant violation: Transcr node {:?} executed twice; op discriminant = {}",
+                        node_curr,
+                        operation.discriminant_order(),
+                    );
+                }
             }
             Node::Inp(_) => {}
             Node::Rel(_) => {}
