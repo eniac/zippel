@@ -247,14 +247,49 @@ pub mod native_side {
             // Match zippel parity: commit + open are both inside the
             // protocol body on the zippel side, so they're both timed
             // together as "prove" here.
+            //
+            // commit and open are INDEPENDENT (open only needs `poly` and
+            // `rand`, not the commitment), so we run them concurrently in
+            // a `rayon::scope` to mirror what the zippel dataflow scheduler
+            // does automatically with the `commitment <- dot(...)` and
+            // `proof <- dot(...)` nodes. Without this, the upstream
+            // KZG10 path serializes ≈2 MSMs + 1 poly division and looks
+            // 2× slower than zippel at small thread counts. At
+            // threads ≥ 8 intra-MSM parallelism saturates and the gap
+            // closes on its own; this fix matters most at threads = 1–4.
+            let powers = self.powers.as_powers();
             let t = Instant::now();
-            let (comm, rand) =
-                Kzg::commit(&self.powers.as_powers(), &poly, None, None).expect("kzg commit");
-            let proof = Kzg::open(&self.powers.as_powers(), &poly, point, &rand).expect("kzg open");
+            let (comm_out, proof_out) = {
+                use std::sync::Mutex;
+                use ark_poly_commit::PCCommitmentState;
+                let comm_out: Mutex<Option<_>> = Mutex::new(None);
+                let proof_out: Mutex<Option<_>> = Mutex::new(None);
+                let rand = ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
+                rayon::scope(|sc| {
+                    sc.spawn(|_| {
+                        let (comm, _r) =
+                            Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
+                        *comm_out.lock().unwrap() = Some(comm);
+                    });
+                    sc.spawn(|_| {
+                        // `open` does the poly division + the witness MSM.
+                        // With `hiding_bound = None` on the commit side,
+                        // `Randomness::empty()` is the correct rand to
+                        // pair with it.
+                        let proof = Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
+                        *proof_out.lock().unwrap() = Some(proof);
+                    });
+                });
+                (
+                    comm_out.into_inner().unwrap().unwrap(),
+                    proof_out.into_inner().unwrap().unwrap(),
+                )
+            };
             let prove = t.elapsed();
 
             let t = Instant::now();
-            let ok = Kzg::check(&self.vk, &comm, point, value, &proof).expect("kzg check");
+            let ok =
+                Kzg::check(&self.vk, &comm_out, point, value, &proof_out).expect("kzg check");
             let verify = t.elapsed();
 
             assert!(ok, "ark-poly-commit KZG verification FAILED");
