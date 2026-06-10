@@ -7,15 +7,16 @@
 # arkworks' parallel path for our protocols.
 #
 # Usage:
-#   benchmarks/run_all.sh                    # default: threads=1,4 → bench_results.csv
-#   THREADS="1,2,4,8" benchmarks/run_all.sh  # sweep more thread counts
+#   benchmarks/run_all.sh                       # default: all systems × threads=1,2,4,8,16
+#                                               # × max-size grid → bench_results.csv
+#   THREADS="1,4" benchmarks/run_all.sh         # narrower thread sweep
 #   OUT=results.csv benchmarks/run_all.sh
-#   QUICK=1 benchmarks/run_all.sh            # small grid for iteration
-#   SYSTEMS=kzg,pari benchmarks/run_all.sh   # filter systems
+#   QUICK=1 benchmarks/run_all.sh               # small grid for iteration
+#   SYSTEMS=kzg,pari benchmarks/run_all.sh      # filter systems
 
 set -euo pipefail
 
-THREADS="${THREADS:-1,4}"
+THREADS="${THREADS:-1,2,4,8,16}"
 OUT="${OUT:-bench_results.csv}"
 QUICK="${QUICK:-0}"
 SYSTEMS="${SYSTEMS:-}"
