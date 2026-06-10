@@ -144,6 +144,10 @@ impl<C: ArkConfig> AsymptoticCost<C> {
             (_, _) => 1.0, // unreachable!(),
         }
     }
+
+    fn fft_work_cost(n: f64, nthreads: usize) -> f64 {
+        n * n.log2() * Self::SCALAR_MUL / nthreads as f64
+    }
 }
 
 impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
@@ -194,26 +198,113 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             }
             Op::Ifft(op) => {
                 let n = op.typ().physical_len() as f64;
-                cost +=
-                    self.cost(op, nthreads).0 + (n * n.log2() * Self::SCALAR_MUL / nthreads as f64)
+                cost += self.cost(op, nthreads).0 + Self::fft_work_cost(n, nthreads)
             }
             Op::Fft(op) => {
                 let n = op.typ().physical_len() as f64;
-                cost +=
-                    self.cost(op, nthreads).0 + (n * n.log2() * Self::SCALAR_MUL / nthreads as f64)
+                cost += self.cost(op, nthreads).0 + Self::fft_work_cost(n, nthreads)
             }
             Op::Check(op) => cost += self.cost(op, nthreads).0,
             Op::Poly(_op) => cost += 1.0,
             Op::Mle(_op) => cost += 1.0,
-            Op::Evaluate(_p, _x) => cost += 1.0,
+            Op::Evaluate(p, None, None) => {
+                let n = p.typ().physical_len() as f64;
+                cost += self.cost(p, nthreads).0 + Self::fft_work_cost(n, nthreads)
+            }
+            Op::Evaluate(_, Some(_), None) => {
+                panic!("Op::Evaluate selected mode requires explicit points/fixed values")
+            }
+            Op::Evaluate(p, _, Some(points)) => {
+                cost += self.cost(p, nthreads).0 + self.cost(points, nthreads).0 + 1.0
+            }
+            Op::HypercubeReduceSelected(p, _, tail_num_vars) => {
+                let tail_count = 1usize
+                    .checked_shl(*tail_num_vars as u32)
+                    .unwrap_or(usize::MAX);
+                cost += self.cost(p, nthreads).0
+                    + (tail_count as f64 * Self::SCALAR_MUL / nthreads as f64)
+            }
             Op::Coef(_op) => cost += 1.0,
             Op::Reduce(_, v) => {
                 let (_, n) = v.typ().into_vec();
                 cost += self.cost(v, nthreads).0 + (n as f64 - 1.0) * Self::SCALAR_MUL;
             }
-            Op::Marginalize(op) => cost += self.cost(op, nthreads).0,
             Op::Proj(op, _, _) => cost += self.cost(op, nthreads).0,
         };
         cost.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mk;
+    use backend::{ATyp, ArkBls12_381};
+    use petgraph::graph::NodeIndex;
+
+    type C = ArkBls12_381;
+
+    fn ref_op(index: usize, typ: ATyp) -> GOp<C> {
+        Op::Ref(Ref::new(NodeIndex::new(index)), typ)
+    }
+
+    #[test]
+    fn scheduler_grid_eval_cost_matches_fft() {
+        let model = AsymptoticCost::<C>::new();
+        let nthreads = 4;
+        let poly = ref_op(0, ATyp::uni(1023));
+        let grid_eval = Op::Evaluate(mk::<C>(poly.clone()), None, None);
+        let fft = Op::Fft(mk::<C>(poly.clone()));
+
+        let grid_cost = model.cost(&grid_eval, nthreads).0;
+        let fft_cost = model.cost(&fft, nthreads).0;
+        let child_cost = model.cost(&poly, nthreads).0;
+        let n = poly.typ().physical_len() as f64;
+        let expected = child_cost + AsymptoticCost::<C>::fft_work_cost(n, nthreads);
+
+        assert_eq!(grid_cost, fft_cost);
+        assert_eq!(grid_cost, expected);
+        assert!(grid_cost > child_cost + 1.0);
+    }
+
+    #[test]
+    fn scheduler_explicit_and_selected_eval_do_not_use_fft_cost() {
+        let model = AsymptoticCost::<C>::new();
+        let nthreads = 4;
+        let poly = ref_op(0, ATyp::uni(1023));
+        let points = ref_op(1, ATyp::vec_scalar(1));
+        let fixed = ref_op(2, ATyp::vec_scalar(1));
+
+        let grid_eval = Op::Evaluate(mk::<C>(poly.clone()), None, None);
+        let explicit_eval =
+            Op::Evaluate(mk::<C>(poly.clone()), None, Some(mk::<C>(points.clone())));
+        let selected_eval = Op::Evaluate(
+            mk::<C>(poly.clone()),
+            Some(CRange::new(0, 1)),
+            Some(mk::<C>(fixed.clone())),
+        );
+
+        let grid_cost = model.cost(&grid_eval, nthreads).0;
+        let explicit_cost = model.cost(&explicit_eval, nthreads).0;
+        let selected_cost = model.cost(&selected_eval, nthreads).0;
+        let expected_explicit =
+            model.cost(&poly, nthreads).0 + model.cost(&points, nthreads).0 + 1.0;
+        let expected_selected =
+            model.cost(&poly, nthreads).0 + model.cost(&fixed, nthreads).0 + 1.0;
+
+        assert_eq!(explicit_cost, expected_explicit);
+        assert_eq!(selected_cost, expected_selected);
+        assert!(grid_cost > explicit_cost);
+        assert!(grid_cost > selected_cost);
+    }
+
+    #[test]
+    #[should_panic(expected = "Op::Evaluate selected mode requires explicit points/fixed values")]
+    fn scheduler_selected_eval_without_points_is_invalid() {
+        let model = AsymptoticCost::<C>::new();
+        let poly = ref_op(0, ATyp::uni(1023));
+        let invalid_selected_eval = Op::Evaluate(mk::<C>(poly), Some(CRange::new(0, 1)), None);
+
+        let _ = model.cost(&invalid_selected_eval, 4);
     }
 }

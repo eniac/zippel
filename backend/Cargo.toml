@@ -28,7 +28,7 @@ zeroize = "1.8.1"
 thiserror = "2.0.11"
 share = { path = "../share" }
 lang = { path = "../lang" }
-serde = "1.0.219"
+serde = { version = "1.0.219", features = ["derive"] }
 petgraph = "0.7.1"
 hashconsing = "1.6"
 lazy_static = "1.5"

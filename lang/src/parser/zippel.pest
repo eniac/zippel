@@ -19,8 +19,8 @@ and_op = @{ "&&" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" | "type" }
-id = @{ !(keyword ~ !ASCII_ALPHANUMERIC) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
+keyword = {"let" | "fn" | "proto" | "type" | "marginalize" }
+id = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 
 /// Ranges appear in types and expressions
@@ -79,7 +79,6 @@ exp_term  = _{
          | verify_exp
          | let_exp
          | log_exp
-         | marginalize_exp
          | app_exp
          | bool_exp
          | minus_exp
@@ -91,11 +90,11 @@ exp_term  = _{
     fun_exp       = { "fun" ~ ids ~ "=>" ~ exp }                      // Polynomial function definition
     interpolate_exp = { "interpolate" ~ "(" ~ exp ~ ("," ~ exp)? ~ ")" }// Unary: FFT grid (inverse FFT); binary: explicit points + evals
     poly_exp      = { "poly" ~ "(" ~ exp ~ ")" }                      // Polynomial from coefficients
-    eval_exp      = { "eval" ~ "(" ~ exp ~ ("," ~ exp)? ~ ")" }       // Unary: evaluate on FFT grid (FFT); binary: evaluate at explicit points
+    eval_exp      = { "eval" ~ eval_selector? ~ "(" ~ exp ~ ("," ~ exp)? ~ ")" } // Unary: evaluate on FFT grid (FFT); binary: evaluate at explicit points; selected: keep a free variable range
+    eval_selector = { "<" ~ (range | size_ty) ~ ">" }                   // eval<i> sugar or eval<i..j> free-variable range
     dot_exp       = { "dot" ~ "(" ~ exp ~ "," ~ exp ~ ")" }            // Dot product (use dot(a,b) instead of a . b)
     coef_exp      = { "coef" ~ "(" ~ exp ~ ")"}                       // Given a polynomial return vector of coefficients of polynomial
     mle_exp       = { "mle" ~ "(" ~ exp ~ ")" }                       // Multilinear extension from evaluations over bool hypercube
-    marginalize_exp = { "marginalize" ~ "(" ~ exp ~ ")" }             // Sum-check round marginalization helper
     random_exp    = { "random" ~ "<" ~ id ~ star? ~ ">" }             // Uniform random sampling (Prover)
     challenge_exp = { "challenge" ~ "<" ~ id ~ star? ~ ">" }          // Random oracle challenge (Verifier)
     map_exp       = { "[" ~ exp ~ "for" ~ id ~ "in" ~ exp ~ "]" }     // Map comprehension

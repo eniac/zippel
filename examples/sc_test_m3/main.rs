@@ -109,13 +109,18 @@ fn random_r1cs<R: Rng + ?Sized>(rng: &mut R, m: usize, z: &[F]) -> (Vec<F>, Vec<
         let mut c_row: Vec<F> = (0..m).map(|_| F::rand(rng)).collect();
         let az: F = a_row.iter().zip(z.iter()).map(|(x, y)| *x * *y).sum();
         let bz: F = b_row.iter().zip(z.iter()).map(|(x, y)| *x * *y).sum();
-        let other: F = c_row.iter().zip(z.iter()).enumerate()
-            .filter(|(j, _)| *j != cc).map(|(_, (c, zj))| *c * *zj).sum();
+        let other: F = c_row
+            .iter()
+            .zip(z.iter())
+            .enumerate()
+            .filter(|(j, _)| *j != cc)
+            .map(|(_, (c, zj))| *c * *zj)
+            .sum();
         c_row[cc] = az * bz - other;
         for j in 0..m {
-            a[i*m+j] = a_row[j];
-            b[i*m+j] = b_row[j];
-            c[i*m+j] = c_row[j];
+            a[i * m + j] = a_row[j];
+            b[i * m + j] = b_row[j];
+            c[i * m + j] = c_row[j];
         }
     }
     (a, b, c)

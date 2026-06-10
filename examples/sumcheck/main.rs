@@ -6,14 +6,43 @@ use backend::poly_variant::PolyVariant;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
+use std::{env, path::PathBuf, thread, time::Instant};
 use zippel::*;
 
 const NUM_VARS: usize = 10;
 const MAX_DEGREE: usize = 10;
 const DROP_EVAL_POINT_TEST: bool = false;
+const DEFAULT_SUMCHECK_EXAMPLE_STACK_SIZE: usize = 64 * 1024 * 1024;
+const SUMCHECK_EXAMPLE_STACK_ENV: &str = "ZIPPEL_SUMCHECK_EXAMPLE_STACK_SIZE";
 
 fn main() {
+    let stack_size = configured_stack_size();
+    let worker = thread::Builder::new()
+        .name("zippel-sumcheck-example".to_string())
+        .stack_size(stack_size)
+        .spawn(run_sumcheck_example)
+        .expect("failed to spawn sumcheck example worker thread");
+
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn configured_stack_size() -> usize {
+    match env::var(SUMCHECK_EXAMPLE_STACK_ENV) {
+        Ok(raw) => raw.parse::<usize>().unwrap_or_else(|_| {
+            eprintln!("{SUMCHECK_EXAMPLE_STACK_ENV} must be a decimal byte count; got {raw:?}.");
+            std::process::exit(2);
+        }),
+        Err(env::VarError::NotPresent) => DEFAULT_SUMCHECK_EXAMPLE_STACK_SIZE,
+        Err(err) => {
+            eprintln!("Could not read {SUMCHECK_EXAMPLE_STACK_ENV}: {err}");
+            std::process::exit(2);
+        }
+    }
+}
+
+fn run_sumcheck_example() {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel");
     let num_vars = NUM_VARS;

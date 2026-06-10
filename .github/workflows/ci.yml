@@ -17,6 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check for Windows reserved-name path components
+        shell: bash
+        run: bash .github/scripts/check-windows-reserved-names.sh
+
       - name: Install build dependencies
         run: |
           apt-get update
@@ -35,12 +39,19 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets
 
+      - name: cargo check benchmarks
+        run: cargo check --manifest-path benchmarks/Cargo.toml --all-targets
+
   test:
     name: Test
     runs-on: ubuntu-latest
     container: rustlang/rust:nightly
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check for Windows reserved-name path components
+        shell: bash
+        run: bash .github/scripts/check-windows-reserved-names.sh
 
       - name: Install build dependencies
         run: |
@@ -53,3 +64,6 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace
+
+      - name: cargo test benchmarks sumcheck_gate
+        run: cargo test --manifest-path benchmarks/Cargo.toml sumcheck_gate

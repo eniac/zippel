@@ -710,9 +710,9 @@ fn pin_interpolate() {
     assert!(gs[0] == expected);
 }
 
-/// Fft operation: polynomial → vector (evaluation on the FFT grid).
-/// Surface syntax: `eval(p)` (unary) lowers to Op::Fft.
-/// Tests: CExp::Evaluate(_, None), Node::fft.
+/// FFT-grid eval operation: polynomial → vector (evaluation on the FFT grid).
+/// Surface syntax: `eval(p)` (unary) lowers to merged Op::Evaluate(_, None, None).
+/// Tests: CExp::Evaluate(_, None, None), GOp::evaluate_grid.
 #[test]
 fn pin_fft() {
     // Phase 14 m+1 convention + issue #116: Uni<F, 3> has 4 coefficients
@@ -732,10 +732,101 @@ fn pin_fft() {
     let arg_a = _inp_args[0];
     let var_a = GOp::<B>::var(&a, arg_a, poly_typ);
 
-    let fft_node = expected.add_node(Node::fft(&var_a));
-    expected.add_edges(DepType::Data, fft_node, var_a);
+    let eval_node = expected.add_node(Node::evaluate_grid(&var_a));
+    expected.add_edges(DepType::Data, eval_node, var_a);
 
     assert!(gs[0] == expected);
+}
+
+#[test]
+fn grid_eval_let_reuse_materializes_one_node() {
+    let src = r#"
+        fn f<F: Field>(public p: Uni<F, 3>) -> F {
+            let evs = eval(p);
+            evs[0] + evs[1]
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+
+    let grid_nodes = dag
+        .graph
+        .node_indices()
+        .filter(|&idx| {
+            matches!(
+                dag.graph[idx].op(),
+                Some(op) if matches!(op.get(), crate::Op::Evaluate(_, None, None))
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(grid_nodes.len(), 1, "expected one scheduled grid eval node");
+    let grid_node = grid_nodes[0];
+
+    let ram_bases = dag
+        .graph
+        .node_weights()
+        .filter_map(|node| node.op())
+        .flat_map(|op| ram_bases_referring_to_grid_eval(op.get(), grid_node))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ram_bases.len(),
+        2,
+        "expected both evs[0] and evs[1] to read from the scheduled grid eval node"
+    );
+
+    let inline_grid_evals_under_consumers = dag
+        .graph
+        .node_indices()
+        .filter(|&idx| idx != grid_node)
+        .filter_map(|idx| dag.graph[idx].op())
+        .map(|op| inline_grid_eval_count_inside_consumers(op.get()))
+        .sum::<usize>();
+    assert_eq!(
+        inline_grid_evals_under_consumers, 0,
+        "downstream consumers should reference the materialized grid eval, not embed inline eval(p) ops"
+    );
+}
+
+fn ram_bases_referring_to_grid_eval(op: &GOp<B>, grid_node: NodeIndex) -> Vec<NodeIndex> {
+    match op {
+        crate::Op::Ram(base, index) => {
+            let mut refs = ram_bases_referring_to_grid_eval(base.get(), grid_node);
+            refs.extend(ram_bases_referring_to_grid_eval(index.get(), grid_node));
+            if matches!(base.get(), crate::Op::Ref(Ref(node), _) if *node == grid_node) {
+                refs.push(grid_node);
+            }
+            refs
+        }
+        crate::Op::Bin(_, left, right, _) | crate::Op::Pair(left, right, _) => {
+            let mut refs = ram_bases_referring_to_grid_eval(left.get(), grid_node);
+            refs.extend(ram_bases_referring_to_grid_eval(right.get(), grid_node));
+            refs
+        }
+        crate::Op::Vec(children) => children
+            .iter()
+            .flat_map(|child| ram_bases_referring_to_grid_eval(child.get(), grid_node))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn inline_grid_eval_count_inside_consumers(op: &GOp<B>) -> usize {
+    match op {
+        crate::Op::Evaluate(_, None, None) => 1,
+        crate::Op::Ram(base, index) => {
+            inline_grid_eval_count_inside_consumers(base.get())
+                + inline_grid_eval_count_inside_consumers(index.get())
+        }
+        crate::Op::Bin(_, left, right, _) | crate::Op::Pair(left, right, _) => {
+            inline_grid_eval_count_inside_consumers(left.get())
+                + inline_grid_eval_count_inside_consumers(right.get())
+        }
+        crate::Op::Vec(children) => children
+            .iter()
+            .map(|child| inline_grid_eval_count_inside_consumers(child.get()))
+            .sum(),
+        _ => 0,
+    }
 }
 
 /// Mle operation.
@@ -1156,7 +1247,7 @@ fn pin_ram_expr() {
 }
 
 /// Eval expression: `eval(p, x)` produces nested Evaluate op, no graph node.
-/// Tests: CExp::Evaluate(p, Some(x)) → GOp::evaluate wrapping two Refs in ret node.
+/// Tests: CExp::Evaluate(p, None, Some(x)) → GOp::evaluate wrapping two Refs in ret node.
 #[test]
 fn pin_eval() {
     let src = r#"

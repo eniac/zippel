@@ -1,8 +1,7 @@
 pub mod error;
 
-use crate::{GOp, Op, Ref};
-use backend::values::marginalize as backend_marginalize;
-use backend::{ArkConfig, Value};
+use crate::{GOp, HOp, Op, Ref};
+use backend::{ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
 use rand::RngCore;
@@ -31,6 +30,16 @@ use std::sync::Arc;
 /// `runtime::graph::run_graph` sync-channel handling); the bare
 /// `Op::Challenge` arm here preserves the runtime's existing `ThreadRng`
 /// fallback behavior.
+fn selected_eval_shape<C: ArkConfig>(p: &HOp<C>, range: &lang::typ::CRange) -> SelectedEvalShape {
+    let (input_num_vars, max_degree) = match p.typ() {
+        ATyp::Uni(d) => (1, d),
+        ATyp::Mle(n) => (n, 1),
+        ATyp::VPoly(n, d) => (n, d),
+        other => panic!("Selected eval expects polynomial input, got {other}"),
+    };
+    SelectedEvalShape::new(input_num_vars, range.len(), max_degree)
+}
+
 pub fn eval_op<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
@@ -127,10 +136,34 @@ where
         }
         Op::Random(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
         Op::Challenge(typ, _) => Ok(Arc::new(Value::random(rng, typ))),
-        Op::Evaluate(p, x) => {
+        Op::Evaluate(p, None, None) => {
+            let p_val = Arc::unwrap_or_clone(eval_op(p, env, rng)?);
+            Ok(Arc::new(p_val.value_fft()))
+        }
+        Op::Evaluate(p, None, Some(x)) => {
             let p_val = Arc::unwrap_or_clone(eval_op(p, env, rng)?);
             let x_val = Arc::unwrap_or_clone(eval_op(x, env, rng)?);
             Ok(Arc::new(p_val.value_eval(x_val)))
+        }
+        Op::Evaluate(p, Some(range), Some(fixed)) => {
+            let shape = selected_eval_shape(p, range);
+            let p_val = Arc::unwrap_or_clone(eval_op(p, env, rng)?);
+            let fixed_val = Arc::unwrap_or_clone(eval_op(fixed, env, rng)?);
+            Ok(Arc::new(
+                p_val.value_eval_selected(*range, fixed_val, shape),
+            ))
+        }
+        Op::Evaluate(_, Some(_), None) => {
+            panic!("Op::Evaluate selected mode requires explicit points/fixed values")
+        }
+        Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
+            let shape = selected_eval_shape(p, range);
+            let p_val = Arc::unwrap_or_clone(eval_op(p, env, rng)?);
+            Ok(Arc::new(p_val.value_hypercube_reduce_selected(
+                *range,
+                *tail_num_vars,
+                shape,
+            )))
         }
         Op::Coef(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_coef())),
         Op::Poly(a) => Ok(Arc::new((*eval_op(a, env, rng)?).value_poly())),
@@ -153,7 +186,6 @@ where
             let v_val = Arc::unwrap_or_clone(eval_op(v, env, rng)?);
             Ok(Arc::new(v_val.value_reduce(*binop)))
         }
-        Op::Marginalize(a) => eval_marginalize(a, env, rng),
         Op::Proj(record_op, field_name, _) => {
             let rec_val = eval_op(record_op, env, rng)?;
             let Value::Record(r) = &*rec_val else {
@@ -162,99 +194,6 @@ where
             Ok(Arc::new(r.get(field_name).cloned().unwrap()))
         }
     }
-}
-
-/// Body of `Op::Marginalize` evaluation, factored out for readability.
-/// Mirrors `runtime::graph::MutexGraph::handle_op`'s Marginalize arm.
-fn eval_marginalize<C, R>(
-    a: &crate::HOp<C>,
-    env: &HashMap<Ref, Arc<Value<C>>>,
-    rng: &mut R,
-) -> Result<Arc<Value<C>>, EvalError>
-where
-    C: ArkConfig,
-    R: RngCore,
-{
-    let (poly_val, challenge_val, round_val, num_variables_val, max_degree_val) = match &**a {
-        Op::Record(fields) => {
-            let poly_op = fields
-                .get(&"poly".to_string())
-                .expect("marginalize: missing field 'poly'");
-            let challenge_op = fields
-                .get(&"challenge".to_string())
-                .expect("marginalize: missing field 'challenge'");
-            let round_op = fields.get(&"round".to_string());
-            let num_variables_op = fields.get(&"num_variables".to_string());
-            let max_degree_op = fields.get(&"max_degree".to_string());
-
-            let poly_val = Arc::unwrap_or_clone(eval_op(poly_op, env, rng)?);
-            let challenge_val = Arc::unwrap_or_clone(eval_op(challenge_op, env, rng)?);
-            let round_val = match round_op {
-                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
-                None => None,
-            };
-            let num_variables_val = match num_variables_op {
-                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
-                None => None,
-            };
-            let max_degree_val = match max_degree_op {
-                Some(op) => Some(Arc::unwrap_or_clone(eval_op(op, env, rng)?)),
-                None => None,
-            };
-            (
-                poly_val,
-                challenge_val,
-                round_val,
-                num_variables_val,
-                max_degree_val,
-            )
-        }
-        _ => {
-            let cfg_val = Arc::unwrap_or_clone(eval_op(a, env, rng)?);
-            let Value::Record(record) = cfg_val else {
-                unreachable!()
-            };
-            let poly_val = record.get(&"poly".to_string()).cloned().unwrap();
-            let challenge_val = record.get(&"challenge".to_string()).cloned().unwrap();
-            let round_val = record.get(&"round".to_string()).cloned();
-            let num_variables_val = record.get(&"num_variables".to_string()).cloned();
-            let max_degree_val = record.get(&"max_degree".to_string()).cloned();
-            (
-                poly_val,
-                challenge_val,
-                round_val,
-                num_variables_val,
-                max_degree_val,
-            )
-        }
-    };
-
-    let poly = poly_val.into_poly().clone();
-    let challenge = Some(challenge_val.into_scalar());
-    let round = round_val.map(|v| v.into_index()).unwrap_or(0usize);
-
-    let num_variables = if let Some(v) = num_variables_val {
-        v.into_index()
-    } else {
-        let current_poly_vars = poly.num_vars().unwrap_or(1);
-        if round == 0 {
-            current_poly_vars
-        } else {
-            current_poly_vars + (round - 1)
-        }
-    };
-
-    let max_degree = max_degree_val
-        .map(|v| v.into_index())
-        .unwrap_or_else(|| poly.degree());
-
-    let (evals, next_poly) =
-        backend_marginalize::<C>(&poly, num_variables, max_degree, round, challenge);
-
-    let mut out_fields: Ctx<String, Value<C>> = Ctx::new();
-    out_fields.insert(&"evaluations".to_string(), &Value::VecScalar(evals));
-    out_fields.insert(&"next_poly".to_string(), &Value::Poly(next_poly));
-    Ok(Arc::new(Value::Record(out_fields)))
 }
 
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
@@ -270,13 +209,15 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
     match op {
         Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => {}
         Op::Ref(r, _) => acc.push(*r),
-        Op::Bin(_, a, b, _)
-        | Op::Pair(a, b, _)
-        | Op::Ram(a, b)
-        | Op::Evaluate(a, b)
-        | Op::Interpolate(a, b) => {
+        Op::Bin(_, a, b, _) | Op::Pair(a, b, _) | Op::Ram(a, b) | Op::Interpolate(a, b) => {
             collect_refs_into(a, acc);
             collect_refs_into(b, acc);
+        }
+        Op::Evaluate(a, _, maybe_b) => {
+            collect_refs_into(a, acc);
+            if let Some(b) = maybe_b {
+                collect_refs_into(b, acc);
+            }
         }
         Op::Vec(children) => {
             for child in children {
@@ -294,7 +235,7 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
         | Op::Ifft(a)
         | Op::Fft(a)
         | Op::Mle(a)
-        | Op::Marginalize(a)
+        | Op::HypercubeReduceSelected(a, _, _)
         | Op::Proj(a, _, _)
         | Op::Reduce(_, a) => {
             collect_refs_into(a, acc);

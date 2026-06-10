@@ -250,50 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn test_marginalize_op() {
-        let mut builder = GraphBuilder::<TestConfig>::new();
-
-        let poly = Value::<TestConfig>::VecIndex(vec![1, 2, 3]).value_poly();
-        let mut cfg_fields = Ctx::new();
-        cfg_fields.insert(&"poly".to_string(), &mk(Op::Value(poly)));
-        cfg_fields.insert(
-            &"challenge".to_string(),
-            &mk(Op::Value(Value::Scalar(
-                <TestConfig as ArkConfig>::FOps::zero(),
-            ))),
-        );
-        cfg_fields.insert(&"round".to_string(), &mk(Op::Value(Value::Index(0))));
-        cfg_fields.insert(
-            &"num_variables".to_string(),
-            &mk(Op::Value(Value::Index(1))),
-        );
-        cfg_fields.insert(&"max_degree".to_string(), &mk(Op::Value(Value::Index(2))));
-        let cfg = Op::Record(cfg_fields);
-
-        builder.add_op(Op::Marginalize(mk(cfg)));
-
-        let dag = builder.build();
-        let result = execute_graph(&dag, test_inputs()).expect("expected marginalize result");
-        let Value::Record(fields) = result else {
-            panic!("expected Value::Record from marginalize");
-        };
-        let evals = fields
-            .get(&"evaluations".to_string())
-            .expect("evaluations field");
-        let next_poly = fields
-            .get(&"next_poly".to_string())
-            .expect("next_poly field");
-        match evals {
-            Value::VecScalar(v) => assert_eq!(v.len(), 3),
-            other => panic!("expected VecScalar evaluations, got {other:?}"),
-        }
-        match next_poly {
-            Value::Poly(_) => {}
-            other => panic!("expected Poly next_poly, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn test_execute_multiple_checks() {
         use crate::UDags;
         use lang::ast::UModule;

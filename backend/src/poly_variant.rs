@@ -8,7 +8,9 @@ use ark_poly::{
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use lang::ast::BinOp;
+use lang::typ::CRange;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use thiserror::Error;
@@ -55,6 +57,9 @@ pub enum PolyError<F: Field> {
         expected: usize,
         actual: usize,
     },
+
+    #[error("Vector evaluation requires a univariate polynomial:\n\t{polynomial}")]
+    VectorEvaluationRequiresUnivariate { polynomial: PolyVariant<F> },
 
     #[error("MLE variable count mismatch: {v1} vs {v2}")]
     MleVariableMismatch { v1: usize, v2: usize },
@@ -137,6 +142,137 @@ fn fix_first_variables_parallel<F: Field>(
     DenseMultilinearExtension::from_evaluations_slice(nv - dim, &data[..(1 << (nv - dim))])
 }
 
+fn fixed_index_for_var(free_range: CRange, var_idx: usize) -> Option<usize> {
+    if var_idx < free_range.start {
+        Some(var_idx)
+    } else if var_idx >= free_range.end {
+        Some(free_range.start + (var_idx - free_range.end))
+    } else {
+        None
+    }
+}
+
+fn restrict_dense_mle_except_range<F: Field>(
+    input_num_vars: usize,
+    evals: &[F],
+    free_range: CRange,
+    fixed: &[F],
+) -> DenseMultilinearExtension<F> {
+    if let Some(fixed_bits) = field_bits(fixed) {
+        return restrict_dense_mle_except_range_boolean(
+            input_num_vars,
+            evals,
+            free_range,
+            &fixed_bits,
+        );
+    }
+
+    let free_len = free_range.len();
+    let mut out = vec![F::zero(); 1usize << free_len];
+    for (idx, value) in evals.iter().copied().enumerate() {
+        let mut free_idx = 0usize;
+        let mut factor = value;
+        for var_idx in 0..input_num_vars {
+            let bit = (idx >> var_idx) & 1;
+            if var_idx >= free_range.start && var_idx < free_range.end {
+                if bit == 1 {
+                    free_idx |= 1usize << (var_idx - free_range.start);
+                }
+            } else {
+                let fixed_value = fixed[fixed_index_for_var(free_range, var_idx).unwrap()];
+                factor *= if bit == 1 {
+                    fixed_value
+                } else {
+                    F::one() - fixed_value
+                };
+            }
+        }
+        out[free_idx] += factor;
+    }
+    DenseMultilinearExtension::from_evaluations_vec(free_len, out)
+}
+
+fn field_bits<F: Field>(values: &[F]) -> Option<Vec<bool>> {
+    values
+        .iter()
+        .map(|value| {
+            if value.is_zero() {
+                Some(false)
+            } else if *value == F::one() {
+                Some(true)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn restrict_dense_mle_except_range_boolean<F: Field>(
+    input_num_vars: usize,
+    evals: &[F],
+    free_range: CRange,
+    fixed_bits: &[bool],
+) -> DenseMultilinearExtension<F> {
+    let free_len = free_range.len();
+    let mut out = vec![F::zero(); 1usize << free_len];
+    let fill_value = |free_idx: usize| {
+        let mut source_idx = 0usize;
+        for var_idx in 0..input_num_vars {
+            let bit = if var_idx >= free_range.start && var_idx < free_range.end {
+                ((free_idx >> (var_idx - free_range.start)) & 1) == 1
+            } else {
+                fixed_bits[fixed_index_for_var(free_range, var_idx).unwrap()]
+            };
+            if bit {
+                source_idx |= 1usize << var_idx;
+            }
+        }
+        evals[source_idx]
+    };
+
+    if out.len() <= 1024 {
+        for (free_idx, out_value) in out.iter_mut().enumerate() {
+            *out_value = fill_value(free_idx);
+        }
+    } else {
+        out.par_iter_mut()
+            .enumerate()
+            .for_each(|(free_idx, out_value)| *out_value = fill_value(free_idx));
+    }
+    DenseMultilinearExtension::from_evaluations_vec(free_len, out)
+}
+
+fn restrict_sparse_mle_except_range<F: Field>(
+    input_num_vars: usize,
+    evals: &[(usize, F)],
+    free_range: CRange,
+    fixed: &[F],
+) -> DenseMultilinearExtension<F> {
+    let free_len = free_range.len();
+    let mut out = vec![F::zero(); 1usize << free_len];
+    for (idx, value) in evals.iter().copied() {
+        let mut free_idx = 0usize;
+        let mut factor = value;
+        for var_idx in 0..input_num_vars {
+            let bit = (idx >> var_idx) & 1;
+            if var_idx >= free_range.start && var_idx < free_range.end {
+                if bit == 1 {
+                    free_idx |= 1usize << (var_idx - free_range.start);
+                }
+            } else {
+                let fixed_value = fixed[fixed_index_for_var(free_range, var_idx).unwrap()];
+                factor *= if bit == 1 {
+                    fixed_value
+                } else {
+                    F::one() - fixed_value
+                };
+            }
+        }
+        out[free_idx] += factor;
+    }
+    DenseMultilinearExtension::from_evaluations_vec(free_len, out)
+}
+
 impl<F: Field> PolyVariant<F> {
     /// Get the degree of the polynomial
     pub fn degree(&self) -> usize {
@@ -151,7 +287,10 @@ impl<F: Field> PolyVariant<F> {
 
     /// Densify a `SparseMle`: instantiate the `2^num_vars` evaluation vector
     /// by scattering the listed `(index, value)` pairs. O(`2^num_vars + |evals|`).
-    fn sparse_mle_to_dense_mle(num_vars: usize, evals: &[(usize, F)]) -> DenseMultilinearExtension<F> {
+    fn sparse_mle_to_dense_mle(
+        num_vars: usize,
+        evals: &[(usize, F)],
+    ) -> DenseMultilinearExtension<F> {
         let len = 1usize << num_vars;
         let mut dense = vec![F::zero(); len];
         for (idx, val) in evals {
@@ -631,8 +770,7 @@ impl<F: Field> PolyVariant<F> {
                 })
             }
             PolyVariant::SparseMle { num_vars, evals } => {
-                let neg_evals: Vec<(usize, F)> =
-                    evals.iter().map(|(i, v)| (*i, -*v)).collect();
+                let neg_evals: Vec<(usize, F)> = evals.iter().map(|(i, v)| (*i, -*v)).collect();
                 PolyVariant::SparseMle {
                     num_vars: *num_vars,
                     evals: neg_evals,
@@ -880,6 +1018,123 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
+    /// Fix all variables outside a contiguous free range, preserving the
+    /// selected variables in their original order.
+    ///
+    /// `fixed` is ordered as variables `[0, range.start)` followed by
+    /// variables `[range.end, input_num_vars)`. `input_num_vars` is the
+    /// caller's static polynomial arity; selected eval must not guess arity
+    /// from constant/zero payloads.
+    pub fn fix_variables_except_range(
+        &self,
+        input_num_vars: usize,
+        free_range: CRange,
+        fixed: &[F],
+    ) -> Result<Self, PolyError<F>> {
+        let free_len = free_range.len();
+        if free_range.step != 1
+            || free_range.start >= free_range.end
+            || free_range.end > input_num_vars
+            || free_len == 0
+            || fixed.len() != input_num_vars - free_len
+        {
+            return Err(PolyError::DimensionMismatch {
+                polynomial: self.clone(),
+                expected: input_num_vars.saturating_sub(free_len),
+                actual: fixed.len(),
+            });
+        }
+
+        match self {
+            PolyVariant::DenseMle(mle) => {
+                if mle.num_vars() != input_num_vars {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: input_num_vars,
+                        actual: mle.num_vars(),
+                    });
+                }
+                Ok(PolyVariant::DenseMle(restrict_dense_mle_except_range(
+                    input_num_vars,
+                    &mle.evaluations,
+                    free_range,
+                    fixed,
+                )))
+            }
+            PolyVariant::SparseMle { num_vars, evals } => {
+                if *num_vars != input_num_vars {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: input_num_vars,
+                        actual: *num_vars,
+                    });
+                }
+                Ok(PolyVariant::DenseMle(restrict_sparse_mle_except_range(
+                    input_num_vars,
+                    evals,
+                    free_range,
+                    fixed,
+                )))
+            }
+            PolyVariant::SparseMultivariate(p) => {
+                if p.num_vars != input_num_vars {
+                    return Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: input_num_vars,
+                        actual: p.num_vars,
+                    });
+                }
+
+                let mut terms_by_monomial: HashMap<MultiSparseTerm, F> = HashMap::new();
+                for (coeff, term) in &p.terms {
+                    let mut new_coeff = *coeff;
+                    let mut new_term = Vec::with_capacity(term.len());
+                    for &(var_idx, pow) in term.iter() {
+                        if var_idx < free_range.start {
+                            new_coeff *= fixed[var_idx].pow(&[pow as u64]);
+                        } else if var_idx >= free_range.end {
+                            let fixed_idx = free_range.start + (var_idx - free_range.end);
+                            new_coeff *= fixed[fixed_idx].pow(&[pow as u64]);
+                        } else {
+                            new_term.push((var_idx - free_range.start, pow));
+                        }
+                    }
+                    if !new_coeff.is_zero() {
+                        *terms_by_monomial
+                            .entry(MultiSparseTerm::new(new_term))
+                            .or_insert_with(F::zero) += new_coeff;
+                    }
+                }
+
+                let terms = terms_by_monomial
+                    .into_iter()
+                    .filter_map(|(term, coeff)| (!coeff.is_zero()).then_some((coeff, term)))
+                    .collect();
+                Ok(PolyVariant::SparseMultivariate(
+                    SparseMultivariatePolynomial {
+                        num_vars: free_len,
+                        terms,
+                    },
+                ))
+            }
+            PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => {
+                if input_num_vars == 1
+                    && free_range.start == 0
+                    && free_range.end == 1
+                    && fixed.is_empty()
+                {
+                    Ok(self.clone())
+                } else {
+                    Err(PolyError::DimensionMismatch {
+                        polynomial: self.clone(),
+                        expected: input_num_vars.saturating_sub(free_len),
+                        actual: fixed.len(),
+                    })
+                }
+            }
+        }
+    }
+
     /// Evaluate MLE at a boolean hypercube point
     pub fn evaluate_mle(&self, point: &[F]) -> Result<F, PolyError<F>> {
         match self {
@@ -897,9 +1152,9 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
-    /// Evaluate univariate polynomial at multiple points
-    /// Returns a univariate polynomial representing the vector of results
-    pub fn evaluate_vec(&self, points: &[F]) -> Self {
+    /// Evaluate univariate polynomial at multiple points.
+    /// Returns an MLE representing the vector of results.
+    pub fn try_evaluate_vec(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         match self {
             PolyVariant::DenseUni(p) => {
                 let vals: Vec<F> = points.iter().map(|pt| p.evaluate(pt)).collect();
@@ -907,8 +1162,8 @@ impl<F: Field> PolyVariant<F> {
                 let num_vars = (vals.len() as f64).log2().ceil() as usize;
                 let mut padded = vals.clone();
                 padded.resize(1 << num_vars, F::zero());
-                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-                    num_vars, padded,
+                Ok(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::from_evaluations_vec(num_vars, padded),
                 ))
             }
             PolyVariant::SparseUni(p) => {
@@ -917,12 +1172,23 @@ impl<F: Field> PolyVariant<F> {
                 let num_vars = (vals.len() as f64).log2().ceil() as usize;
                 let mut padded = vals.clone();
                 padded.resize(1 << num_vars, F::zero());
-                PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
-                    num_vars, padded,
+                Ok(PolyVariant::DenseMle(
+                    DenseMultilinearExtension::from_evaluations_vec(num_vars, padded),
                 ))
             }
-            _ => panic!("evaluate_vec only works for univariate polynomials"),
+            _ => Err(PolyError::VectorEvaluationRequiresUnivariate {
+                polynomial: self.clone(),
+            }),
         }
+    }
+
+    /// Evaluate univariate polynomial at multiple points.
+    ///
+    /// This infallible compatibility wrapper panics explicitly on unsupported
+    /// shapes; use [`Self::try_evaluate_vec`] to handle errors.
+    pub fn evaluate_vec(&self, points: &[F]) -> Self {
+        self.try_evaluate_vec(points)
+            .expect("PolyVariant::evaluate_vec failed; use try_evaluate_vec to handle errors")
     }
 
     /// Evaluate or partially fix MLE variables

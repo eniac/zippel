@@ -3,6 +3,7 @@
 pub mod config;
 pub mod nothing;
 pub mod op;
+pub mod optimization;
 pub mod poly_variant;
 pub mod types;
 pub mod values;
@@ -15,10 +16,11 @@ pub use config::{
 };
 pub use nothing::{NoCurve, NoField, NoPairing};
 pub use op::{GOp, HasOpFactory, Op, Ref};
+pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use types::{ABase, ATyp, binomial};
 pub use values::{Value, value_to_bytes};
-pub use virtual_polynomial::VirtualPolynomial;
+pub use virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
 
 #[cfg(test)]
 mod tests;
