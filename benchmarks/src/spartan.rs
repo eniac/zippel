@@ -74,13 +74,21 @@ impl Setup {
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
 
         let verifier_scheduled = self.handler.default_schedule_verifier();
-        let t = Instant::now();
-        let verifier_result = self
-            .handler
-            .run_verifier(verifier_scheduled, proof)
-            .expect("zippel spartan verifier failed");
-        let verify = t.elapsed();
-        let passed = check_verification(verifier_result).passed;
+        let mut verify_sum = std::time::Duration::ZERO;
+        let mut last_result = None;
+        for _ in 0..crate::VERIFY_SAMPLES {
+            let sched = verifier_scheduled.clone();
+            let proof_c = proof.clone();
+            let t = Instant::now();
+            let verifier_result = self
+                .handler
+                .run_verifier(sched, proof_c)
+                .expect("zippel spartan verifier failed");
+            verify_sum += t.elapsed();
+            last_result = Some(verifier_result);
+        }
+        let verify = verify_sum / crate::VERIFY_SAMPLES;
+        let passed = check_verification(last_result.expect("VERIFY_SAMPLES > 0")).passed;
 
         ZippelTiming {
             prove,

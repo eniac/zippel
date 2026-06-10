@@ -205,10 +205,16 @@ pub mod native_side {
             let proof = Pcs::open(&self.ck, &poly, &point);
             let prove = t.elapsed();
 
-            let t = Instant::now();
-            let ok = Pcs::check(&self.vk, &comm, &point, value, &proof);
-            let verify = t.elapsed();
-            assert!(ok, "ark-poly-commit MultilinearPC verification FAILED");
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Pcs::check(&self.vk, &comm, &point, value, &proof);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "ark-poly-commit MultilinearPC verification FAILED");
 
             Timing { prove, verify }
         }
@@ -432,13 +438,21 @@ pub mod zippel_side {
             let prove = t.elapsed();
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel pst13 verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel pst13 verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel PST13 verification FAILED");
 
             Timing { prove, verify }

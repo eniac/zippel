@@ -94,13 +94,21 @@ pub mod zippel_side {
             let prove = t.elapsed();
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel hyrax verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel hyrax verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel hyrax verification FAILED");
             Timing { prove, verify }
         }
@@ -261,19 +269,28 @@ pub mod native_side {
             .expect("hyrax open");
             let prove = t.elapsed();
 
-            let t = Instant::now();
-            let mut sponge_v = test_sponge::<Fr>();
-            let ok = Hyrax::check(
-                &self.vk,
-                &coms,
-                &point,
-                [value],
-                &proof,
-                &mut sponge_v,
-                None,
-            )
-            .expect("hyrax check");
-            let verify = t.elapsed();
+            // Hyrax::check takes &mut sponge; re-seed per iteration.
+            // Sponge re-init happens OUTSIDE the per-call timer.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let mut sponge_v = test_sponge::<Fr>();
+                let t = Instant::now();
+                let ok = Hyrax::check(
+                    &self.vk,
+                    &coms,
+                    &point,
+                    [value],
+                    &proof,
+                    &mut sponge_v,
+                    None,
+                )
+                .expect("hyrax check");
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let ok = last_ok;
             assert!(ok, "upstream Hyrax verification FAILED");
 
             let _ = (Fr::one(), Fr::zero());

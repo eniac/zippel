@@ -54,6 +54,12 @@ struct Args {
     /// Don't write the CSV header row (for concatenating across runs).
     #[arg(long)]
     no_header: bool,
+    /// Append to the output CSV instead of truncating it. Pair with
+    /// `--no-header` when continuing a file written by an earlier run
+    /// (e.g. `run_all.sh` sweeping multiple thread counts into a single
+    /// CSV — each thread iteration appends so Ctrl-C never loses rows).
+    #[arg(long)]
+    append: bool,
     /// Override every system's log_size grid with this comma-separated
     /// list. For kzg the entries are converted to n_coeffs = 1 << log_size.
     /// Useful for re-running a single failing point, e.g.
@@ -236,8 +242,12 @@ fn native_ncloc(sys: &str) -> usize {
 
 static CSV_WRITER: OnceLock<Mutex<BufWriter<std::fs::File>>> = OnceLock::new();
 
-fn init_csv(path: &PathBuf, header: bool) -> std::io::Result<()> {
-    if header {
+fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
+    // Truncate UNLESS the caller asked to append. `header` is independent:
+    // run_all.sh writes the header on the first thread iteration (header=true,
+    // append=false → truncate + write header) and then appends headerless rows
+    // for subsequent threads (header=false, append=true → keep existing rows).
+    if !append {
         std::fs::write(path, "")?;
     }
     let f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -289,8 +299,12 @@ fn print_row(r: &Row) {
 }
 
 fn run_schnorr(threads: usize) -> Vec<Row> {
-    let mut z = schnorr::zippel_side::Setup::new();
-    let n = schnorr::native_side::Setup::new();
+    let (mut z, n) = setup_pool().install(|| {
+        (
+            schnorr::zippel_side::Setup::new(),
+            schnorr::native_side::Setup::new(),
+        )
+    });
     let zippel = z.time_protocol();
     let native = n.time_protocol();
     // Schnorr has no size knob — log_size = 0 marks "single fixed point".
@@ -307,8 +321,12 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
     sizes
         .iter()
         .map(|&nv| {
-            let mut z = sumcheck::zippel_side::Setup::new(nv, max_degree);
-            let n = sumcheck::native_side::Setup::new(nv, max_degree);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    sumcheck::zippel_side::Setup::new(nv, max_degree),
+                    sumcheck::native_side::Setup::new(nv, max_degree),
+                )
+            });
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // Sumcheck size knob is `num_vars` itself — the hypercube has 2^nv
@@ -329,8 +347,12 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
 fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
     ss.iter()
         .map(|&s| {
-            let mut z = ipa::zippel_side::Setup::new(s);
-            let n = ipa::native_side::Setup::new(s);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    ipa::zippel_side::Setup::new(s),
+                    ipa::native_side::Setup::new(s),
+                )
+            });
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -349,8 +371,12 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
 fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n_coeffs| {
-            let mut z = kzg::zippel_side::Setup::new(n_coeffs);
-            let n = kzg::native_side::Setup::new(n_coeffs);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    kzg::zippel_side::Setup::new(n_coeffs),
+                    kzg::native_side::Setup::new(n_coeffs),
+                )
+            });
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // KZG's grid is restricted to powers of two so log_2 is exact;
@@ -372,10 +398,13 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
     ms.iter()
         .map(|&m_log| {
             let m_witness = k_vars.saturating_sub(2 * n_pub);
-            let mut rng = ark_std::test_rng();
-            let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
-            let mut z = pari::zippel_side::Setup::new(m_log, n_pub, inst.num_vars);
-            let n = pari::native_side::Setup::new(&inst);
+            let (inst, mut z, n) = setup_pool().install(|| {
+                let mut rng = ark_std::test_rng();
+                let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
+                let z = pari::zippel_side::Setup::new(m_log, n_pub, inst.num_vars);
+                let n = pari::native_side::Setup::new(&inst);
+                (inst, z, n)
+            });
             let zippel = z.time_protocol(&inst);
             let native = n.time_protocol(&inst);
             let r = Row {
@@ -396,9 +425,17 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
         .iter()
         .map(|&log_size| {
             let num_constraints = 1usize << log_size;
-            let translated = groth16::build_translated(num_constraints);
-            let mut z = groth16::zippel_side::Setup::new(&translated);
-            let n = groth16::native_side::Setup::new(&translated);
+            // `translated` borrowed by both setups, so build all three
+            // inside the same install closure and pass them out as a
+            // tuple. `translated` outlives both setups for the duration
+            // of `time_protocol`, which is what the borrow requires.
+            let translated = setup_pool().install(|| groth16::build_translated(num_constraints));
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    groth16::zippel_side::Setup::new(&translated),
+                    groth16::native_side::Setup::new(&translated),
+                )
+            });
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -417,9 +454,13 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
 fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n| {
-            let shared = pst13::shared::build(n);
-            let mut z = pst13::zippel_side::Setup::new(&shared);
-            let np = pst13::native_side::Setup::new(&shared);
+            let shared = setup_pool().install(|| pst13::shared::build(n));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    pst13::zippel_side::Setup::new(&shared),
+                    pst13::native_side::Setup::new(&shared),
+                )
+            });
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -438,8 +479,12 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n| {
-            let mut z = hyrax::zippel_side::Setup::new(n);
-            let np = hyrax::native_side::Setup::new(n);
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    hyrax::zippel_side::Setup::new(n),
+                    hyrax::native_side::Setup::new(n),
+                )
+            });
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -458,32 +503,42 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
-            let mut z = spartan::Setup::new(m);
+            let mut z = setup_pool().install(|| spartan::Setup::new(m));
+            // `z.timing()` IS the timed region for the zippel side —
+            // it runs run_prover + run_verifier internally, so we hand
+            // it to the global (bench) pool, not the setup pool.
             let zippel = z.timing();
 
             let num_cons = 1usize << m;
             let num_vars = 1usize << (m - 1);
             let num_inputs = num_vars - 1;
-            let (inst, vars, inputs) =
-                Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-
-            let n_matvec = {
-                let mut best = Duration::MAX;
-                for _ in 0..3 {
-                    let t0 = Instant::now();
-                    let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
-                    let dt = t0.elapsed();
-                    assert!(sat);
-                    if dt < best {
-                        best = dt;
-                    }
-                }
-                best
-            };
-
-            let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-            let inst_bytes = vec![0u8; 3 * num_cons * 40];
-            let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
+            // Synthesize the R1CS instance + gens off the bench pool.
+            // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
+            // (libspartan with the multicore feature uses rayon, so the
+            // install routes them onto every core).
+            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec) =
+                setup_pool().install(|| {
+                    let (inst, vars, inputs) =
+                        Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+                    let n_matvec = {
+                        let mut best = Duration::MAX;
+                        for _ in 0..3 {
+                            let t0 = Instant::now();
+                            let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
+                            let dt = t0.elapsed();
+                            assert!(sat);
+                            if dt < best {
+                                best = dt;
+                            }
+                        }
+                        best
+                    };
+                    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+                    let inst_bytes = vec![0u8; 3 * num_cons * 40];
+                    let inputs_bytes =
+                        bincode::serialize(&inputs).expect("serialize inputs");
+                    (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
+                });
 
             let mut pt = Transcript::new(b"bench_all_spartan");
             let t = Instant::now();
@@ -495,15 +550,24 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
             let native_prove = t.elapsed().saturating_sub(n_matvec);
 
-            let mut vt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
+            // Verifier sampled VERIFY_SAMPLES times. Transcript
+            // construction is the same trivial work the original timer
+            // included (mirrors the prover-side measurement), so we keep
+            // it inside the per-call timer. libspartan's verify takes
+            // &mut transcript, so it must be re-init per iteration.
+            let mut verify_sum = Duration::ZERO;
+            for _ in 0..benchmarks::VERIFY_SAMPLES {
+                let mut vt = Transcript::new(b"bench_all_spartan");
+                let t = Instant::now();
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
+                }
+                proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
+                verify_sum += t.elapsed();
             }
-            proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
-            let native_verify = t.elapsed();
+            let native_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
 
             let native = Timing {
                 prove: native_prove,
@@ -520,6 +584,18 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             r
         })
         .collect()
+}
+
+// Separate rayon pool used for the setup/SRS-generation work that runs
+// OUTSIDE the timed prove/verify. The global pool is constrained to the
+// benchmark thread count (1, 2, 4, 8, 16...) so we can measure scaling,
+// but setup is bench-harness overhead — we want it to use every core.
+// `setup_pool().install(|| { ... })` routes nested `par_iter`/`join`/`spawn`
+// to this all-core pool; control returns to the global pool the moment
+// `install` returns, so it can't bleed into a timed region.
+static SETUP_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn setup_pool() -> &'static rayon::ThreadPool {
+    SETUP_POOL.get().expect("SETUP_POOL not initialized")
 }
 
 fn main() {
@@ -541,6 +617,24 @@ fn main() {
         .build_global()
         .expect("init rayon global pool");
 
+    // Build the all-core SETUP_POOL after the global pool so it can't
+    // accidentally be picked up by `build_global`. Uses the same 64 MB
+    // worker stack because some setup paths (groth16 keygen, kzg SRS,
+    // pari `compute_ai_bi_at_tau`) push the same large frames the
+    // timed paths do.
+    let setup_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(num_threads.max(1));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(setup_threads)
+        .stack_size(64 * 1024 * 1024)
+        .build()
+        .expect("init rayon setup pool");
+    SETUP_POOL
+        .set(pool)
+        .map_err(|_| ())
+        .expect("SETUP_POOL already initialized");
+
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {
         Some(names) => ALL_SYSTEMS
@@ -555,14 +649,15 @@ fn main() {
         .threads_label
         .unwrap_or_else(rayon::current_num_threads);
 
-    // Default grid: log_size = 1..=20 for systems whose cost scales gracefully
-    // (sumcheck/pari/kzg are FFT-dominated, ~K log K). IPA is capped at 14
-    // because its prover + verifier are O(N) MSMs — at S=20 (N=2^20 ≈ 1M)
-    // single-threaded runs push into many minutes per call.
-    // Default grid: log_size = 1..=20 for systems whose cost scales gracefully
-    // (sumcheck/pari/kzg are FFT-dominated, ~K log K). IPA is capped at 14
-    // because its prover + verifier are O(N) MSMs — at S=20 (N=2^20 ≈ 1M)
-    // single-threaded runs push into many minutes per call.
+    // Default grid: every system at log_size=20 (domain size 2^20 ≈ 1M).
+    // sumcheck/pari/kzg/pst13/hyrax/spartan are FFT-dominated (~K log K)
+    // and finish in seconds-to-minutes per single-threaded prove. IPA's
+    // prover/verifier are O(N) MSMs with no FFT shortcut (log_2(N) folding
+    // rounds, each halving the vector), so S=20 single-threaded runs in
+    // tens of seconds. Groth16 at log_constraints=20 is the heaviest:
+    // a_query/b_query/h_query/l_query are each Vec<G1Projective> of length
+    // ≥ num_constraints (~150 MB per vector on BLS12-381 → ~1 GB peak RSS
+    // for the keys alone), and single-thread prove runs into many minutes.
     //
     // Sumcheck starts at nv=3 because sumcheck.zippel's `V: 2..NUM_VARS_CONST`
     // range must be non-empty (V is the per-round residual var count).
@@ -570,11 +665,6 @@ fn main() {
     // PARI starts at M=2 because the protocol divides q(X) by (X−r); at
     // K=2 the quotient q has degree 0 and the type checker rejects the
     // div. K=4 (M=2) is the smallest size where q has degree ≥ 1.
-    // Groth16 sweep is capped at log_constraints=14 (16K constraints).
-    // Beyond that, the zippel-side keys + circuit balloon (a_query,
-    // b_query, h_query are each Vec<G1Projective> of length ≥
-    // num_constraints), and single-thread prove already runs in
-    // tens of seconds at log_size=14.
     let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
         if let Some(ls) = &args.sizes {
             let kzg = ls.iter().map(|&s| 1usize << s).collect::<Vec<_>>();
@@ -606,9 +696,9 @@ fn main() {
             (
                 vec![20usize],            // pari        (M=20  → K=2^20 constraints)
                 vec![20usize],            // sumcheck    (num_vars=20)
-                vec![14usize],            // ipa         (S=14  → N=2^14)
+                vec![20usize],            // ipa         (S=20  → N=2^20)
                 vec![1usize << 20],       // kzg         (n_coeffs=2^20, log_size=20)
-                vec![14usize],            // groth16     (log_constraints=14)
+                vec![20usize],            // groth16     (log_constraints=20)
                 vec![20usize],            // pst13       (n=20)
                 vec![20usize],            // hyrax       (n=20)
                 vec![20usize],            // spartan     (m=20)
@@ -631,7 +721,7 @@ fn main() {
     }
     eprintln!();
 
-    init_csv(&args.out, !args.no_header).expect("open csv for streaming writes");
+    init_csv(&args.out, !args.no_header, args.append).expect("open csv for streaming writes");
 
     let mut all_rows: Vec<Row> = Vec::new();
     let started = Instant::now();

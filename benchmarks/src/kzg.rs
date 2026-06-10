@@ -154,14 +154,26 @@ pub mod zippel_side {
             let prove = t.elapsed();
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("run_verifier failed");
-            let verify = t.elapsed();
+            // Average over VERIFY_SAMPLES verifier runs on the same proof.
+            // TDag<C> and Vec<Value<C>> both derive Clone, so we re-clone
+            // per iteration; clones happen OUTSIDE the per-call timer so
+            // they don't bias the mean.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("run_verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            let result = check_verification(verifier_result);
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel KZG verification FAILED");
 
             Timing { prove, verify }
@@ -287,12 +299,20 @@ pub mod native_side {
             };
             let prove = t.elapsed();
 
-            let t = Instant::now();
-            let ok =
-                Kzg::check(&self.vk, &comm_out, point, value, &proof_out).expect("kzg check");
-            let verify = t.elapsed();
+            // Average over VERIFY_SAMPLES verifier runs on the same proof.
+            // Kzg::check borrows everything, so no clone needed in the loop.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Kzg::check(&self.vk, &comm_out, point, value, &proof_out)
+                    .expect("kzg check");
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            assert!(ok, "ark-poly-commit KZG verification FAILED");
+            assert!(last_ok, "ark-poly-commit KZG verification FAILED");
 
             Timing { prove, verify }
         }

@@ -32,8 +32,6 @@ echo ">>> building bench_all (release)" >&2
 cargo build --release --manifest-path "${SCRIPT_DIR}/Cargo.toml" --bin bench_all >&2
 
 BIN="${SCRIPT_DIR}/target/release/bench_all"
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "${TMPDIR}"' EXIT
 
 CHILD_ARGS=()
 [[ "${QUICK}" == "1" ]] && CHILD_ARGS+=(--quick)
@@ -41,22 +39,24 @@ CHILD_ARGS=()
 
 IFS=',' read -r -a THREAD_LIST <<< "${THREADS}"
 
-# First run writes the header; subsequent runs append with --no-header.
+# Each thread iteration writes DIRECTLY to OUT (append mode). bench_all
+# flushes per row, so Ctrl-C anywhere — between threads, mid-iteration
+# within a system, or between systems — preserves every row that finished
+# before the interrupt. The first call writes the header and truncates;
+# subsequent calls append with --no-header --append.
 HEADER_DONE=0
 : > "${OUT}"
 for T in "${THREAD_LIST[@]}"; do
-    PART="${TMPDIR}/part_${T}.csv"
     EXTRA=()
     if [[ "${HEADER_DONE}" == "1" ]]; then
-        EXTRA+=(--no-header)
+        EXTRA+=(--no-header --append)
     fi
     echo ">>> threads=${T}" >&2
     RAYON_NUM_THREADS="${T}" "${BIN}" \
-        --out "${PART}" \
+        --out "${OUT}" \
         --threads-label "${T}" \
         ${CHILD_ARGS[@]+"${CHILD_ARGS[@]}"} \
         ${EXTRA[@]+"${EXTRA[@]}"}
-    cat "${PART}" >> "${OUT}"
     HEADER_DONE=1
 done
 

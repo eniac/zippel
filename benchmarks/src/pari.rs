@@ -399,16 +399,24 @@ pub mod zippel_side {
                 .expect("zippel pari prover failed");
             let prove = t.elapsed();
 
-            // --- Time verify ---
+            // --- Time verify (mean of VERIFY_SAMPLES samples) ---
             self.handler.set_public_inputs(public_inputs);
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel pari verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel pari verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel PARI verification FAILED");
 
             Timing { prove, verify }
@@ -499,10 +507,16 @@ pub mod native_side {
             .expect("Pari::prove_from_sr1cs failed");
             let prove = t.elapsed();
 
-            let t = Instant::now();
-            let ok = Pari::<E>::verify(&proof, &self.vk, &self.public_inputs);
-            let verify = t.elapsed();
-            assert!(ok, "upstream PARI verification FAILED");
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Pari::<E>::verify(&proof, &self.vk, &self.public_inputs);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "upstream PARI verification FAILED");
 
             Timing { prove, verify }
         }

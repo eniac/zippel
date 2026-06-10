@@ -13,6 +13,16 @@ pub struct Timing {
     pub verify: Duration,
 }
 
+/// Number of verifier samples to take per `time_protocol` call. Each
+/// `Timing { verify }` returned by a `*_side::Setup::time_protocol(...)`
+/// is the MEAN of this many independent verifier invocations on the same
+/// proof; `prove` stays single-shot because provers are slow and one run
+/// already takes seconds-to-minutes at log_size=20.
+///
+/// IPA is the exception — its verifier is O(N) MSM, ~tens of seconds per
+/// call at S=20, so it stays single-sample. See `ipa::*::time_protocol`.
+pub const VERIFY_SAMPLES: u32 = 100;
+
 pub mod groth16;
 pub mod hyrax;
 pub mod ipa;

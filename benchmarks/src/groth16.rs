@@ -544,13 +544,21 @@ pub mod zippel_side {
 
             self.handler.set_public_inputs(self.public_inputs.clone());
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel groth16 verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel groth16 verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel Groth16 verification FAILED");
 
             Timing { prove, verify }
@@ -656,10 +664,16 @@ pub mod native_side {
             // Verifier convention: drop the leading constant-1 from the
             // public-input vector (matches ark-groth16's verify_proof).
             let public_inputs = &self.translated.instance_assignment[1..];
-            let t = Instant::now();
-            let ok = verify(&self.keys, &proof, public_inputs);
-            let verify_t = t.elapsed();
-            assert!(ok, "native (vendored) Groth16 verification FAILED");
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = verify(&self.keys, &proof, public_inputs);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify_t = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "native (vendored) Groth16 verification FAILED");
 
             Timing {
                 prove: prove_t,
