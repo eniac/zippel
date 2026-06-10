@@ -1,0 +1,11 @@
+// Protocol to prove knowledge of x and y such that h1 = g*x and h2 = g*y
+proto multi_schnorr<G: Group, F: Scalar<G>>(private x: F, private y: F, public g: G, public h1: G, public h2: G) where h1 == g*x && h2 == g*y {
+      let r1 = random<F>;
+      let r2 = random<F>; 
+      u1 <- g*r; 
+      c1 <- challenge<F>;
+      z1 <- r + x*c1;      // Response for x
+      c2 <- challenge<F> 
+      z2 <- r + y*c2;      // Response for y
+      verify(g*z1 == u1 + h1*c1 && g*z2 == u2 + h2*c2)
+}

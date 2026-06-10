@@ -8,7 +8,7 @@ use zippel::*;
 fn main() {
     println!("=== Reuse Randomness (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
-        "examples/tests/schnorr_and/schnorr_and.zippel",
+        "examples/multi_schnorr/multi_schnorr.zippel",
     ));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
@@ -46,7 +46,7 @@ fn main() {
     let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from(
-            "examples/tests/schnorr_and/schnorr_and.zippel",
+            "examples/multi_schnorr/multi_schnorr.zippel",
         ));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()

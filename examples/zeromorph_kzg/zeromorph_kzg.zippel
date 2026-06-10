@@ -1,5 +1,6 @@
 // Zeromorph KZG protocol by Tohru Kohrita and Patrick Towa
-// This makes makes KZG ZK in a different way than zk_kzg. 
+// This makes makes KZG Zero-Knowledge. This is not the 
+// full Multilinear PCS Zeromorph protocol. 
 // Protocol is from: https://eprint.iacr.org/2023/917.pdf.
 proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p_coeffs: [F; N], public u: F, public v: F, public srs_g1: [G1; N+1],

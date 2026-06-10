@@ -166,8 +166,8 @@ name = "schnorr_no_random"
 path = "examples/tests/schnorr_no_random/main.rs"
 
 [[example]]
-name = "schnorr_and"
-path = "examples/tests/schnorr_and/main.rs"
+name = "multi_schnorr"
+path = "examples/multi_schnorr/main.rs"
 
 [[example]]
 name = "schnorr_and_two_verify"
