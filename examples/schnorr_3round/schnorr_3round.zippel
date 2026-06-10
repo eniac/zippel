@@ -1,0 +1,15 @@
+proto schnorr_3round<G: Group, F: Scalar<G>>(private x: F, public g: G, public h: G) where h == g*x {
+    let r1 = random<F>;
+    u1 <- g*r1;
+    c1 <- challenge<F*>;
+    let r2 = random<F>;
+    u2 <- g*r2;
+    c2 <- challenge<F*>;
+    let r3 = random<F>;
+    u3 <- g*r3;
+    c3 <- challenge<F*>;
+    z1 <- r1 + x*c1;
+    z2 <- r2 + x*c2;
+    z3 <- r3 + x*c3;
+    verify(g*z1 == u1 + h*c1 && g*z2 == u2 + h*c2 && g*z3 == u3 + h*c3)
+}

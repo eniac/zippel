@@ -274,21 +274,5 @@ name = "groth16"
 path = "examples/groth16/main.rs"
 
 [[example]]
-name = "schnorr_not_spec_sound"
-path = "examples/schnorr_not_spec_sound/main.rs"
-
-[[example]]
-name = "schnorr_not_sound"
-path = "examples/schnorr_not_sound/main.rs"
-
-[[example]]
-name = "schnorr_quadratic"
-path = "examples/schnorr_quadratic/main.rs"
-
-[[example]]
-name = "schnorr_two_challenge"
-path = "examples/schnorr_two_challenge/main.rs"
-
-[[example]]
-name = "schnorr_quadratic_two_challenge"
-path = "examples/schnorr_quadratic_two_challenge/main.rs"
+name = "schnorr_3round"
+path = "examples/schnorr_3round/main.rs"
