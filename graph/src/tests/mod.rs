@@ -2,6 +2,7 @@
 pub mod algebraic_properties;
 pub(crate) mod analyses;
 pub mod cross_type_properties;
+pub mod fusion_tests;
 pub mod isomorphism_tests;
 pub mod node_tests;
 pub mod op_tests;

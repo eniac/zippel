@@ -602,7 +602,8 @@ mod cross_layer {
     fn eval_op(p: &V, x: &V) -> TOp {
         Op::Evaluate(
             mk::<TestConfig>(val_op(p.clone())),
-            mk::<TestConfig>(val_op(x.clone())),
+            None,
+            Some(mk::<TestConfig>(val_op(x.clone()))),
         )
     }
     fn mle_op(v: &V) -> TOp {
@@ -868,10 +869,10 @@ mod cross_layer {
         });
     }
 
-    /// Batched univariate eval at `k > 1` points: runtime pads via FFT.
-    /// Gap pinned with `#[should_panic]`.
+    /// Batched univariate eval at `k > 1` points now returns an exact
+    /// `VecScalar(k)` (the explicit-eval migration replaced the old FFT-padded
+    /// MLE output), so type preservation holds. Gap closed.
     #[test]
-    #[should_panic(expected = "value_eval(Uni(")]
     fn pbt_eval_uni_batched_multi_point() {
         arbtest::arbtest(|u| {
             let tm: AnyUniATyp = u.arbitrary()?;
@@ -914,10 +915,9 @@ mod cross_layer {
         });
     }
 
-    /// Partial VPoly eval `k < n`: runtime returns VecScalar, spec says
-    /// VPoly(n-k, m). Gap pinned with `#[should_panic]`.
+    /// Partial VPoly eval `k < n` now returns a `VecScalar` that satisfies
+    /// the op's declared type after the explicit-eval migration. Gap closed.
     #[test]
-    #[should_panic(expected = "value_eval(VPoly(")]
     fn pbt_eval_vpoly_partial() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(2..=4)?;
@@ -976,10 +976,9 @@ mod cross_layer {
         );
     }
 
-    /// Partial MLE eval: runtime returns VecScalar, spec says `Mle(n-k)`.
-    /// Gap pinned with `#[should_panic]`.
+    /// Partial MLE eval now returns a `VecScalar` that satisfies the op's
+    /// declared type after the explicit-eval migration. Gap closed.
     #[test]
-    #[should_panic(expected = "value_eval(Mle(")]
     fn pbt_eval_mle_partial() {
         arbtest::arbtest(|u| {
             let n: usize = u.int_in_range(2..=4)?;

@@ -1,5 +1,15 @@
-// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on `next_poly` until `Poly<F,1>`.
-// `challenge` is the verifier coin for this round; we draw the next one only before recursing.
+// Sample a univariate polynomial one point at a time. This intentionally avoids
+// `eval(p, points)`: a one-variable MLE residual would interpret `points` as one
+// multivariate coordinate vector instead of as a batch of scalar sample points.
+fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
+    public p: Poly<F, 1, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1]
+) -> [F; MAX_DEGREE_CONST + 1] {
+    [(let v = eval(p, [t]); v[0]) for t in points]
+}
+
+// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on the explicit
+// residual polynomial until `Poly<F,1>`.
 //
 // orig_poly was removed: the final subclaim `eval(orig_poly, full_challenges)`
 // is delegated to the prover (matches hyperplonk's SumCheck::verify which
@@ -8,47 +18,62 @@
 // absorbs the full polynomial into the FS transcript at the start (which
 // was the dominant O(2^NV) cost in verify) — making verify O(log N)
 // instead of O(N).
-fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 2..NUM_VARS_CONST, MAX_DEGREE_CONST: Size>(
+fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_DEGREE_CONST: Size>(
     private curr_poly: Poly<F, V, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
-    public challenges: [F; NUM_VARS_CONST - V],
+    public challenges: [F; NUM_VARS_CONST - V + 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
-    let pi = out.next_poly;
+    let residual_poly = eval(curr_poly, [challenge]);
+    let zero = points[0] - points[0];
+    let one = zero + 1;
+    // Canonical fusion shape: keep the Boolean-tail comprehension inline in
+    // the reduce map so graph lowering can emit the private fused
+    // hypercube-reduction op before selected eval terms are materialized.
+    let round_poly = reduce(+, [
+        eval<0>(residual_poly, tail)
+        for tail in [
+            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
+            for i in 0..(2^(V - 2))
+        ]
+    ]);
+    let eval_points = points;
+    let evs = sample_univariate(round_poly, eval_points);
 
-    evs <- out.evaluations;
-    verify(prev_eval == evs[0] + evs[1]);
+    evs_msg <- evs;
+    verify(prev_eval == evs_msg[0] + evs_msg[1]);
 
-    let g = interpolate(points, evs);
+    let g = interpolate(eval_points, evs_msg);
     r_next <- challenge<F>;
     let next_prev_vec = eval(g, [r_next]);
     let next_prev = next_prev_vec[0];
 
     let next_challenges = challenges ++ [r_next];
-    sumcheck_round(pi, points, next_challenges, next_prev, r_next, curr_round + 1)
+    sumcheck_round(residual_poly, points, next_challenges, next_prev, r_next, curr_round + 1)
 }
 
 fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
-    private curr_poly: Poly<F, 1, MAX_DEGREE_CONST>,
+    private curr_poly: Poly<F, 2, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1],
     public challenges: [F; NUM_VARS_CONST - 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS_CONST>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
-    evs <- out.evaluations;
-    verify(prev_eval == evs[0] + evs[1]);
+    let residual_poly = eval(curr_poly, [challenge]);
+    let eval_points = points;
+    let evs = sample_univariate(residual_poly, eval_points);
+    evs_msg <- evs;
+    verify(prev_eval == evs_msg[0] + evs_msg[1]);
 
-    let g = interpolate(points, evs);
+    let g = interpolate(eval_points, evs_msg);
     r_final <- challenge<F>;
     let _drop_g = g;
     let _drop_r = r_final;
+    let _drop_round = curr_round;
+    let _drop_challenges = challenges;
     true
 }
 
@@ -57,20 +82,34 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
     public claimed_sum: F,
     private poly: Poly<F, NUM_VARS_CONST, MAX_DEGREE_CONST>
 ) where let zero: F = 0;
-        let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
-        let out0 = marginalize(cfg0);
-        let evs0 = out0.evaluations;
+        let one = zero + 1;
+        let points = [i * one for i in 0..MAX_DEGREE_CONST + 1];
+        let round_poly0 = reduce(+, [
+            eval<0>(poly, tail)
+            for tail in [
+                [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS_CONST - 1)]
+                for i in 0..(2^(NUM_VARS_CONST - 1))
+            ]
+        ]);
+        let evs0 = sample_univariate(round_poly0, points);
         claimed_sum == evs0[0] + evs0[1] {
     let zero: F = 0;
-    let cfg0 = {| poly: poly, num_variables: NUM_VARS_CONST, max_degree: MAX_DEGREE_CONST, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
-    evs0 <- out0.evaluations;
-    verify(claimed_sum == evs0[0] + evs0[1]);
+    let one = zero + 1;
+    let points = [i * one for i in 0..MAX_DEGREE_CONST + 1];
+    let round_poly0 = reduce(+, [
+        eval<0>(poly, tail)
+        for tail in [
+            [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS_CONST - 1)]
+            for i in 0..(2^(NUM_VARS_CONST - 1))
+        ]
+    ]);
+    let evs0 = sample_univariate(round_poly0, points);
+    evs0_msg <- evs0;
+    verify(claimed_sum == evs0_msg[0] + evs0_msg[1]);
 
     r1 <- challenge<F>;
-    let points = [i for i in 0..MAX_DEGREE_CONST + 1];
-    let g = interpolate(points, evs0);
+    let g = interpolate(points, evs0_msg);
     let prev_vec = eval(g, [r1]);
     let prev = prev_vec[0];
-    verify(sumcheck_round(out0.next_poly, points, [r1], prev, r1, 1))
+    verify(sumcheck_round(poly, points, [r1], prev, r1, 1))
 }

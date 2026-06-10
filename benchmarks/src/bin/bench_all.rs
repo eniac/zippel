@@ -1,5 +1,6 @@
-//! Runs every benchmark (schnorr, sumcheck, ipa, kzg, pari) at the rayon
-//! thread count of the current process and writes a single CSV.
+//! Runs every registered non-quarantined benchmark (schnorr, sumcheck, ipa,
+//! kzg, pari, groth16, pst13, hyrax) at the rayon thread count of the current
+//! process and writes a single CSV.
 //!
 //! Columns: system, threads, log_size, prover_time_ms, verifier_time_ms,
 //!          native_prover_time_ms, native_verifier_time_ms
@@ -12,6 +13,12 @@
 //!   kzg      : log_2(N)    (N = coefficient count; degree = N-1)
 //!   pari     : M           (K = 2^M constraints)
 //!   groth16  : log_2(C)    (C = num_constraints in the bench circuit)
+//!   pst13    : N           (multilinear KZG variables)
+//!   hyrax    : N           (Hyrax vector dimension parameter)
+//!
+//! The Zippel-Spartan path is quarantined until its embedded Zippel source no
+//! longer uses removed `marginalize(cfg)` syntax; use `spartan_bench` for the
+//! native-only Spartan sweep.
 //!
 //! Thread sweeping is done by running this binary multiple times with
 //! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
@@ -20,18 +27,16 @@
 //! single-thread pool installed mid-process — running with the global pool
 //! sized by `RAYON_NUM_THREADS` is the reliable path.
 
-use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, spartan, sumcheck};
+use benchmarks::{Timing, groth16, hyrax, ipa, kzg, pari, pst13, schnorr, sumcheck};
 use clap::Parser;
-use libspartan::{Instance, NIZK, NIZKGens};
-use merlin::Transcript;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const ALL_SYSTEMS: &[&str] = &[
-    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax", "spartan",
+    "schnorr", "sumcheck", "ipa", "kzg", "pari", "groth16", "pst13", "hyrax",
 ];
 
 #[derive(Parser, Debug)]
@@ -76,7 +81,6 @@ const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
 const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
 const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
-const SPARTAN_WRAPPER_RS: &str = include_str!("../../src/spartan.rs");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
 const NATIVE_PARI_RS: &str = include_str!("../../src/pari_native.rs");
@@ -86,12 +90,11 @@ const NATIVE_HYRAX_RS: &str = include_str!("../../src/hyrax.rs");
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
 // Update when bumping crate versions.
-const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.5.0 src/signature/schnorr/mod.rs
-const SUMCHECK_EXT_NCLOC: usize = 703;  // hyperplonk subroutines src/poly_iop/sum_check/{mod,prover,verifier}.rs
-const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.5.0 src/kzg10/mod.rs
-const GROTH16_EXT_NCLOC: usize = 440;   // ark-groth16-0.5.0 src/{prover,verifier,r1cs_to_qap}.rs
-const PST13_EXT_NCLOC: usize = 494;     // hyperplonk subroutines src/pcs/multilinear_kzg/{mod,srs,util}.rs
-const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
+const SCHNORR_EXT_NCLOC: usize = 186; // ark-crypto-primitives-0.5.0 src/signature/schnorr/mod.rs
+const SUMCHECK_EXT_NCLOC: usize = 703; // hyperplonk subroutines src/poly_iop/sum_check/{mod,prover,verifier}.rs
+const KZG_EXT_NCLOC: usize = 527; // ark-poly-commit-0.5.0 src/kzg10/mod.rs
+const GROTH16_EXT_NCLOC: usize = 440; // ark-groth16-0.5.0 src/{prover,verifier,r1cs_to_qap}.rs
+const PST13_EXT_NCLOC: usize = 494; // hyperplonk subroutines src/pcs/multilinear_kzg/{mod,srs,util}.rs
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -154,28 +157,6 @@ fn extract_braced_block<'a>(src: &'a str, header: &str) -> &'a str {
     body
 }
 
-fn extract_raw_string<'a>(src: &'a str, header: &str) -> &'a str {
-    let Some(start) = src.find(header) else {
-        return "";
-    };
-    let after = &src[start..];
-    let Some(rs) = after.find("r#\"") else {
-        return "";
-    };
-    let body_start = rs + 3;
-    let body = &after[body_start..];
-    let Some(end) = body.find("\"#") else {
-        return body;
-    };
-    &body[..end]
-}
-
-fn spartan_zippel_ncloc() -> usize {
-    let proto = extract_raw_string(SPARTAN_WRAPPER_RS, "fn generate_proto");
-    count_ncloc_line_comments(proto)
-}
-
-
 fn zippel_ncloc(sys: &str) -> usize {
     match sys {
         "schnorr" => count_ncloc_line_comments(ZIPPEL_SCHNORR),
@@ -186,7 +167,6 @@ fn zippel_ncloc(sys: &str) -> usize {
         "groth16" => count_ncloc_line_comments(ZIPPEL_GROTH16),
         "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
         "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
-        "spartan" => spartan_zippel_ncloc(),
         _ => 0,
     }
 }
@@ -198,7 +178,6 @@ fn native_ncloc(sys: &str) -> usize {
         "kzg" => KZG_EXT_NCLOC,
         "groth16" => GROTH16_EXT_NCLOC,
         "pst13" => PST13_EXT_NCLOC,
-        "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => count_ncloc_rust(extract_braced_block(NATIVE_HYRAX_RS, "pub mod native_side")),
         "pari" => count_ncloc_rust(NATIVE_PARI_RS),
@@ -427,72 +406,9 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
         .collect()
 }
 
-fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
-    ms.iter()
-        .map(|&m| {
-            let mut z = spartan::Setup::new(m);
-            let zippel = z.timing();
-
-            let num_cons = 1usize << m;
-            let num_vars = 1usize << (m - 1);
-            let num_inputs = num_vars - 1;
-            let (inst, vars, inputs) =
-                Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
-
-            let n_matvec = {
-                let mut best = Duration::MAX;
-                for _ in 0..3 {
-                    let t0 = Instant::now();
-                    let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
-                    let dt = t0.elapsed();
-                    assert!(sat);
-                    if dt < best {
-                        best = dt;
-                    }
-                }
-                best
-            };
-
-            let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-            let inst_bytes = vec![0u8; 3 * num_cons * 40];
-            let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
-
-            let mut pt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
-            }
-            let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
-            let native_prove = t.elapsed().saturating_sub(n_matvec);
-
-            let mut vt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
-            }
-            proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
-            let native_verify = t.elapsed();
-
-            let native = Timing {
-                prove: native_prove,
-                verify: native_verify,
-            };
-            let r = Row {
-                system: "spartan",
-                threads,
-                log_size: m,
-                zippel,
-                native,
-            };
-            print_row(&r);
-            r
-        })
-        .collect()
-}
+// Zippel-Spartan is intentionally absent from bench_all until the embedded
+// Zippel template in benchmarks/src/spartan.rs is migrated off `marginalize(cfg)`.
+// Use the native-only `spartan_bench` binary for Microsoft Spartan sweeps.
 
 fn main() {
     let args = Args::parse();
@@ -529,30 +445,28 @@ fn main() {
     // b_query, h_query are each Vec<G1Projective> of length ≥
     // num_constraints), and single-thread prove already runs in
     // tens of seconds at log_size=14.
-    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
-        if args.quick {
-            (
-                vec![4usize, 8],
-                vec![4usize, 8],
-                vec![4usize, 6],
-                vec![16usize, 256],
-                vec![4usize, 8],
-                vec![4usize, 8],
-                vec![4usize, 8],
-                vec![4usize, 8],
-            )
-        } else {
-            (
-                (2..=20).collect::<Vec<_>>(),
-                (3..=20).collect::<Vec<_>>(),
-                (1..=14).collect::<Vec<_>>(),
-                (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
-                (1..=14).collect::<Vec<_>>(),
-                (1..=20).collect::<Vec<_>>(),
-                (2..=20).step_by(2).collect::<Vec<_>>(),
-                (3..=20).collect::<Vec<_>>(),
-            )
-        };
+    let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns) = if args.quick
+    {
+        (
+            vec![4usize, 8],
+            vec![4usize, 8],
+            vec![4usize, 6],
+            vec![16usize, 256],
+            vec![4usize, 8],
+            vec![4usize, 8],
+            vec![4usize, 8],
+        )
+    } else {
+        (
+            (2..=20).collect::<Vec<_>>(),
+            (3..=20).collect::<Vec<_>>(),
+            (1..=14).collect::<Vec<_>>(),
+            (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
+            (1..=14).collect::<Vec<_>>(),
+            (1..=20).collect::<Vec<_>>(),
+            (2..=20).step_by(2).collect::<Vec<_>>(),
+        )
+    };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
     // pari n_pub=1 / k_vars=3 mirrors the sweep we've been running by hand.
     let sumcheck_degree = 3usize;
@@ -566,7 +480,12 @@ fn main() {
     eprintln!();
     eprintln!("source NCLOC (zippel proto vs native_side Rust module):");
     for sys in ALL_SYSTEMS {
-        eprintln!("  {:<8} zippel={:>4}  native={:>4}", sys, zippel_ncloc(sys), native_ncloc(sys));
+        eprintln!(
+            "  {:<8} zippel={:>4}  native={:>4}",
+            sys,
+            zippel_ncloc(sys),
+            native_ncloc(sys)
+        );
     }
     eprintln!();
 
@@ -591,7 +510,6 @@ fn main() {
             "groth16" => run_groth16(threads, &groth16_log_ns),
             "pst13" => run_pst13(threads, &pst13_ns),
             "hyrax" => run_hyrax(threads, &hyrax_ns),
-            "spartan" => run_spartan(threads, &spartan_ms),
             other => panic!("unknown system: {other}"),
         };
         all_rows.extend(chunk);

@@ -26,14 +26,17 @@ fn op_ancestors_of<C: ArkConfig>(
         Op::Poly(op) => op_ancestors_of(op, ancestors),
         Op::Coef(op) => op_ancestors_of(op, ancestors),
         Op::Reduce(_, v) => op_ancestors_of(v, ancestors),
-        Op::Evaluate(p, x) => op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors)),
+        Op::HypercubeReduceSelected(p, _, _) => op_ancestors_of(p, ancestors),
+        Op::Evaluate(p, _, None) => op_ancestors_of(p, ancestors),
+        Op::Evaluate(p, _, Some(x)) => {
+            op_ancestors_of(p, ancestors).union(op_ancestors_of(x, ancestors))
+        }
         Op::Interpolate(points, evals) => {
             op_ancestors_of(points, ancestors).union(op_ancestors_of(evals, ancestors))
         }
         Op::Ifft(op) => op_ancestors_of(op, ancestors),
         Op::Fft(op) => op_ancestors_of(op, ancestors),
         Op::Mle(op) => op_ancestors_of(op, ancestors),
-        Op::Marginalize(op) => op_ancestors_of(op, ancestors),
         Op::Proj(op, _, _) => op_ancestors_of(op, ancestors),
         Op::Random(_, _) => Set::new(),
         Op::Challenge(_, _) => Set::new(),
@@ -71,7 +74,8 @@ fn compute_distribution<C: ArkConfig>(
         Op::Ram(a, _) => compute_distribution(a, ancestors, distributions),
         Op::Poly(a) => compute_distribution(a, ancestors, distributions),
         Op::Coef(op) => compute_distribution(op, ancestors, distributions),
-        Op::Evaluate(p, x) => {
+        Op::Evaluate(p, _, None) => compute_distribution(p, ancestors, distributions),
+        Op::Evaluate(p, _, Some(x)) => {
             let _dist_p = compute_distribution(p, ancestors, distributions)?;
             let dist_x = compute_distribution(x, ancestors, distributions)?;
             if is_independent(p, x, ancestors) {
@@ -80,6 +84,7 @@ fn compute_distribution<C: ArkConfig>(
                 Some(Distribution::Nonuniform)
             }
         }
+        Op::HypercubeReduceSelected(p, _, _) => compute_distribution(p, ancestors, distributions),
         Op::Interpolate(points, evals) => {
             let dist_evals = compute_distribution(evals, ancestors, distributions)?;
             let dist_points = compute_distribution(points, ancestors, distributions)?;
@@ -92,7 +97,6 @@ fn compute_distribution<C: ArkConfig>(
         Op::Ifft(a) => compute_distribution(a, ancestors, distributions),
         Op::Fft(a) => compute_distribution(a, ancestors, distributions),
         Op::Mle(a) => compute_distribution(a, ancestors, distributions),
-        Op::Marginalize(a) => compute_distribution(a, ancestors, distributions),
         Op::Proj(a, _, _) => compute_distribution(a, ancestors, distributions),
         Op::Bin(BinOp::Add, a, b, _) | Op::Bin(BinOp::Concat, a, b, _) => {
             let dist_a = compute_distribution(a, ancestors, distributions)?;

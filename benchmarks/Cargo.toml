@@ -3,6 +3,7 @@ name = "benchmarks"
 version = "0.1.0"
 edition = "2024"
 publish = false
+autobins = false
 
 [dependencies]
 # Zippel side (uses arkworks from git main, via backend's transitive deps).
@@ -81,6 +82,9 @@ rayon = "1"
 
 rand = { version = "0.8", features = ["std"] }
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 tempfile = "3"
 
 # Native Spartan baseline: Microsoft's Spartan crate (NOT Spartan2). The
@@ -98,6 +102,10 @@ criterion = "0.5"
 [[bin]]
 name = "sumcheck"
 path = "src/bin/sumcheck.rs"
+
+[[bin]]
+name = "sumcheck_gate"
+path = "src/bin/sumcheck_gate.rs"
 
 [[bin]]
 name = "schnorr"
@@ -142,10 +150,9 @@ path = "src/bin/bench_all.rs"
 name = "spartan_bench"
 path = "src/bin/spartan_bench.rs"
 
-[[bin]]
-name = "spartan_compare"
-path = "src/bin/spartan_compare.rs"
-
+# Zippel-Spartan comparison is quarantined while its embedded Zippel source
+# still uses the removed public `marginalize(cfg)` syntax. The native-only
+# `spartan_bench` binary above remains registered.
 [[bench]]
 name = "sumcheck"
 harness = false

@@ -259,14 +259,14 @@ impl<C: HasOpFactory> Node<C, Nothing> {
     pub fn fft(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::fft(op.clone())), Nothing)
     }
+    pub fn evaluate_grid(p: &GOp<C>) -> Self {
+        Node::Op(mk::<C>(GOp::evaluate_grid(p.clone())), Nothing)
+    }
     pub fn evaluate(p: &GOp<C>, x: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::evaluate(p.clone(), x.clone())), Nothing)
     }
     pub fn mle(op: &GOp<C>) -> Self {
         Node::Op(mk::<C>(GOp::mle(op.clone())), Nothing)
-    }
-    pub fn marginalize(op: &GOp<C>) -> Self {
-        Node::Op(mk::<C>(GOp::marginalize(op.clone())), Nothing)
     }
     pub fn proj(op: &GOp<C>, field: &str, typ: &ATyp) -> Self {
         Node::Op(

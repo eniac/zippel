@@ -624,7 +624,7 @@ mod tests {
         let mk_eval = |p_typ: ATyp, x_typ: ATyp| -> GOp<ArkBls12_381> {
             let p: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(0)), p_typ);
             let x: GOp<ArkBls12_381> = BOp::Ref(Ref::new(NodeIndex::new(1)), x_typ);
-            BOp::Evaluate(mk(p), mk(x))
+            BOp::Evaluate(mk(p), None, Some(mk(x)))
         };
 
         // Univariate batched: Uni(m) at Vec(scalar, k) → Vec(scalar, k).

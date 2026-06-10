@@ -23,7 +23,9 @@ impl QualifierPropagation {
             Op::Mle(a) => self.from_op(a),
             Op::Coef(a) => self.from_op(a),
             Op::Reduce(_, v) => self.from_op(v),
-            Op::Evaluate(p, x) => {
+            Op::HypercubeReduceSelected(p, _, _) => self.from_op(p),
+            Op::Evaluate(p, _, None) => self.from_op(p),
+            Op::Evaluate(p, _, Some(x)) => {
                 let qual_p = self.from_op(p)?;
                 let qual_x = self.from_op(x)?;
                 Some(qual_p.join(&qual_x))
@@ -35,7 +37,6 @@ impl QualifierPropagation {
             }
             Op::Ifft(a) => self.from_op(a),
             Op::Fft(a) => self.from_op(a),
-            Op::Marginalize(a) => self.from_op(a),
             Op::Proj(a, _, _) => self.from_op(a),
             Op::Bin(_, a, b, _) | Op::Pair(a, b, _) => {
                 let qual_a = self.from_op(a)?;

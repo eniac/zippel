@@ -858,6 +858,15 @@ fn test_value_pow() {
 }
 
 #[test]
+fn test_value_pow_index_even_composite_exponent() {
+    let base = Value::<TestConfig>::Index(2);
+    let exp = Value::<TestConfig>::Index(6);
+    let result = &base ^ &exp;
+
+    assert_deq!(&result, &Value::<TestConfig>::Index(64));
+}
+
+#[test]
 fn test_value_dot() {
     let mut rng = test_rng();
     let a = Value::<TestConfig>::random(&mut rng, &ATyp::vec_scalar(5));

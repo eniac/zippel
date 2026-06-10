@@ -74,17 +74,22 @@ pub enum Op<C: ArkConfig, R> {
     /// Multilinear extension
     Mle(HOp<C>),
 
-    /// Sum-check marginalization helper
-    Marginalize(HOp<C>),
-
     /// Project a field from a record value
     Proj(HOp<C>, String, ATyp),
 
     /// Coefficients of a polynomial
     Coef(HOp<C>),
 
-    /// Evaluate a polynomial at a point (or vector of points)
-    Evaluate(HOp<C>, HOp<C>),
+    /// Evaluate a polynomial. `(None, None)` is FFT-grid evaluation;
+    /// `(None, Some(points))` is ordinary scalar/vector evaluation;
+    /// `(Some(range), Some(fixed))` keeps `range` free and fixes the rest.
+    Evaluate(HOp<C>, Option<CRange>, Option<HOp<C>>),
+
+    /// Private fused sumcheck round reduction over Boolean tails.
+    ///
+    /// This represents `reduce(+, [eval<range>(poly, tail) for tail in
+    /// boolean_hypercube])` without constructing the selected-eval vector.
+    HypercubeReduceSelected(HOp<C>, CRange, usize),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -156,6 +161,16 @@ fn coef_typ_from_poly(t: ATyp) -> ATyp {
     }
 }
 
+fn selected_eval_typ<C: ArkConfig>(p: &HOp<C>, range: &CRange) -> ATyp {
+    let free_len = range.len();
+    match p.typ() {
+        ATyp::Uni(d) => ATyp::vpoly(free_len, d),
+        ATyp::Mle(_) => ATyp::vpoly(free_len, 1),
+        ATyp::VPoly(_, d) => ATyp::vpoly(free_len, d),
+        other => other,
+    }
+}
+
 impl<C: ArkConfig, R> Op<C, R> {
     /// Assign a unique tag to each operation
     pub fn discriminant_order(&self) -> usize {
@@ -182,11 +197,11 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Fft(_) => 20,
             Op::Check(_) => 21,
             Op::Poly(_) => 22,
-            Op::Evaluate(_, _) => 23,
-            Op::Coef(_) => 24,
-            Op::Mle(_) => 25,
-            Op::Reduce(_, _) => 26,
-            Op::Marginalize(_) => 27,
+            Op::Evaluate(_, _, _) => 23,
+            Op::HypercubeReduceSelected(_, _, _) => 24,
+            Op::Coef(_) => 25,
+            Op::Mle(_) => 26,
+            Op::Reduce(_, _) => 27,
             Op::Proj(_, _, _) => 28,
             Op::Ifft(_) => 29,
         }
@@ -247,32 +262,43 @@ impl<C: ArkConfig, R> Op<C, R> {
             // Op::Poly(v): v : Vec<F, k> → Uni(k - 1) under the degree
             // convention (see docs/poly-encoding.md).
             Op::Poly(op) => poly_typ_from_vec(op.typ()),
-            Op::Evaluate(p, x) => {
-                // Compute the result type of evaluating polynomial `p` at
-                // the k-length vector of points `x`.
-                //
-                // Shapes (k = |x|):
-                //   Uni(_) / VPoly(1, _)        at Vec(b, k) / Uni(k) -> Vec(b, k)  (batched)
-                //   VPoly(n, _)   with k == n   at Vec(b, n)          -> b           (full)
-                //   VPoly(n, m)   with k <  n   at Vec(b, k)          -> VPoly(n-k, m) (partial)
-                //   Mle(n)        with k == n   at Vec(b, n)          -> b           (full)
-                //   Mle(n)        with k <  n   at Vec(b, k)          -> Mle(n - k)  (partial)
-                let x_typ = x.typ();
-                let (elem_typ, k) = match x_typ.clone() {
-                    ATyp::Vec(box t, n) => (t, n),
-                    ATyp::Uni(n) => (ATyp::scalar(), n),
-                    _ => return x_typ,
-                };
-                match p.typ() {
-                    ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
-                    ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
-                    ATyp::VPoly(n, _) if k == n => elem_typ,
-                    ATyp::Mle(n) if k == n => elem_typ,
-                    ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
-                    ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
-                    _ => x_typ,
+            Op::Evaluate(p, selector, points) => match (selector, points) {
+                // Grid evaluation: polynomial coefficients → evaluations on the FFT grid.
+                (None, None) => coef_typ_from_poly(p.typ()),
+                // Ordinary evaluation at scalar/vector points.
+                (None, Some(x)) => {
+                    // Compute the result type of evaluating polynomial `p` at
+                    // the k-length vector of points `x`.
+                    //
+                    // Shapes (k = |x|):
+                    //   Uni(_) / VPoly(1, _)        at Vec(b, k) / Uni(k) -> Vec(b, k)  (batched)
+                    //   VPoly(n, _)   with k == n   at Vec(b, n)          -> b           (full)
+                    //   VPoly(n, m)   with k <  n   at Vec(b, k)          -> VPoly(n-k, m) (partial)
+                    //   Mle(n)        with k == n   at Vec(b, n)          -> b           (full)
+                    //   Mle(n)        with k <  n   at Vec(b, k)          -> Mle(n - k)  (partial)
+                    let x_typ = x.typ();
+                    let (elem_typ, k) = match x_typ.clone() {
+                        ATyp::Vec(box t, n) => (t, n),
+                        ATyp::Uni(n) => (ATyp::scalar(), n),
+                        _ => return x_typ,
+                    };
+                    match p.typ() {
+                        ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
+                        ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
+                        ATyp::VPoly(n, _) if k == n => elem_typ,
+                        ATyp::Mle(n) if k == n => elem_typ,
+                        ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
+                        ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
+                        _ => x_typ,
+                    }
                 }
-            }
+                // Selected evaluation: keep a free range and fix the complement.
+                (Some(range), Some(_)) => selected_eval_typ(p, range),
+                (Some(_), None) => {
+                    panic!("Op::Evaluate selected mode requires explicit points/fixed values")
+                }
+            },
+            Op::HypercubeReduceSelected(p, range, _) => selected_eval_typ(p, range),
             // Op::Coef(p) flattens a polynomial to its coefficient vector.
             // The resulting Vec length equals the polynomial's coefficient
             // count (see ATyp::size).
@@ -328,43 +354,6 @@ impl<C: ArkConfig, R> Op<C, R> {
                     tp, te
                 ),
             },
-            Op::Marginalize(op) => {
-                let cfg_typ = op.typ();
-                let ATyp::Record(fields) = cfg_typ else {
-                    panic!("Op::Marginalize: input must be a record config");
-                };
-                let poly_typ = fields
-                    .get(&"poly".to_string())
-                    .unwrap_or_else(|| panic!("Op::Marginalize: missing 'poly' field"));
-                let (n, d) = match poly_typ {
-                    ATyp::Uni(deg) => (1usize, *deg),
-                    ATyp::Mle(vars) => (*vars, 1usize),
-                    ATyp::VPoly(vars, deg) => (*vars, *deg),
-                    t => panic!(
-                        "Op::Marginalize: 'poly' must be a polynomial type, got {}",
-                        t,
-                    ),
-                };
-                let out_degree = fields
-                    .get(&"max_degree".to_string())
-                    .and_then(|t| match t {
-                        ATyp::Base(ABase::Fin(r))
-                            if r.step == 1 && r.end == r.start.saturating_add(1) =>
-                        {
-                            Some(r.start)
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(d);
-                let next_n = n.saturating_sub(1);
-                let mut out_fields = Ctx::new();
-                out_fields.insert(
-                    &"evaluations".to_string(),
-                    &ATyp::vec_scalar(out_degree + 1),
-                );
-                out_fields.insert(&"next_poly".to_string(), &ATyp::vpoly(next_n, out_degree));
-                ATyp::Record(out_fields)
-            }
             Op::Proj(_, _, typ) => typ.clone(),
         }
     }
@@ -426,7 +415,19 @@ impl<C: HasOpFactory> GOp<C> {
     }
 
     pub fn evaluate(p: Self, x: Self) -> Self {
-        Op::Evaluate(mk::<C>(p), mk::<C>(x))
+        Op::Evaluate(mk::<C>(p), None, Some(mk::<C>(x)))
+    }
+
+    pub fn evaluate_grid(p: Self) -> Self {
+        Op::Evaluate(mk::<C>(p), None, None)
+    }
+
+    pub fn evaluate_selected(p: Self, range: CRange, fixed: Self) -> Self {
+        Op::Evaluate(mk::<C>(p), Some(range), Some(mk::<C>(fixed)))
+    }
+
+    pub fn hypercube_reduce_selected(p: Self, range: CRange, tail_num_vars: usize) -> Self {
+        Op::HypercubeReduceSelected(mk::<C>(p), range, tail_num_vars)
     }
 
     /// Random access simplifications
@@ -785,10 +786,6 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Mle(mk::<C>(op))
     }
 
-    pub fn marginalize(op: Self) -> GOp<C> {
-        Op::Marginalize(mk::<C>(op))
-    }
-
     pub fn proj(record_op: Self, field: String, typ: ATyp) -> GOp<C> {
         Op::Proj(mk::<C>(record_op), field, typ)
     }
@@ -881,9 +878,14 @@ impl<C: ArkConfig> GOp<C> {
     pub fn references(&self) -> Vec<Ref> {
         match self {
             Op::Ref(n, _) => vec![*n],
-            Op::Bin(_, a, b, _) | Op::Evaluate(a, b) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
+            Op::Bin(_, a, b, _) | Op::Pair(a, b, _) | Op::Ram(a, b) => {
                 a.references().into_iter().chain(b.references()).collect()
             }
+            Op::Evaluate(p, _, points) => match points {
+                None => p.references(),
+                Some(x) => p.references().into_iter().chain(x.references()).collect(),
+            },
+            Op::HypercubeReduceSelected(p, _, _) => p.references(),
             Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
             Op::Interpolate(points, v) => points
@@ -896,7 +898,6 @@ impl<C: ArkConfig> GOp<C> {
             | Op::Mle(v)
             | Op::Coef(v)
             | Op::Reduce(_, v)
-            | Op::Marginalize(v)
             | Op::Ifft(v)
             | Op::Fft(v) => v.references(),
             Op::Proj(v, _, _) => v.references(),
@@ -931,10 +932,14 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(b.map_node_indices(f)),
                 typ.clone(),
             ),
-            Op::Evaluate(a, b) => Op::Evaluate(
+            Op::Evaluate(a, range, points) => Op::Evaluate(
                 mk::<C>(a.map_node_indices(f)),
-                mk::<C>(b.map_node_indices(f)),
+                *range,
+                points.as_ref().map(|b| mk::<C>(b.map_node_indices(f))),
             ),
+            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
+                Op::HypercubeReduceSelected(mk::<C>(p.map_node_indices(f)), *range, *tail_num_vars)
+            }
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
             Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
@@ -945,7 +950,6 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Ifft(op) => Op::Ifft(mk::<C>(op.map_node_indices(f))),
             Op::Fft(op) => Op::Fft(mk::<C>(op.map_node_indices(f))),
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_node_indices(f))),
-            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_node_indices(f))),
             Op::Proj(op, field, typ) => {
                 Op::Proj(mk::<C>(op.map_node_indices(f)), field.clone(), typ.clone())
             }
@@ -983,9 +987,15 @@ impl<C: HasOpFactory> GOp<C> {
             Op::Value(_) | Op::Random(_, _) | Op::Challenge(_, _) => self.clone(),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_refs(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_refs(f))),
-            Op::Evaluate(p, x) => Op::Evaluate(mk::<C>(p.map_refs(f)), mk::<C>(x.map_refs(f))),
+            Op::Evaluate(p, range, x) => Op::Evaluate(
+                mk::<C>(p.map_refs(f)),
+                *range,
+                x.as_ref().map(|x| mk::<C>(x.map_refs(f))),
+            ),
+            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
+                Op::HypercubeReduceSelected(mk::<C>(p.map_refs(f)), *range, *tail_num_vars)
+            }
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
-            Op::Marginalize(op) => Op::Marginalize(mk::<C>(op.map_refs(f))),
             Op::Proj(op, field, typ) => {
                 Op::Proj(mk::<C>(op.map_refs(f)), field.clone(), typ.clone())
             }
@@ -1039,11 +1049,18 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::Ifft(v) => Op::Ifft(mk::<C>(v.inline(vars, except))),
             Op::Fft(v) => Op::Fft(mk::<C>(v.inline(vars, except))),
-            Op::Marginalize(v) => Op::Marginalize(mk::<C>(v.inline(vars, except))),
             Op::Proj(v, field, typ) => {
                 Op::Proj(mk::<C>(v.inline(vars, except)), field.clone(), typ.clone())
             }
             Op::Reduce(op, v) => Op::Reduce(*op, mk::<C>(v.inline(vars, except))),
+            Op::Evaluate(p, range, points) => Op::Evaluate(
+                mk::<C>(p.inline(vars, except)),
+                *range,
+                points.as_ref().map(|x| mk::<C>(x.inline(vars, except))),
+            ),
+            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
+                Op::HypercubeReduceSelected(mk::<C>(p.inline(vars, except)), *range, *tail_num_vars)
+            }
             _ => self.clone(),
         }
     }
@@ -1248,20 +1265,45 @@ where
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Evaluate(p, x) => allocator.concat([
+            Op::Evaluate(p, None, None) => allocator.concat([
+                allocator.text("(eval "),
+                p.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Evaluate(p, None, Some(x)) => allocator.concat([
                 allocator.text("(eval "),
                 p.get().clone().pretty(allocator),
                 allocator.text(", "),
                 x.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Mle(v) => allocator.concat([
-                allocator.text("(mle "),
-                v.get().clone().pretty(allocator),
+            Op::Evaluate(p, Some(range), Some(fixed)) => allocator.concat([
+                allocator.text("(eval<"),
+                range.pretty(allocator),
+                allocator.text("> "),
+                p.get().clone().pretty(allocator),
+                allocator.text(", "),
+                fixed.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::Marginalize(v) => allocator.concat([
-                allocator.text("(marginalize "),
+            Op::Evaluate(p, Some(range), None) => allocator.concat([
+                allocator.text("(eval<"),
+                range.pretty(allocator),
+                allocator.text("> "),
+                p.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::HypercubeReduceSelected(p, range, tail_num_vars) => allocator.concat([
+                allocator.text("(hypercube-reduce-selected<"),
+                range.pretty(allocator),
+                allocator.text(", tails="),
+                allocator.text(format!("{}", tail_num_vars)),
+                allocator.text("> "),
+                p.get().clone().pretty(allocator),
+                allocator.text(")"),
+            ]),
+            Op::Mle(v) => allocator.concat([
+                allocator.text("(mle "),
                 v.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),

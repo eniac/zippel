@@ -1,6 +1,9 @@
+use crate::optimization::record_selected_eval_interpolation_fallback;
 use crate::{PolyError, PolyVariant};
 use ark_ff::{Field, PrimeField};
+use ark_poly::{DenseUVPolynomial, univariate::DensePolynomial};
 use ark_serialize::{CanonicalSerialize, SerializationError};
+use lang::typ::CRange;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -45,6 +48,144 @@ impl<F: Field> Hash for ArcPtr<F> {
 impl<F: Field> fmt::Debug for ArcPtr<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ArcPtr({:p})", Arc::as_ptr(&self.0))
+    }
+}
+
+/// Static selected-evaluation shape carried by typed graph/runtime code.
+/// Runtime values can lose arity when they are constants or typed zeroes, so
+/// selected eval validates against this shape instead of guessing from the
+/// polynomial payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedEvalShape {
+    pub input_num_vars: usize,
+    pub output_num_vars: usize,
+    pub max_degree: usize,
+}
+
+impl SelectedEvalShape {
+    pub fn new(input_num_vars: usize, output_num_vars: usize, max_degree: usize) -> Self {
+        SelectedEvalShape {
+            input_num_vars,
+            output_num_vars,
+            max_degree,
+        }
+    }
+}
+
+fn interpolate_univariate_from_points<F: PrimeField>(points: &[F], evals: &[F]) -> Vec<F> {
+    let n = points.len();
+    assert_eq!(n, evals.len(), "point/eval length mismatch");
+    assert!(n > 0, "cannot interpolate empty point set");
+
+    let mut prod = vec![F::one()];
+    for &x in points {
+        let mut next = vec![F::zero(); prod.len() + 1];
+        for (i, &c) in prod.iter().enumerate() {
+            next[i] -= c * x;
+            next[i + 1] += c;
+        }
+        prod = next;
+    }
+
+    let mut coeffs = vec![F::zero(); n];
+    for i in 0..n {
+        let xi = points[i];
+        let mut denom = F::one();
+        for (j, &xj) in points.iter().enumerate() {
+            if i != j {
+                denom *= xi - xj;
+            }
+        }
+        assert!(!denom.is_zero(), "interpolation points must be distinct");
+
+        let qi = divide_by_x_minus_a(&prod, xi);
+        let scale = evals[i] * denom.inverse().unwrap();
+        for (k, qk) in qi.iter().enumerate() {
+            coeffs[k] += *qk * scale;
+        }
+    }
+
+    coeffs
+}
+
+fn divide_by_x_minus_a<F: PrimeField>(p: &[F], a: F) -> Vec<F> {
+    assert!(p.len() >= 2, "polynomial degree must be at least 1");
+    let n = p.len() - 1;
+    let mut q = vec![F::zero(); n];
+    q[n - 1] = p[n];
+    for k in (1..n).rev() {
+        q[k - 1] = p[k] + a * q[k];
+    }
+    q
+}
+
+fn unit_constant_with_declared_degree<F: PrimeField>(
+    scalar: F,
+    max_degree: usize,
+) -> VirtualPolynomial<F> {
+    let mut coeffs = vec![F::zero(); max_degree + 1];
+    coeffs[0] = scalar;
+    let mut result =
+        VirtualPolynomial::from_poly(PolyVariant::DenseUni(DensePolynomial { coeffs }));
+    result.num_variables = Some(1);
+    result
+}
+
+fn univariate_factor_coeffs<F: PrimeField>(poly: &PolyVariant<F>) -> Option<Vec<F>> {
+    match poly {
+        PolyVariant::DenseMle(mle) if mle.evaluations.len() == 2 => {
+            let v0 = mle.evaluations[0];
+            let v1 = mle.evaluations[1];
+            Some(vec![v0, v1 - v0])
+        }
+        PolyVariant::DenseMle(mle) if mle.evaluations.len() == 1 => Some(vec![mle.evaluations[0]]),
+        PolyVariant::SparseMle { num_vars: 1, evals } => {
+            let mut values = [F::zero(), F::zero()];
+            for (idx, value) in evals {
+                if *idx < 2 {
+                    values[*idx] += *value;
+                }
+            }
+            Some(vec![values[0], values[1] - values[0]])
+        }
+        PolyVariant::SparseMle { num_vars: 0, evals } => {
+            let value = evals.iter().map(|(_, value)| *value).sum();
+            Some(vec![value])
+        }
+        PolyVariant::DenseUni(_) | PolyVariant::SparseUni(_) => poly.to_coeffs(),
+        _ => None,
+    }
+}
+
+fn add_coeffs_assign<F: Field>(target: &mut Vec<F>, addend: &[F]) {
+    if target.len() < addend.len() {
+        target.resize(addend.len(), F::zero());
+    }
+    for (target_coeff, addend_coeff) in target.iter_mut().zip(addend.iter()) {
+        *target_coeff += *addend_coeff;
+    }
+}
+
+fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
+    if left.is_empty() || right.is_empty() {
+        return vec![F::zero()];
+    }
+    let mut result = vec![F::zero(); left.len() + right.len() - 1];
+    for (i, left_coeff) in left.iter().enumerate() {
+        for (j, right_coeff) in right.iter().enumerate() {
+            result[i + j] += *left_coeff * *right_coeff;
+        }
+    }
+    trim_trailing_zero_coeffs(&mut result);
+    result
+}
+
+fn trim_trailing_zero_coeffs<F: Field>(coeffs: &mut Vec<F>) {
+    while coeffs.len() > 1 && coeffs.last().is_some_and(|coeff| coeff.is_zero()) {
+        coeffs.pop();
+    }
+    if coeffs.is_empty() {
+        coeffs.push(F::zero());
     }
 }
 
@@ -115,6 +256,30 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         }
     }
 
+    /// Create a typed zero polynomial that preserves the declared arity.
+    pub fn zero_with_num_vars(num_vars: usize) -> Self {
+        VirtualPolynomial {
+            products: Vec::new(),
+            flattened_polys: Vec::new(),
+            poly_pointers_lookup: HashMap::new(),
+            num_variables: Some(num_vars),
+        }
+    }
+
+    /// Create a typed constant polynomial that preserves the declared arity.
+    pub fn constant_with_num_vars(scalar: F, num_vars: usize) -> Self {
+        if scalar.is_zero() {
+            VirtualPolynomial::zero_with_num_vars(num_vars)
+        } else {
+            VirtualPolynomial {
+                products: vec![(scalar, vec![])],
+                flattened_polys: vec![],
+                poly_pointers_lookup: HashMap::new(),
+                num_variables: Some(num_vars),
+            }
+        }
+    }
+
     pub fn fix_first_mle_variables_factorwise(&self, points: &[F]) -> Result<Self, PolyError<F>> {
         if points.is_empty() {
             return Ok(self.clone());
@@ -151,6 +316,203 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         }
 
         Ok(result)
+    }
+
+    /// Conservative degree bound for the virtual sum-of-products form.
+    ///
+    /// This avoids normalizing products of MLE factors (which is intentionally
+    /// unsupported in the fast path) while still giving selected unit-range
+    /// evaluation enough interpolation points to recover the residual
+    /// univariate polynomial.
+    pub fn degree_bound(&self) -> usize {
+        self.products
+            .iter()
+            .map(|(_, indices)| {
+                indices
+                    .iter()
+                    .map(|&idx| self.flattened_polys[idx].degree())
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Fix all variables outside a selected free range, using the static
+    /// shape from type inference/lowering rather than runtime payload arity.
+    pub fn fix_variables_except_range_with_shape(
+        &self,
+        shape: SelectedEvalShape,
+        free_range: CRange,
+        fixed: &[F],
+    ) -> Result<Self, PolyError<F>> {
+        let free_len = free_range.len();
+        if free_range.step != 1
+            || free_range.start >= free_range.end
+            || free_range.end > shape.input_num_vars
+            || free_len == 0
+            || free_len != shape.output_num_vars
+            || fixed.len() != shape.input_num_vars - free_len
+        {
+            return Err(PolyError::DimensionMismatch {
+                polynomial: PolyVariant::from_scalar(F::zero()),
+                expected: shape.input_num_vars.saturating_sub(free_len),
+                actual: fixed.len(),
+            });
+        }
+
+        if self.is_zero() {
+            if shape.output_num_vars == 1 {
+                return Ok(unit_constant_with_declared_degree(
+                    F::zero(),
+                    shape.max_degree,
+                ));
+            }
+            return Ok(VirtualPolynomial::zero_with_num_vars(shape.output_num_vars));
+        }
+        if let Some(scalar) = self.to_scalar() {
+            if shape.output_num_vars == 1 {
+                return Ok(unit_constant_with_declared_degree(scalar, shape.max_degree));
+            }
+            return Ok(VirtualPolynomial::constant_with_num_vars(
+                scalar,
+                shape.output_num_vars,
+            ));
+        }
+
+        if shape.output_num_vars == 1 {
+            return self.fix_variables_except_unit_range_by_interpolation(shape, free_range, fixed);
+        }
+
+        if self
+            .flattened_polys
+            .iter()
+            .all(|poly| poly.is_multivariate() && poly.num_vars() == shape.input_num_vars)
+        {
+            let new_flattened: Vec<Arc<PolyVariant<F>>> = self
+                .flattened_polys
+                .par_iter()
+                .map(|poly| {
+                    poly.fix_variables_except_range(shape.input_num_vars, free_range, fixed)
+                        .map(Arc::new)
+                })
+                .collect::<Result<_, _>>()?;
+
+            let mut new_lookup = HashMap::new();
+            for (idx, poly) in new_flattened.iter().enumerate() {
+                new_lookup.insert(ArcPtr(Arc::clone(poly)), idx);
+            }
+            let mut result = VirtualPolynomial {
+                products: self.products.clone(),
+                flattened_polys: new_flattened,
+                poly_pointers_lookup: new_lookup,
+                num_variables: Some(shape.output_num_vars),
+            };
+            result.simplify();
+            return Ok(result);
+        }
+
+        let restricted = self.normalize()?.fix_variables_except_range(
+            shape.input_num_vars,
+            free_range,
+            fixed,
+        )?;
+        let mut result = VirtualPolynomial::from_poly(restricted);
+        result.num_variables = Some(shape.output_num_vars);
+        Ok(result)
+    }
+
+    /// Compatibility helper for tests and non-selected-eval callers. The input
+    /// arity is derived from the selected-eval call shape (`fixed.len() +
+    /// free_range.len()`), not from potentially untyped constant payloads.
+    pub fn fix_variables_except_range(
+        &self,
+        free_range: CRange,
+        fixed: &[F],
+    ) -> Result<Self, PolyError<F>> {
+        let shape = SelectedEvalShape::new(
+            fixed.len() + free_range.len(),
+            free_range.len(),
+            self.degree_bound(),
+        );
+        self.fix_variables_except_range_with_shape(shape, free_range, fixed)
+    }
+
+    fn fix_variables_except_unit_range_by_interpolation(
+        &self,
+        shape: SelectedEvalShape,
+        free_range: CRange,
+        fixed: &[F],
+    ) -> Result<Self, PolyError<F>> {
+        record_selected_eval_interpolation_fallback();
+        let degree = shape.max_degree.max(self.degree_bound());
+        let points: Vec<F> = (0..=degree).map(|i| F::from(i as u64)).collect();
+        let evals: Vec<F> = points
+            .par_iter()
+            .map(|t| {
+                let mut full_point = Vec::with_capacity(shape.input_num_vars);
+                let mut fixed_idx = 0usize;
+                for var_idx in 0..shape.input_num_vars {
+                    if var_idx >= free_range.start && var_idx < free_range.end {
+                        full_point.push(*t);
+                    } else {
+                        full_point.push(fixed[fixed_idx]);
+                        fixed_idx += 1;
+                    }
+                }
+                self.evaluate_mv(&full_point)
+            })
+            .collect::<Result<_, _>>()?;
+
+        let coeffs = interpolate_univariate_from_points(&points, &evals);
+        let mut result = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            DensePolynomial::from_coefficients_vec(coeffs),
+        ));
+        result.num_variables = Some(1);
+        Ok(result)
+    }
+
+    /// Sum a batch of univariate virtual polynomials into one dense
+    /// univariate polynomial without preserving the per-tail product-of-MLE
+    /// representation. This is a private reduce(+) fast path for explicit
+    /// sumcheck rounds after selected MLE factors have been restricted to the
+    /// current unit variable.
+    pub(crate) fn sum_univariate_products_dense(polys: &[Self]) -> Option<Self> {
+        if polys.is_empty() {
+            return None;
+        }
+
+        let mut total = vec![F::zero()];
+        for poly in polys {
+            let coeffs = poly.univariate_products_coeffs()?;
+            add_coeffs_assign(&mut total, &coeffs);
+        }
+        trim_trailing_zero_coeffs(&mut total);
+
+        let mut result = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+            DensePolynomial::from_coefficients_vec(total),
+        ));
+        result.num_variables = Some(1);
+        Some(result)
+    }
+
+    fn univariate_products_coeffs(&self) -> Option<Vec<F>> {
+        if let Some(num_vars) = self.num_variables
+            && num_vars != 1
+        {
+            return None;
+        }
+
+        let mut total = vec![F::zero()];
+        for (coefficient, indices) in &self.products {
+            let mut term = vec![*coefficient];
+            for &idx in indices {
+                let factor = univariate_factor_coeffs(self.flattened_polys[idx].as_ref())?;
+                term = mul_coeffs(&term, &factor);
+            }
+            add_coeffs_assign(&mut total, &term);
+        }
+        trim_trailing_zero_coeffs(&mut total);
+        Some(total)
     }
 
     /// Add a product of polynomials to this virtual polynomial
@@ -282,6 +644,16 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
 
     /// Evaluate multivariate - the virtual polynomial at a multidimensional point
     pub fn evaluate_mv(&self, point: &[F]) -> Result<F, PolyError<F>> {
+        if let Some(num_vars) = self.num_variables
+            && point.len() != num_vars
+        {
+            return Err(PolyError::DimensionMismatch {
+                polynomial: PolyVariant::from_scalar(F::zero()),
+                expected: num_vars,
+                actual: point.len(),
+            });
+        }
+
         let mut result = F::zero();
         for (coeff, indices) in &self.products {
             let mut prod = *coeff;
@@ -441,6 +813,7 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
             // Multiply by coefficient
             let term = match term_result {
                 None => PolyVariant::from_scalar(*coeff), // Just the scalar
+                Some(poly) if *coeff == F::one() => poly,
                 Some(poly) => poly.poly_mul_scalar(*coeff),
             };
 
@@ -457,10 +830,18 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     // Wrapper methods that delegate to normalized PolyVariant
 
     pub fn is_univariate(&self) -> bool {
-        self.normalize().map(|p| p.is_univariate()).unwrap_or(false)
+        if let Some(num_vars) = self.num_variables {
+            return num_vars == 1;
+        }
+        self.normalize()
+            .map(|p| p.is_univariate())
+            .unwrap_or_else(|_| self.num_vars() == Some(1))
     }
 
     pub fn is_multilinear(&self) -> bool {
+        if self.num_variables.is_some() && self.degree_bound() <= 1 {
+            return true;
+        }
         self.normalize()
             .map(|p| p.is_multilinear())
             .unwrap_or(false)
@@ -488,16 +869,51 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         self.normalize().ok().and_then(|p| p.to_coeffs())
     }
 
+    pub fn try_evaluate_vec(&self, points: &[F]) -> Result<Self, PolyError<F>> {
+        // Normalize and evaluate at all points, returning errors instead of
+        // silently converting normalization/evaluation failures into zero.
+        let normalized = self.normalize()?;
+        let evaluated = normalized.try_evaluate_vec(points)?;
+        Ok(VirtualPolynomial::from_poly(evaluated))
+    }
+
     pub fn evaluate_vec(&self, points: &[F]) -> Self {
-        // Normalize and evaluate at all points, return as VirtualPolynomial
-        if let Ok(normalized) = self.normalize() {
-            VirtualPolynomial::from_poly(normalized.evaluate_vec(points))
-        } else {
-            VirtualPolynomial::new()
-        }
+        self.try_evaluate_vec(points)
+            .expect("VirtualPolynomial::evaluate_vec failed; use try_evaluate_vec to handle errors")
     }
 
     pub fn evaluate_or_fix_mle(&self, points: &[F]) -> Result<Self, PolyError<F>> {
+        if let Some(num_vars) = self.num_variables
+            && (self.is_zero() || self.to_scalar().is_some())
+        {
+            if points.len() > num_vars {
+                return Err(PolyError::DimensionMismatch {
+                    polynomial: PolyVariant::from_scalar(F::zero()),
+                    expected: num_vars,
+                    actual: points.len(),
+                });
+            }
+            let scalar = self.to_scalar().unwrap_or_else(F::zero);
+            return if points.len() == num_vars {
+                Ok(VirtualPolynomial::from_scalar(scalar))
+            } else {
+                Ok(VirtualPolynomial::constant_with_num_vars(
+                    scalar,
+                    num_vars - points.len(),
+                ))
+            };
+        }
+
+        if let Some(num_vars) = self.num_vars()
+            && points.len() < num_vars
+            && self
+                .flattened_polys
+                .iter()
+                .all(|poly| matches!(&**poly, PolyVariant::DenseMle(_)))
+        {
+            return self.fix_first_mle_variables_factorwise(points);
+        }
+
         let normalized = self.normalize()?;
         let result = normalized.evaluate_or_fix_mle(points)?;
         Ok(VirtualPolynomial::from_poly(result))
@@ -524,9 +940,11 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
     }
 
     pub fn scalar_div_poly(scalar: F, poly: &Self) -> Result<Self, PolyError<F>> {
-        let poly_norm = poly.normalize()?;
-        let result = PolyVariant::scalar_sub_poly(scalar, &poly_norm)?;
-        Ok(VirtualPolynomial::from_poly(result))
+        let divisor = poly.normalize()?;
+        Err(PolyError::DivisionNotApplicable {
+            v1: PolyVariant::from_scalar(scalar),
+            v2: divisor,
+        })
     }
 }
 
@@ -809,10 +1227,12 @@ impl<F: ark_ff::PrimeField> fmt::Display for VirtualPolynomial<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ArkBls12_381, ArkConfig, ArkScalarOps, Value, values::marginalize};
     use ark_bls12_381::Fr;
     use ark_ff::{One, UniformRand, Zero};
     use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
     use ark_std::test_rng;
+    use lang::ast::BinOp;
 
     // ========== Test Helpers ==========
     fn create_vp_from_scalar(val: u64) -> VirtualPolynomial<Fr> {
@@ -846,6 +1266,538 @@ mod tests {
                 msg, point
             );
         }
+    }
+
+    fn explicit_round_poly(poly: &VirtualPolynomial<Fr>, num_vars: usize) -> VirtualPolynomial<Fr> {
+        let mut round_poly = VirtualPolynomial::new();
+        for tail_index in 0..(1usize << (num_vars - 1)) {
+            let tail: Vec<Fr> = (0..(num_vars - 1))
+                .map(|j| Fr::from(((tail_index >> j) & 1) as u64))
+                .collect();
+            let selected = poly
+                .fix_variables_except_range(CRange::singleton(0), &tail)
+                .unwrap();
+            round_poly.add_virtual(&selected);
+        }
+        round_poly
+    }
+
+    fn explicit_round_evals(
+        poly: &VirtualPolynomial<Fr>,
+        num_vars: usize,
+        max_degree: usize,
+    ) -> Vec<Fr> {
+        let round_poly = explicit_round_poly(poly, num_vars);
+        (0..=max_degree)
+            .map(|t| round_poly.evaluate_uv(&Fr::from(t as u64)))
+            .collect()
+    }
+
+    fn eval_coeffs(coeffs: &[Fr], point: Fr) -> Fr {
+        coeffs
+            .iter()
+            .rev()
+            .fold(Fr::zero(), |acc, coeff| acc * point + *coeff)
+    }
+
+    fn direct_unit_selected_coeffs(
+        product: &VirtualPolynomial<Fr>,
+        fixed_tail: &[Fr],
+        degree: usize,
+    ) -> Vec<Fr> {
+        let points: Vec<Fr> = (0..=degree).map(|i| Fr::from(i as u64)).collect();
+        let evals: Vec<Fr> = points
+            .iter()
+            .map(|t| {
+                let mut point = Vec::with_capacity(1 + fixed_tail.len());
+                point.push(*t);
+                point.extend_from_slice(fixed_tail);
+                product.evaluate_mv(&point).unwrap()
+            })
+            .collect();
+        let mut coeffs = interpolate_univariate_from_points(&points, &evals);
+        trim_trailing_zero_coeffs(&mut coeffs);
+        coeffs
+    }
+
+    #[test]
+    fn test_selected_unit_eval_matches_direct_evaluation_for_mle_product() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4], 2);
+        let b = create_vp_from_mle(vec![5, 7, 11, 13], 2);
+        let product = a.poly_mul(&b).unwrap();
+        let fixed_tail = vec![Fr::from(3u64)];
+
+        let selected = product
+            .fix_variables_except_range(CRange::singleton(0), &fixed_tail)
+            .unwrap();
+
+        for t in [0u64, 1, 2, 5] {
+            let point = vec![Fr::from(t), fixed_tail[0]];
+            let direct = product.evaluate_mv(&point).unwrap();
+            let selected_eval = selected.evaluate_uv(&Fr::from(t));
+            assert_eq!(selected_eval, direct, "selected eval mismatch at t={t}");
+        }
+    }
+
+    #[test]
+    fn test_selected_unit_eval_of_mle_product_materializes_coefficient_univariate() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let fixed_tail = vec![Fr::from(3u64), Fr::from(5u64)];
+
+        let selected = product
+            .fix_variables_except_range_with_shape(
+                SelectedEvalShape::new(3, 1, 2),
+                CRange::singleton(0),
+                &fixed_tail,
+            )
+            .unwrap();
+
+        assert_eq!(selected.num_vars(), Some(1));
+        assert!(
+            selected.flattened_polys.len() == 1
+                && matches!(
+                    selected.flattened_polys[0].as_ref(),
+                    PolyVariant::DenseUni(_)
+                ),
+            "unit selected eval over MLE products must materialize a coefficient-compatible DenseUni"
+        );
+        let coeffs = selected
+            .to_coeffs()
+            .expect("unit selected eval must expose univariate coefficients");
+        assert_eq!(
+            coeffs,
+            direct_unit_selected_coeffs(&product, &fixed_tail, 2)
+        );
+
+        for t in [0u64, 1, 2, 7] {
+            let point = vec![Fr::from(t), fixed_tail[0], fixed_tail[1]];
+            let direct = product.evaluate_mv(&point).unwrap();
+            let selected_eval = selected.evaluate_uv(&Fr::from(t));
+            assert_eq!(selected_eval, direct, "selected eval mismatch at t={t}");
+            assert_eq!(
+                eval_coeffs(&coeffs, Fr::from(t)),
+                direct,
+                "selected coefficients mismatch at t={t}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_coef_after_unit_selected_eval_of_mle_product_returns_coefficients() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let fixed_tail = vec![Fr::from(3u64), Fr::from(5u64)];
+
+        let coeff_value = Value::<ArkBls12_381>::Poly(product.clone())
+            .value_eval_selected(
+                CRange::singleton(0),
+                Value::VecScalar(fixed_tail.clone()),
+                SelectedEvalShape::new(3, 1, 2),
+            )
+            .value_coef();
+
+        let Value::VecScalar(coeffs) = coeff_value else {
+            panic!("coef after unit selected eval should return VecScalar coefficients");
+        };
+        assert_eq!(
+            coeffs,
+            direct_unit_selected_coeffs(&product, &fixed_tail, 2)
+        );
+
+        for t in [0u64, 1, 2, 7] {
+            let point = vec![Fr::from(t), fixed_tail[0], fixed_tail[1]];
+            let direct = product.evaluate_mv(&point).unwrap();
+            assert_eq!(
+                eval_coeffs(&coeffs, Fr::from(t)),
+                direct,
+                "coef-selected polynomial mismatch at t={t}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fft_after_unit_selected_eval_of_mle_product_returns_evaluations() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let fixed_tail = vec![Fr::from(3u64), Fr::from(5u64)];
+
+        let selected_value = Value::<ArkBls12_381>::Poly(product.clone()).value_eval_selected(
+            CRange::singleton(0),
+            Value::VecScalar(fixed_tail.clone()),
+            SelectedEvalShape::new(3, 1, 2),
+        );
+
+        let mut expected_fft = direct_unit_selected_coeffs(&product, &fixed_tail, 2);
+        <<ArkBls12_381 as ArkConfig>::FOps as ArkScalarOps<Fr>>::vec_fft(&mut expected_fft);
+
+        let fft_value = selected_value.value_fft();
+        let Value::VecScalar(actual_fft) = fft_value else {
+            panic!("fft after unit selected eval should return VecScalar evaluations");
+        };
+        assert_eq!(actual_fft.len(), expected_fft.len());
+        assert_eq!(actual_fft, expected_fft);
+    }
+
+    #[test]
+    fn test_reduce_of_boolean_selected_mle_products_collapses_to_dense_univariate() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+
+        let selected_terms = (0..4usize)
+            .map(|tail_index| {
+                let tail: Vec<Fr> = (0..2)
+                    .map(|j| Fr::from(((tail_index >> j) & 1) as u64))
+                    .collect();
+                Value::<ArkBls12_381>::Poly(
+                    product
+                        .fix_variables_except_range(CRange::singleton(0), &tail)
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let reduced = Value::<ArkBls12_381>::Vec(selected_terms).value_reduce(BinOp::Add);
+        let Value::Poly(round_poly) = reduced else {
+            panic!("expected reduced polynomial");
+        };
+
+        assert_eq!(round_poly.num_vars(), Some(1));
+        assert!(
+            round_poly.flattened_polys.len() == 1
+                && matches!(
+                    round_poly.flattened_polys[0].as_ref(),
+                    PolyVariant::DenseUni(_)
+                ),
+            "sum of selected MLE-product tails should materialize a compact DenseUni round polynomial"
+        );
+
+        let expected = explicit_round_evals(&product, 3, 2);
+        let actual = (0..=2)
+            .map(|t| round_poly.evaluate_uv(&Fr::from(t as u64)))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_prefix_eval_fixes_mle_product_factorwise() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let r0 = Fr::from(5u64);
+        let residual = product.evaluate_or_fix_mle(&[r0]).unwrap();
+
+        for (x1, x2) in [(0u64, 0u64), (1, 0), (0, 1), (3, 4)] {
+            let direct = product
+                .evaluate_mv(&[r0, Fr::from(x1), Fr::from(x2)])
+                .unwrap();
+            let residual_eval = residual.evaluate_mv(&[Fr::from(x1), Fr::from(x2)]).unwrap();
+            assert_eq!(
+                residual_eval, direct,
+                "prefix residual mismatch at ({x1}, {x2})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_prefix_eval_leaves_product_univariate_when_one_variable_remains() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let r0 = Fr::from(5u64);
+        let r1 = Fr::from(7u64);
+        let residual = product.evaluate_or_fix_mle(&[r0, r1]).unwrap();
+        assert!(residual.is_univariate());
+
+        for t in [0u64, 1, 6] {
+            let direct = product.evaluate_mv(&[r0, r1, Fr::from(t)]).unwrap();
+            let residual_eval = residual.evaluate_uv(&Fr::from(t));
+            assert_eq!(residual_eval, direct, "univariate residual mismatch at {t}");
+        }
+    }
+
+    #[test]
+    fn test_repeated_prefix_eval_matches_direct_for_deep_mle_product() {
+        let base = create_vp_from_mle((1..=256).collect(), 8);
+        let mut product = base.clone();
+        for _ in 1..6 {
+            product = product.poly_mul(&base).unwrap();
+        }
+
+        let prefix: Vec<Fr> = (2u64..=7).map(Fr::from).collect();
+        let mut residual = product.clone();
+        for r in &prefix {
+            residual = residual.evaluate_or_fix_mle(&[*r]).unwrap();
+        }
+
+        for (x6, x7) in [(0u64, 0u64), (1, 0), (0, 1), (3, 5)] {
+            let mut full_point = prefix.clone();
+            full_point.push(Fr::from(x6));
+            full_point.push(Fr::from(x7));
+            let direct = product.evaluate_mv(&full_point).unwrap();
+            let residual_eval = residual.evaluate_mv(&[Fr::from(x6), Fr::from(x7)]).unwrap();
+            assert_eq!(
+                residual_eval, direct,
+                "deep repeated prefix residual mismatch at ({x6}, {x7})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_deep_explicit_final_round_consistency() {
+        let base = create_vp_from_mle((1..=256).collect(), 8);
+        let mut product = base.clone();
+        for _ in 1..6 {
+            product = product.poly_mul(&base).unwrap();
+        }
+
+        let mut rng = test_rng();
+        let prefix: Vec<Fr> = (0..6).map(|_| Fr::rand(&mut rng)).collect();
+        let mut curr_poly = product.clone();
+        for r in &prefix {
+            curr_poly = curr_poly.evaluate_or_fix_mle(&[*r]).unwrap();
+        }
+
+        let round_poly = explicit_round_poly(&curr_poly, 2);
+        let final_challenge = Fr::rand(&mut rng);
+        let prev_eval = round_poly.evaluate_uv(&final_challenge);
+        let final_poly = curr_poly.evaluate_or_fix_mle(&[final_challenge]).unwrap();
+        let ev0 = final_poly.evaluate_uv(&Fr::from(0u64));
+        let ev1 = final_poly.evaluate_uv(&Fr::from(1u64));
+        assert_eq!(prev_eval, ev0 + ev1);
+    }
+
+    #[test]
+    fn test_explicit_round_eval_matches_marginalize_reference_for_small_product() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4, 5, 6, 7, 8], 3);
+        let b = create_vp_from_mle(vec![2, 3, 5, 7, 11, 13, 17, 19], 3);
+        let product = a.poly_mul(&b).unwrap();
+        let max_degree = 2;
+
+        let explicit_round0 = explicit_round_evals(&product, 3, max_degree);
+        let (legacy_round0, _) = marginalize::<ArkBls12_381>(&product, 3, max_degree, 0, None);
+        assert_eq!(explicit_round0, legacy_round0);
+
+        let r1 = Fr::from(5u64);
+        let residual = product.evaluate_or_fix_mle(&[r1]).unwrap();
+        let explicit_round1 = explicit_round_evals(&residual, 2, max_degree);
+        let (legacy_round1, legacy_residual) =
+            marginalize::<ArkBls12_381>(&product, 3, max_degree, 1, Some(r1));
+        assert_eq!(explicit_round1, legacy_round1);
+
+        for (x1, x2) in [(0u64, 0u64), (1, 0), (0, 1), (3, 4)] {
+            assert_eq!(
+                residual.evaluate_mv(&[Fr::from(x1), Fr::from(x2)]).unwrap(),
+                legacy_residual
+                    .evaluate_mv(&[Fr::from(x1), Fr::from(x2)])
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_explicit_round_eval_matches_marginalize_reference_for_degree10_product() {
+        let num_vars = 8;
+        let max_degree = 10;
+        let mut rng = test_rng();
+        let evals: Vec<Fr> = (0..(1usize << num_vars))
+            .map(|_| Fr::rand(&mut rng))
+            .collect();
+        let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+            DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
+        ));
+        let mut product = base.clone();
+        for _ in 1..max_degree {
+            product = product.poly_mul(&base).unwrap();
+        }
+
+        let explicit_round0 = explicit_round_evals(&product, num_vars, max_degree);
+        let reduced_terms = (0..(1usize << (num_vars - 1)))
+            .map(|tail_index| {
+                let tail: Vec<Fr> = (0..(num_vars - 1))
+                    .map(|j| Fr::from(((tail_index >> j) & 1) as u64))
+                    .collect();
+                Value::<ArkBls12_381>::Poly(
+                    product
+                        .fix_variables_except_range(CRange::singleton(0), &tail)
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let reduced_round0 =
+            match Value::<ArkBls12_381>::Vec(reduced_terms).value_reduce(BinOp::Add) {
+                Value::Poly(poly) => (0..=max_degree)
+                    .map(|t| poly.evaluate_uv(&Fr::from(t as u64)))
+                    .collect::<Vec<_>>(),
+                other => panic!("expected reduced polynomial, got {other}"),
+            };
+        assert_eq!(explicit_round0, reduced_round0);
+        let (legacy_round0, _) =
+            marginalize::<ArkBls12_381>(&product, num_vars, max_degree, 0, None);
+        assert_eq!(explicit_round0, legacy_round0);
+
+        let r1 = Fr::from(5u64);
+        let residual = product.evaluate_or_fix_mle(&[r1]).unwrap();
+        let explicit_round1 = explicit_round_evals(&residual, num_vars - 1, max_degree);
+        let (legacy_round1, _) =
+            marginalize::<ArkBls12_381>(&product, num_vars, max_degree, 1, Some(r1));
+        assert_eq!(explicit_round1, legacy_round1);
+    }
+
+    #[test]
+    fn test_explicit_sumcheck_round_chain_consistency_degree6_num_vars8() {
+        let num_vars = 8;
+        let max_degree = 6;
+        let mut rng = test_rng();
+        let evals: Vec<Fr> = (0..(1usize << num_vars))
+            .map(|_| Fr::rand(&mut rng))
+            .collect();
+        let base = VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+            DenseMultilinearExtension::from_evaluations_vec(num_vars, evals),
+        ));
+        let mut curr_poly = base.clone();
+        for _ in 1..max_degree {
+            curr_poly = curr_poly.poly_mul(&base).unwrap();
+        }
+
+        let mut prev_eval: Option<Fr> = None;
+        let mut current_vars = num_vars;
+        for round in 0..num_vars {
+            let evs = if current_vars == 1 {
+                (0..=max_degree)
+                    .map(|t| curr_poly.evaluate_uv(&Fr::from(t as u64)))
+                    .collect::<Vec<_>>()
+            } else {
+                explicit_round_evals(&curr_poly, current_vars, max_degree)
+            };
+            if let Some(prev) = prev_eval {
+                assert_eq!(
+                    prev,
+                    evs[0] + evs[1],
+                    "sumcheck consistency failed at round {round}"
+                );
+            }
+            let g = crate::values::round_univariate_from_marginalize_evals::<Fr>(&evs);
+            let challenge = Fr::from((round + 5) as u64);
+            prev_eval = Some(g.evaluate_uv(&challenge));
+            if current_vars > 1 {
+                curr_poly = curr_poly.evaluate_or_fix_mle(&[challenge]).unwrap();
+                current_vars -= 1;
+            }
+        }
+    }
+
+    #[test]
+    fn test_selected_wide_eval_matches_direct_evaluation_for_dense_mle() {
+        let p = create_vp_from_mle((1u64..=16).collect(), 4);
+        let fixed = vec![Fr::from(5u64), Fr::from(7u64)]; // variables 0 and 3
+        let selected = p
+            .fix_variables_except_range_with_shape(
+                SelectedEvalShape::new(4, 2, 1),
+                CRange::new(1, 3),
+                &fixed,
+            )
+            .unwrap();
+
+        assert_eq!(selected.num_vars(), Some(2));
+        for (x1, x2) in [(0u64, 0u64), (1, 0), (0, 1), (2, 3)] {
+            let direct = p
+                .evaluate_mv(&[fixed[0], Fr::from(x1), Fr::from(x2), fixed[1]])
+                .unwrap();
+            let selected_eval = selected.evaluate_mv(&[Fr::from(x1), Fr::from(x2)]).unwrap();
+            assert_eq!(
+                selected_eval, direct,
+                "wide selected eval mismatch at ({x1}, {x2})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_selected_eval_typed_zero_preserves_output_arity() {
+        let zero = VirtualPolynomial::<Fr>::zero_with_num_vars(3);
+        let selected = zero
+            .fix_variables_except_range_with_shape(
+                SelectedEvalShape::new(3, 1, 5),
+                CRange::singleton(0),
+                &[Fr::from(2u64), Fr::from(3u64)],
+            )
+            .unwrap();
+
+        assert_eq!(selected.num_vars(), Some(1));
+        assert_eq!(selected.evaluate_uv(&Fr::from(11u64)), Fr::from(0u64));
+        assert_eq!(selected.to_coeffs().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn selected_eval_unit_zero_preserves_declared_degree_slots() {
+        let degree = 7usize;
+        let zero = VirtualPolynomial::<Fr>::zero_with_num_vars(3);
+        let selected_value = Value::<ArkBls12_381>::Poly(zero).value_eval_selected(
+            CRange::singleton(0),
+            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            SelectedEvalShape::new(3, 1, degree),
+        );
+
+        let Value::VecScalar(coeffs) = selected_value.value_coef() else {
+            panic!("coef after unit selected zero should return VecScalar");
+        };
+        assert_eq!(coeffs.len(), degree + 1);
+        assert!(coeffs.iter().all(|c| c.is_zero()));
+
+        let Value::VecScalar(evals) = selected_value.value_fft() else {
+            panic!("fft after unit selected zero should return VecScalar");
+        };
+        assert_eq!(evals.len(), degree + 1);
+        assert!(evals.iter().all(|v| v.is_zero()));
+    }
+
+    #[test]
+    fn selected_eval_unit_constant_preserves_declared_degree_slots() {
+        let degree = 7usize;
+        let scalar = Fr::from(9u64);
+        let constant = VirtualPolynomial::<Fr>::constant_with_num_vars(scalar, 3);
+        let selected_value = Value::<ArkBls12_381>::Poly(constant).value_eval_selected(
+            CRange::singleton(0),
+            Value::VecScalar(vec![Fr::from(2u64), Fr::from(3u64)]),
+            SelectedEvalShape::new(3, 1, degree),
+        );
+
+        let Value::VecScalar(coeffs) = selected_value.value_coef() else {
+            panic!("coef after unit selected constant should return VecScalar");
+        };
+        assert_eq!(coeffs.len(), degree + 1);
+        assert_eq!(coeffs[0], scalar);
+        assert!(coeffs[1..].iter().all(|c| c.is_zero()));
+
+        let Value::VecScalar(evals) = selected_value.value_fft() else {
+            panic!("fft after unit selected constant should return VecScalar");
+        };
+        assert_eq!(evals.len(), degree + 1);
+        assert!(evals.iter().all(|v| *v == scalar));
+    }
+
+    #[test]
+    fn test_selected_eval_typed_constant_wide_range_preserves_output_arity() {
+        let constant = VirtualPolynomial::<Fr>::constant_with_num_vars(Fr::from(9u64), 4);
+        let selected = constant
+            .fix_variables_except_range_with_shape(
+                SelectedEvalShape::new(4, 2, 7),
+                CRange::new(1, 3),
+                &[Fr::from(2u64), Fr::from(5u64)],
+            )
+            .unwrap();
+
+        assert_eq!(selected.num_vars(), Some(2));
+        assert_eq!(
+            selected
+                .evaluate_mv(&[Fr::from(7u64), Fr::from(11u64)])
+                .unwrap(),
+            Fr::from(9u64)
+        );
     }
 
     // ========== Ring Axiom Tests: Addition ==========
@@ -1024,6 +1976,83 @@ mod tests {
         let expected = create_vp_from_poly_univariate(vec![5, 2, 3]); // (10-5) + 2x + 3x^2
 
         assert_vp_eq(&result, &expected, "Scalar subtraction");
+    }
+
+    // ========== Division Refusal Tests ==========
+
+    #[test]
+    fn test_scalar_div_poly_refuses_nonconstant_divisor_without_subtracting() {
+        let scalar = Fr::from(10u64);
+        let poly = create_vp_from_poly_univariate(vec![3, 2]); // 3 + 2x
+
+        let err = VirtualPolynomial::scalar_div_poly(scalar, &poly).unwrap_err();
+
+        match err {
+            PolyError::DivisionNotApplicable { v1, v2 } => {
+                assert_eq!(v1, PolyVariant::from_scalar(scalar));
+                assert_eq!(v2, poly.normalize().unwrap());
+            }
+            other => panic!("expected DivisionNotApplicable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_scalar_div_poly_refuses_constant_polynomial_divisor() {
+        let scalar = Fr::from(10u64);
+        let constant_poly = create_vp_from_poly_univariate(vec![2]);
+
+        let err = VirtualPolynomial::scalar_div_poly(scalar, &constant_poly).unwrap_err();
+
+        assert!(
+            matches!(err, PolyError::DivisionNotApplicable { .. }),
+            "scalar / constant-polynomial should mirror source typing and be refused, got {err:?}"
+        );
+    }
+
+    // ========== Checked Vector Evaluation Tests ==========
+
+    #[test]
+    fn test_try_evaluate_vec_happy_path() {
+        let poly = create_vp_from_poly_univariate(vec![1, 2]); // 1 + 2x
+        let points = vec![Fr::from(0u64), Fr::from(3u64)];
+
+        let evaluated = poly.try_evaluate_vec(&points).unwrap();
+
+        assert_eq!(
+            evaluated.to_vec().unwrap(),
+            vec![Fr::from(1u64), Fr::from(7u64)]
+        );
+    }
+
+    #[test]
+    fn test_try_evaluate_vec_normalization_failure_returns_error() {
+        let a = create_vp_from_mle(vec![1, 2, 3, 4], 2);
+        let b = create_vp_from_mle(vec![5, 6, 7, 8], 2);
+        let product = a.poly_mul(&b).unwrap();
+
+        let err = product
+            .try_evaluate_vec(&[Fr::from(0u64), Fr::from(1u64)])
+            .unwrap_err();
+
+        assert!(
+            matches!(err, PolyError::MleMultiplication { .. }),
+            "normalization failure should be returned, not converted to zero; got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_poly_variant_try_evaluate_vec_rejects_non_univariate_without_panic() {
+        let mle = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            1,
+            vec![Fr::from(1u64), Fr::from(2u64)],
+        ));
+
+        let err = mle.try_evaluate_vec(&[Fr::from(0u64)]).unwrap_err();
+
+        assert!(
+            matches!(err, PolyError::VectorEvaluationRequiresUnivariate { .. }),
+            "non-univariate vector evaluation should return a typed error, got {err:?}"
+        );
     }
 
     // ========== Virtual Polynomial Specific Tests ==========

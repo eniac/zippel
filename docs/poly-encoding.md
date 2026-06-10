@@ -76,6 +76,13 @@ Aliases defined by the lang: `Uni<F, m> ≡ Poly<F, 1, m>`,
 | `eval(p: Poly<F, n, m>, xs: [F; k])` | `k = n` | `F` |
 | `eval(p: Poly<F, n, m>, xs: [F; k])` | `k < n` | `Poly<F, n − k, m>` |
 | `eval(p: Poly<F, n, m>, xs: [F; k])` | `k > n` | type error |
+| `eval<i..j>(p: Poly<F, n, m>, fixed: [F; n − (j − i)])` | `0 ≤ i < j ≤ n`, step `1` | `Poly<F, j − i, m>` |
+| `eval<i>(p: Poly<F, n, m>, fixed: [F; n − 1])` | unit-range sugar for `eval<i..i+1>` | `Poly<F, 1, m>` |
+
+Selected eval fixes variables outside the half-open free range. Fixed values
+are ordered as variables `[0,i)` followed by variables `[j,n)`. The backend
+uses the static `Poly<F,n,m>` shape from the typed op so typed zero/constant
+polynomials preserve arity even when their runtime payload is scalar-like.
 
 ## Arithmetic (lub rules)
 

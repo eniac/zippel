@@ -20,6 +20,8 @@ pub enum InputError<'pest> {
     UnexpectedExp(Pair<'pest, Rule>),
     #[error("Unsupported operation {0}")]
     UnsupportedOp(Pair<'pest, Rule>),
+    #[error("Eval selector requires explicit evaluation points: {0}")]
+    EvaluateSelectorWithoutPoints(Pair<'pest, Rule>),
     #[error("Expected constant arithmetic size expression,found {0}")]
     ExpectedConstSize(Size),
     #[error(transparent)]

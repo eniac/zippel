@@ -35,6 +35,12 @@ pub struct ZippelArgs {
     /// The path to the zippel file to read
     pub file_path: PathBuf,
 
+    /// Stable Fiat-Shamir transcript session identity.
+    ///
+    /// When unset, existing callers keep the historical behavior: the source
+    /// file path display string is used as the domain session.
+    pub domain_separator_session: Option<String>,
+
     /// Optional path for the pdf file
     /// If not provided, defaults to <INPUT_FILE>.pdf
     pub pdf_path_opt: Option<PathBuf>,
@@ -47,9 +53,28 @@ impl ZippelArgs {
     pub fn new(file_path: PathBuf) -> Self {
         ZippelArgs {
             file_path,
+            domain_separator_session: None,
             pdf_path_opt: None,
             subgraph: None,
         }
+    }
+
+    pub fn new_with_domain_session(
+        file_path: PathBuf,
+        domain_separator_session: impl Into<String>,
+    ) -> Self {
+        Self::new(file_path).with_domain_session(domain_separator_session)
+    }
+
+    pub fn with_domain_session(mut self, domain_separator_session: impl Into<String>) -> Self {
+        self.domain_separator_session = Some(domain_separator_session.into());
+        self
+    }
+
+    pub fn domain_separator_session(&self) -> String {
+        self.domain_separator_session
+            .clone()
+            .unwrap_or_else(|| self.file_path.display().to_string())
     }
 
     pub fn with_pdf(mut self, pdf_path: PathBuf) -> Self {
@@ -147,6 +172,24 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     }
     // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
     pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
+        let stack_size = std::env::var("ZIPPEL_COMPILE_STACK_SIZE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(64 * 1024 * 1024);
+
+        std::thread::scope(|scope| {
+            let handle = std::thread::Builder::new()
+                .name("zippel-compile".to_string())
+                .stack_size(stack_size)
+                .spawn_scoped(scope, || self.compile_inner(sizes))
+                .expect("failed to spawn zippel compiler thread");
+            if let Err(payload) = handle.join() {
+                std::panic::resume_unwind(payload);
+            }
+        });
+    }
+
+    fn compile_inner(&mut self, sizes: &Ctx<Tid, usize>) {
         self.parse();
 
         debug!("Concretizing module type variables");
@@ -253,8 +296,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             .filter(|(vid, _)| public_args.contains(vid))
             .collect::<Ctx<Vid, Value<C>>>();
 
+        let domain_separator_session = self.args.domain_separator_session();
         let prover_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
-            &self.args.file_path.display().to_string(),
+            &domain_separator_session,
             &prover.clone(),
         );
 
@@ -313,8 +357,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 
         // Verifier uses the same public inputs (instance) as the prover
         // The instance should only contain the public statement, not the proof
+        let domain_separator_session = self.args.domain_separator_session();
         let verifier_seperator = ZippelDomainSeparator::new_zippel_domain_seperator(
-            &self.args.file_path.display().to_string(),
+            &domain_separator_session,
             &verifier.clone(),
         );
         // For now, use prover state since we don't have narg_string yet
@@ -464,6 +509,28 @@ pub fn proof_size_bytes<C: ArkConfig>(proof: &[Value<C>]) -> usize {
 mod tests {
     use super::*;
     use backend::ArkBls12_381;
+
+    #[test]
+    fn zippel_args_domain_session_defaults_to_path_and_can_be_overridden() {
+        let file_path = PathBuf::from("examples/sumcheck/sumcheck.zippel");
+        let args = ZippelArgs::new(file_path.clone());
+        assert_eq!(
+            args.domain_separator_session(),
+            file_path.display().to_string()
+        );
+
+        let args = ZippelArgs::new_with_domain_session(file_path, "logical/sumcheck.zippel");
+        assert_eq!(
+            args.domain_separator_session(),
+            "logical/sumcheck.zippel".to_string()
+        );
+
+        let args = args.with_domain_session("other/logical.zippel");
+        assert_eq!(
+            args.domain_separator_session(),
+            "other/logical.zippel".to_string()
+        );
+    }
 
     /// Regression: find_minimal_sizes must collect all SizeVars before
     /// collecting ranges, so ranges that appear before their SizeVar

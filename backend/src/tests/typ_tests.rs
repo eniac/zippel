@@ -149,7 +149,7 @@ fn eval_of_mle_full_shape_is_scalar() {
     let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
     let xs: Vec<_> = (0..4).map(|_| h(scalar(0))).collect();
     let xs_vec: GOp<C> = Op::Vec(xs);
-    let eval: GOp<C> = Op::Evaluate(h(mle), h(xs_vec)); // full evaluation
+    let eval: GOp<C> = Op::Evaluate(h(mle), None, Some(h(xs_vec))); // full evaluation
     assert_eq!(eval.typ(), ATyp::scalar());
 }
 
@@ -159,7 +159,7 @@ fn eval_of_mle_partial_shape_is_residual_mle() {
     let evals: Vec<_> = (0..16).map(|i| h(scalar(i))).collect();
     let mle: GOp<C> = Op::Mle(h(Op::Vec(evals))); // Mle(4)
     let xs_vec: GOp<C> = Op::Vec(vec![h(scalar(0))]); // |xs| = 1, k < n
-    let eval: GOp<C> = Op::Evaluate(h(mle), h(xs_vec));
+    let eval: GOp<C> = Op::Evaluate(h(mle), None, Some(h(xs_vec)));
     assert_eq!(eval.typ(), ATyp::mle(3));
 }
 

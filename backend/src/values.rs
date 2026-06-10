@@ -1,6 +1,10 @@
+use crate::optimization::{
+    record_hypercube_reduce_fused, record_reduce_univariate_post_materialization,
+    record_selected_eval_term_materialized,
+};
 use crate::poly_variant::PolyVariant;
 use crate::types::Lub;
-use crate::virtual_polynomial::VirtualPolynomial;
+use crate::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
 use crate::{ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, to_bytes};
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, CurveGroup};
@@ -8,7 +12,7 @@ use ark_ff::Field;
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
-    univariate::DensePolynomial,
+    MultilinearExtension, univariate::DensePolynomial,
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
@@ -277,11 +281,8 @@ impl<C: ArkConfig> Value<C> {
         Value::Scalar(C::FOps::from_usize(i))
     }
 
-    /// Returns the zero value for `typ`. For polynomial types, the
-    /// arkworks zero polynomial is size-independent, so the `m` / `n`
-    /// parameters (which under the phase-14 encoding denote **max
-    /// degree** / **num variables**, not coefficient counts — see
-    /// `docs/poly-encoding.md`) are intentionally ignored.
+    /// Returns the zero value for `typ` while preserving declared polynomial
+    /// arity for typed zero polynomials.
     pub fn zero(typ: &ATyp) -> Self {
         match typ {
             ATyp::Base(ABase::Bool) => Value::Bool(false),
@@ -290,13 +291,9 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Base(ABase::G1) => Value::G1(C::G1::zero()),
             ATyp::Base(ABase::G2) => Value::G2(C::G2::zero()),
             ATyp::Base(ABase::GT) => Value::GT(PairingOutput::<C::P>::zero()),
-            ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseUni(
-                DensePolynomial::<C::F>::zero(),
-            ))),
-            ATyp::Mle(_n) => Value::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
-                DenseMultilinearExtension::<C::F>::zero(),
-            ))),
-            ATyp::VPoly(_, _) => Value::Poly(VirtualPolynomial::new()),
+            ATyp::Uni(_m) => Value::Poly(VirtualPolynomial::zero_with_num_vars(1)),
+            ATyp::Mle(n) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
+            ATyp::VPoly(n, _) => Value::Poly(VirtualPolynomial::zero_with_num_vars(*n)),
             ATyp::Vec(box ATyp::Base(ABase::Bool), n) => Value::VecBool(vec![false; *n]),
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(0) => {
                 Value::VecIndex(vec![0; *n])
@@ -339,9 +336,12 @@ impl<C: ArkConfig> Value<C> {
             ATyp::Vec(box ATyp::Base(ABase::Fin(r)), n) if r.contains(1) => {
                 Value::VecIndex(vec![1; *n])
             }
-            ATyp::Uni(_) | ATyp::Mle(_) | ATyp::VPoly(_, _) => {
-                Value::Poly(VirtualPolynomial::from_scalar(C::FOps::one()))
+            ATyp::Uni(_) => {
+                Value::Poly(VirtualPolynomial::constant_with_num_vars(C::FOps::one(), 1))
             }
+            ATyp::Mle(n) | ATyp::VPoly(n, _) => Value::Poly(
+                VirtualPolynomial::constant_with_num_vars(C::FOps::one(), *n),
+            ),
             ATyp::Vec(box vt, n) => {
                 let mut v = Vec::<Value<C>>::with_capacity(*n);
                 for _ in 0..*n {
@@ -1511,18 +1511,18 @@ impl<C: ArkConfig> Value<C> {
     /// Value exponentiation, saves result in other
     pub fn value_pow(&self, other: &mut Self) {
         #[inline]
-        fn pow64(a: usize, i: usize) -> usize {
-            let mut i = i;
-            let mut exp = a;
-            while i.is_multiple_of(2) {
-                exp *= exp;
-                i /= 2;
+        fn pow64(mut base: usize, mut exp: usize) -> usize {
+            let mut acc = 1usize;
+            while exp > 0 {
+                if exp % 2 == 1 {
+                    acc *= base;
+                }
+                exp /= 2;
+                if exp > 0 {
+                    base *= base;
+                }
             }
-            while i > 1 {
-                exp *= a;
-                i -= 1;
-            }
-            exp
+            acc
         }
         match (self, &other) {
             // Index ^ Index = Index
@@ -1717,6 +1717,114 @@ impl<C: ArkConfig> Value<C> {
             }
         }
         other
+    }
+
+    #[inline]
+    pub fn value_eval_selected(
+        self,
+        free_range: CRange,
+        fixed: Self,
+        shape: SelectedEvalShape,
+    ) -> Self {
+        record_selected_eval_term_materialized();
+        let poly_value = if matches!(&self, Value::VecScalar(_) | Value::VecIndex(_)) {
+            self.value_poly()
+        } else {
+            self
+        };
+
+        let poly = match poly_value {
+            Value::Poly(poly) => poly,
+            other => panic!("Selected eval expects a polynomial, found {}", other),
+        };
+
+        let mut fixed = fixed;
+        let fixed_points = fixed.into_vec_scalar_mut().clone();
+        Value::Poly(
+            poly.fix_variables_except_range_with_shape(shape, free_range, &fixed_points)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Selected eval failed for static shape {:?}, range {:?}, fixed arity {}: {:?}",
+                        shape,
+                        free_range,
+                        fixed_points.len(),
+                        e
+                    )
+                }),
+        )
+    }
+
+    #[inline]
+    pub fn value_hypercube_reduce_selected(
+        self,
+        free_range: CRange,
+        tail_num_vars: usize,
+        shape: SelectedEvalShape,
+    ) -> Self {
+        assert_eq!(
+            free_range.len(),
+            1,
+            "hypercube reduce fusion currently supports a unit free range"
+        );
+        assert_eq!(
+            free_range.start, 0,
+            "hypercube reduce fusion currently supports eval<0> canonical rounds"
+        );
+        assert_eq!(
+            shape.output_num_vars, 1,
+            "hypercube reduce fusion currently returns a univariate round polynomial"
+        );
+        assert_eq!(
+            tail_num_vars,
+            shape.input_num_vars.saturating_sub(1),
+            "hypercube reduce tail arity must match the selected-eval static input shape"
+        );
+
+        let poly_value = if matches!(&self, Value::VecScalar(_) | Value::VecIndex(_)) {
+            self.value_poly()
+        } else {
+            self
+        };
+        let poly = match poly_value {
+            Value::Poly(poly) => poly,
+            other => panic!("Hypercube reduce expects a polynomial, found {}", other),
+        };
+
+        if let Some(round) =
+            hypercube_reduce_selected_dense_mle_products::<C>(&poly, tail_num_vars, shape)
+        {
+            record_hypercube_reduce_fused();
+            return Value::Poly(round);
+        }
+
+        let tail_count = 1usize
+            .checked_shl(tail_num_vars as u32)
+            .expect("hypercube reduce tail arity exceeds usize bit width");
+        let degree = shape.max_degree.max(poly.degree_bound());
+        let evals: Vec<C::F> = (0..=degree)
+            .into_par_iter()
+            .map(|t_idx| {
+                let t = C::FOps::from_usize(t_idx);
+                let mut sum = C::F::zero();
+                for tail_index in 0..tail_count {
+                    let mut point = Vec::with_capacity(shape.input_num_vars);
+                    point.push(t);
+                    for bit_index in 0..tail_num_vars {
+                        let bit = (tail_index >> bit_index) & 1;
+                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+                    }
+                    sum += poly
+                        .evaluate_mv(&point)
+                        .expect("hypercube reduce selected evaluation failed");
+                }
+                sum
+            })
+            .collect();
+
+        record_hypercube_reduce_fused();
+        let mut round = round_univariate_from_marginalize_evals(&evals);
+        round.num_variables = Some(1);
+        Value::Poly(round)
     }
 
     #[inline]
@@ -1944,9 +2052,11 @@ impl<C: ArkConfig> Value<C> {
                 Value::Vec(b.par_iter().map(|i| a[*i].clone()).collect())
             }
             (Value::Vec(a), Value::Index(b)) => a[*b].clone(),
-            (Value::Vec(a), Value::Vec(b)) => {
-                Value::Vec(b.par_iter().map(|i| a[i.clone().into_index()].clone()).collect())
-            }
+            (Value::Vec(a), Value::Vec(b)) => Value::Vec(
+                b.par_iter()
+                    .map(|i| a[i.clone().into_index()].clone())
+                    .collect(),
+            ),
             (Value::Record(_), _) => {
                 panic!(
                     "Records do not support indexed access. Use direct field access (record.field) instead."
@@ -1964,24 +2074,33 @@ impl<C: ArkConfig> Value<C> {
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
                 let uni_input = poly.is_univariate();
-                let result_poly = if uni_input {
-                    poly.evaluate_vec(&points)
-                } else if let Ok(scalar) = poly.evaluate_mv(&points) {
+                if uni_input {
+                    *other = Value::VecScalar(
+                        points
+                            .par_iter()
+                            .map(|point| poly.evaluate_uv(point))
+                            .collect(),
+                    );
+                    return;
+                }
+
+                let original_num_vars = poly.num_vars();
+                let result_poly = if let Ok(scalar) = poly.evaluate_mv(&points) {
                     VirtualPolynomial::from_scalar(scalar)
                 } else {
                     poly.evaluate_or_fix_mle(&points)
                         .expect("MLE evaluation failed")
                 };
 
-                *other = if let Some(scalar) = result_poly.to_scalar() {
-                    if n_points == 1 {
-                        Value::VecScalar(vec![scalar])
-                    } else {
-                        Value::Scalar(scalar)
-                    }
-                } else if uni_input {
-                    if let Some(vec) = result_poly.to_vec() {
-                        Value::VecScalar(vec)
+                let keep_typed_residual = original_num_vars.is_some_and(|n| n_points < n)
+                    && result_poly.num_vars().is_some();
+                *other = if !keep_typed_residual {
+                    if let Some(scalar) = result_poly.to_scalar() {
+                        if n_points == 1 {
+                            Value::VecScalar(vec![scalar])
+                        } else {
+                            Value::Scalar(scalar)
+                        }
                     } else {
                         Value::Poly(result_poly)
                     }
@@ -1992,23 +2111,29 @@ impl<C: ArkConfig> Value<C> {
             (Value::Poly(poly), Value::VecScalar(v)) => {
                 let n_points = v.len();
                 let uni_input = poly.is_univariate();
-                let result_poly = if uni_input {
-                    poly.evaluate_vec(v)
-                } else if let Ok(scalar) = poly.evaluate_mv(v) {
+                if uni_input {
+                    *other = Value::VecScalar(
+                        v.par_iter().map(|point| poly.evaluate_uv(point)).collect(),
+                    );
+                    return;
+                }
+
+                let original_num_vars = poly.num_vars();
+                let result_poly = if let Ok(scalar) = poly.evaluate_mv(v) {
                     VirtualPolynomial::from_scalar(scalar)
                 } else {
                     poly.evaluate_or_fix_mle(v).expect("MLE evaluation failed")
                 };
 
-                *other = if let Some(scalar) = result_poly.to_scalar() {
-                    if n_points == 1 {
-                        Value::VecScalar(vec![scalar])
-                    } else {
-                        Value::Scalar(scalar)
-                    }
-                } else if uni_input {
-                    if let Some(vec) = result_poly.to_vec() {
-                        Value::VecScalar(vec)
+                let keep_typed_residual = original_num_vars.is_some_and(|n| n_points < n)
+                    && result_poly.num_vars().is_some();
+                *other = if !keep_typed_residual {
+                    if let Some(scalar) = result_poly.to_scalar() {
+                        if n_points == 1 {
+                            Value::VecScalar(vec![scalar])
+                        } else {
+                            Value::Scalar(scalar)
+                        }
                     } else {
                         Value::Poly(result_poly)
                     }
@@ -2793,6 +2918,10 @@ impl<C: ArkConfig> Value<C> {
         assert!(!elements.is_empty(), "Cannot reduce empty vector");
         match op {
             BinOp::Add => {
+                if let Some(poly) = reduce_univariate_poly_sum(&elements) {
+                    record_reduce_univariate_post_materialization();
+                    return Value::Poly(poly);
+                }
                 let elem_typ = elements[0].typ();
                 elements
                     .into_par_iter()
@@ -2844,7 +2973,99 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
-pub fn round_univariate_from_marginalize_evals<F: PrimeField>(evals: &[F]) -> VirtualPolynomial<F> {
+fn hypercube_reduce_selected_dense_mle_products<C: ArkConfig>(
+    poly: &VirtualPolynomial<C::F>,
+    tail_num_vars: usize,
+    shape: SelectedEvalShape,
+) -> Option<VirtualPolynomial<C::F>> {
+    if shape.output_num_vars != 1 || shape.input_num_vars != tail_num_vars + 1 {
+        return None;
+    }
+    let tail_count = 1usize.checked_shl(tail_num_vars as u32)?;
+    let degree_cap = shape.max_degree.max(poly.degree_bound()) + 1;
+    let mut total = vec![C::F::zero(); degree_cap.max(1)];
+
+    for (coefficient, indices) in &poly.products {
+        for tail_index in 0..tail_count {
+            let mut term = vec![*coefficient];
+            for &idx in indices {
+                let factor = dense_mle_factor_as_univariate::<C>(
+                    poly.flattened_polys[idx].as_ref(),
+                    shape.input_num_vars,
+                    tail_index,
+                )?;
+                term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
+            }
+            add_coeffs_truncated(&mut total, &term);
+        }
+    }
+
+    trim_coeffs(&mut total);
+    let mut round = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+        DensePolynomial::from_coefficients_vec(total),
+    ));
+    round.num_variables = Some(1);
+    Some(round)
+}
+
+fn dense_mle_factor_as_univariate<C: ArkConfig>(
+    poly: &PolyVariant<C::F>,
+    input_num_vars: usize,
+    tail_index: usize,
+) -> Option<[C::F; 2]> {
+    let PolyVariant::DenseMle(mle) = poly else {
+        return None;
+    };
+    if mle.num_vars() != input_num_vars {
+        return None;
+    }
+    let base_idx = tail_index.checked_shl(1)?;
+    let v0 = *mle.evaluations.get(base_idx)?;
+    let v1 = *mle.evaluations.get(base_idx | 1)?;
+    Some([v0, v1 - v0])
+}
+
+fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
+    let mut result = vec![F::zero(); (left.len() + 1).min(max_len).max(1)];
+    for (i, coeff) in left.iter().enumerate() {
+        if i < result.len() {
+            result[i] += *coeff * right[0];
+        }
+        if i + 1 < result.len() {
+            result[i + 1] += *coeff * right[1];
+        }
+    }
+    result
+}
+
+fn add_coeffs_truncated<F: Field>(target: &mut [F], addend: &[F]) {
+    for (target_coeff, addend_coeff) in target.iter_mut().zip(addend.iter()) {
+        *target_coeff += *addend_coeff;
+    }
+}
+
+fn trim_coeffs<F: Field>(coeffs: &mut Vec<F>) {
+    while coeffs.len() > 1 && coeffs.last().is_some_and(|coeff| coeff.is_zero()) {
+        coeffs.pop();
+    }
+}
+
+fn reduce_univariate_poly_sum<C: ArkConfig>(
+    elements: &[Value<C>],
+) -> Option<VirtualPolynomial<C::F>> {
+    let polys = elements
+        .iter()
+        .map(|element| match element {
+            Value::Poly(poly) => Some(poly.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    VirtualPolynomial::sum_univariate_products_dense(&polys)
+}
+
+pub(crate) fn round_univariate_from_marginalize_evals<F: PrimeField>(
+    evals: &[F],
+) -> VirtualPolynomial<F> {
     #![allow(clippy::needless_range_loop)]
     let n = evals.len();
     assert!(n > 0, "marginalize evaluations must be non-empty");
@@ -2965,7 +3186,13 @@ pub fn eval_univariate_from_evals_0d<F: PrimeField>(evals: &[F], x: F) -> F {
     g.evaluate_uv(&x)
 }
 
-pub fn marginalize<C: ArkConfig>(
+/// Iteration-2 reference helper for the round/marginalize semantics used by
+/// explicit-round backend tests. This is intentionally *not* reachable from
+/// any parser/AST/typed graph public op; the previous `Op::Marginalize`
+/// public surface has been removed. Kept only as a private reference oracle
+/// for the explicit_round backend tests in `virtual_polynomial::tests`.
+#[cfg(test)]
+pub(crate) fn marginalize<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     num_variables: usize,
     max_degree: usize,
@@ -3055,7 +3282,6 @@ pub fn marginalize<C: ArkConfig>(
         for (coefficient, products) in &next_poly.products {
             let product_tables: Vec<&[C::F]> = products.iter().map(|&idx| tables[idx]).collect();
             let k = product_tables.len();
-
 
             let coeff_acc: Vec<C::F> = (0..total)
                 .into_par_iter()
