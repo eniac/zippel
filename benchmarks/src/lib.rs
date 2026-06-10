@@ -23,3 +23,4 @@ pub mod pst13;
 pub mod schnorr;
 pub mod spartan;
 pub mod sumcheck;
+pub mod sumcheck_upstream;

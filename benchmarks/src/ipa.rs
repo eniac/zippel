@@ -100,11 +100,11 @@ pub mod zippel_side {
 
 pub mod native_side {
     use super::*;
-    use bp_ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
-    use bp_ark_secp256k1::{Affine as SecpAffine, Fr, Projective};
-    use bp_ark_serialize::CanonicalSerialize;
-    use hp_ark_ff::{Field, PrimeField};
-    use hp_ark_std::UniformRand;
+    use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
+    use ark_secp256k1::{Affine as SecpAffine, Fr, Projective};
+    use ark_serialize::CanonicalSerialize;
+    use ark_ff::{Field, PrimeField};
+    use ark_std::UniformRand;
     use merlin::Transcript;
     use rayon::prelude::*;
     use std::time::Instant;
@@ -119,7 +119,7 @@ pub mod native_side {
     impl Setup {
         pub fn new(s_const: usize) -> Self {
             let n = 1usize << s_const;
-            let mut rng = hp_ark_std::test_rng();
+            let mut rng = ark_std::test_rng();
             let g_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
             let h_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
             let g_vec = Projective::normalize_batch(&g_proj);
@@ -129,7 +129,7 @@ pub mod native_side {
         }
 
         pub fn time_protocol(&self) -> Timing {
-            let mut rng = hp_ark_std::test_rng();
+            let mut rng = ark_std::test_rng();
             let a_vec: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
             let b_vec: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
             let ip_val_claimed = ip_fr(&a_vec, &b_vec);

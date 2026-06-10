@@ -195,22 +195,23 @@ proto hyrax<G: Group, F: Scalar<G>>(
     }
 }
 
-/// Native Hyrax baseline: `ark_poly_commit::hyrax::HyraxPC` (v0.5.0 on
-/// crates.io, pulled via the `np-ark-*` 0.5-island aliases). Multilinear
-/// PCS with a Poseidon-based Fiat-Shamir transcript — the same
-/// PoseidonConfig the upstream `bench-templates::test_sponge` uses.
-/// Timed regions match the zippel side: prove = commit + open (row
-/// Pedersens + σ-protocol), verify = check.
+/// Native Hyrax baseline: `ark_poly_commit::hyrax::HyraxPC` from the
+/// `release/0.6.0` branch (unaliased — same arkworks 0.6 set the zippel
+/// side uses, so MSM/pairing primitives are bit-identical on both
+/// sides). Multilinear PCS with a Poseidon-based Fiat-Shamir transcript
+/// — the same `PoseidonConfig` the upstream `bench-templates::test_sponge`
+/// uses. Timed regions match the zippel side: prove = commit + open
+/// (row Pedersens + σ-protocol), verify = check.
 pub mod native_side {
     use super::Timing;
-    use np_ark_bls12_381::{Fr, G1Affine};
-    use np_ark_crypto_primitives::sponge::{
+    use ark_bls12_381::{Fr, G1Affine};
+    use ark_crypto_primitives::sponge::{
         poseidon::{PoseidonConfig, PoseidonSponge},
         CryptographicSponge,
     };
-    use np_ark_ff::{One, PrimeField, UniformRand, Zero};
-    use np_ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
-    use np_ark_poly_commit::{
+    use ark_ff::{One, PrimeField, UniformRand, Zero};
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_poly_commit::{
         hyrax::HyraxPC, LabeledPolynomial, PolynomialCommitment,
     };
     use std::time::Instant;

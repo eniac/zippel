@@ -37,19 +37,21 @@ use crate::Timing;
 pub const DEFAULT_LOG_CONSTRAINTS: usize = 10;
 
 // ---------------------------------------------------------------------------
-// Shared setup: v0.5 BenchCircuit + keys + witness/matrices/h_coeffs.
-// The fields are kept in v0.5 types so the keygen call stays untouched;
-// `bridge::translate_shared` then projects everything into git-main types
-// for both sides to consume.
+// Shared setup: BenchCircuit + keys + witness/matrices/h_coeffs, all in
+// 0.6 arkworks types (same set the zippel side uses). The `bridge`
+// module below still exists as a thin re-shaper of `Shared` into the
+// flat `Translated` view both sides consume — its byte round-trip is now
+// identity since shared and bridge share the same arkworks version.
 // ---------------------------------------------------------------------------
 
 pub mod shared {
-    use np_ark_bls12_381::{Bls12_381, Fr};
-    use np_ark_ff::UniformRand;
-    use np_ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-    use np_ark_relations::r1cs::{
-        ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef,
-        LinearCombination, SynthesisError, SynthesisMode,
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_ff::UniformRand;
+    use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
+    use ark_relations::gr1cs::{
+        predicate::polynomial_constraint::R1CS_PREDICATE_LABEL, ConstraintSynthesizer,
+        ConstraintSystem, ConstraintSystemRef, LinearCombination, Matrix, SynthesisError,
+        SynthesisMode,
     };
 
     pub type E = Bls12_381;
@@ -104,16 +106,17 @@ pub mod shared {
             }
 
             // N squaring constraints, the last one binding to `y`.
+            // gr1cs takes closures returning a LinearCombination —
+            // captures avoid building the LCs unless the predicate needs
+            // them (cf. enforce_constraint in 0.5 r1cs which took LCs
+            // directly).
             for i in 0..n {
-                let next = if i + 1 < n {
-                    LinearCombination::from(wit_vars[i + 1])
-                } else {
-                    LinearCombination::from(y)
-                };
-                cs.enforce_constraint(
-                    LinearCombination::from(wit_vars[i]),
-                    LinearCombination::from(wit_vars[i]),
-                    next,
+                let wi = wit_vars[i];
+                let next_var = if i + 1 < n { wit_vars[i + 1] } else { y };
+                cs.enforce_r1cs_constraint(
+                    || LinearCombination::from(wi),
+                    || LinearCombination::from(wi),
+                    || LinearCombination::from(next_var),
                 )?;
             }
             Ok(())
@@ -130,12 +133,16 @@ pub mod shared {
         ark_std::rand::rngs::StdRng::from_seed(seed_bytes)
     }
 
-    /// Captures the v0.5 keygen output + matrices + assignment for one
-    /// circuit size. Both sides translate from here.
+    /// Captures the 0.6 keygen output + R1CS matrices + assignment for
+    /// one circuit size. Both sides translate from here.
+    ///
+    /// `matrices` is the gr1cs R1CS-predicate matrix triple, indexed as
+    /// `[0]=A, [1]=B, [2]=C` (in 0.5 r1cs the equivalent was a struct
+    /// with `.a/.b/.c` fields).
     pub struct Shared {
         pub pk: ProvingKey<E>,
         pub vk: VerifyingKey<E>,
-        pub matrices: ConstraintMatrices<F>,
+        pub matrices: Vec<Matrix<F>>,
         pub num_inputs: usize,
         pub num_constraints: usize,
         pub instance_assignment: Vec<F>,
@@ -154,21 +161,33 @@ pub mod shared {
 
         // Capture the matrices + assignment by replaying the synthesizer in
         // Prove mode. Same seed inside the circuit → same witness values.
+        // gr1cs uses generalized predicates; we pull the standard R1CS
+        // matrix triple via R1CS_PREDICATE_LABEL.
         let cs = ConstraintSystem::<F>::new_ref();
         cs.set_mode(SynthesisMode::Prove {
             construct_matrices: true,
+            generate_lc_assignments: true,
         });
         circuit
             .clone()
             .generate_constraints(cs.clone())
             .expect("synthesizer");
         cs.finalize();
-        let matrices = cs.to_matrices().expect("matrices");
+        let mut predicate_matrices = cs.to_matrices().expect("matrices");
+        let matrices = predicate_matrices
+            .remove(R1CS_PREDICATE_LABEL)
+            .expect("R1CS predicate matrices");
         let cs_borrowed = cs.borrow().expect("borrow cs");
-        let num_inputs = cs_borrowed.num_instance_variables;
-        let num_constraints_real = cs_borrowed.num_constraints;
-        let instance_assignment = cs_borrowed.instance_assignment.clone();
-        let witness_assignment = cs_borrowed.witness_assignment.clone();
+        let num_inputs = cs_borrowed.num_instance_variables();
+        let num_constraints_real = cs_borrowed.num_constraints();
+        let instance_assignment = cs_borrowed
+            .instance_assignment()
+            .expect("instance assignment")
+            .to_vec();
+        let witness_assignment = cs_borrowed
+            .witness_assignment()
+            .expect("witness assignment")
+            .to_vec();
         drop(cs_borrowed);
 
         Shared {
@@ -184,50 +203,31 @@ pub mod shared {
 }
 
 // ---------------------------------------------------------------------------
-// Byte-bridge: translate v0.5 scalars / group elements → git-main types.
-// Both versions share BLS12-381's canonical serialization, so we round-trip
-// through the canonical compressed byte form.
+// Bridge: re-shape `Shared` into the flat `Translated` view that both the
+// zippel and native sides consume. After the 0.6 migration this is a
+// pure field projection — `Shared` and `Translated` are over the same
+// arkworks 0.6 types — but we keep the layer so downstream call sites
+// (zippel_side / native_side, witness_map, build_translated) stay
+// stable. The byte-roundtrip helpers are now identity / Affine→Projective.
 // ---------------------------------------------------------------------------
 
 pub mod bridge {
     use super::shared::Shared;
-    use ark_bls12_381::{Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj};
-    use ark_ec::AffineRepr as GitAffineRepr;
+    use ark_bls12_381::{Bls12_381, Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj};
+    use ark_ec::{pairing::Pairing, AffineRepr as GitAffineRepr};
     use ark_ff::{FftField, Field, Zero};
     use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-    use ark_serialize::CanonicalDeserialize;
-    use np_ark_bls12_381::{Bls12_381 as NpBls12_381, Fr as NpFr};
-    use np_ark_ec::pairing::Pairing as NpPairing;
-    use np_ark_serialize::CanonicalSerialize as NpCanonicalSerialize;
 
-    type NpG1Affine = <NpBls12_381 as NpPairing>::G1Affine;
-    type NpG2Affine = <NpBls12_381 as NpPairing>::G2Affine;
+    type NpG1Affine = <Bls12_381 as Pairing>::G1Affine;
+    type NpG2Affine = <Bls12_381 as Pairing>::G2Affine;
 
-    pub fn fr_to_git(x: &NpFr) -> GitFr {
-        let mut bytes = Vec::with_capacity(32);
-        x.serialize_compressed(&mut bytes).expect("ser np fr");
-        GitFr::deserialize_compressed(&bytes[..]).expect("deser git fr")
-    }
+    pub fn fr_to_git(x: &GitFr) -> GitFr { *x }
 
-    pub fn fr_vec_to_git(xs: &[NpFr]) -> Vec<GitFr> {
-        xs.iter().map(fr_to_git).collect()
-    }
+    pub fn fr_vec_to_git(xs: &[GitFr]) -> Vec<GitFr> { xs.to_vec() }
 
-    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj {
-        let mut bytes = Vec::with_capacity(48);
-        p.serialize_compressed(&mut bytes).expect("ser np g1");
-        let aff =
-            ark_bls12_381::G1Affine::deserialize_compressed(&bytes[..]).expect("deser git g1");
-        GitAffineRepr::into_group(aff)
-    }
+    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj { p.into_group() }
 
-    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj {
-        let mut bytes = Vec::with_capacity(96);
-        p.serialize_compressed(&mut bytes).expect("ser np g2");
-        let aff =
-            ark_bls12_381::G2Affine::deserialize_compressed(&bytes[..]).expect("deser git g2");
-        GitAffineRepr::into_group(aff)
-    }
+    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj { p.into_group() }
 
     pub fn g1_vec_to_git(ps: &[NpG1Affine]) -> Vec<GitG1Proj> {
         ps.iter().map(g1_to_git_proj).collect()
@@ -292,15 +292,14 @@ pub mod bridge {
             l_query: g1_vec_to_git(&s.pk.l_query),
             gamma_abc_g1: g1_vec_to_git(&s.vk.gamma_abc_g1),
         };
-        let translate_row = |row: &Vec<(NpFr, usize)>| {
-            row.iter()
-                .map(|(c, j)| (fr_to_git(c), *j))
-                .collect::<Vec<_>>()
-        };
+        // gr1cs ConstraintMatrices is Vec<Matrix<F>> — [0]=A, [1]=B, [2]=C
+        // for the R1CS predicate. (In 0.5 r1cs the same struct exposed
+        // .a/.b/.c fields; the 0.6 gr1cs view goes by index.)
+        let translate_row = |row: &Vec<(GitFr, usize)>| row.clone();
         let mat = GitMatrices {
-            a: s.matrices.a.iter().map(translate_row).collect(),
-            b: s.matrices.b.iter().map(translate_row).collect(),
-            c: s.matrices.c.iter().map(translate_row).collect(),
+            a: s.matrices[0].iter().map(translate_row).collect(),
+            b: s.matrices[1].iter().map(translate_row).collect(),
+            c: s.matrices[2].iter().map(translate_row).collect(),
         };
         let instance_assignment = fr_vec_to_git(&s.instance_assignment);
         let witness_assignment = fr_vec_to_git(&s.witness_assignment);
@@ -393,9 +392,9 @@ pub mod bridge {
         use super::*;
         #[test]
         fn fr_roundtrips() {
-            use np_ark_ff::UniformRand;
+            use ark_ff::UniformRand;
             let mut rng = ark_std::test_rng();
-            let x = NpFr::rand(&mut rng);
+            let x = GitFr::rand(&mut rng);
             let _y = fr_to_git(&x);
         }
     }

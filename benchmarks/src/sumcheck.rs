@@ -97,15 +97,20 @@ pub mod zippel_side {
     }
 }
 
+/// Native sumcheck baseline: hyperplonk's `poly_iop::sum_check`,
+/// vendored in-tree under `crate::sumcheck_upstream` and ported to
+/// arkworks 0.6 so it shares the zippel-side curve set. Protocol code
+/// verbatim from EspressoSystems/hyperplonk `main`; only `use` paths
+/// changed.
 pub mod native_side {
     use super::*;
-    use arithmetic::VirtualPolynomial;
-    use hp_ark_bls12_381::Fr;
-    use hp_ark_ff::{One, UniformRand, Zero};
-    use hp_ark_poly::DenseMultilinearExtension;
+    use crate::sumcheck_upstream::arithmetic::VirtualPolynomial;
+    use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
+    use ark_bls12_381::Fr;
+    use ark_ff::{One, UniformRand, Zero};
+    use ark_poly::DenseMultilinearExtension;
     use std::sync::Arc;
     use std::time::Instant;
-    use subroutines::{PolyIOP, SumCheck};
 
     pub struct Setup {
         num_vars: usize,
@@ -123,7 +128,7 @@ pub mod native_side {
         pub fn time_protocol(&self) -> Timing {
             let nv = self.num_vars;
             let md = self.max_degree;
-            let mut rng = hp_ark_std::test_rng();
+            let mut rng = ark_std::test_rng();
             let eval_count = 1usize << nv;
             let evals: Vec<Fr> = (0..eval_count).map(|_| Fr::rand(&mut rng)).collect();
             let claimed_sum: Fr = evals

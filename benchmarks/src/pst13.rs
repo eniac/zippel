@@ -138,44 +138,50 @@ pub mod shared {
 // Performance comparison only — no cross-side byte equality.
 // ---------------------------------------------------------------------------
 
+/// Native PST13 baseline: `ark_poly_commit::multilinear_pc::MultilinearPC`
+/// (0.6 from crates.io, same arkworks set the zippel side uses — so
+/// MSM/pairing primitives are bit-identical on both sides). Replaces the
+/// previous hyperplonk `MultilinearKzgPCS` baseline that was locked at
+/// arkworks 0.4. Same setup/commit/open/check shape — only API rename:
+/// `gen_srs_for_testing` → `setup`, `verify` → `check`, `open` no longer
+/// returns `value` so we evaluate the MLE inside the prove timer (which
+/// is correct — the prover has to compute it to build the proof).
 pub mod native_side {
     use super::Timing;
     use super::shared::Shared;
-    use hp_ark_bls12_381::{Bls12_381, Fr};
-    use hp_ark_ff::UniformRand;
-    use hp_ark_poly::{DenseMultilinearExtension, MultilinearExtension};
-    use hp_ark_std::rand::SeedableRng;
-    use std::sync::Arc;
-    use std::time::Instant;
-    use subroutines::{
-        MultilinearKzgPCS, MultilinearProverParam, MultilinearVerifierParam,
-        PolynomialCommitmentScheme,
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_ff::UniformRand;
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_poly_commit::multilinear_pc::{
+        data_structures::{CommitterKey, VerifierKey},
+        MultilinearPC,
     };
+    use ark_std::rand::SeedableRng;
+    use std::time::Instant;
 
-    type Pcs = MultilinearKzgPCS<Bls12_381>;
+    type Pcs = MultilinearPC<Bls12_381>;
 
     pub struct Setup {
         n: usize,
-        ck: MultilinearProverParam<Bls12_381>,
-        vk: MultilinearVerifierParam<Bls12_381>,
+        ck: CommitterKey<Bls12_381>,
+        vk: VerifierKey<Bls12_381>,
     }
 
     impl Setup {
-        /// Takes `&Shared` only to read `n` — the hyperplonk side generates
-        /// its own SRS + polynomial + point internally so we don't have to
-        /// translate between hp-ark v0.4 and ark git-main types at every call.
-        /// Both sides run the same protocol on a random size-2^n MLE; only
-        /// the wall-clock matters for the comparison.
+        /// Takes `&Shared` only to read `n` — the native side generates its
+        /// own SRS + polynomial + point internally. Both sides run the
+        /// same protocol on a random size-2^n MLE; only the wall-clock
+        /// matters for the comparison.
         pub fn new(shared: &Shared) -> Self {
             let n = shared.n;
             // Seeded to match `shared::build`'s seed family so successive
             // sweep rows don't share state with prior runs.
             let mut seed_bytes = [0u8; 32];
             seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
-            let mut rng = hp_ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
 
-            let srs = Pcs::gen_srs_for_testing(&mut rng, n).expect("hp gen_srs_for_testing");
-            let (ck, vk) = Pcs::trim(&srs, None, Some(n)).expect("hp trim");
+            let pp = Pcs::setup(n, &mut rng);
+            let (ck, vk) = Pcs::trim(&pp, n);
 
             Setup { n, ck, vk }
         }
@@ -184,22 +190,25 @@ pub mod native_side {
             // Re-seed for the per-call poly/point so timing is reproducible.
             let mut seed_bytes = [0u8; 32];
             seed_bytes[..8].copy_from_slice(&(0xDEC0DE_u64 ^ self.n as u64).to_le_bytes());
-            let mut rng = hp_ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
 
-            let poly = Arc::new(DenseMultilinearExtension::<Fr>::rand(self.n, &mut rng));
+            let poly = DenseMultilinearExtension::<Fr>::rand(self.n, &mut rng);
             let point: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
 
-            // Prove timer covers commit + open — same scope the zippel side
-            // measures (`c_p <- pst13_commit(...)` plus the open recursion).
+            // Prove timer covers commit + evaluate + open — same scope the
+            // zippel side measures (`c_p <- pst13_commit(...)` plus the
+            // open recursion). The MLE evaluation is the prover's
+            // statement-of-fact and is implicit in the proof structure.
             let t = Instant::now();
-            let comm = Pcs::commit(&self.ck, &poly).expect("hp commit");
-            let (proof, value) = Pcs::open(&self.ck, &poly, &point).expect("hp open");
+            let comm = Pcs::commit(&self.ck, &poly);
+            let value = poly.evaluate(&point);
+            let proof = Pcs::open(&self.ck, &poly, &point);
             let prove = t.elapsed();
 
             let t = Instant::now();
-            let ok = Pcs::verify(&self.vk, &comm, &point, &value, &proof).expect("hp verify");
+            let ok = Pcs::check(&self.vk, &comm, &point, value, &proof);
             let verify = t.elapsed();
-            assert!(ok, "hyperplonk MultilinearKzgPCS verification FAILED");
+            assert!(ok, "ark-poly-commit MultilinearPC verification FAILED");
 
             Timing { prove, verify }
         }

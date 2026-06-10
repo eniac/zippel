@@ -104,13 +104,13 @@ const NATIVE_PARI_TRANSCRIPT_ERR_RS: &str =
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
 // Update when bumping crate versions.
-const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.5.0 src/signature/schnorr/mod.rs
-const SUMCHECK_EXT_NCLOC: usize = 703;  // hyperplonk subroutines src/poly_iop/sum_check/{mod,prover,verifier}.rs
-const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.5.0 src/kzg10/mod.rs
-const GROTH16_EXT_NCLOC: usize = 440;   // ark-groth16-0.5.0 src/{prover,verifier,r1cs_to_qap}.rs
-const PST13_EXT_NCLOC: usize = 494;     // hyperplonk subroutines src/pcs/multilinear_kzg/{mod,srs,util}.rs
+const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.6.0 src/signature/schnorr/mod.rs
+const SUMCHECK_EXT_NCLOC: usize = 1544; // vendored from hyperplonk: src/sumcheck_upstream/{arithmetic,poly_iop,transcript}/*.rs (ported to ark 0.6)
+const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.6.0 src/kzg10/mod.rs
+const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
+const PST13_EXT_NCLOC: usize = 297;     // ark-poly-commit-0.6.0 src/multilinear_pc/{mod,data_structures}.rs
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
-const HYRAX_EXT_NCLOC: usize = 403;     // ark-poly-commit-0.5.0 src/hyrax/{mod,data_structures,utils}.rs
+const HYRAX_EXT_NCLOC: usize = 403;     // ark-poly-commit-0.6.0 src/hyrax/{mod,data_structures,utils}.rs
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
