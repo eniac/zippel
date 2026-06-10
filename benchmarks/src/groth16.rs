@@ -572,7 +572,7 @@ pub mod native_side {
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, VariableBaseMSM};
     use ark_ff::{PrimeField, UniformRand};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     type E = GitBls12_381;
     type G1Affine = <E as Pairing>::G1Affine;
@@ -629,62 +629,16 @@ pub mod native_side {
             }
         }
 
-        /// Time the sparse matrix–vector products the native prover does
-        /// inside `bridge::witness_map` (A·z, B·z, C·z over the
-        /// constraint domain — the FFTs that follow are part of the QAP
-        /// step proper and stay counted). The .zippel circuit does NOT
-        /// compute these matvecs (h_coeffs is provided as input), so for
-        /// a parity comparison of the SNARK-specific work, this MVM cost
-        /// is subtracted from the native prove time. Caveat: zippel-side
-        /// `time_protocol` still calls `bridge::witness_map` in Rust
-        /// before handing off to the runtime, so its prove timer still
-        /// includes this MVM. Don't read the prove ratio as "zippel
-        /// circuit vs. native SNARK"; read it as "the comparison the
-        /// user asked for".
-        fn time_mvm(&self) -> Duration {
-            use ark_ff::Zero;
-            use ark_poly::EvaluationDomain;
-            let mat = &self.translated.mat;
-            let full = &self.translated.full_assignment;
-            let num_inputs = self.translated.num_inputs;
-            let num_constraints = self.translated.num_constraints;
-            let zero = GitFr::zero();
-            let domain_size = num_constraints + num_inputs;
-            let domain_size = ark_poly::GeneralEvaluationDomain::<GitFr>::new(domain_size)
-                .expect("domain")
-                .size();
-            let mut a = vec![zero; domain_size];
-            let mut b = vec![zero; domain_size];
-            let mut c = vec![zero; domain_size];
-            let t = Instant::now();
-            for (i, row) in mat.a.iter().enumerate() {
-                for (cc, j) in row {
-                    a[i] += *cc * full[*j];
-                }
-            }
-            for (i, row) in mat.b.iter().enumerate() {
-                for (cc, j) in row {
-                    b[i] += *cc * full[*j];
-                }
-            }
-            for (i, row) in mat.c.iter().enumerate() {
-                for (cc, j) in row {
-                    c[i] += *cc * full[*j];
-                }
-            }
-            for i in 0..num_inputs {
-                a[num_constraints + i] = full[i];
-            }
-            let elapsed = t.elapsed();
-            std::hint::black_box((a, b, c));
-            elapsed
-        }
-
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let r = GitFr::rand(&mut rng);
             let s = GitFr::rand(&mut rng);
 
+            // No MVM subtraction: both sides call `bridge::witness_map`
+            // inside their prove timer (zippel-side time_protocol does it
+            // explicitly to produce h_coeffs; native prove does it as the
+            // first step of `prove(...)`). Subtracting on one side biased
+            // the comparison.
             let t = Instant::now();
             let proof = prove(
                 &self.keys,
@@ -698,8 +652,6 @@ pub mod native_side {
                 s,
             );
             let prove_t = t.elapsed();
-            let mvm_t = self.time_mvm();
-            let prove_adjusted = prove_t.saturating_sub(mvm_t);
 
             // Verifier convention: drop the leading constant-1 from the
             // public-input vector (matches ark-groth16's verify_proof).
@@ -710,7 +662,7 @@ pub mod native_side {
             assert!(ok, "native (vendored) Groth16 verification FAILED");
 
             Timing {
-                prove: prove_adjusted,
+                prove: prove_t,
                 verify: verify_t,
             }
         }
@@ -724,7 +676,15 @@ pub mod native_side {
 
     /// Vendored Groth16 prover (Sect. 3.2 of the paper, libsnark
     /// reduction). Single MSM per key vector; uses
-    /// `VariableBaseMSM::msm_bigint` from git-main `ark_ec`.
+    /// `VariableBaseMSM::msm_bigint` from git-main `ark_ec`. The 5 MSMs
+    /// are independent and run concurrently via `rayon::scope` — mirrors
+    /// the zippel runtime's dataflow scheduler, which dispatches each
+    /// independent `dot(...)` node to the rayon pool so they overlap on
+    /// the same workers. At threads ≥ 2 this maps onto N cores; at
+    /// threads = 1 it still gives the rayon worker pipelining headroom
+    /// (e.g. `into_bigint` of one MSM overlapping with bucket-fill of
+    /// the next). Without this, the prover serializes 5 large MSMs and
+    /// looks artificially slow next to zippel's identical work.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         keys: &AffineKeys,
@@ -737,32 +697,67 @@ pub mod native_side {
         r: GitFr,
         s: GitFr,
     ) -> Proof {
+        use rayon::prelude::*;
         // h_coeffs (also folded into the timer on the zippel side).
         let mut h_coeffs = witness_map(mat, num_inputs, num_constraints, full_assignment);
         h_coeffs.resize(h_size, GitFr::zero_scalar());
 
+        // Parallel into_bigint matches what `VariableBaseMSM::msm` does
+        // internally via `cfg_into_iter!`; we pre-convert because the
+        // same `full_bi` feeds three of the five MSMs (a, b_g1, b_g2).
         let full_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            full_assignment.iter().map(|x| x.into_bigint()).collect();
+            full_assignment.par_iter().map(|x| x.into_bigint()).collect();
         let wit_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            witness_assignment.iter().map(|x| x.into_bigint()).collect();
+            witness_assignment.par_iter().map(|x| x.into_bigint()).collect();
         let h_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            h_coeffs.iter().map(|x| x.into_bigint()).collect();
+            h_coeffs.par_iter().map(|x| x.into_bigint()).collect();
+
+        // 5 independent MSMs, concurrent via rayon::scope. Each spawn
+        // returns its result through a Mutex<Option<_>>; the scope barrier
+        // guarantees all five are populated before we read them out.
+        use std::sync::Mutex;
+        let a_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let b_g2_msm_out: Mutex<Option<G2Projective>> = Mutex::new(None);
+        let b_g1_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let l_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let h_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+
+        rayon::scope(|sc| {
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.a_query, &full_bi);
+                *a_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G2Projective::msm_bigint(&keys.b_g2_query, &full_bi);
+                *b_g2_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.b_g1_query, &full_bi);
+                *b_g1_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.l_query, &wit_bi);
+                *l_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.h_query, &h_bi);
+                *h_msm_out.lock().unwrap() = Some(v);
+            });
+        });
+
+        let a_msm = a_msm_out.into_inner().unwrap().unwrap();
+        let b_g2_msm = b_g2_msm_out.into_inner().unwrap().unwrap();
+        let b_g1_msm = b_g1_msm_out.into_inner().unwrap().unwrap();
+        let l_msm = l_msm_out.into_inner().unwrap().unwrap();
+        let h_msm = h_msm_out.into_inner().unwrap().unwrap();
 
         // A = alpha + MSM(a_query, full_assignment) + delta * r
-        let a_msm = G1Projective::msm_bigint(&keys.a_query, &full_bi);
         let a = keys.alpha_g1.into_group() + a_msm + keys.delta_g1.into_group() * r;
-
         // B (G2) = beta + MSM(b_g2_query, full_assignment) + delta_g2 * s
-        let b_g2_msm = G2Projective::msm_bigint(&keys.b_g2_query, &full_bi);
         let b_g2 = keys.beta_g2_aff.into_group() + b_g2_msm + keys.delta_g2_aff.into_group() * s;
-
         // B (G1) = beta_g1 + MSM(b_g1_query, full_assignment) + delta_g1 * s
-        let b_g1_msm = G1Projective::msm_bigint(&keys.b_g1_query, &full_bi);
         let b_g1 = keys.beta_g1.into_group() + b_g1_msm + keys.delta_g1.into_group() * s;
-
         // C = MSM(l_query, witness) + MSM(h_query, h) + A·s + B₁·r − δ·r·s
-        let l_msm = G1Projective::msm_bigint(&keys.l_query, &wit_bi);
-        let h_msm = G1Projective::msm_bigint(&keys.h_query, &h_bi);
         let rs = r * s;
         let c = l_msm + h_msm + a * s + b_g1 * r - keys.delta_g1.into_group() * rs;
 
