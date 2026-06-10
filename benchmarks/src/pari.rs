@@ -420,126 +420,104 @@ pub mod zippel_side {
 // ---------------------------------------------------------------------------
 
 pub mod native_side {
-    use super::*;
-    use crate::pari_native::{Proof, ProvingKey, VerifyingKey, keygen, prove, verify};
+    //! Native PARI baseline: the upstream `pari` crate, vendored in-tree
+    //! at `benchmarks/src/pari_upstream/`. Timed via a synthetic
+    //! K = 2^M-constraint circuit (K copies of `a*b=c`) on BLS12-381 —
+    //! same SNARK problem size as the zippel side, different input shape
+    //! (zippel takes precomputed `A·z`, `B·z` evaluations; upstream Pari
+    //! synthesizes its constraint system from a `ConstraintSynthesizer`).
+    use super::Timing;
+    use crate::pari_upstream::{
+        Pari,
+        data_structures::{ProvingKey, VerifyingKey},
+    };
     use ark_bls12_381::Bls12_381;
     use ark_ec::pairing::Pairing;
-    use ark_ff::Zero;
-    use ark_serialize::CanonicalSerialize;
-    use std::time::{Duration, Instant};
-
-    /// Sparse matrix row · dense vector — same shape as pari_native's
-    /// internal `eval_constraint`, inlined here so we can time it from
-    /// outside the prove function without exposing pari_native internals.
-    fn eval_sparse_row<F: ark_ff::Field>(row: &[(F, usize)], v: &[F]) -> F {
-        let mut acc = F::zero();
-        for (c, j) in row {
-            acc += *c * v[*j];
-        }
-        acc
-    }
+    use ark_ff::UniformRand;
+    use ark_relations::{
+        gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+        lc,
+    };
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+    use std::time::Instant;
 
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
 
+    /// K-constraint circuit: K copies of `a_i * b_i = c_i`, witness vars
+    /// for `a_i, b_i`, public input for each `c_i`. K = 2^m_log.
+    #[derive(Clone)]
+    struct PariBenchCircuit {
+        a_vals: Vec<F>,
+        b_vals: Vec<F>,
+    }
+
+    impl PariBenchCircuit {
+        fn new(num_constraints: usize, seed: u64) -> Self {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let a_vals: Vec<F> = (0..num_constraints).map(|_| F::rand(&mut rng)).collect();
+            let b_vals: Vec<F> = (0..num_constraints).map(|_| F::rand(&mut rng)).collect();
+            Self { a_vals, b_vals }
+        }
+
+        fn public_inputs(&self) -> Vec<F> {
+            self.a_vals
+                .iter()
+                .zip(&self.b_vals)
+                .map(|(a, b)| *a * *b)
+                .collect()
+        }
+    }
+
+    impl ConstraintSynthesizer<F> for PariBenchCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+            for i in 0..self.a_vals.len() {
+                let a_val = self.a_vals[i];
+                let b_val = self.b_vals[i];
+                let c_val = a_val * b_val;
+                let a = cs.new_witness_variable(|| Ok(a_val))?;
+                let b = cs.new_witness_variable(|| Ok(b_val))?;
+                let c = cs.new_input_variable(|| Ok(c_val))?;
+                cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
+            }
+            Ok(())
+        }
+    }
+
     pub struct Setup {
+        circuit: PariBenchCircuit,
+        public_inputs: Vec<F>,
         pk: ProvingKey<E>,
         vk: VerifyingKey<E>,
     }
 
     impl Setup {
-        pub fn new(inst: &super::Instance<F>) -> Self {
-            let mut rng = ark_std::test_rng();
-            let (pk, vk) = keygen::<E, _>(
-                &inst.a_mat,
-                &inst.b_mat,
-                inst.num_vars,
-                inst.instance_len,
-                &mut rng,
-            );
-            Setup { pk, vk }
-        }
-
-        /// Time the sparse matrix–vector products the native prover would
-        /// have to do anyway (z_a = A·z, z_b = B·z, w_a = A·w_punctured,
-        /// w_b = B·w_punctured on the K-domain). The zippel side gets these
-        /// vectors as precomputed inputs (`inst.z_a_evals` etc.) and so its
-        /// prove timer excludes this cost; we subtract it from the native
-        /// prove timer to put the two sides on the same footing.
-        fn time_mvm(&self, inst: &super::Instance<F>) -> Duration {
-            let k = inst.k;
-            let instance_assignment = &inst.z[..inst.instance_len];
-            let witness_assignment = &inst.z[inst.instance_len..];
-
-            let mut assignment = instance_assignment.to_vec();
-            assignment.extend_from_slice(witness_assignment);
-            let mut punctured = vec![F::zero(); inst.instance_len];
-            punctured.extend_from_slice(witness_assignment);
-
-            // Mirror pari_native::prove's MVM loop verbatim.
-            let mut z_a = vec![F::zero(); k];
-            let mut z_b = vec![F::zero(); k];
-            let mut w_a = vec![F::zero(); k];
-            let mut w_b = vec![F::zero(); k];
-            let t = Instant::now();
-            for i in 0..k {
-                z_a[i] = eval_sparse_row(&inst.a_mat[i], &assignment);
-                z_b[i] = eval_sparse_row(&inst.b_mat[i], &assignment);
-                w_a[i] = eval_sparse_row(&inst.a_mat[i], &punctured);
-                w_b[i] = eval_sparse_row(&inst.b_mat[i], &punctured);
-            }
-            let elapsed = t.elapsed();
-            // Defeat dead-code elimination — keep the output alive past
-            // the timer so the loop isn't optimized away.
-            std::hint::black_box((z_a, z_b, w_a, w_b));
-            elapsed
-        }
-
-        pub fn time_protocol(&self, inst: &super::Instance<F>) -> Timing {
-            let instance_assignment = &inst.z[..inst.instance_len];
-            let witness_assignment = &inst.z[inst.instance_len..];
-
-            let t = Instant::now();
-            let proof: Proof<E> = prove(
-                &self.pk,
-                &inst.a_mat,
-                &inst.b_mat,
-                instance_assignment,
-                witness_assignment,
-            );
-            let prove_t = t.elapsed();
-
-            // Subtract the MVM cost from the prove timer so the
-            // comparison reports SNARK-specific work only (the zippel
-            // side doesn't compute these MVMs inside its timer — see
-            // `time_mvm`'s docstring).
-            let mvm_t = self.time_mvm(inst);
-            let prove_adjusted = prove_t.saturating_sub(mvm_t);
-
-            // Verifier receives public_input as everything except the
-            // constant 1 at z[0] — matching upstream's stripping convention.
-            let public_input: Vec<F> = instance_assignment[1..].to_vec();
-
-            let t = Instant::now();
-            let ok = verify(&proof, &self.vk, &public_input);
-            let verify_t = t.elapsed();
-            assert!(ok, "native PARI verification FAILED");
-
-            Timing {
-                prove: prove_adjusted,
-                verify: verify_t,
+        pub fn new(m_log: usize) -> Self {
+            let num_constraints = 1usize << m_log;
+            let circuit = PariBenchCircuit::new(num_constraints, 0xC0FFEE_u64 ^ m_log as u64);
+            let public_inputs = circuit.public_inputs();
+            let mut rng = StdRng::seed_from_u64(0xBEEF_u64 ^ m_log as u64);
+            let (pk, vk) = Pari::<E>::keygen(circuit.clone(), &mut rng);
+            Setup {
+                circuit,
+                public_inputs,
+                pk,
+                vk,
             }
         }
 
-        pub fn proof_size(&self, inst: &super::Instance<F>) -> usize {
-            let proof: Proof<E> = prove(
-                &self.pk,
-                &inst.a_mat,
-                &inst.b_mat,
-                &inst.z[..inst.instance_len],
-                &inst.z[inst.instance_len..],
-            );
-            proof.compressed_size()
+        pub fn time_protocol(&self) -> Timing {
+            let t = Instant::now();
+            let proof =
+                Pari::<E>::prove(self.circuit.clone(), &self.pk).expect("Pari::prove failed");
+            let prove = t.elapsed();
+
+            let t = Instant::now();
+            let ok = Pari::<E>::verify(&proof, &self.vk, &self.public_inputs);
+            let verify = t.elapsed();
+            assert!(ok, "upstream PARI verification FAILED");
+
+            Timing { prove, verify }
         }
     }
 }

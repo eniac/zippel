@@ -18,7 +18,7 @@ pub mod hyrax;
 pub mod ipa;
 pub mod kzg;
 pub mod pari;
-pub mod pari_native;
+pub mod pari_upstream;
 pub mod pst13;
 pub mod schnorr;
 pub mod spartan;
