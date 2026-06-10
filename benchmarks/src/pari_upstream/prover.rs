@@ -258,4 +258,81 @@ impl<E: Pairing> Pari<E> {
 
         Ok(((z_a, z_b), (w_a, w_b)))
     }
+
+    /// Prove entry point that takes raw SR1CS matrices + assignments
+    /// instead of a `ConstraintSynthesizer`. Bypasses circuit synthesis
+    /// and the `Sr1csAdapter` R1CS→SR1CS conversion so the prover does
+    /// only the SNARK work (z_a/z_b/w_a/w_b sparse MVMs, 4 IFFTs, quotient
+    /// division, 5 MSMs) on the exact matrices provided. Used by the
+    /// bench harness to measure the same work as the zippel side.
+    pub fn prove_from_sr1cs(
+        a_mat: &Matrix<E::ScalarField>,
+        b_mat: &Matrix<E::ScalarField>,
+        instance_assignment: &[E::ScalarField],
+        witness_assignment: &[E::ScalarField],
+        pk: &ProvingKey<E>,
+    ) -> Result<Proof<E>, SynthesisError>
+    where
+        E::G1Affine: Neg<Output = E::G1Affine>,
+        E::ScalarField: Field,
+        E::BaseField: PrimeField,
+        <<E as Pairing>::G1Affine as AffineRepr>::BaseField: PrimeField,
+    {
+        let num_constraints = a_mat.len();
+        assert_eq!(b_mat.len(), num_constraints, "A and B row counts must match");
+
+        let domain = GeneralEvaluationDomain::<E::ScalarField>::new(num_constraints).unwrap();
+
+        let ((z_a, z_b), (w_a, w_b)) = Self::compute_wa_wb_za_zb(
+            domain,
+            a_mat,
+            b_mat,
+            instance_assignment,
+            witness_assignment,
+            num_constraints,
+        )?;
+
+        let z_a_hat = Evaluations::from_vec_and_domain(z_a, domain).interpolate();
+        let z_b_hat = Evaluations::from_vec_and_domain(z_b, domain).interpolate();
+        let w_a_hat = Evaluations::from_vec_and_domain(w_a, domain).interpolate();
+        let w_b_hat = Evaluations::from_vec_and_domain(w_b, domain).interpolate();
+
+        let (q, _) = (&z_a_hat * &z_a_hat - &z_b_hat).divide_by_vanishing_poly(domain);
+
+        let t_ab = <E::G1 as VariableBaseMSM>::msm_unchecked(&pk.sigma, witness_assignment);
+        let t_q = <E::G1 as VariableBaseMSM>::msm_unchecked(&pk.sigma_q_comm, &q);
+        let t = t_ab + t_q;
+        let t: E::G1Affine = -t.into();
+
+        let challenge = compute_chall::<E>(
+            &pk.verifying_key,
+            &instance_assignment[1..].to_vec(),
+            &t,
+        );
+
+        let v_a = w_a_hat.evaluate(&challenge);
+        let v_b = w_b_hat.evaluate(&challenge);
+        let v_q = q.evaluate(&challenge);
+
+        let one = E::ScalarField::ONE;
+        let w_a_r = DensePolynomial::from_coefficients_vec(vec![v_a]);
+        let w_b_r = DensePolynomial::from_coefficients_vec(vec![v_b]);
+        let q_r = DensePolynomial::from_coefficients_vec(vec![v_q]);
+        let chall_vanishing_poly = DensePolynomial::from_coefficients_vec(vec![-challenge, one]);
+        let witness_a = (&w_a_hat - &w_a_r) / &chall_vanishing_poly;
+        let witness_b = (&w_b_hat - &w_b_r) / &chall_vanishing_poly;
+        let witness_q = (&q - &q_r) / &chall_vanishing_poly;
+
+        let w_a_proof = E::G1::msm_unchecked(&pk.sigma_a, &witness_a.coeffs);
+        let w_b_proof = E::G1::msm_unchecked(&pk.sigma_b, &witness_b.coeffs);
+        let q_proof = E::G1::msm_unchecked(&pk.sigma_q_opening, &witness_q.coeffs);
+        let u = w_a_proof + w_b_proof + q_proof;
+
+        Ok(Proof {
+            t_g: t,
+            u_g: u.into(),
+            v_a,
+            v_b,
+        })
+    }
 }

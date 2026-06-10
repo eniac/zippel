@@ -13,16 +13,24 @@
 //! matrices and the same witness.
 //!
 //! Parity decisions:
-//!   - Zippel side feeds `z_a_evals`, `z_b_evals`, `x_a_evals`,
-//!     `x_b_evals` as inputs (no sparse MVM inside the protocol — same
-//!     simplification the user requested when implementing PARI in
-//!     `examples/pari`). The native side reaches the same vectors
-//!     internally; both pay the same sparse-MVM cost outside the
-//!     "prove" timer.
+//!   - Native side runs the SR1CS-direct entry points (`Pari::
+//!     keygen_from_sr1cs` / `Pari::prove_from_sr1cs`) so both sides see
+//!     the EXACT same matrices, witness, and instance_len. No
+//!     `ConstraintSynthesizer`, no R1CS→SR1CS adapter (which would
+//!     expand the constraint count and add aux variables), no extra
+//!     instance vars beyond the n_pub the zippel side declares.
+//!   - Zippel side feeds `z_a_evals`, `z_b_evals`, `w_a_evals`,
+//!     `w_b_evals` precomputed (no sparse MVM inside the protocol);
+//!     native side runs those 4 sparse MVMs INSIDE its prove timer. This
+//!     is the one asymmetry left — at K = 2^20 with row_density = 3 the
+//!     MVM cost is O(K) = ~1M field multiplies per matrix, small next
+//!     to the 4 IFFTs + quotient division + 5 MSMs that dominate.
 //!   - Native verifier uses the upstream O(n) Lagrange shortcut; the
 //!     zippel verifier interpolates `x_a_evals` over K (O(K log K)).
 //!     This is the real zippel-side limitation, not a measurement
-//!     artifact.
+//!     artifact. With instance_len = n_pub (= 1 by default) the native
+//!     shortcut is O(1) and dominated by the 4-element MSM + 3-pair
+//!     final check.
 
 use crate::Timing;
 
@@ -421,95 +429,74 @@ pub mod zippel_side {
 
 pub mod native_side {
     //! Native PARI baseline: the upstream `pari` crate, vendored in-tree
-    //! at `benchmarks/src/pari_upstream/`. Timed via a synthetic
-    //! K = 2^M-constraint circuit (K copies of `a*b=c`) on BLS12-381 —
-    //! same SNARK problem size as the zippel side, different input shape
-    //! (zippel takes precomputed `A·z`, `B·z` evaluations; upstream Pari
-    //! synthesizes its constraint system from a `ConstraintSynthesizer`).
-    use super::Timing;
+    //! at `benchmarks/src/pari_upstream/`. Driven via the SR1CS-direct
+    //! entry points (`Pari::keygen_from_sr1cs` / `Pari::prove_from_sr1cs`)
+    //! so both sides prove the EXACT same SR1CS statement built by
+    //! `super::inst_gen::build_random` — same K, same matrices, same z,
+    //! same instance_len. No `ConstraintSynthesizer`, no `Sr1csAdapter`
+    //! R1CS→SR1CS expansion, and (since instance_len = n_pub instead of
+    //! K+1) the verifier's O(n) Lagrange shortcut runs over the small
+    //! instance dimension just like the zippel verifier does.
+    use super::{Instance, Timing};
     use crate::pari_upstream::{
         Pari,
         data_structures::{ProvingKey, VerifyingKey},
     };
     use ark_bls12_381::Bls12_381;
     use ark_ec::pairing::Pairing;
-    use ark_ff::UniformRand;
-    use ark_relations::{
-        gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
-        lc,
-    };
+    use ark_serialize::CanonicalSerialize;
     use ark_std::rand::{SeedableRng, rngs::StdRng};
     use std::time::Instant;
 
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
 
-    /// K-constraint circuit: K copies of `a_i * b_i = c_i`, witness vars
-    /// for `a_i, b_i`, public input for each `c_i`. K = 2^m_log.
-    #[derive(Clone)]
-    struct PariBenchCircuit {
-        a_vals: Vec<F>,
-        b_vals: Vec<F>,
-    }
-
-    impl PariBenchCircuit {
-        fn new(num_constraints: usize, seed: u64) -> Self {
-            let mut rng = StdRng::seed_from_u64(seed);
-            let a_vals: Vec<F> = (0..num_constraints).map(|_| F::rand(&mut rng)).collect();
-            let b_vals: Vec<F> = (0..num_constraints).map(|_| F::rand(&mut rng)).collect();
-            Self { a_vals, b_vals }
-        }
-
-        fn public_inputs(&self) -> Vec<F> {
-            self.a_vals
-                .iter()
-                .zip(&self.b_vals)
-                .map(|(a, b)| *a * *b)
-                .collect()
-        }
-    }
-
-    impl ConstraintSynthesizer<F> for PariBenchCircuit {
-        fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-            for i in 0..self.a_vals.len() {
-                let a_val = self.a_vals[i];
-                let b_val = self.b_vals[i];
-                let c_val = a_val * b_val;
-                let a = cs.new_witness_variable(|| Ok(a_val))?;
-                let b = cs.new_witness_variable(|| Ok(b_val))?;
-                let c = cs.new_input_variable(|| Ok(c_val))?;
-                cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
-            }
-            Ok(())
-        }
-    }
-
     pub struct Setup {
-        circuit: PariBenchCircuit,
+        instance_assignment: Vec<F>,
+        witness_assignment: Vec<F>,
         public_inputs: Vec<F>,
+        a_mat: Vec<Vec<(F, usize)>>,
+        b_mat: Vec<Vec<(F, usize)>>,
         pk: ProvingKey<E>,
         vk: VerifyingKey<E>,
     }
 
     impl Setup {
-        pub fn new(m_log: usize) -> Self {
-            let num_constraints = 1usize << m_log;
-            let circuit = PariBenchCircuit::new(num_constraints, 0xC0FFEE_u64 ^ m_log as u64);
-            let public_inputs = circuit.public_inputs();
-            let mut rng = StdRng::seed_from_u64(0xBEEF_u64 ^ m_log as u64);
-            let (pk, vk) = Pari::<E>::keygen(circuit.clone(), &mut rng);
+        pub fn new(inst: &Instance<F>) -> Self {
+            let instance_assignment = inst.z[..inst.instance_len].to_vec();
+            let witness_assignment = inst.z[inst.instance_len..].to_vec();
+            // Verifier's public input is `instance_assignment[1..]` (the
+            // constant-1 at position 0 is implicit) — matches upstream.
+            let public_inputs = instance_assignment[1..].to_vec();
+            let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
+            let (pk, vk) = Pari::<E>::keygen_from_sr1cs(
+                &inst.a_mat,
+                &inst.b_mat,
+                inst.instance_len,
+                inst.num_vars,
+                &mut rng,
+            );
             Setup {
-                circuit,
+                instance_assignment,
+                witness_assignment,
                 public_inputs,
+                a_mat: inst.a_mat.clone(),
+                b_mat: inst.b_mat.clone(),
                 pk,
                 vk,
             }
         }
 
-        pub fn time_protocol(&self) -> Timing {
+        pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
             let t = Instant::now();
-            let proof =
-                Pari::<E>::prove(self.circuit.clone(), &self.pk).expect("Pari::prove failed");
+            let proof = Pari::<E>::prove_from_sr1cs(
+                &self.a_mat,
+                &self.b_mat,
+                &self.instance_assignment,
+                &self.witness_assignment,
+                &self.pk,
+            )
+            .expect("Pari::prove_from_sr1cs failed");
             let prove = t.elapsed();
 
             let t = Instant::now();
@@ -518,6 +505,18 @@ pub mod native_side {
             assert!(ok, "upstream PARI verification FAILED");
 
             Timing { prove, verify }
+        }
+
+        pub fn proof_size(&self, _inst: &Instance<F>) -> usize {
+            let proof = Pari::<E>::prove_from_sr1cs(
+                &self.a_mat,
+                &self.b_mat,
+                &self.instance_assignment,
+                &self.witness_assignment,
+                &self.pk,
+            )
+            .expect("Pari::prove_from_sr1cs failed");
+            proof.compressed_size()
         }
     }
 }

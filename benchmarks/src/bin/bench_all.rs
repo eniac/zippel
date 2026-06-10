@@ -375,9 +375,9 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
             let mut rng = ark_std::test_rng();
             let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
             let mut z = pari::zippel_side::Setup::new(m_log, n_pub, inst.num_vars);
-            let n = pari::native_side::Setup::new(m_log);
+            let n = pari::native_side::Setup::new(&inst);
             let zippel = z.time_protocol(&inst);
-            let native = n.time_protocol();
+            let native = n.time_protocol(&inst);
             let r = Row {
                 system: "pari",
                 threads,
@@ -523,6 +523,24 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
 }
 
 fn main() {
+    // Init the rayon global pool with a 64 MB worker stack before any
+    // rayon call — the default per-worker stack is the OS default
+    // (~2 MB on macOS/Linux), and HyraxPC's open/check at n=20 pushes
+    // multi-MB frames through `par_iter` chains and overflows. Must
+    // happen before `Args::parse()` (clap) or any other touch of rayon,
+    // because `build_global` errors if the pool is already initialized.
+    // Honors RAYON_NUM_THREADS the way the implicit pool does.
+    let num_threads = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(0); // 0 → rayon picks (= num CPUs)
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .stack_size(64 * 1024 * 1024)
+        .build_global()
+        .expect("init rayon global pool");
+
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {
         Some(names) => ALL_SYSTEMS

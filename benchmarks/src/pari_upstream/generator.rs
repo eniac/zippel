@@ -14,7 +14,8 @@ use ark_relations::{
         self,
         instance_outliner::{outline_sr1cs, InstanceOutliner},
         predicate::polynomial_constraint::SR1CS_PREDICATE_LABEL,
-        ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, SynthesisError, SynthesisMode,
+        ConstraintSynthesizer, ConstraintSystem, Matrix, OptimizationGoal, SynthesisError,
+        SynthesisMode,
     },
     sr1cs::Sr1csAdapter,
 };
@@ -270,5 +271,138 @@ impl<E: Pairing> Pari<E> {
         // write a sanity check, make up a z, check if MV product is correct
         end_timer!(timer_compute_a_b);
         Ok((a, b))
+    }
+
+    /// Keygen entry point that takes raw SR1CS matrices instead of a
+    /// `ConstraintSynthesizer`. Bypasses circuit synthesis and the
+    /// `Sr1csAdapter` R1CS→SR1CS conversion, so the resulting (pk, vk)
+    /// matches a benchmark instance built directly in SR1CS form. Used by
+    /// the bench harness so the native side proves the same SR1CS
+    /// statement the zippel side does (no expansion of constraint count
+    /// or aux variables from the R1CS adapter).
+    pub fn keygen_from_sr1cs<R: RngCore>(
+        a_mat: &Matrix<E::ScalarField>,
+        b_mat: &Matrix<E::ScalarField>,
+        instance_len: usize,
+        num_vars: usize,
+        rng: &mut R,
+    ) -> (ProvingKey<E>, VerifyingKey<E>)
+    where
+        E::ScalarField: Field,
+    {
+        let num_constraints = a_mat.len();
+        assert_eq!(b_mat.len(), num_constraints, "A and B row counts must match");
+
+        let g = E::G1::rand(rng);
+        let h = E::G2::rand(rng);
+
+        let alpha = E::ScalarField::rand(rng);
+        let beta = E::ScalarField::rand(rng);
+        let delta_two = E::ScalarField::rand(rng);
+        let tau = E::ScalarField::rand(rng);
+
+        let alpha_g: E::G1 = g * alpha;
+        let beta_g = g * beta;
+        let delta_two_h = h * delta_two;
+        let tau_h = h * tau;
+
+        let delta_two_inverse = delta_two.inverse().unwrap();
+        let alpha_over_delta_two = alpha * delta_two_inverse;
+        let beta_over_delta_two = beta * delta_two_inverse;
+
+        let domain = Radix2EvaluationDomain::<E::ScalarField>::new(num_constraints).unwrap();
+        assert_ne!(
+            domain.evaluate_vanishing_polynomial(tau),
+            E::ScalarField::zero()
+        );
+        let domain_size = domain.size();
+        let max_degree = domain_size - 1;
+
+        // a_i(tau), b_i(tau) for i = 0..num_vars.
+        let lagrange_polys_at_tau = domain.evaluate_all_lagrange_coefficients(tau);
+        let mut a = vec![E::ScalarField::zero(); num_vars];
+        let mut b = vec![E::ScalarField::zero(); num_vars];
+        for (i, u_i) in lagrange_polys_at_tau
+            .iter()
+            .enumerate()
+            .take(num_constraints)
+        {
+            for &(ref coeff, index) in &a_mat[i] {
+                a[index] += *u_i * coeff;
+            }
+            for &(ref coeff, index) in &b_mat[i] {
+                b[index] += *u_i * coeff;
+            }
+        }
+
+        let mut powers_of_tau = vec![E::ScalarField::ONE];
+        let mut cur = tau;
+        for _ in 0..=max_degree {
+            powers_of_tau.push(cur);
+            cur *= &tau;
+        }
+
+        let table = BatchMulPreprocessing::new(g, max_degree + 1);
+
+        let sigma_a_powers = powers_of_tau[0..max_degree + 1]
+            .par_iter()
+            .map(|t| *t * alpha)
+            .collect::<Vec<_>>();
+        let sigma_a = table.batch_mul(&sigma_a_powers);
+
+        let sigma_b_powers = powers_of_tau[0..max_degree + 1]
+            .par_iter()
+            .map(|t| *t * beta)
+            .collect::<Vec<_>>();
+        let sigma_b = table.batch_mul(&sigma_b_powers);
+
+        let sigma_q_opening_powers = powers_of_tau[0..max_degree + 1]
+            .par_iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let sigma_q_opening = table.batch_mul(&sigma_q_opening_powers);
+
+        let sigma_powers = a[instance_len..]
+            .par_iter()
+            .zip(&b[instance_len..])
+            .map(|(a_i, b_i)| *a_i * alpha_over_delta_two + *b_i * beta_over_delta_two)
+            .collect::<Vec<_>>();
+        let sigma = table.batch_mul(&sigma_powers);
+
+        let sigma_q_comm_powers = powers_of_tau[0..max_degree]
+            .par_iter()
+            .map(|t| *t * delta_two_inverse)
+            .collect::<Vec<_>>();
+        let sigma_q_comm = table.batch_mul(&sigma_q_comm_powers);
+
+        let succinct_index = SuccinctIndex {
+            num_constraints,
+            instance_len,
+        };
+
+        let vk = VerifyingKey {
+            succinct_index,
+            alpha_g: alpha_g.into(),
+            beta_g: beta_g.into(),
+            delta_two_h_prep: delta_two_h.into().into(),
+            delta_two_h: delta_two_h.into(),
+            tau_h: tau_h.into(),
+            tau_h_prep: tau_h.into().into(),
+            g: g.into(),
+            h_prep: h.into().into(),
+            h: h.into(),
+            domain,
+        };
+
+        let pk = ProvingKey {
+            sigma,
+            sigma_a,
+            sigma_b,
+            sigma_q_comm,
+            sigma_q_opening,
+            verifying_key: vk.clone(),
+        };
+
+        (pk, vk)
     }
 }
