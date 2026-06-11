@@ -60,7 +60,15 @@ serde = { version = "1", features = ["derive"] }
 # algebra.git git-main arkworks set; no separate np-/hp-/bp- namespace
 # needed. `ark-relations` (with the gr1cs API) comes from snark.git via
 # the workspace [patch.crates-io]. `displaydoc` is for transcript errors.
-ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0", default-features = false }
+#
+# IMPORTANT: each `default-features = false` dep below MUST also enable
+# `parallel` explicitly. The 4 crates with the `parallel` feature gate
+# rayon-based loops INSIDE them (e.g. ark-poly-commit's Hyrax row
+# iteration, ark-groth16's `compute_h` parallelism, ark-relations'
+# witness assignment). Without `parallel`, our own `ark-ff/parallel`
+# only buys MSM-level concurrency — the higher-level loops in the
+# native baselines run single-threaded and the comparison is unfair.
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0", default-features = false, features = ["parallel"] }
 displaydoc = { version = "0.2", default-features = false }
 num-bigint = "0.4"
 
@@ -69,9 +77,9 @@ num-bigint = "0.4"
 # and ark-secp256k1 (ipa). Their ark-ff/ec/poly transitive deps unify
 # with the zippel-side algebra.git 0.6 pin via [patch.crates-io], so
 # MSM/Pairing primitives are bit-identical on both sides.
-ark-poly-commit = { version = "0.6", default-features = false }
-ark-groth16 = { version = "0.6", default-features = false }
-ark-crypto-primitives = { version = "0.6", default-features = false, features = ["sponge", "signature"] }
+ark-poly-commit = { version = "0.6", default-features = false, features = ["parallel"] }
+ark-groth16 = { version = "0.6", default-features = false, features = ["parallel"] }
+ark-crypto-primitives = { version = "0.6", default-features = false, features = ["sponge", "signature", "parallel"] }
 ark-secp256k1 = { version = "0.6", default-features = false }
 
 [dev-dependencies]
