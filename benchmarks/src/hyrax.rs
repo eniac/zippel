@@ -232,6 +232,9 @@ pub mod native_side {
         num_vars: usize,
         ck: CK,
         vk: VK,
+        labeled: LabeledPolynomial<Fr, DenseMultilinearExtension<Fr>>,
+        point: Vec<Fr>,
+        value: Fr,
     }
 
     impl Setup {
@@ -244,27 +247,45 @@ pub mod native_side {
                 Hyrax::setup(n, Some(n), &mut rng).expect("hyrax setup")
             });
             let (ck, vk) = Hyrax::trim(&pp, n, n, None).expect("hyrax trim");
-            Setup { num_vars: n, ck, vk }
+
+            // Poly/point/value generation runs in `setup_pool` (called
+            // here, not in time_protocol). At log_size=20 the rand poly
+            // is 2^20 field elements and `evaluate` is O(2^n) — keeping
+            // this in the bench pool single-threaded at threads=1 was
+            // wasting ~60ms per sweep iteration.
+            let mut rng = ark_std::test_rng();
+            let poly = DenseMultilinearExtension::<Fr>::rand(n, &mut rng);
+            let labeled =
+                LabeledPolynomial::new("hyrax_bench".to_string(), poly, None, None);
+            let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let value = labeled.evaluate(&point);
+
+            Setup {
+                num_vars: n,
+                ck,
+                vk,
+                labeled,
+                point,
+                value,
+            }
         }
 
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
-            let poly = DenseMultilinearExtension::<Fr>::rand(self.num_vars, &mut rng);
-            let labeled =
-                LabeledPolynomial::new("hyrax_bench".to_string(), poly, None, None);
-            let point: Vec<Fr> = (0..self.num_vars).map(|_| Fr::rand(&mut rng)).collect();
-            let value = labeled.evaluate(&point);
+            let labeled = &self.labeled;
+            let point = &self.point;
+            let value = self.value;
 
             // Prove = commit + open. Mirrors the zippel side, which
             // synthesizes c_rows (row Pedersens) and the σ-protocol
             // triple (τ, δ, β) + responses inside one timed region.
             let t = Instant::now();
             let (coms, states) =
-                Hyrax::commit(&self.ck, [&labeled], Some(&mut rng)).expect("hyrax commit");
+                Hyrax::commit(&self.ck, [labeled], Some(&mut rng)).expect("hyrax commit");
             let mut sponge = test_sponge::<Fr>();
             let proof = Hyrax::open(
                 &self.ck,
-                [&labeled],
+                [labeled],
                 &coms,
                 &point,
                 &mut sponge,

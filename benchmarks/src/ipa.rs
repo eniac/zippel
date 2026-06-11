@@ -20,6 +20,10 @@ use crate::Timing;
 
 pub mod zippel_side {
     use super::*;
+    use ark_ec::{CurveGroup, VariableBaseMSM};
+    use ark_secp256k1::{Affine as SecpAffine, Fr as SecpFr, Projective as SecpProjective};
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use ark_std::UniformRand;
     use backend::{ATyp, ArkSecp256k1, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
@@ -27,9 +31,65 @@ pub mod zippel_side {
     use std::time::Instant;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    // Cached IPA inputs. Bases (g_vec, h_vec, u_aux_base) are Pedersen
+    // setup. (a_vec, b_vec, sum_vec) would normally be the per-call
+    // witness, but the bench measures asymptotic prove/verify cost which
+    // is data-independent — so we use a deterministic seed and cache
+    // them too. p_initial and ip_val_claimed are derived from the cached
+    // (bases, witness) via 2 MSMs + 1 inner product; cache them as well
+    // so subsequent loads skip the ~2× 2^20 MSM work on the prover-input
+    // path.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
+    struct IpaInputs {
+        u_aux_base: SecpProjective,
+        g_vec: Vec<SecpProjective>,
+        h_vec: Vec<SecpProjective>,
+        a_vec: Vec<SecpFr>,
+        b_vec: Vec<SecpFr>,
+        sum_vec: Vec<SecpFr>,
+        ip_val_claimed: SecpFr,
+        p_initial: SecpProjective,
+    }
+
+    impl IpaInputs {
+        fn build(n: usize) -> Self {
+            let mut rng = ark_std::test_rng();
+            let u_aux_base = SecpProjective::rand(&mut rng);
+            let g_vec: Vec<SecpProjective> =
+                (0..n).map(|_| SecpProjective::rand(&mut rng)).collect();
+            let h_vec: Vec<SecpProjective> =
+                (0..n).map(|_| SecpProjective::rand(&mut rng)).collect();
+            let a_vec: Vec<SecpFr> = (0..n).map(|_| SecpFr::rand(&mut rng)).collect();
+            let b_vec: Vec<SecpFr> = (0..n).map(|_| SecpFr::rand(&mut rng)).collect();
+            let sum_vec: Vec<SecpFr> = (0..n).map(|_| SecpFr::rand(&mut rng)).collect();
+
+            let ip_val_claimed: SecpFr =
+                a_vec.iter().zip(b_vec.iter()).map(|(a, b)| *a * *b).sum();
+
+            let g_affine: Vec<SecpAffine> =
+                SecpProjective::normalize_batch(&g_vec);
+            let h_affine: Vec<SecpAffine> =
+                SecpProjective::normalize_batch(&h_vec);
+            let p_initial = SecpProjective::msm(&g_affine, &a_vec).expect("msm g·a")
+                + SecpProjective::msm(&h_affine, &b_vec).expect("msm h·b");
+
+            IpaInputs {
+                u_aux_base,
+                g_vec,
+                h_vec,
+                a_vec,
+                b_vec,
+                sum_vec,
+                ip_val_claimed,
+                p_initial,
+            }
+        }
+    }
+
     pub struct Setup {
         handler: ZippelHandler<ArkSecp256k1>,
         n: usize,
+        inputs: IpaInputs,
     }
 
     impl Setup {
@@ -43,35 +103,54 @@ pub mod zippel_side {
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("S"), &s_const);
             handler.compile(&sizes);
-            Setup { handler, n }
+
+            let inputs = crate::cache::load_or_build_canonical(
+                "ipa_zippel_inputs",
+                s_const,
+                || IpaInputs::build(n),
+            );
+
+            Setup {
+                handler,
+                n,
+                inputs,
+            }
         }
 
         pub fn time_protocol(&mut self) -> Timing {
-            let mut rng = rand::rngs::OsRng;
-            let n = self.n;
-
-            let u_aux_base = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::g1());
-            let g_vec = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n));
-            let h_vec = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec(&ATyp::g1(), n));
-            let a_vec_witness = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n));
-            let b_vec_witness = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n));
-            let ip_val_claimed = a_vec_witness.clone().dot(b_vec_witness.clone());
-            let p_initial_commitment =
-                g_vec.clone().dot(a_vec_witness.clone()) + h_vec.clone().dot(b_vec_witness.clone());
-            let sum_vec = Value::<ArkSecp256k1>::random(&mut rng, &ATyp::vec_scalar(n));
-
             let inputs = Ctx::<Vid, Value<ArkSecp256k1>>::from_iter([
-                (Vid("g_vec".to_string()), g_vec),
-                (Vid("h_vec".to_string()), h_vec),
+                (
+                    Vid("g_vec".to_string()),
+                    Value::VecG1(self.inputs.g_vec.clone()),
+                ),
+                (
+                    Vid("h_vec".to_string()),
+                    Value::VecG1(self.inputs.h_vec.clone()),
+                ),
                 (
                     Vid("p_initial_commitment".to_string()),
-                    p_initial_commitment,
+                    Value::G1(self.inputs.p_initial),
                 ),
-                (Vid("ip_val_claimed".to_string()), ip_val_claimed),
-                (Vid("u_aux_base".to_string()), u_aux_base),
-                (Vid("a_vec_witness".to_string()), a_vec_witness),
-                (Vid("b_vec_witness".to_string()), b_vec_witness),
-                (Vid("sum_vec".to_string()), sum_vec),
+                (
+                    Vid("ip_val_claimed".to_string()),
+                    Value::Scalar(self.inputs.ip_val_claimed),
+                ),
+                (
+                    Vid("u_aux_base".to_string()),
+                    Value::G1(self.inputs.u_aux_base),
+                ),
+                (
+                    Vid("a_vec_witness".to_string()),
+                    Value::VecScalar(self.inputs.a_vec.clone()),
+                ),
+                (
+                    Vid("b_vec_witness".to_string()),
+                    Value::VecScalar(self.inputs.b_vec.clone()),
+                ),
+                (
+                    Vid("sum_vec".to_string()),
+                    Value::VecScalar(self.inputs.sum_vec.clone()),
+                ),
             ]);
 
             let prover_scheduled = self.handler.default_schedule_prover();

@@ -196,6 +196,7 @@ pub mod zippel_side {
         DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial,
         univariate::DensePolynomial,
     };
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use backend::{ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
@@ -208,44 +209,33 @@ pub mod zippel_side {
     type G1 = <C as ArkConfig>::G1;
     type G2 = <C as ArkConfig>::G2;
 
-    pub struct Setup {
-        handler: ZippelHandler<C>,
-        m_log: usize,
-        k: usize,
-        n_pub: usize,
-        kmn: usize, // = num_vars - n_pub
-        num_vars: usize,
+    // Cached SRS artifact. Deterministic given `(test_rng seed, inst,
+    // m_log, n_pub, num_vars)`. The bench reuses the same Instance
+    // across the full thread sweep, so caching by `m_log` alone is safe
+    // as long as inst_gen stays seeded with `ark_std::test_rng()` and
+    // (n_pub, k_vars) stay fixed.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
+    struct PariSrs {
+        sigma_w: Vec<G1>,
+        sigma_q: Vec<G1>,
+        sigma_a: Vec<G1>,
+        sigma_b: Vec<G1>,
+        sigma_q_prime: Vec<G1>,
+        alpha_g: G1,
+        beta_g: G1,
+        g_g1: G1,
+        delta2_h: G2,
+        tau_h: G2,
+        h_g2: G2,
+        omegas: Vec<F>,
+        k_inv: F,
+        v_k_coeffs: Vec<F>,
     }
 
-    impl Setup {
-        pub fn new(m_log: usize, n_pub: usize, num_vars: usize) -> Self {
+    impl PariSrs {
+        fn build(m_log: usize, n_pub: usize, num_vars: usize, inst: &super::Instance<F>) -> Self {
             let k = 1usize << m_log;
-            let kmn = num_vars - n_pub;
-            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-            let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("M"), &m_log);
-            sizes.insert(&Tid::new("N"), &n_pub);
-            sizes.insert(&Tid::new("KMN"), &kmn);
-            handler.compile(&sizes);
-            Setup {
-                handler,
-                m_log,
-                k,
-                n_pub,
-                kmn,
-                num_vars,
-            }
-        }
-
-        pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
-            assert_eq!(inst.k, self.k);
-            assert_eq!(inst.instance_len, self.n_pub);
-            assert_eq!(inst.num_vars, self.num_vars);
-
             let mut rng = ark_std::test_rng();
-
-            // --- PARI Generator: SRS construction (matches examples/pari/main.rs) ---
             let alpha = F::rand(&mut rng);
             let beta = F::rand(&mut rng);
             let delta2 = F::rand(&mut rng);
@@ -253,15 +243,14 @@ pub mod zippel_side {
             let g_g1: G1 = G1::rand(&mut rng);
             let h_g2: G2 = G2::rand(&mut rng);
 
-            let domain = GeneralEvaluationDomain::<F>::new(self.k).expect("K-domain");
+            let domain = GeneralEvaluationDomain::<F>::new(k).expect("K-domain");
 
-            // Interpolate columns of A and B over K to get a_i(X), b_i(X).
-            let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_vars);
-            let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_vars);
-            for j in 0..self.num_vars {
-                let mut a_col = vec![F::zero(); self.k];
-                let mut b_col = vec![F::zero(); self.k];
-                for i in 0..self.k {
+            let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
+            let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
+            for j in 0..num_vars {
+                let mut a_col = vec![F::zero(); k];
+                let mut b_col = vec![F::zero(); k];
+                for i in 0..k {
                     for &(c, idx) in &inst.a_mat[i] {
                         if idx == j {
                             a_col[i] += c;
@@ -278,7 +267,7 @@ pub mod zippel_side {
             }
 
             let delta2_inv = delta2.inverse().expect("delta2 != 0");
-            let sigma_w_vec: Vec<G1> = (self.n_pub..self.num_vars)
+            let sigma_w: Vec<G1> = (n_pub..num_vars)
                 .map(|i| {
                     let scalar = (alpha * a_polys[i].evaluate(&tau)
                         + beta * b_polys[i].evaluate(&tau))
@@ -289,7 +278,7 @@ pub mod zippel_side {
 
             let tau_powers: Vec<F> = {
                 let mut acc = F::one();
-                (0..self.k)
+                (0..k)
                     .map(|_| {
                         let v = acc;
                         acc *= tau;
@@ -297,33 +286,96 @@ pub mod zippel_side {
                     })
                     .collect()
             };
-            let sigma_q_vec: Vec<G1> = tau_powers
+            let sigma_q: Vec<G1> = tau_powers
                 .iter()
                 .map(|t| g_g1 * (*t * delta2_inv))
                 .collect();
-            let sigma_a_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (alpha * *t)).collect();
-            let sigma_b_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (beta * *t)).collect();
-            let sigma_q_prime_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * *t).collect();
+            let sigma_a: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (alpha * *t)).collect();
+            let sigma_b: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (beta * *t)).collect();
+            let sigma_q_prime: Vec<G1> = tau_powers.iter().map(|t| g_g1 * *t).collect();
 
-            let alpha_g_val: G1 = g_g1 * alpha;
-            let beta_g_val: G1 = g_g1 * beta;
-            let delta2_h_val: G2 = h_g2 * delta2;
-            let tau_h_val: G2 = h_g2 * tau;
+            let alpha_g: G1 = g_g1 * alpha;
+            let beta_g: G1 = g_g1 * beta;
+            let delta2_h: G2 = h_g2 * delta2;
+            let tau_h: G2 = h_g2 * tau;
 
-            let mut v_k_coeffs_vec = vec![F::zero(); self.k + 1];
-            v_k_coeffs_vec[0] = -F::one();
-            v_k_coeffs_vec[self.k] = F::one();
+            let mut v_k_coeffs = vec![F::zero(); k + 1];
+            v_k_coeffs[0] = -F::one();
+            v_k_coeffs[k] = F::one();
 
-            // Lagrange-shortcut inputs: only N scalars for public input,
-            // plus N precomputed omegas[i] = ω^{K-N+i}, plus k_inv.
             let omega = domain.group_gen();
-            let x_vec: Vec<F> = inst.z[..self.n_pub].to_vec();
-            let omegas_vec: Vec<F> = (0..self.n_pub)
-                .map(|i| omega.pow([(self.k - self.n_pub + i) as u64]))
+            let omegas: Vec<F> = (0..n_pub)
+                .map(|i| omega.pow([(k - n_pub + i) as u64]))
                 .collect();
-            let k_inv = F::from(self.k as u64).inverse().unwrap();
+            let k_inv = F::from(k as u64).inverse().unwrap();
 
-            // Prover-side precomputed w_*_evals = z_*_evals − x_*_evals on K.
+            PariSrs {
+                sigma_w,
+                sigma_q,
+                sigma_a,
+                sigma_b,
+                sigma_q_prime,
+                alpha_g,
+                beta_g,
+                g_g1,
+                delta2_h,
+                tau_h,
+                h_g2,
+                omegas,
+                k_inv,
+                v_k_coeffs,
+            }
+        }
+    }
+
+    pub struct Setup {
+        handler: ZippelHandler<C>,
+        m_log: usize,
+        k: usize,
+        n_pub: usize,
+        kmn: usize, // = num_vars - n_pub
+        num_vars: usize,
+        srs: PariSrs,
+    }
+
+    impl Setup {
+        pub fn new(m_log: usize, n_pub: usize, inst: &super::Instance<F>) -> Self {
+            let k = 1usize << m_log;
+            let num_vars = inst.num_vars;
+            let kmn = num_vars - n_pub;
+            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
+            let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
+            let mut sizes = Ctx::new();
+            sizes.insert(&Tid::new("M"), &m_log);
+            sizes.insert(&Tid::new("N"), &n_pub);
+            sizes.insert(&Tid::new("KMN"), &kmn);
+            handler.compile(&sizes);
+
+            let srs = crate::cache::load_or_build_canonical("pari_zippel_srs", m_log, || {
+                PariSrs::build(m_log, n_pub, num_vars, inst)
+            });
+
+            Setup {
+                handler,
+                m_log,
+                k,
+                n_pub,
+                kmn,
+                num_vars,
+                srs,
+            }
+        }
+
+        pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
+            assert_eq!(inst.k, self.k);
+            assert_eq!(inst.instance_len, self.n_pub);
+            assert_eq!(inst.num_vars, self.num_vars);
+
+            // Cheap per-call data derived from inst (element-wise
+            // subtractions + slice clones). The expensive SRS bits live
+            // in `self.srs`, built once in `Setup::new`.
+            let x_vec: Vec<F> = inst.z[..self.n_pub].to_vec();
+            let w_vec: Vec<F> = inst.z[self.n_pub..].to_vec();
             let w_a_evals: Vec<F> = (0..self.k)
                 .map(|i| inst.z_a_evals[i] - inst.x_a_evals[i])
                 .collect();
@@ -331,9 +383,6 @@ pub mod zippel_side {
                 .map(|i| inst.z_b_evals[i] - inst.x_b_evals[i])
                 .collect();
 
-            let w_vec: Vec<F> = inst.z[self.n_pub..].to_vec();
-
-            // --- Pack into the zippel inputs Ctx ---
             let inputs = Ctx::<Vid, Value<C>>::from_iter([
                 (
                     Vid("z_a_evals".to_string()),
@@ -349,45 +398,56 @@ pub mod zippel_side {
                 (Vid("x".to_string()), Value::VecScalar(x_vec.clone())),
                 (
                     Vid("omegas".to_string()),
-                    Value::VecScalar(omegas_vec.clone()),
+                    Value::VecScalar(self.srs.omegas.clone()),
                 ),
-                (Vid("sigma_w".to_string()), Value::VecG1(sigma_w_vec)),
-                (Vid("sigma_q".to_string()), Value::VecG1(sigma_q_vec)),
-                (Vid("sigma_a".to_string()), Value::VecG1(sigma_a_vec)),
-                (Vid("sigma_b".to_string()), Value::VecG1(sigma_b_vec)),
+                (
+                    Vid("sigma_w".to_string()),
+                    Value::VecG1(self.srs.sigma_w.clone()),
+                ),
+                (
+                    Vid("sigma_q".to_string()),
+                    Value::VecG1(self.srs.sigma_q.clone()),
+                ),
+                (
+                    Vid("sigma_a".to_string()),
+                    Value::VecG1(self.srs.sigma_a.clone()),
+                ),
+                (
+                    Vid("sigma_b".to_string()),
+                    Value::VecG1(self.srs.sigma_b.clone()),
+                ),
                 (
                     Vid("sigma_q_prime".to_string()),
-                    Value::VecG1(sigma_q_prime_vec),
+                    Value::VecG1(self.srs.sigma_q_prime.clone()),
                 ),
-                (Vid("alpha_g".to_string()), Value::G1(alpha_g_val)),
-                (Vid("beta_g".to_string()), Value::G1(beta_g_val)),
-                (Vid("g_g1".to_string()), Value::G1(g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(delta2_h_val)),
-                (Vid("tau_h".to_string()), Value::G2(tau_h_val)),
-                (Vid("h_g2".to_string()), Value::G2(h_g2)),
+                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
+                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
+                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
+                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
+                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
+                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (
                     Vid("v_k_coeffs".to_string()),
-                    Value::VecScalar(v_k_coeffs_vec),
+                    Value::VecScalar(self.srs.v_k_coeffs.clone()),
                 ),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
-                (Vid("k_inv".to_string()), Value::Scalar(k_inv)),
+                (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            // Public inputs (verifier side). With sigma_*, v_k_coeffs
-            // marked `private` in the .zippel, the verifier only sees
-            // the O(N)-sized Lagrange-shortcut data + the constant-size
-            // verifier keys.
             let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
                 (Vid("x".to_string()), Value::VecScalar(x_vec)),
-                (Vid("omegas".to_string()), Value::VecScalar(omegas_vec)),
-                (Vid("alpha_g".to_string()), Value::G1(alpha_g_val)),
-                (Vid("beta_g".to_string()), Value::G1(beta_g_val)),
-                (Vid("g_g1".to_string()), Value::G1(g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(delta2_h_val)),
-                (Vid("tau_h".to_string()), Value::G2(tau_h_val)),
-                (Vid("h_g2".to_string()), Value::G2(h_g2)),
+                (
+                    Vid("omegas".to_string()),
+                    Value::VecScalar(self.srs.omegas.clone()),
+                ),
+                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
+                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
+                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
+                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
+                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
+                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
-                (Vid("k_inv".to_string()), Value::Scalar(k_inv)),
+                (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
             // --- Time prove ---

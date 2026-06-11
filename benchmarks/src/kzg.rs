@@ -52,6 +52,7 @@ pub mod zippel_side {
     use super::*;
     use ark_ec::scalar_mul::ScalarMul;
     use ark_ff::One;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
@@ -62,9 +63,27 @@ pub mod zippel_side {
     use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    type G2 = <ArkBls12_381 as ArkConfig>::G2;
+    type G1Affine = <ArkBls12_381 as ArkConfig>::G1Affine;
+
+    // Cached SRS artifact. The proto's setup quantities are deterministic
+    // in `(seed, n)`, so we seed with `ark_std::test_rng()` and cache
+    // keyed on `log_size`. Per-call randomness (polynomial + eval point)
+    // stays in `time_protocol` — it doesn't go on disk.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
+    struct KzgSrs {
+        g_input: G1,
+        h_input: G2,
+        srs_affine: Vec<G1Affine>,
+        h_val: G2,
+    }
+
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         n: usize,
+        srs: KzgSrs,
         // Only `Some` for the diagnostic `--no-srs-check` variant — the
         // normal path compiles examples/kzg/kzg.zippel directly with N
         // bound via `sizes.insert`, no per-call source rewriting.
@@ -97,43 +116,55 @@ pub mod zippel_side {
             sizes.insert(&Tid::new("N"), &n);
             handler.compile(&sizes);
 
+            // Build (or load) SRS here so it runs inside the caller's
+            // `setup_pool().install(...)` block — all cores on cache miss,
+            // instant disk load on cache hit. Matches the native side's
+            // `Kzg::setup` caching pattern.
+            let log_size = n.trailing_zeros() as usize;
+            let srs = crate::cache::load_or_build_canonical("kzg_zippel_srs", log_size, || {
+                let mut rng = ark_std::test_rng();
+                let g_input = G1::rand(&mut rng);
+                let h_input = G2::rand(&mut rng);
+                let tau_input = F::rand(&mut rng);
+                let mut powers_of_tau: Vec<F> = Vec::with_capacity(n);
+                let mut acc = F::one();
+                for _ in 0..n {
+                    powers_of_tau.push(acc);
+                    acc *= tau_input;
+                }
+                let srs_affine = g_input.batch_mul(&powers_of_tau);
+                let h_val = h_input * tau_input;
+                KzgSrs {
+                    g_input,
+                    h_input,
+                    srs_affine,
+                    h_val,
+                }
+            });
+
             Setup {
                 handler,
                 n,
+                srs,
                 _source_file,
             }
         }
 
         pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
-            type G1 = <ArkBls12_381 as ArkConfig>::G1;
-            type G2 = <ArkBls12_381 as ArkConfig>::G2;
-
             let mut rng = rand::rngs::OsRng;
             let n = self.n;
 
-            let g_input = G1::rand(&mut rng);
-            let g = Value::G1(g_input);
-            let h_input = G2::rand(&mut rng);
-            let h = Value::G2(h_input);
+            let g = Value::G1(self.srs.g_input);
+            let h = Value::G2(self.srs.h_input);
+            let ss = Value::VecG1Affine(self.srs.srs_affine.clone());
+            let h_val = Value::G2(self.srs.h_val);
 
             let p = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));
             let z = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-            let tau_input = F::rand(&mut rng);
-
-            let mut powers_of_tau: Vec<F> = Vec::with_capacity(n);
-            let mut acc = F::one();
-            for _ in 0..n {
-                powers_of_tau.push(acc);
-                acc *= tau_input;
-            }
-            let srs_affine = g_input.batch_mul(&powers_of_tau);
-            let ss = Value::VecG1Affine(srs_affine);
 
             let z_val: Value<ArkBls12_381> =
                 Value::Vec((0..n).map(|i| z.clone() ^ Value::Index(i)).collect());
             let y = p.clone().dot(z_val);
-            let h_val = Value::G2(h_input * tau_input);
 
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("poly_coeffs".to_string()), p),

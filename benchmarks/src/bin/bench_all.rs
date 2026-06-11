@@ -410,7 +410,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
             let (inst, mut z, n) = setup_pool().install(|| {
                 let mut rng = ark_std::test_rng();
                 let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
-                let z = pari::zippel_side::Setup::new(m_log, n_pub, inst.num_vars);
+                let z = pari::zippel_side::Setup::new(m_log, n_pub, &inst);
                 let n = pari::native_side::Setup::new(&inst);
                 (inst, z, n)
             });
@@ -709,14 +709,14 @@ fn main() {
             // historical default size. Use `--sizes a,b,c` for an explicit
             // sweep, or `--quick` for the small grid.
             (
-                vec![20usize],            // pari        (M=20  → K=2^20 constraints)
-                vec![20usize],            // sumcheck    (num_vars=20)
-                vec![20usize],            // ipa         (S=20  → N=2^20)
-                vec![1usize << 20],       // kzg         (n_coeffs=2^20, log_size=20)
-                vec![20usize],            // groth16     (log_constraints=20)
-                vec![20usize],            // pst13       (n=20)
-                vec![20usize],            // hyrax       (n=20)
-                vec![20usize],            // spartan     (m=20)
+                vec![18usize],            // pari        (M=18  → K=2^18 constraints)
+                vec![18usize],            // sumcheck    (num_vars=18)
+                vec![18usize],            // ipa         (S=18  → N=2^18)
+                vec![1usize << 18],       // kzg         (n_coeffs=2^18, log_size=18)
+                vec![18usize],            // groth16     (log_constraints=18)
+                vec![18usize],            // pst13       (n=18)
+                vec![18usize],            // hyrax       (n=18, must be even per `n % 2 == 0` assert)
+                vec![18usize],            // spartan     (m=18)
             )
         };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
