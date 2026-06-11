@@ -13,7 +13,7 @@ mod speedup_bench;
 
 use crate::analyses::TransClos;
 use crate::pref::PRef;
-use crate::{GOp, HOp, Op, ReduceMapDomainFact, Ref, mk};
+use crate::{GOp, HOp, Op, Ref, mk};
 use lang::ast::BinOp;
 use lang::id::Vid;
 
@@ -1872,6 +1872,35 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
                 Some(out)
             }
+            ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+                let p_polys = Self::ref_vars(p, prefs);
+                let all_b = hypercube(n);
+                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                    if bi == 1 { x.clone() } else { &one - x }
+                };
+                let free = range.start;
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); 2];
+                for (idx, b) in all_b.iter().enumerate() {
+                    let mut w = one.clone();
+                    let mut fixed_idx = 0usize;
+                    for (var_idx, &bv) in b.iter().enumerate().take(n) {
+                        if var_idx == free {
+                            continue;
+                        }
+                        w = &w * &eq(bv, &fixed_polys[fixed_idx]);
+                        fixed_idx += 1;
+                    }
+                    let term = &p_polys[idx] * &w;
+                    if b[free] == 0 {
+                        out[0] = &out[0] + &term;
+                        out[1] = &out[1] - &term;
+                    } else {
+                        out[1] = &out[1] + &term;
+                    }
+                }
+                Some(out)
+            }
             _ => None,
         }
     }
@@ -2117,9 +2146,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Evaluate(_, Some(_), None) => {
                 Self::uncovered_op("selected-evaluate-missing-points", &pr);
             }
-            Op::Map(ref domain, ref body) => self.map_to_poly(pr, domain, body, &[], result),
-            Op::ReduceMap(rop, ref domain, ref body, fact) => {
-                self.reduce_map_to_poly(pr, rop, domain, body, fact, &[], result)
+            Op::Map(ref domain, ref body) => self.map_to_poly(pr, domain, body, &[], &[], result),
+            Op::ReduceMap(rop, ref domain, ref body) => {
+                self.reduce_map_to_poly(pr, rop, domain, body, &[], &[], result)
             }
             Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &pr),
             // Phase 10: `Op::Reduce(op, v)` � left-fold of vector elements.
@@ -2312,18 +2341,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 .collect(),
             Op::Ref(r, _) => {
                 let points_pref = result.find_ref(r);
-                points_pref
+                let polys: Vec<Option<SparsePolynomial<C::F, T>>> = points_pref
                     .slots()
                     .iter()
-                    .map(|s| {
-                        result.pl.get(s).and_then(|p| {
-                            if p.is_constant() {
-                                p.leading_term().map(|(c, _)| c)
-                            } else {
-                                None
-                            }
-                        })
-                    })
+                    .map(|s| result.pl.get(s).cloned())
+                    .collect();
+                polys
+                    .into_iter()
+                    .map(|opt| opt.and_then(|p| Self::resolve_constant(&p, result)))
                     .collect()
             }
             other => {
@@ -2356,6 +2381,41 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             result.pl.insert(pf, &acc);
             result.basis.push(acc - SparsePolynomial::var(pf));
         }
+    }
+
+    /// Reduce `poly` to a field constant by iteratively inlining each variable
+    /// with its bound definition in `result.pl`, following the node DAG until
+    /// the polynomial is constant. Returns `None` if a genuine (unbound or
+    /// self-bound) input variable remains. Recognizes interpolation
+    /// x-coordinates like `[i * one]` where `one = zero + 1` and `zero = p - p`
+    /// are derived constants rather than syntactic literals.
+    fn resolve_constant(
+        poly: &SparsePolynomial<C::F, T>,
+        result: &GroebnerResult<C, T>,
+    ) -> Option<C::F> {
+        let mut p = poly.clone();
+        for _ in 0..256 {
+            if p.is_constant() {
+                return Some(p.leading_term().map(|(c, _)| c).unwrap_or_else(C::F::zero));
+            }
+            let mut subs: Ctx<PRef, SparsePolynomial<C::F, T>> = Ctx::new();
+            for v in p.vars() {
+                if let Some(binding) = result.pl.get(&v)
+                    && *binding != SparsePolynomial::var(&v)
+                {
+                    subs.insert(&v, binding);
+                }
+            }
+            if subs.is_empty() {
+                return None;
+            }
+            let (next, changed) = p.inline_vars(&subs);
+            if !changed {
+                return None;
+            }
+            p = next;
+        }
+        None
     }
 
     /// Left-fold of vector elements:
@@ -2552,6 +2612,28 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Constant-fold an integer (`Fin`/`Bool`) subexpression over the enclosing
+    /// loop indices. Returns `Some(value)` only when `op` is integer-typed and
+    /// every enclosing loop binder has a concrete value (literal/range domains);
+    /// otherwise `None`. This collapses bit-extraction (`(i / 2^j) % 2`) and
+    /// loop-index exponents (`x ^ i`) to literals so `pow_op` and friends never
+    /// see a non-constant `Fin` operand.
+    fn const_eval_int(&self, op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {
+        let t = op.typ();
+        if !(t.is_fin() || t.is_bool()) {
+            return None;
+        }
+        let params: Vec<std::sync::Arc<Value<C>>> = loop_vals
+            .iter()
+            .map(|v| v.clone().map(std::sync::Arc::new))
+            .collect::<Option<_>>()?;
+        let env: HashMap<Ref, std::sync::Arc<Value<C>>> = HashMap::new();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
+        crate::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params)
+            .ok()
+            .map(|v| (*v).clone())
+    }
+
     /// Materialize an inline Map/ReduceMap body op-tree into registered
     /// sentinel PRefs and return the PRef bound to its result.
     /// `loops[level]` is the element PRef of the enclosing loop at de Bruijn
@@ -2561,6 +2643,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         body: &HOp<C>,
         loops: &[PRef],
+        loop_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
     ) -> Option<PRef> {
         match body.get() {
@@ -2577,18 +2660,25 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let name = self.ns.next_name("gb_map_body");
                 let pf = self.sentinel_pref(&name, body.typ());
                 result.register(&pf);
-                self.map_to_poly(pf.clone(), d, b, loops, result);
+                self.map_to_poly(pf.clone(), d, b, loops, loop_vals, result);
                 Some(pf)
             }
-            Op::ReduceMap(rop, d, b, fact) => {
+            Op::ReduceMap(rop, d, b) => {
                 let name = self.ns.next_name("gb_map_body");
                 let pf = self.sentinel_pref(&name, body.typ());
                 result.register(&pf);
-                self.reduce_map_to_poly(pf.clone(), *rop, d, b, *fact, loops, result);
+                self.reduce_map_to_poly(pf.clone(), *rop, d, b, loops, loop_vals, result);
                 Some(pf)
             }
             _ => {
-                let rebuilt = self.rebuild_body_op(body, loops, result)?;
+                if let Some(v) = self.const_eval_int(body, loop_vals) {
+                    let name = self.ns.next_name("gb_map_body");
+                    let pf = self.sentinel_pref(&name, body.typ());
+                    result.register(&pf);
+                    self.add_op(pf.clone(), Op::Value(v), result);
+                    return Some(pf);
+                }
+                let rebuilt = self.rebuild_body_op(body, loops, loop_vals, result)?;
                 let name = self.ns.next_name("gb_map_body");
                 let pf = self.sentinel_pref(&name, body.typ());
                 result.register(&pf);
@@ -2605,12 +2695,16 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         child: &HOp<C>,
         loops: &[PRef],
+        loop_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
     ) -> Option<HOp<C>> {
         match child.get() {
             Op::Value(_) | Op::Ref(_, _) => Some(child.clone()),
             _ => {
-                let pf = self.body_to_poly(child, loops, result)?;
+                if let Some(v) = self.const_eval_int(child, loop_vals) {
+                    return Some(mk::<C>(Op::Value(v)));
+                }
+                let pf = self.body_to_poly(child, loops, loop_vals, result)?;
                 Some(mk::<C>(Op::Ref(pf.reference, pf.typ.clone())))
             }
         }
@@ -2622,52 +2716,53 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         body: &HOp<C>,
         loops: &[PRef],
+        loop_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
     ) -> Option<GOp<C>> {
         Some(match body.get() {
             Op::Bin(op, a, b, typ) => Op::Bin(
                 *op,
-                self.body_child(a, loops, result)?,
-                self.body_child(b, loops, result)?,
+                self.body_child(a, loops, loop_vals, result)?,
+                self.body_child(b, loops, loop_vals, result)?,
                 typ.clone(),
             ),
             Op::Ram(a, b) => Op::Ram(
-                self.body_child(a, loops, result)?,
-                self.body_child(b, loops, result)?,
+                self.body_child(a, loops, loop_vals, result)?,
+                self.body_child(b, loops, loop_vals, result)?,
             ),
             Op::Evaluate(p, range, pts) => Op::Evaluate(
-                self.body_child(p, loops, result)?,
+                self.body_child(p, loops, loop_vals, result)?,
                 *range,
                 match pts {
-                    Some(x) => Some(self.body_child(x, loops, result)?),
+                    Some(x) => Some(self.body_child(x, loops, loop_vals, result)?),
                     None => None,
                 },
             ),
-            Op::Poly(a) => Op::Poly(self.body_child(a, loops, result)?),
-            Op::Coef(a) => Op::Coef(self.body_child(a, loops, result)?),
-            Op::Mle(a) => Op::Mle(self.body_child(a, loops, result)?),
-            Op::Ifft(a) => Op::Ifft(self.body_child(a, loops, result)?),
-            Op::Fft(a) => Op::Fft(self.body_child(a, loops, result)?),
+            Op::Poly(a) => Op::Poly(self.body_child(a, loops, loop_vals, result)?),
+            Op::Coef(a) => Op::Coef(self.body_child(a, loops, loop_vals, result)?),
+            Op::Mle(a) => Op::Mle(self.body_child(a, loops, loop_vals, result)?),
+            Op::Ifft(a) => Op::Ifft(self.body_child(a, loops, loop_vals, result)?),
+            Op::Fft(a) => Op::Fft(self.body_child(a, loops, loop_vals, result)?),
             Op::Interpolate(pts, evals) => Op::Interpolate(
-                self.body_child(pts, loops, result)?,
-                self.body_child(evals, loops, result)?,
+                self.body_child(pts, loops, loop_vals, result)?,
+                self.body_child(evals, loops, loop_vals, result)?,
             ),
             Op::Proj(a, field, typ) => Op::Proj(
-                self.body_child(a, loops, result)?,
+                self.body_child(a, loops, loop_vals, result)?,
                 field.clone(),
                 typ.clone(),
             ),
             Op::Vec(vs) => {
                 let mut children = Vec::with_capacity(vs.len());
                 for v in vs {
-                    children.push(self.body_child(v, loops, result)?);
+                    children.push(self.body_child(v, loops, loop_vals, result)?);
                 }
                 Op::Vec(children)
             }
             Op::Record(fields) => {
                 let mut out: Ctx<String, HOp<C>> = Ctx::new();
                 for (k, v) in fields.iter() {
-                    let child = self.body_child(v, loops, result)?;
+                    let child = self.body_child(v, loops, loop_vals, result)?;
                     out.insert(k, &child);
                 }
                 Op::Record(out)
@@ -2682,16 +2777,21 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         &mut self,
         domain: &HOp<C>,
         loops: &[PRef],
+        loop_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
-    ) -> Option<Vec<PRef>> {
+    ) -> Option<Vec<(PRef, Option<Value<C>>)>> {
         let (elem_t, n) = match domain.typ() {
             ATyp::Vec(box e, n) => (e, n),
             _ => return None,
         };
+        let elem_values: Vec<Option<Value<C>>> = match domain.get() {
+            Op::Value(v) => v.clone().into_elements().into_iter().map(Some).collect(),
+            _ => vec![None; n],
+        };
         let src: PolySource<C, T> = match domain.get() {
             Op::Ref(_, _) | Op::Value(_) => PolySource::from_ref_vars(&result.prefs, domain.get()),
             _ => {
-                let dp = self.body_to_poly(domain, loops, result)?;
+                let dp = self.body_to_poly(domain, loops, loop_vals, result)?;
                 PolySource::new(
                     dp.slots()
                         .into_iter()
@@ -2711,7 +2811,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 result.pl.insert(&slot, &poly);
                 result.basis.push(poly - SparsePolynomial::var(&slot));
             }
-            elems.push(elem_pf);
+            elems.push((elem_pf, elem_values.get(i).cloned().flatten()));
         }
         Some(elems)
     }
@@ -2724,25 +2824,28 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         domain: &HOp<C>,
         body: &HOp<C>,
         parent_loops: &[PRef],
+        parent_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
     ) {
-        let elems = match self.explode_domain(domain, parent_loops, result) {
+        let elems = match self.explode_domain(domain, parent_loops, parent_vals, result) {
             Some(e) => e,
             None => Self::uncovered_op("map-domain", &pr),
         };
-        for (i, elem) in elems.iter().enumerate() {
+        for (i, (elem, elem_val)) in elems.iter().enumerate() {
             let mut loops = parent_loops.to_vec();
             loops.push(elem.clone());
-            match self.body_to_poly(body, &loops, result) {
+            let mut vals = parent_vals.to_vec();
+            vals.push(elem_val.clone());
+            match self.body_to_poly(body, &loops, &vals, result) {
                 Some(vi) => self.link_to_witness(&pr.with_index(i).unwrap(), &vi, result),
                 None => Self::uncovered_op("map-body", &pr),
             }
         }
     }
 
-    /// `Op::ReduceMap`: the `CompleteBooleanHypercube` fast path stays opaque
-    /// (its 2^k domain must never be exploded). Otherwise explode the domain,
-    /// map the body per element, and fold with `reduce_polysource`.
+    /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
+    /// the results with `reduce_polysource`. Integer (`Fin`/`Bool`)
+    /// subexpressions over concrete loop indices are constant-folded first.
     #[allow(clippy::too_many_arguments)]
     fn reduce_map_to_poly(
         &mut self,
@@ -2750,14 +2853,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         rop: BinOp,
         domain: &HOp<C>,
         body: &HOp<C>,
-        fact: ReduceMapDomainFact,
         parent_loops: &[PRef],
+        parent_vals: &[Option<Value<C>>],
         result: &mut GroebnerResult<C, T>,
     ) {
-        if let ReduceMapDomainFact::CompleteBooleanHypercube { .. } = fact {
-            Self::uncovered_op("reduce-map-hypercube", &pr);
-        }
-        let elems = match self.explode_domain(domain, parent_loops, result) {
+        let elems = match self.explode_domain(domain, parent_loops, parent_vals, result) {
             Some(e) => e,
             None => Self::uncovered_op("reduce-map-domain", &pr),
         };
@@ -2766,10 +2866,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Self::uncovered_op("reduce-map-empty", &pr);
         }
         let mut mapped: Vec<PRef> = Vec::with_capacity(n);
-        for elem in elems.iter() {
+        for (elem, elem_val) in elems.iter() {
             let mut loops = parent_loops.to_vec();
             loops.push(elem.clone());
-            match self.body_to_poly(body, &loops, result) {
+            let mut vals = parent_vals.to_vec();
+            vals.push(elem_val.clone());
+            match self.body_to_poly(body, &loops, &vals, result) {
                 Some(vi) => mapped.push(vi),
                 None => Self::uncovered_op("reduce-map-body", &pr),
             }
@@ -2827,6 +2929,35 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         TransClos::verifier(&g)
+    }
+    #[test]
+    fn canonical_hypercube_reduce_vpoly_extracts() {
+        // Degree-2 canonical Boolean-tail hypercube reduce (the sumcheck round
+        // shape). The bit-extraction `(i / 2^j) % 2` is const-folded over the
+        // loop indices and the selected eval on a `VPoly` is modeled, so
+        // `build` (extraction) completes without an `uncovered_op` panic.
+        let src = r#"
+            proto round<F: Field>(public claimed_sum: F, public poly: Poly<F, 3, 2>)
+                where claimed_sum == claimed_sum {
+                let zero: F = 0;
+                let one = zero + 1;
+                let round_poly0 = reduce(+, [
+                    eval<0>(poly, tail)
+                    for tail in [
+                        [(((i / (2 ^ j)) % 2) * one) for j in 0..2]
+                        for i in 0..4
+                    ]
+                ]);
+                let cs = coef(round_poly0);
+                verify(claimed_sum == cs[0])
+            }"#;
+        let tc = trans_clos_from_src(src);
+        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let gr = builder.build(tc);
+        assert!(
+            !gr.pl.is_empty(),
+            "degree-2 hypercube extraction should bind the round-poly chain"
+        );
     }
 
     #[test]
@@ -5223,7 +5354,6 @@ mod tests {
             BinOp::Add,
             mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
             mk::<ArkBls12_381>(body),
-            ReduceMapDomainFact::Unknown,
         );
         builder.add_op(result.clone(), op, &mut gresult);
         (gresult, pref_v, result)

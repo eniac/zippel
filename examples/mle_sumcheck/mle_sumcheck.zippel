@@ -25,8 +25,8 @@ fn sumcheck_round<F: Field, NUM_VARS: Size, V: 3..NUM_VARS + 1>(
     let residual_poly = eval(curr_poly, [challenge]);
     let zero = challenge - challenge;
     let one = zero + 1;
-    // Canonical fusion shape: keep the Boolean-tail comprehension inline in the
-    // reduce map so graph lowering can emit the fused hypercube-reduction op.
+    // Round polynomial: sum the residual over the Boolean-tail hypercube.
+    // This lowers to a generic materialized reduce-map.
     let round_poly = reduce(+, [
         eval<0>(residual_poly, tail)
         for tail in [

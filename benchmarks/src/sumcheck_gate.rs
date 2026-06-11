@@ -2025,11 +2025,6 @@ fn compare_optimizer_evidence(row: &SumcheckRow, mismatches: &mut Vec<String>) {
                 "{prefix} has canonical_sumcheck_rows_seen == 0; expected canonical explicit sumcheck rows"
             ));
         }
-        if stats.hypercube_reduce_fused == 0 {
-            mismatches.push(format!(
-                "{prefix} has hypercube_reduce_fused == 0; expected pre-materialization fusion"
-            ));
-        }
         if stats.canonical_sumcheck_rows_fused != stats.canonical_sumcheck_rows_seen {
             mismatches.push(format!(
                 "{prefix} fused {} canonical rows but saw {}",
@@ -2510,9 +2505,6 @@ mod tests {
 
     fn test_optimizer_evidence() -> OptimizationStats {
         OptimizationStats {
-            hypercube_reduce_fused: 1,
-            hypercube_reduce_cache_hits: 0,
-            hypercube_reduce_cache_misses: 1,
             selected_eval_terms_materialized: 0,
             selected_eval_interpolation_fallback: 0,
             reduce_univariate_post_materialization: 0,
@@ -2881,21 +2873,6 @@ mod tests {
             .remove("zippel_optimizer");
         let parsed = serde_json::from_value::<SumcheckBenchmarkRun>(value);
         assert!(parsed.is_err());
-    }
-
-    #[test]
-    fn missing_hypercube_fusion_evidence_is_optimizer_mismatch() {
-        let baseline = run_with_row(summary(10.0, 5.0, 8.0, 4.0));
-        let mut candidate = baseline.clone();
-        for sample in &mut candidate.rows[0].samples {
-            sample.zippel_optimizer.hypercube_reduce_fused = 0;
-            sample.zippel_optimizer.canonical_sumcheck_rows_fused = 0;
-        }
-        let report = compare_sumcheck_benchmark(&baseline, &candidate, policy());
-        assert_eq!(report.outcome, GateOutcome::OptimizerEvidenceMismatch);
-        assert!(report.optimizer_evidence_mismatch_reasons.iter().any(|reason| {
-            reason.contains("hypercube_reduce_fused == 0")
-        }));
     }
 
     #[test]

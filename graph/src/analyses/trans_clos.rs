@@ -289,11 +289,10 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 mk::<C>(self.trans_clos_op(dag, d.get().clone(), index)),
                 mk::<C>(self.trans_clos_op(dag, b.get().clone(), index)),
             ),
-            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+            Op::ReduceMap(op, d, b) => Op::ReduceMap(
                 op,
                 mk::<C>(self.trans_clos_op(dag, d.get().clone(), index)),
                 mk::<C>(self.trans_clos_op(dag, b.get().clone(), index)),
-                fact,
             ),
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),

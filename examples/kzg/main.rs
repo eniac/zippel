@@ -3,10 +3,23 @@ use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
 
+const KZG_EXAMPLE_STACK_SIZE: usize = 256 * 1024 * 1024;
+
 fn main() {
+    let worker = thread::Builder::new()
+        .name("zippel-kzg-example".to_string())
+        .stack_size(KZG_EXAMPLE_STACK_SIZE)
+        .spawn(run_kzg_example)
+        .expect("failed to spawn kzg example worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_kzg_example() {
     println!("=== KZG (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -55,19 +68,29 @@ fn main() {
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
     let analysis_start = Instant::now();
+    // Analyze completeness/ZK at the same (small) N the prover demonstrates.
+    // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
+    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2
+    // rather than via `minimal_analysis()`.
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        analysis_handler.minimal_analysis()
+        let mut analysis_sizes = Ctx::new();
+        analysis_sizes.insert(&Tid::new("N"), &2);
+        analysis_handler.compile(&analysis_sizes);
+        (
+            analysis_handler.analyze_completeness(),
+            analysis_handler.analyze_knowledge(),
+        )
     });
     let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
+        Ok((completeness, zk)) => {
+            match &completeness {
                 Ok(()) => println!("Completeness:   ✓"),
                 Err(e) => println!("Completeness:   ✗ {}", e),
             }
-            match &analysis.zk {
+            match &zk {
                 Ok(()) => println!("ZK:             ✓"),
                 Err(e) => println!("ZK:             ✗ {}", e),
             }

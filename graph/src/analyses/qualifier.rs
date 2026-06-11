@@ -1,4 +1,4 @@
-use crate::{Dag, GOp, Node, Op, QDag, ReduceMapDomainFact, UDag};
+use crate::{Dag, GOp, Node, Op, QDag, UDag};
 use backend::ArkConfig;
 use lang::typ::Qualifier;
 use petgraph::Direction;
@@ -35,24 +35,12 @@ impl QualifierPropagation {
                 next.push(qd);
                 self.from_op_loops(b, &next)
             }
-            Op::ReduceMap(_, d, b, fact) => match fact {
-                ReduceMapDomainFact::CompleteBooleanHypercube { .. } => match b.get() {
-                    // Mirror the old HypercubeReduceSelected: delegate to the poly child.
-                    Op::Evaluate(p, Some(_), Some(_)) => self.from_op_loops(p, loops),
-                    _ => {
-                        let qd = self.from_op_loops(d, loops)?;
-                        let mut next = loops.to_vec();
-                        next.push(qd);
-                        self.from_op_loops(b, &next)
-                    }
-                },
-                ReduceMapDomainFact::Unknown => {
-                    let qd = self.from_op_loops(d, loops)?;
-                    let mut next = loops.to_vec();
-                    next.push(qd);
-                    self.from_op_loops(b, &next)
-                }
-            },
+            Op::ReduceMap(_, d, b) => {
+                let qd = self.from_op_loops(d, loops)?;
+                let mut next = loops.to_vec();
+                next.push(qd);
+                self.from_op_loops(b, &next)
+            }
             Op::Evaluate(p, _, None) => self.from_op_loops(p, loops),
             Op::Evaluate(p, _, Some(x)) => {
                 let qual_p = self.from_op_loops(p, loops)?;

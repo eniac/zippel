@@ -15,7 +15,7 @@ pub use config::{
     ArkVesta,
 };
 pub use nothing::{NoCurve, NoField, NoPairing};
-pub use op::{GOp, HasOpFactory, Op, ReduceMapDomainFact, Ref};
+pub use op::{GOp, HasOpFactory, Op, Ref};
 pub use optimization::{OptimizationStats, optimization_stats_snapshot, reset_optimization_stats};
 pub use poly_variant::{PolyError, PolyVariant};
 pub use types::{ABase, ATyp, binomial};

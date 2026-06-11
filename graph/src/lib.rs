@@ -20,7 +20,7 @@ pub mod scheduler;
 #[cfg(test)]
 mod tests;
 
-pub use backend::op::{GOp, HOp, HasOpFactory, Op, ReduceMapDomainFact, Ref, mk};
+pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use node::{ArgKind, Node};
@@ -1105,43 +1105,6 @@ impl<C: HasOpFactory> UDags<C> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct BooleanHypercubeProvenance {
-    tail_num_vars: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScalarConstProvenance {
-    Zero,
-    One,
-}
-
-#[derive(Clone, Debug, Default)]
-struct LoweringProvenance {
-    boolean_hypercube_tails: Ctx<Vid, BooleanHypercubeProvenance>,
-    scalar_consts: Ctx<Vid, ScalarConstProvenance>,
-}
-
-impl LoweringProvenance {
-    fn new() -> Self {
-        Self {
-            boolean_hypercube_tails: Ctx::new(),
-            scalar_consts: Ctx::new(),
-        }
-    }
-
-    fn remove_binding(&mut self, id: &Vid) {
-        self.boolean_hypercube_tails.remove(id);
-        self.scalar_consts.remove(id);
-    }
-
-    fn shadow_binding(&self, id: &Vid) -> Self {
-        let mut next = self.clone();
-        next.remove_binding(id);
-        next
-    }
-}
-
 /// Constructors for graphs
 impl<C: HasOpFactory> UDag<C> {
     /// Materialize an operation into the DAG.
@@ -1424,7 +1387,6 @@ impl<C: HasOpFactory> UDag<C> {
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
-        provenance: &LoweringProvenance,
     ) -> Result<Option<GOp<C>>, GraphError> {
         match exp {
             CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
@@ -1438,13 +1400,11 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Bin(op, a, b) => {
-                let Some(la) =
-                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(la) = self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
-                let Some(lb) =
-                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lb) = self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
@@ -1455,13 +1415,11 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(GOp::bin(*op, la, lb, atyp)))
             }
             CExp::Ram(a, b) => {
-                let Some(la) =
-                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(la) = self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
-                let Some(lb) =
-                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lb) = self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
@@ -1470,8 +1428,8 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Vec(xs) => {
                 let mut out = Vec::with_capacity(xs.0.len());
                 for e in xs.0.iter() {
-                    let Some(le) = self
-                        .lower_loop_body_template(e, binders, kctx, fctx, vctx, vars, provenance)?
+                    let Some(le) =
+                        self.lower_loop_body_template(e, binders, kctx, fctx, vctx, vars)?
                     else {
                         return Ok(None);
                     };
@@ -1480,26 +1438,23 @@ impl<C: HasOpFactory> UDag<C> {
                 Ok(Some(GOp::vec(out)))
             }
             CExp::Evaluate(p, selector, opt_points) => {
-                let Some(lp) =
-                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
                 match (selector, opt_points) {
                     (None, None) => Ok(Some(GOp::evaluate_grid(lp))),
                     (None, Some(x)) => {
-                        let Some(lx) = self.lower_loop_body_template(
-                            x, binders, kctx, fctx, vctx, vars, provenance,
-                        )?
+                        let Some(lx) =
+                            self.lower_loop_body_template(x, binders, kctx, fctx, vctx, vars)?
                         else {
                             return Ok(None);
                         };
                         Ok(Some(GOp::evaluate(lp, lx)))
                     }
                     (Some(range), Some(fixed)) => {
-                        let Some(lfixed) = self.lower_loop_body_template(
-                            fixed, binders, kctx, fctx, vctx, vars, provenance,
-                        )?
+                        let Some(lfixed) =
+                            self.lower_loop_body_template(fixed, binders, kctx, fctx, vctx, vars)?
                         else {
                             return Ok(None);
                         };
@@ -1509,41 +1464,37 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Poly(p) => {
-                let Some(lp) =
-                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Poly(mk::<C>(lp))))
             }
             CExp::Coef(p) => {
-                let Some(lp) =
-                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Coef(mk::<C>(lp))))
             }
             CExp::Mle(p) => {
-                let Some(lp) =
-                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lp) = self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(Op::Mle(mk::<C>(lp))))
             }
             CExp::Interpolate(points_opt, evals) => {
-                let Some(levals) = self
-                    .lower_loop_body_template(evals, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(levals) =
+                    self.lower_loop_body_template(evals, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
                 match points_opt {
                     None => Ok(Some(Op::Ifft(mk::<C>(levals)))),
                     Some(p) => {
-                        let Some(lp) = self.lower_loop_body_template(
-                            p, binders, kctx, fctx, vctx, vars, provenance,
-                        )?
+                        let Some(lp) =
+                            self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars)?
                         else {
                             return Ok(None);
                         };
@@ -1552,8 +1503,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
             }
             CExp::Proj(r, field) => {
-                let Some(lr) =
-                    self.lower_loop_body_template(r, binders, kctx, fctx, vctx, vars, provenance)?
+                let Some(lr) = self.lower_loop_body_template(r, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
@@ -1566,8 +1516,8 @@ impl<C: HasOpFactory> UDag<C> {
             CExp::Record(fields) => {
                 let mut out: Ctx<String, HOp<C>> = Ctx::new();
                 for (k, v) in fields.iter() {
-                    let Some(lv) = self
-                        .lower_loop_body_template(v, binders, kctx, fctx, vctx, vars, provenance)?
+                    let Some(lv) =
+                        self.lower_loop_body_template(v, binders, kctx, fctx, vctx, vars)?
                     else {
                         return Ok(None);
                     };
@@ -1584,9 +1534,8 @@ impl<C: HasOpFactory> UDag<C> {
                 let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
                     return Ok(None);
                 };
-                let Some(ld) = self.lower_loop_body_template(
-                    domain, binders, kctx, fctx, vctx, vars, provenance,
-                )?
+                let Some(ld) =
+                    self.lower_loop_body_template(domain, binders, kctx, fctx, vctx, vars)?
                 else {
                     return Ok(None);
                 };
@@ -1594,7 +1543,6 @@ impl<C: HasOpFactory> UDag<C> {
                 inner_binders.push((binder.clone(), binder_atyp));
                 let mut inner_vctx = vctx.clone();
                 inner_vctx.insert(binder, &elem_ctyp);
-                let inner_prov = provenance.shadow_binding(binder);
                 let Some(lb) = self.lower_loop_body_template(
                     body,
                     &inner_binders,
@@ -1602,7 +1550,6 @@ impl<C: HasOpFactory> UDag<C> {
                     fctx,
                     &inner_vctx,
                     vars,
-                    &inner_prov,
                 )?
                 else {
                     return Ok(None);
@@ -1621,7 +1568,6 @@ impl<C: HasOpFactory> UDag<C> {
                         fctx,
                         vctx,
                         vars,
-                        provenance,
                     )
                 } else {
                     Ok(None)
@@ -1724,60 +1670,9 @@ impl<C: HasOpFactory> UDag<C> {
         (body, binder, domain)
     }
 
-    /// Classify whether `reduce(rop, [body for binder in domain])` is the
-    /// canonical fused sumcheck shape. Mirrors the old
-    /// `try_lower_hypercube_reduce_selected` recognizer exactly.
-    #[allow(clippy::too_many_arguments)]
-    fn classify_reduce_map_fact(
-        rop: BinOp,
-        body: &CExp,
-        binder: &Vid,
-        domain: &CExp,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        provenance: &LoweringProvenance,
-    ) -> Result<ReduceMapDomainFact, GraphError> {
-        if rop != BinOp::Add {
-            return Ok(ReduceMapDomainFact::Unknown);
-        }
-        let CExp::Evaluate(poly, Some(range), Some(fixed)) = body else {
-            return Ok(ReduceMapDomainFact::Unknown);
-        };
-        let CExp::Var(fv) = fixed.as_ref() else {
-            return Ok(ReduceMapDomainFact::Unknown);
-        };
-        if fv != binder || range.start != 0 || range.step != 1 || range.len() != 1 {
-            return Ok(ReduceMapDomainFact::Unknown);
-        }
-        if Self::exp_mentions_free_var(poly, binder) {
-            return Ok(ReduceMapDomainFact::Unknown);
-        }
-        if !Self::is_poly_hoist_safe(poly) {
-            return Ok(ReduceMapDomainFact::Unknown);
-        }
-        let poly_typ = poly.infer(kctx, &fctx.keys(), vctx)?;
-        let Some(poly_atyp) = ATyp::from_ctyp(&poly_typ, kctx) else {
-            return Ok(ReduceMapDomainFact::Unknown);
-        };
-        let arity = match poly_atyp {
-            ATyp::Uni(_) => 1,
-            ATyp::Mle(n) | ATyp::VPoly(n, _) => n,
-            _ => return Ok(ReduceMapDomainFact::Unknown),
-        };
-        let Some(tail_num_vars) = arity.checked_sub(range.len()) else {
-            return Ok(ReduceMapDomainFact::Unknown);
-        };
-        if !Self::is_boolean_hypercube_tail_domain(domain, tail_num_vars, provenance) {
-            return Ok(ReduceMapDomainFact::Unknown);
-        }
-        Ok(ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars })
-    }
-
     /// Build an inline `Op::ReduceMap` for `reduce(rop, [body for binder in
-    /// domain])`. Classifies the fast-path fact on the un-composed form, fuses
-    /// nested-map domains for the generic case, then lowers domain and body via
-    /// the template. Declines (`None`) if any sub-lowering declines.
+    /// domain])`. Fuses nested-map domains, then lowers domain and body via the
+    /// template. Declines (`None`) if any sub-lowering declines.
     #[allow(clippy::too_many_arguments)]
     fn try_build_reduce_map(
         &mut self,
@@ -1790,15 +1685,8 @@ impl<C: HasOpFactory> UDag<C> {
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
-        provenance: &LoweringProvenance,
     ) -> Result<Option<GOp<C>>, GraphError> {
-        let fact = Self::classify_reduce_map_fact(
-            rop, &body, &binder, &domain, kctx, fctx, vctx, provenance,
-        )?;
-        let (body, binder, domain) = match fact {
-            ReduceMapDomainFact::Unknown => Self::compose_nested_map_domain(body, binder, domain),
-            ReduceMapDomainFact::CompleteBooleanHypercube { .. } => (body, binder, domain),
-        };
+        let (body, binder, domain) = Self::compose_nested_map_domain(body, binder, domain);
         let domain_typ = domain.infer(kctx, &fctx.keys(), vctx)?;
         let (elem_ctyp, _) = match domain_typ {
             CTyp::Vec(box e, n) => (e, n),
@@ -1808,7 +1696,7 @@ impl<C: HasOpFactory> UDag<C> {
             return Ok(None);
         };
         let Some(domain_op) =
-            self.lower_loop_body_template(&domain, binders, kctx, fctx, vctx, vars, provenance)?
+            self.lower_loop_body_template(&domain, binders, kctx, fctx, vctx, vars)?
         else {
             return Ok(None);
         };
@@ -1816,210 +1704,12 @@ impl<C: HasOpFactory> UDag<C> {
         body_binders.push((binder.clone(), binder_atyp));
         let mut body_vctx = vctx.clone();
         body_vctx.insert(&binder, &elem_ctyp);
-        let body_prov = provenance.shadow_binding(&binder);
-        let Some(body_op) = self.lower_loop_body_template(
-            &body,
-            &body_binders,
-            kctx,
-            fctx,
-            &body_vctx,
-            vars,
-            &body_prov,
-        )?
+        let Some(body_op) =
+            self.lower_loop_body_template(&body, &body_binders, kctx, fctx, &body_vctx, vars)?
         else {
             return Ok(None);
         };
-        Ok(Some(GOp::reduce_map(rop, domain_op, body_op, fact)))
-    }
-
-    fn is_boolean_hypercube_tail_domain(
-        exp: &CExp,
-        tail_num_vars: usize,
-        provenance: &LoweringProvenance,
-    ) -> bool {
-        match exp {
-            CExp::Var(id) => provenance
-                .boolean_hypercube_tails
-                .get(id)
-                .is_some_and(|p| p.tail_num_vars == tail_num_vars),
-            other => Self::classify_boolean_hypercube_tail_domain(other, provenance)
-                .is_some_and(|p| p.tail_num_vars == tail_num_vars),
-        }
-    }
-
-    fn classify_boolean_hypercube_tail_domain(
-        exp: &CExp,
-        provenance: &LoweringProvenance,
-    ) -> Option<BooleanHypercubeProvenance> {
-        let CExp::Map(inner, i_var, outer_domain) = exp else {
-            return None;
-        };
-        let CExp::Range(outer_range) = outer_domain.as_ref() else {
-            return None;
-        };
-        if outer_range.start != 0 || outer_range.step != 1 {
-            return None;
-        }
-
-        let CExp::Map(bit_expr, j_var, inner_domain) = inner.as_ref() else {
-            return None;
-        };
-        let CExp::Range(inner_range) = inner_domain.as_ref() else {
-            return None;
-        };
-        if inner_range.start != 0 || inner_range.step != 1 {
-            return None;
-        }
-
-        let tail_num_vars = inner_range.len();
-        let expected_outer_len = 1usize.checked_shl(tail_num_vars as u32)?;
-        if outer_range.len() != expected_outer_len {
-            return None;
-        }
-        let bit_expr_provenance = provenance.shadow_binding(i_var).shadow_binding(j_var);
-        if !Self::is_canonical_tail_bit_expr(bit_expr, i_var, j_var, &bit_expr_provenance) {
-            return None;
-        }
-
-        Some(BooleanHypercubeProvenance { tail_num_vars })
-    }
-
-    fn is_canonical_tail_bit_expr(
-        exp: &CExp,
-        i_var: &Vid,
-        j_var: &Vid,
-        provenance: &LoweringProvenance,
-    ) -> bool {
-        match exp {
-            CExp::Bin(BinOp::Mul, left, right) => {
-                (Self::is_tail_bit_core(left.as_ref(), i_var, j_var)
-                    && Self::is_one_factor(right.as_ref(), provenance))
-                    || (Self::is_one_factor(left.as_ref(), provenance)
-                        && Self::is_tail_bit_core(right.as_ref(), i_var, j_var))
-            }
-            other => Self::is_tail_bit_core(other, i_var, j_var),
-        }
-    }
-
-    fn is_one_factor(exp: &CExp, provenance: &LoweringProvenance) -> bool {
-        Self::classify_scalar_const(exp, provenance) == Some(ScalarConstProvenance::One)
-    }
-
-    fn is_tail_bit_core(exp: &CExp, i_var: &Vid, j_var: &Vid) -> bool {
-        let CExp::Bin(BinOp::Rem, div, modulus) = exp else {
-            return false;
-        };
-        if !matches!(modulus.as_ref(), CExp::Lit(2)) {
-            return false;
-        }
-        let CExp::Bin(BinOp::Div, dividend, pow) = div.as_ref() else {
-            return false;
-        };
-        let CExp::Var(i) = dividend.as_ref() else {
-            return false;
-        };
-        if i != i_var {
-            return false;
-        }
-        let CExp::Bin(BinOp::Pow, base, exponent) = pow.as_ref() else {
-            return false;
-        };
-        matches!(base.as_ref(), CExp::Lit(2))
-            && matches!(exponent.as_ref(), CExp::Var(j) if j == j_var)
-    }
-
-    fn classify_scalar_const(
-        exp: &CExp,
-        provenance: &LoweringProvenance,
-    ) -> Option<ScalarConstProvenance> {
-        use ScalarConstProvenance::{One, Zero};
-
-        match exp {
-            CExp::Lit(0) => Some(Zero),
-            CExp::Lit(1) => Some(One),
-            CExp::Var(id) => provenance.scalar_consts.get(id).copied(),
-            CExp::Bin(BinOp::Add, left, right) => {
-                match (
-                    Self::classify_scalar_const(left, provenance),
-                    Self::classify_scalar_const(right, provenance),
-                ) {
-                    (Some(Zero), rhs) => rhs,
-                    (lhs, Some(Zero)) => lhs,
-                    _ => None,
-                }
-            }
-            CExp::Bin(BinOp::Sub, left, right) => {
-                if left == right && Self::is_pure_value_expr(left) {
-                    return Some(Zero);
-                }
-                match (
-                    Self::classify_scalar_const(left, provenance),
-                    Self::classify_scalar_const(right, provenance),
-                ) {
-                    (Some(lhs), Some(Zero)) => Some(lhs),
-                    _ => None,
-                }
-            }
-            CExp::Bin(BinOp::Mul, left, right) => {
-                match (
-                    Self::classify_scalar_const(left, provenance),
-                    Self::classify_scalar_const(right, provenance),
-                ) {
-                    (Some(Zero), Some(_)) | (Some(_), Some(Zero)) => Some(Zero),
-                    (Some(One), Some(One)) => Some(One),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn is_poly_hoist_safe(exp: &CExp) -> bool {
-        // Bound values have already been evaluated in ordinary lexical order,
-        // so `Var(_)` is accepted by the baseline even when its RHS had
-        // effects. Inline expressions must pass the conservative pure-value
-        // proof below before the fused path may hoist them.
-        Self::is_pure_value_expr(exp)
-    }
-
-    fn is_pure_value_expr(exp: &CExp) -> bool {
-        match exp {
-            CExp::Lit(_) | CExp::Bool(_) | CExp::Var(_) | CExp::Range(_) => true,
-            CExp::Interpolate(points, evals) => {
-                points.as_ref().is_none_or(|p| Self::is_pure_value_expr(p))
-                    && Self::is_pure_value_expr(evals)
-            }
-            CExp::Evaluate(p, _, points) => {
-                Self::is_pure_value_expr(p)
-                    && points.as_ref().is_none_or(|x| Self::is_pure_value_expr(x))
-            }
-            CExp::Poly(p) | CExp::Coef(p) | CExp::Mle(p) | CExp::Proj(p, _) => {
-                Self::is_pure_value_expr(p)
-            }
-            CExp::Vec(xs) => xs.0.iter().all(Self::is_pure_value_expr),
-            CExp::Bin(_, left, right) | CExp::Pair(left, right) | CExp::Ram(left, right) => {
-                Self::is_pure_value_expr(left) && Self::is_pure_value_expr(right)
-            }
-            CExp::Record(fields) => fields
-                .iter()
-                .all(|(_, field)| Self::is_pure_value_expr(field)),
-            CExp::SetRecord(record, _, value) => {
-                Self::is_pure_value_expr(record) && Self::is_pure_value_expr(value)
-            }
-            // Be conservative around binders, assertions, transcript/random
-            // sources, and calls whose bodies are not available in this local
-            // syntactic proof.
-            CExp::Map(_, _, _)
-            | CExp::Reduce(_, _)
-            | CExp::Let(_, _, _)
-            | CExp::Log(_, _, _)
-            | CExp::Assert(_)
-            | CExp::Verify(_)
-            | CExp::Fun(_, _)
-            | CExp::App(_, _)
-            | CExp::Random(_, _)
-            | CExp::Challenge(_, _) => false,
-        }
+        Ok(Some(GOp::reduce_map(rop, domain_op, body_op)))
     }
 
     fn exp_mentions_free_var(exp: &CExp, target: &Vid) -> bool {
@@ -2094,6 +1784,7 @@ impl<C: HasOpFactory> UDag<C> {
     /// Downstream consumers (notably `trans_clos_op` and `ref_vars` in the
     /// Groebner analysis) rely on this invariant: every top-level result from
     /// `add_exp` can be assumed to be a `Ref` or `Value`.
+    #[allow(clippy::too_many_arguments)]
     fn add_exp(
         &mut self,
         initial_exp: CExp,
@@ -2104,37 +1795,10 @@ impl<C: HasOpFactory> UDag<C> {
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
     ) -> Result<GOp<C>, GraphError> {
-        self.add_exp_with_provenance(
-            initial_exp,
-            transcr,
-            edge_type,
-            kctx,
-            fctx,
-            vctx,
-            vars,
-            &LoweringProvenance::new(),
-        )
-    }
-
-    /// Add an expression [exp] to the graph while preserving lowering-only
-    /// provenance used by conservative private optimizer fusions.
-    #[allow(clippy::too_many_arguments)]
-    fn add_exp_with_provenance(
-        &mut self,
-        initial_exp: CExp,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
-        kctx: &Ctx<Tid, CKind>,
-        fctx: &Ctx<CSig, CBody>,
-        vctx: &Ctx<Vid, CTyp>,
-        vars: &Ctx<Vid, GOp<C>>,
-        provenance: &LoweringProvenance,
-    ) -> Result<GOp<C>, GraphError> {
         // Own mutable copies for trampoline loop
         let mut exp = initial_exp;
         let mut vctx = vctx.clone();
         let mut vars = vars.clone();
-        let mut provenance = provenance.clone();
         loop {
             // Type inference for [self]
             let typ = exp.infer(kctx, &fctx.keys(), &vctx)?;
@@ -2149,16 +1813,8 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Var(id) => return Self::op_from_var(&id, &vars),
 
                 CExp::Evaluate(box p, selector, opt_points) => {
-                    let vp = self.add_exp_with_provenance(
-                        p.clone(),
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let vp =
+                        self.add_exp(p.clone(), transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     match (selector, opt_points) {
                         // Unary form: eval(p) -> materialized merged Op::Evaluate(p, None, None).
                         // This preserves the old Node::fft sharing behavior for reusable bindings.
@@ -2178,16 +1834,8 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Binary form: eval(p, points) -> Op::Evaluate(p, None, Some(points)).
                         (None, Some(box x)) => {
-                            let vx = self.add_exp_with_provenance(
-                                x,
-                                transcr,
-                                edge_type,
-                                kctx,
-                                fctx,
-                                &vctx,
-                                &vars,
-                                &provenance,
-                            )?;
+                            let vx =
+                                self.add_exp(x, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                                 TypeError::next(
                                     TypeError::exp(kctx, &vctx, &exp),
@@ -2198,16 +1846,8 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Selected form: eval<range>(p, fixed).
                         (Some(range), Some(box fixed)) => {
-                            let vfixed = self.add_exp_with_provenance(
-                                fixed,
-                                transcr,
-                                edge_type,
-                                kctx,
-                                fctx,
-                                &vctx,
-                                &vars,
-                                &provenance,
-                            )?;
+                            let vfixed =
+                                self.add_exp(fixed, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                                 TypeError::next(
                                     TypeError::exp(kctx, &vctx, &exp),
@@ -2231,16 +1871,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Poly(box v) => {
-                    let child = self.add_exp_with_provenance(
-                        v,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let npoly = self.add_node(Node::poly(&child));
 
@@ -2258,16 +1889,7 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Coef(box v) => {
-                    let child = self.add_exp_with_provenance(
-                        v,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let npoly = self.add_node(Node::coef(&child));
 
@@ -2287,16 +1909,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // Lower CExp::Interpolate(opt_points, evals) into either Op::Ifft (unary)
                 // or Op::Interpolate (binary) — monomorphic per variant.
                 CExp::Interpolate(points_opt, box evals) => {
-                    let evals_op = self.add_exp_with_provenance(
-                        evals,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let evals_op =
+                        self.add_exp(evals, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     match points_opt {
                         // Unary: interpolate(evs) → Op::Ifft(evs)  (FFT-grid interpolation)
                         None => {
@@ -2315,16 +1929,8 @@ impl<C: HasOpFactory> UDag<C> {
                         }
                         // Binary: interpolate(pts, evs) → Op::Interpolate(pts, evs)
                         Some(box p) => {
-                            let points_op = self.add_exp_with_provenance(
-                                p,
-                                transcr,
-                                edge_type,
-                                kctx,
-                                fctx,
-                                &vctx,
-                                &vars,
-                                &provenance,
-                            )?;
+                            let points_op =
+                                self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                             let ninterp = self.add_node(Node::interpolate(&points_op, &evals_op));
                             self.add_edges(edge_type, ninterp, points_op);
                             self.add_edges(edge_type, ninterp, evals_op);
@@ -2344,16 +1950,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // Create a new [vec] value
                 CExp::Vec(vs) => {
                     let vec_op = GOp::vec(vs.0.traverse1(&mut |v| {
-                        self.add_exp_with_provenance(
-                            v,
-                            transcr,
-                            edge_type,
-                            kctx,
-                            fctx,
-                            &vctx,
-                            &vars,
-                            &provenance,
-                        )
+                        self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)
                     })?);
                     let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
@@ -2367,16 +1964,7 @@ impl<C: HasOpFactory> UDag<C> {
                 // MLE is a noop?
                 // CExp::Mle(box inner) => self.add_exp(inner, transcr, edge_type, kctx, fctx, &vctx, &vars),
                 CExp::Mle(box v) => {
-                    let child = self.add_exp_with_provenance(
-                        v,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let child = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let nmle = self.add_node(Node::mle(&child));
 
@@ -2395,26 +1983,8 @@ impl<C: HasOpFactory> UDag<C> {
 
                 // Billinear pairing
                 CExp::Pair(box a, box b) => {
-                    let va = self.add_exp_with_provenance(
-                        a,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
-                    let vb = self.add_exp_with_provenance(
-                        b,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let va = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let vb = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
@@ -2428,26 +1998,8 @@ impl<C: HasOpFactory> UDag<C> {
                 // Create a new [bin] node
                 CExp::Bin(op, box a, box b) => {
                     // Add children first
-                    let vl = self.add_exp_with_provenance(
-                        a,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
-                    let vr = self.add_exp_with_provenance(
-                        b,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let vl = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let vr = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     // Convert type [typ] to [ATyp]
                     let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
@@ -2492,7 +2044,6 @@ impl<C: HasOpFactory> UDag<C> {
                         fctx,
                         &vctx,
                         &vars,
-                        &provenance,
                     )? {
                         return Ok(self.materialize(map_op, edge_type, map_atyp));
                     }
@@ -2500,16 +2051,7 @@ impl<C: HasOpFactory> UDag<C> {
                     let te = e.infer(kctx, &fctx.keys(), &vctx)?;
 
                     // Op for [e]
-                    let oe = self.add_exp_with_provenance(
-                        e,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let oe = self.add_exp(e, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
 
                     let (ie, n) = te.into_vec();
 
@@ -2529,19 +2071,17 @@ impl<C: HasOpFactory> UDag<C> {
 
                     let mut res = Vec::with_capacity(n);
                     for i in 0..n {
-                        // Add oe[i] to local vars and vctx. The map binder shadows
-                        // any same-named let provenance in the comprehension body.
+                        // Add oe[i] to local vars and vctx; the map binder
+                        // shadows any same-named let binding in the body.
                         let mut local_vars = vars.clone();
                         let mut local_vctx = vctx.clone();
-                        let mut local_provenance = provenance.clone();
                         let ram_op = GOp::ram(oe.clone(), GOp::index(i));
                         let ram_ref =
                             self.materialize(ram_op, edge_type, input_element_typ.clone());
                         local_vars.insert(&x, &ram_ref);
                         local_vctx.insert(&x, &ie);
-                        local_provenance.remove_binding(&x);
                         // Add subexpression
-                        let ol = self.add_exp_with_provenance(
+                        let ol = self.add_exp(
                             l.clone(),
                             transcr,
                             edge_type,
@@ -2549,7 +2089,6 @@ impl<C: HasOpFactory> UDag<C> {
                             fctx,
                             &local_vctx,
                             &local_vars,
-                            &local_provenance,
                         )?;
                         res.push(ol);
                     }
@@ -2568,7 +2107,6 @@ impl<C: HasOpFactory> UDag<C> {
                             fctx,
                             &vctx,
                             &vars,
-                            &provenance,
                         )?
                     } else {
                         None
@@ -2582,16 +2120,7 @@ impl<C: HasOpFactory> UDag<C> {
                         })?;
                         return Ok(self.materialize(rm, edge_type, atyp));
                     }
-                    let ov = self.add_exp_with_provenance(
-                        v,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let ov = self.add_exp(v, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
                             TypeError::exp(kctx, &vctx, &exp),
@@ -2602,26 +2131,8 @@ impl<C: HasOpFactory> UDag<C> {
                 }
                 CExp::Ram(box a, box b) => {
                     // Add children
-                    let oa = self.add_exp_with_provenance(
-                        a,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
-                    let ob = self.add_exp_with_provenance(
-                        b,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
+                    let ob = self.add_exp(b, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
                         TypeError::next(
                             TypeError::exp(kctx, &vctx, &exp),
@@ -2743,16 +2254,7 @@ impl<C: HasOpFactory> UDag<C> {
                             let oparams: Vec<GOp<C>> = params
                                 .into_iter()
                                 .map(|p| {
-                                    self.add_exp_with_provenance(
-                                        p,
-                                        transcr,
-                                        edge_type,
-                                        kctx,
-                                        fctx,
-                                        &vctx,
-                                        &vars,
-                                        &provenance,
-                                    )
+                                    self.add_exp(p, transcr, edge_type, kctx, fctx, &vctx, &vars)
                                 })
                                 .collect::<Result<_, _>>()?;
 
@@ -2767,7 +2269,6 @@ impl<C: HasOpFactory> UDag<C> {
                                 next_vars.insert(&arg.id, op);
                             }
                             vars = next_vars;
-                            provenance = LoweringProvenance::new();
                             let fn_kctx = sig.typevars.to_ctx();
                             for (tid, kind) in fn_kctx.iter() {
                                 if let CKind::Range(r) = kind
@@ -2785,47 +2286,19 @@ impl<C: HasOpFactory> UDag<C> {
                     }
                 }
                 CExp::Let(Some(id), box l, box r) => {
-                    let scalar_const = Self::classify_scalar_const(&l, &provenance);
-                    let hypercube_tail =
-                        Self::classify_boolean_hypercube_tail_domain(&l, &provenance);
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
-                    let nl = self.add_exp_with_provenance(
-                        l,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let nl = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add [id] to the variable context (clone-on-write)
                     vctx.insert(&id, &tl);
                     vars.insert(&id, &nl);
-                    provenance.remove_binding(&id);
-                    if let Some(tail) = hypercube_tail {
-                        provenance.boolean_hypercube_tails.insert(&id, &tail);
-                    }
-                    if let Some(scalar) = scalar_const {
-                        provenance.scalar_consts.insert(&id, &scalar);
-                    }
                     // Trampoline: continue loop with r
                     exp = r;
                     continue;
                 }
                 CExp::Let(None, box l, box r) => {
-                    self.add_exp_with_provenance(
-                        l,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Trampoline: continue loop with r
                     exp = r;
                     continue;
@@ -2834,16 +2307,7 @@ impl<C: HasOpFactory> UDag<C> {
                     // Infer the type of [l]
                     let tl = l.infer(kctx, &fctx.keys(), &vctx)?;
                     // Add left-hand side as node
-                    let ol = self.add_exp_with_provenance(
-                        l,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let ol = self.add_exp(l, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Record transcript interaction
                     let transcr_op = match &ol {
                         GOp::Ref(r, _)
@@ -2884,22 +2348,12 @@ impl<C: HasOpFactory> UDag<C> {
                     // Add [id] to the variable context (clone-on-write)
                     vctx.insert(&id, &tl);
                     vars.insert(&id, &transcr_op);
-                    provenance.remove_binding(&id);
                     // Trampoline: continue loop with r
                     exp = r;
                     continue;
                 }
                 CExp::Assert(box a) => {
-                    let oa = self.add_exp_with_provenance(
-                        a,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
                     let nassert = self.add_node(Node::check(&oa));
                     // Add edges
@@ -2917,16 +2371,7 @@ impl<C: HasOpFactory> UDag<C> {
                     ));
                 }
                 CExp::Verify(box a) => {
-                    let oa = self.add_exp_with_provenance(
-                        a,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )?;
+                    let oa = self.add_exp(a, transcr, edge_type, kctx, fctx, &vctx, &vars)?;
                     // Add new node
                     let nverify = self.add_node(Node::check(&oa));
                     self.add_edges(edge_type, nverify, oa);
@@ -2961,7 +2406,7 @@ impl<C: HasOpFactory> UDag<C> {
                     let mut field_ops: Ctx<String, HOp<C>> = Ctx::new();
 
                     for (field_name, field_exp) in fields.iter() {
-                        let field_op = self.add_exp_with_provenance(
+                        let field_op = self.add_exp(
                             field_exp.clone(),
                             transcr,
                             edge_type,
@@ -2969,7 +2414,6 @@ impl<C: HasOpFactory> UDag<C> {
                             fctx,
                             &vctx,
                             &vars,
-                            &provenance,
                         )?;
                         let hop = mk::<C>(field_op);
                         field_ops.insert(field_name, &hop);
@@ -3005,7 +2449,7 @@ impl<C: HasOpFactory> UDag<C> {
                             })?;
 
                             // Add the field expression to the graph
-                            self.add_exp_with_provenance(
+                            self.add_exp(
                                 field_exp.clone(),
                                 transcr,
                                 edge_type,
@@ -3013,7 +2457,6 @@ impl<C: HasOpFactory> UDag<C> {
                                 fctx,
                                 &vctx,
                                 &vars,
-                                &provenance,
                             )
                         }
                         CExp::Var(id) => {

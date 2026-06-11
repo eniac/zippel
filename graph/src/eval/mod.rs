@@ -1,6 +1,6 @@
 pub mod error;
 
-use crate::{GOp, HOp, Op, ReduceMapDomainFact, Ref};
+use crate::{GOp, HOp, Op, Ref};
 use backend::{ABase, ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
@@ -79,7 +79,7 @@ where
 /// Internal evaluator threading a de Bruijn loop-parameter stack for
 /// `Op::Map` / `Op::ReduceMap` bodies. `loop_params[level]` resolves
 /// `Op::LoopParam(level, _)`; the public `eval_op` calls this with `&[]`.
-fn eval_op_with_loop_params<C, R>(
+pub(crate) fn eval_op_with_loop_params<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
@@ -215,18 +215,7 @@ where
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Arc::new(Value::value_vec(results)))
         }
-        Op::ReduceMap(op, domain, body, fact) => {
-            if let Some(v) = try_eval_reduce_map_hypercube_selected(
-                *op,
-                domain,
-                body,
-                *fact,
-                env,
-                rng,
-                loop_params,
-            )? {
-                return Ok(v);
-            }
+        Op::ReduceMap(op, domain, body) => {
             let dom =
                 Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
@@ -293,47 +282,6 @@ fn eval_loop_body_each<C: ArkConfig>(
         .collect()
 }
 
-/// Sumcheck fast path: a `CompleteBooleanHypercube` reduce-map whose body is
-/// `eval<range>(poly, loop_param)` routes to the parallel dense-MLE kernel
-/// `value_hypercube_reduce_selected` and never materializes its 2^k domain.
-fn try_eval_reduce_map_hypercube_selected<C, R>(
-    op: BinOp,
-    _domain: &HOp<C>,
-    body: &HOp<C>,
-    fact: ReduceMapDomainFact,
-    env: &HashMap<Ref, Arc<Value<C>>>,
-    rng: &mut R,
-    loop_params: &[Arc<Value<C>>],
-) -> Result<Option<Arc<Value<C>>>, EvalError>
-where
-    C: ArkConfig,
-    R: RngCore,
-{
-    let ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars } = fact else {
-        return Ok(None);
-    };
-    if op != BinOp::Add {
-        return Ok(None);
-    }
-    let Op::Evaluate(poly, Some(range), Some(fixed)) = body.get() else {
-        return Ok(None);
-    };
-    let Op::LoopParam(level, _) = fixed.get() else {
-        return Ok(None);
-    };
-    // Only fire when `fixed` is exactly this reduce-map's own binder.
-    if *level != loop_params.len() {
-        return Ok(None);
-    }
-    let shape = selected_eval_shape(poly, range);
-    let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
-    Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
-        *range,
-        tail_num_vars,
-        shape,
-    ))))
-}
-
 /// Collect every `Op::Ref` leaf reachable from `op`, in DFS order with
 /// duplicates retained. Used by the runtime to snapshot referenced node
 /// values into the `eval_op` env before dispatch.
@@ -378,7 +326,7 @@ fn collect_refs_into<C: ArkConfig>(op: &GOp<C>, acc: &mut Vec<Ref>) {
             collect_refs_into(a, acc);
         }
         Op::LoopParam(_, _) => {}
-        Op::Map(d, b) | Op::ReduceMap(_, d, b, _) => {
+        Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
             collect_refs_into(d, acc);
             collect_refs_into(b, acc);
         }

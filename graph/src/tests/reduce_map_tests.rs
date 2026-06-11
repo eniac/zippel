@@ -4,7 +4,6 @@
 use crate::eval::eval_op;
 use crate::tests::test_helpers::scalar;
 use crate::{GOp, Op, Ref, UDags, mk};
-use backend::op::ReduceMapDomainFact;
 use backend::{ATyp, ArkBls12_381, Value};
 use lang::ast::{BinOp, UModule};
 use rand::SeedableRng;
@@ -44,7 +43,7 @@ fn op_has_loop_param(op: &GOp<B>, level: usize) -> bool {
         Op::Bin(_, a, b, _) | Op::Ram(a, b) | Op::Pair(a, b, _) | Op::Interpolate(a, b) => {
             op_has_loop_param(a.get(), level) || op_has_loop_param(b.get(), level)
         }
-        Op::Map(d, b) | Op::ReduceMap(_, d, b, _) => {
+        Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
             op_has_loop_param(d.get(), level) || op_has_loop_param(b.get(), level)
         }
         Op::Poly(a)
@@ -84,7 +83,7 @@ fn generic_reduce_over_map_lowers_to_reduce_map() {
             let Some(op) = dag[n].op() else {
                 continue;
             };
-            if let Op::ReduceMap(BinOp::Add, _, body, ReduceMapDomainFact::Unknown) = op.get() {
+            if let Op::ReduceMap(BinOp::Add, _, body) = op.get() {
                 reduce_maps += 1;
                 assert!(
                     op_has_loop_param(body.get(), 0),
@@ -148,7 +147,7 @@ fn nested_map_domain_is_composed_away() {
             let Some(op) = dag[n].op() else {
                 continue;
             };
-            if let Op::ReduceMap(_, domain, _, _) = op.get() {
+            if let Op::ReduceMap(_, domain, _) = op.get() {
                 found = true;
                 assert!(
                     !matches!(domain.get(), Op::Map(_, _)),
@@ -176,7 +175,7 @@ fn effectful_body_declines_to_unroll() {
     let graphs = parse_and_build(src);
 
     assert_eq!(
-        count_ops(&graphs, |op| matches!(op, Op::ReduceMap(_, _, _, _))),
+        count_ops(&graphs, |op| matches!(op, Op::ReduceMap(_, _, _))),
         0,
         "effectful body must decline fusion"
     );
@@ -201,7 +200,7 @@ fn reduce_map_eval_matches_materialized_reduce() {
         mk::<B>(Op::LoopParam(0, scalar_t.clone())),
         scalar_t,
     );
-    let rm = GOp::reduce_map(BinOp::Add, domain, body, ReduceMapDomainFact::Unknown);
+    let rm = GOp::reduce_map(BinOp::Add, domain, body);
 
     let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
     let mut rng = StdRng::seed_from_u64(0);

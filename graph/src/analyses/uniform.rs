@@ -1,4 +1,4 @@
-use crate::{DQDag, Dag, GOp, Node, Op, QDag, ReduceMapDomainFact, Ref};
+use crate::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
 use backend::ArkConfig;
 use lang::ast::BinOp;
 use lang::typ::Distribution;
@@ -42,23 +42,12 @@ fn op_ancestors_of_loops<C: ArkConfig>(
             next.push(dd);
             op_ancestors_of_loops(b, ancestors, &next)
         }
-        Op::ReduceMap(_, d, b, fact) => match fact {
-            ReduceMapDomainFact::CompleteBooleanHypercube { .. } => match b.get() {
-                Op::Evaluate(p, Some(_), Some(_)) => op_ancestors_of_loops(p, ancestors, loops),
-                _ => {
-                    let dd = op_ancestors_of_loops(d, ancestors, loops);
-                    let mut next = loops.to_vec();
-                    next.push(dd);
-                    op_ancestors_of_loops(b, ancestors, &next)
-                }
-            },
-            ReduceMapDomainFact::Unknown => {
-                let dd = op_ancestors_of_loops(d, ancestors, loops);
-                let mut next = loops.to_vec();
-                next.push(dd);
-                op_ancestors_of_loops(b, ancestors, &next)
-            }
-        },
+        Op::ReduceMap(_, d, b) => {
+            let dd = op_ancestors_of_loops(d, ancestors, loops);
+            let mut next = loops.to_vec();
+            next.push(dd);
+            op_ancestors_of_loops(b, ancestors, &next)
+        }
         Op::Evaluate(p, _, None) => op_ancestors_of_loops(p, ancestors, loops),
         Op::Evaluate(p, _, Some(x)) => op_ancestors_of_loops(p, ancestors, loops)
             .union(op_ancestors_of_loops(x, ancestors, loops)),
@@ -150,24 +139,9 @@ fn compute_distribution_loops<C: ArkConfig>(
             next_anc.push(da);
             compute_distribution_loops(b, ancestors, distributions, &next_dist, &next_anc)
         }
-        Op::ReduceMap(_, d, b, fact) => match fact {
-            ReduceMapDomainFact::CompleteBooleanHypercube { .. } => match b.get() {
-                Op::Evaluate(p, Some(_), Some(_)) => {
-                    compute_distribution_loops(p, ancestors, distributions, dist_loops, anc_loops)
-                }
-                _ => compute_reduce_map_generic(
-                    d,
-                    b,
-                    ancestors,
-                    distributions,
-                    dist_loops,
-                    anc_loops,
-                ),
-            },
-            ReduceMapDomainFact::Unknown => {
-                compute_reduce_map_generic(d, b, ancestors, distributions, dist_loops, anc_loops)
-            }
-        },
+        Op::ReduceMap(_, d, b) => {
+            compute_reduce_map_generic(d, b, ancestors, distributions, dist_loops, anc_loops)
+        }
         Op::Evaluate(p, _, None) => {
             compute_distribution_loops(p, ancestors, distributions, dist_loops, anc_loops)
         }

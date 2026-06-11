@@ -26,14 +26,6 @@ use std::sync::RwLock;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct Ref(pub NodeIndex);
 
-/// Domain knowledge for a fused `Op::ReduceMap`. `CompleteBooleanHypercube`
-/// marks the sumcheck fast path whose 2^k domain is never materialized.
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Ord, PartialOrd, Hash)]
-pub enum ReduceMapDomainFact {
-    Unknown,
-    CompleteBooleanHypercube { tail_num_vars: usize },
-}
-
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
 #[derive(PartialEq, Eq, Clone, Debug, Ord, PartialOrd, Hash)]
@@ -100,8 +92,8 @@ pub enum Op<C: ArkConfig, R> {
     /// Persistent map: `[body for x in domain]`. `body` may contain `LoopParam`.
     Map(HOp<C>, HOp<C>),
 
-    /// Explicit-domain fused reduce-map: `reduce(op, [body for x in domain])`.
-    ReduceMap(BinOp, HOp<C>, HOp<C>, ReduceMapDomainFact),
+    /// Explicit-domain reduce-map: `reduce(op, [body for x in domain])`.
+    ReduceMap(BinOp, HOp<C>, HOp<C>),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -211,7 +203,7 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Poly(_) => 22,
             Op::Evaluate(_, _, _) => 23,
             Op::Map(_, _) => 30,
-            Op::ReduceMap(_, _, _, _) => 31,
+            Op::ReduceMap(_, _, _) => 31,
             Op::LoopParam(_, _) => 32,
             Op::Coef(_) => 25,
             Op::Mle(_) => 26,
@@ -315,13 +307,8 @@ impl<C: ArkConfig, R> Op<C, R> {
                 let (_, n) = domain.typ().into_vec();
                 ATyp::vec(&body.typ(), n)
             }
-            Op::ReduceMap(op, domain, body, fact) => {
-                let n = match fact {
-                    ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars } => 1usize
-                        .checked_shl(*tail_num_vars as u32)
-                        .expect("ReduceMap hypercube arity overflow"),
-                    ReduceMapDomainFact::Unknown => domain.typ().into_vec().1,
-                };
+            Op::ReduceMap(op, domain, body) => {
+                let (_, n) = domain.typ().into_vec();
                 let elem = body.typ();
                 let mut acc = elem.clone();
                 for _ in 1..n {
@@ -470,8 +457,8 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Map(mk::<C>(domain), mk::<C>(body))
     }
 
-    pub fn reduce_map(op: BinOp, domain: Self, body: Self, fact: ReduceMapDomainFact) -> Self {
-        Op::ReduceMap(op, mk::<C>(domain), mk::<C>(body), fact)
+    pub fn reduce_map(op: BinOp, domain: Self, body: Self) -> Self {
+        Op::ReduceMap(op, mk::<C>(domain), mk::<C>(body))
     }
 
     /// Random access simplifications
@@ -930,7 +917,7 @@ impl<C: ArkConfig> GOp<C> {
                 Some(x) => p.references().into_iter().chain(x.references()).collect(),
             },
             Op::LoopParam(_, _) => vec![],
-            Op::Map(d, b) | Op::ReduceMap(_, d, b, _) => {
+            Op::Map(d, b) | Op::ReduceMap(_, d, b) => {
                 d.references().into_iter().chain(b.references()).collect()
             }
             Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
@@ -989,11 +976,10 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(d.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
             ),
-            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+            Op::ReduceMap(op, d, b) => Op::ReduceMap(
                 *op,
                 mk::<C>(d.map_node_indices(f)),
                 mk::<C>(b.map_node_indices(f)),
-                *fact,
             ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
@@ -1049,8 +1035,8 @@ impl<C: HasOpFactory> GOp<C> {
             ),
             Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
             Op::Map(d, b) => Op::Map(mk::<C>(d.map_refs(f)), mk::<C>(b.map_refs(f))),
-            Op::ReduceMap(op, d, b, fact) => {
-                Op::ReduceMap(*op, mk::<C>(d.map_refs(f)), mk::<C>(b.map_refs(f)), *fact)
+            Op::ReduceMap(op, d, b) => {
+                Op::ReduceMap(*op, mk::<C>(d.map_refs(f)), mk::<C>(b.map_refs(f)))
             }
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Proj(op, field, typ) => {
@@ -1120,11 +1106,10 @@ impl<C: HasOpFactory> GOp<C> {
                 mk::<C>(d.inline(vars, except)),
                 mk::<C>(b.inline(vars, except)),
             ),
-            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+            Op::ReduceMap(op, d, b) => Op::ReduceMap(
                 *op,
                 mk::<C>(d.inline(vars, except)),
                 mk::<C>(b.inline(vars, except)),
-                *fact,
             ),
             _ => self.clone(),
         }
@@ -1366,12 +1351,12 @@ where
                 b.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::ReduceMap(op, d, b, fact) => allocator.concat([
+            Op::ReduceMap(op, d, b) => allocator.concat([
                 allocator.text(format!("(reduce_map {} ", op)),
                 d.get().clone().pretty(allocator),
                 allocator.text(", "),
                 b.get().clone().pretty(allocator),
-                allocator.text(format!(" [{:?}])", fact)),
+                allocator.text(")"),
             ]),
             Op::Mle(v) => allocator.concat([
                 allocator.text("(mle "),
