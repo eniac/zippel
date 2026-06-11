@@ -21,6 +21,7 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
         _source_file: NamedTempFile,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -73,15 +74,27 @@ pub mod zippel_side {
                 (Vid("h_base".to_string()), Value::G1(h_base)),
             ]);
 
+            // Time the zippel compiler: source → executable graph.
+            // Includes parsing, type-checking, and graph construction.
+            // Excludes runtime scheduling (which is per-call cheap
+            // graph→TDag work the runtime does) and excludes the actual
+            // prove/verify execution.
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(source_file.path().to_path_buf());
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs,
                 _source_file: source_file,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {

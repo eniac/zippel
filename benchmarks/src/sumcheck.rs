@@ -32,22 +32,30 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
             sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 num_vars,
                 max_degree,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {

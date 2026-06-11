@@ -88,6 +88,7 @@ pub mod zippel_side {
         // normal path compiles examples/kzg/kzg.zippel directly with N
         // bound via `sizes.insert`, no per-call source rewriting.
         _source_file: Option<NamedTempFile>,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -111,10 +112,12 @@ pub mod zippel_side {
                 )
             };
 
+            let compile_start = Instant::now();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &n);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             // Build (or load) SRS here so it runs inside the caller's
             // `setup_pool().install(...)` block — all cores on cache miss,
@@ -147,7 +150,12 @@ pub mod zippel_side {
                 n,
                 srs,
                 _source_file,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {

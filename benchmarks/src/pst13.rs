@@ -452,6 +452,7 @@ pub mod zippel_side {
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
+        compile_time: std::time::Duration,
     }
 
     impl<'a> Setup<'a> {
@@ -480,17 +481,24 @@ pub mod zippel_side {
                 ),
             ]);
 
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &shared.n);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs_base,
                 shared,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {

@@ -25,6 +25,7 @@ pub mod zippel_side {
 
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -32,10 +33,19 @@ pub mod zippel_side {
             let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("examples/schnorr/schnorr.zippel");
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(zippel_file);
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
-            Setup { handler }
+            let compile_time = compile_start.elapsed();
+            Setup {
+                handler,
+                compile_time,
+            }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {

@@ -74,6 +74,12 @@ struct Row {
     log_size: usize,
     zippel: Timing,
     native: Timing,
+    /// Wall-clock time for the zippel compiler: source → executable
+    /// graph (parse + type-check + graph construction inside
+    /// `ZippelHandler::compile`). Excludes the Rust compiler (which
+    /// builds this binary once), excludes runtime scheduling
+    /// (graph→TDag), and excludes prove/verify execution.
+    compile: std::time::Duration,
 }
 
 fn ms(t: std::time::Duration) -> f64 {
@@ -280,7 +286,7 @@ fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
     if header {
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc"
+            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler"
         )?;
         w.flush()?;
     }
@@ -294,7 +300,7 @@ fn write_row(r: &Row) {
     let mut w = m.lock().unwrap();
     writeln!(
         w,
-        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{}",
+        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3}",
         r.system,
         r.threads,
         r.log_size,
@@ -304,6 +310,7 @@ fn write_row(r: &Row) {
         ms(r.native.verify),
         zippel_ncloc(r.system),
         native_ncloc(r.system),
+        ms(r.compile),
     )
     .expect("write csv row");
     w.flush().expect("flush csv row");
@@ -311,7 +318,7 @@ fn write_row(r: &Row) {
 
 fn print_row(r: &Row) {
     eprintln!(
-        "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / native {:>8.2}ms   verify={:>7.2}ms / native {:>7.2}ms",
+        "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / native {:>8.2}ms   verify={:>7.2}ms / native {:>7.2}ms   compile={:>8.2}ms",
         r.system,
         r.threads,
         r.log_size,
@@ -319,6 +326,7 @@ fn print_row(r: &Row) {
         ms(r.native.prove),
         ms(r.zippel.verify),
         ms(r.native.verify),
+        ms(r.compile),
     );
     write_row(r);
 }
@@ -330,6 +338,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
             schnorr::native_side::Setup::new(),
         )
     });
+    let compile = z.compile_time();
     let zippel = z.time_protocol();
     let native = n.time_protocol();
     // Schnorr has no size knob — log_size = 0 marks "single fixed point".
@@ -339,6 +348,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         log_size: 0,
         zippel,
         native,
+        compile,
     }]
 }
 
@@ -352,6 +362,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                     sumcheck::native_side::Setup::new(nv, max_degree),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // Sumcheck size knob is `num_vars` itself — the hypercube has 2^nv
@@ -362,6 +373,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 log_size: nv,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -378,6 +390,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                     ipa::native_side::Setup::new(s),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -386,6 +399,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 log_size: s,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -402,6 +416,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                     kzg::native_side::Setup::new(n_coeffs),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // KZG's grid is restricted to powers of two so log_2 is exact;
@@ -412,6 +427,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n_coeffs.trailing_zeros() as usize,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -430,6 +446,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 let n = pari::native_side::Setup::new(&inst);
                 (inst, z, n)
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol(&inst);
             let native = n.time_protocol(&inst);
             let r = Row {
@@ -438,6 +455,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 log_size: m_log,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -467,6 +485,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                     groth16::native_side::Setup::new(&translated),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -475,6 +494,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 log_size,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -492,6 +512,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                     pst13::native_side::Setup::new(&shared),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -500,6 +521,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -516,6 +538,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                     hyrax::native_side::Setup::new(n),
                 )
             });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -524,6 +547,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -535,6 +559,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
             let mut z = setup_pool().install(|| spartan::Setup::new(m));
+            let compile = z.compile_time();
             // `z.timing()` IS the timed region for the zippel side —
             // it runs run_prover + run_verifier internally, so we hand
             // it to the global (bench) pool, not the setup pool.
@@ -619,6 +644,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 log_size: m,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r

@@ -34,6 +34,7 @@ pub struct Setup {
     handler: ZippelHandler<ArkCurve25519>,
     inputs: Ctx<Vid, Value<ArkCurve25519>>,
     _source_file: NamedTempFile,
+    compile_time: std::time::Duration,
 }
 
 impl Setup {
@@ -47,6 +48,7 @@ impl Setup {
 
         let inputs = prover_create_inputs(m);
 
+        let compile_start = Instant::now();
         let args = ZippelArgs::new(source_file.path().to_path_buf());
         let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
         let (_l_h, m_h) = hyrax_split(m);
@@ -54,13 +56,19 @@ impl Setup {
         sizes.insert(&Tid::new("SC"), &m);
         sizes.insert(&Tid::new("S"), &m_h);
         handler.compile(&sizes);
+        let compile_time = compile_start.elapsed();
 
         Setup {
             m,
             handler,
             inputs,
             _source_file: source_file,
+            compile_time,
         }
+    }
+
+    pub fn compile_time(&self) -> std::time::Duration {
+        self.compile_time
     }
 
     pub fn time_protocol(&mut self) -> ZippelTiming {

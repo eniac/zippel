@@ -78,15 +78,35 @@ impl FlatMatrix {
     /// Returns `v^T · M` — a length-`m` vector where
     /// `out[col] = Σ_row v[row] * M[row][col]`.
     ///
-    /// Each rayon task takes a strip of rows and SAXPYs them into a
-    /// thread-local length-`m` accumulator: the inner loop reads one
-    /// row sequentially and writes the accumulator sequentially, so
-    /// memory traffic is cache-friendly. Final reduce sums the strip
-    /// accumulators componentwise.
+    /// At threads > 1: each rayon task takes a strip of rows and
+    /// SAXPYs them into a thread-local length-`m` accumulator; the
+    /// inner loop reads one row sequentially and writes the
+    /// accumulator sequentially, so memory traffic is cache-friendly.
+    /// Final reduce sums the strip accumulators componentwise.
+    ///
+    /// At threads == 1: skip rayon entirely. The fold-reduce pattern
+    /// still chunks at threads=1 and allocates a fresh `vec![Fr::zero(); m]`
+    /// accumulator per chunk, then walks the queue overhead per task.
+    /// On a 256-thread Xeon with `RAYON_NUM_THREADS=1` that overhead
+    /// can balloon to ~6× the actual SAXPY work — the cost of going
+    /// through rayon's scheduler when there's nothing to parallelize.
     pub fn row_mul(&self, v: &[Fr]) -> Vec<Fr> {
         assert_eq!(v.len(), self.n);
         let m = self.m;
         let entries = &self.entries;
+
+        if rayon::current_num_threads() <= 1 {
+            let mut acc = vec![Fr::zero(); m];
+            for row in 0..self.n {
+                let v_row = v[row];
+                let row_slice = &entries[row * m..row * m + m];
+                for col in 0..m {
+                    acc[col] += v_row * row_slice[col];
+                }
+            }
+            return acc;
+        }
+
         (0..self.n)
             .into_par_iter()
             .fold(
@@ -114,7 +134,14 @@ impl FlatMatrix {
 
 fn pedersen_commit(key: &[G1Affine], scalars: &[Fr]) -> G1Projective {
     assert_eq!(key.len(), scalars.len());
-    let scalars_bigint: Vec<_> = scalars.par_iter().map(|s| s.into_bigint()).collect();
+    // Avoid nested par_iter at threads=1 — the outer commit loop is
+    // already a par_iter, and rayon's scheduler queues every nested
+    // par_iter task even when there's no parallelism to gain.
+    let scalars_bigint: Vec<_> = if rayon::current_num_threads() <= 1 {
+        scalars.iter().map(|s| s.into_bigint()).collect()
+    } else {
+        scalars.par_iter().map(|s| s.into_bigint()).collect()
+    };
     <G1Projective as VariableBaseMSM>::msm_bigint(key, &scalars_bigint)
 }
 
@@ -193,30 +220,54 @@ pub fn commit(
     // just the physical layout that lets `row_mul` stream rows
     // sequentially.
     let mut entries = vec![Fr::zero(); dim * dim];
-    entries
-        .par_chunks_mut(dim)
-        .enumerate()
-        .for_each(|(row, row_slice)| {
+    if rayon::current_num_threads() <= 1 {
+        for row in 0..dim {
+            let row_slice = &mut entries[row * dim..row * dim + dim];
             for col in 0..dim {
                 row_slice[col] = evals[col * dim + row];
             }
-        });
+        }
+    } else {
+        entries
+            .par_chunks_mut(dim)
+            .enumerate()
+            .for_each(|(row, row_slice)| {
+                for col in 0..dim {
+                    row_slice[col] = evals[col * dim + row];
+                }
+            });
+    }
     let mat = FlatMatrix {
         n: dim,
         m: dim,
         entries,
     };
 
-    let (row_coms, com_rands): (Vec<G1Affine>, Vec<Fr>) = (0..dim)
-        .into_par_iter()
-        .map(|row| {
-            let mut rng = rand::thread_rng();
-            let r = Fr::rand(&mut rng);
-            let row_slice = &mat.entries[row * dim..row * dim + dim];
-            let c = (pedersen_commit(&ck.com_key, row_slice) + ck.h * r).into_affine();
-            (c, r)
-        })
-        .unzip();
+    // Outer row loop: serial at threads=1 (rayon scheduler overhead per
+    // task dominates the actual MSM work on big-core counts), par_iter
+    // at threads>1.
+    let (row_coms, com_rands): (Vec<G1Affine>, Vec<Fr>) = if rayon::current_num_threads() <= 1 {
+        let mut rng = rand::thread_rng();
+        (0..dim)
+            .map(|row| {
+                let r = Fr::rand(&mut rng);
+                let row_slice = &mat.entries[row * dim..row * dim + dim];
+                let c = (pedersen_commit(&ck.com_key, row_slice) + ck.h * r).into_affine();
+                (c, r)
+            })
+            .unzip()
+    } else {
+        (0..dim)
+            .into_par_iter()
+            .map(|row| {
+                let mut rng = rand::thread_rng();
+                let r = Fr::rand(&mut rng);
+                let row_slice = &mat.entries[row * dim..row * dim + dim];
+                let c = (pedersen_commit(&ck.com_key, row_slice) + ck.h * r).into_affine();
+                (c, r)
+            })
+            .unzip()
+    };
 
     let com = HyraxCommitment { row_coms };
     let state = CommitmentState {

@@ -336,6 +336,7 @@ pub mod zippel_side {
         kmn: usize, // = num_vars - n_pub
         num_vars: usize,
         srs: PariSrs,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -343,6 +344,7 @@ pub mod zippel_side {
             let k = 1usize << m_log;
             let num_vars = inst.num_vars;
             let kmn = num_vars - n_pub;
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
             let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
@@ -350,6 +352,7 @@ pub mod zippel_side {
             sizes.insert(&Tid::new("N"), &n_pub);
             sizes.insert(&Tid::new("KMN"), &kmn);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             let srs = crate::cache::load_or_build_canonical("pari_zippel_srs", m_log, || {
                 PariSrs::build(m_log, n_pub, num_vars, inst)
@@ -363,7 +366,12 @@ pub mod zippel_side {
                 kmn,
                 num_vars,
                 srs,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {

@@ -427,6 +427,7 @@ pub mod zippel_side {
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         public_inputs: Ctx<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
+        compile_time: std::time::Duration,
     }
 
     impl<'a> Setup<'a> {
@@ -510,6 +511,7 @@ pub mod zippel_side {
                 .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                 .collect();
 
+            let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
@@ -517,13 +519,19 @@ pub mod zippel_side {
             sizes.insert(&Tid::new("L"), &translated.l);
             sizes.insert(&Tid::new("H"), &translated.h_size);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs_base,
                 public_inputs,
                 translated,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {
