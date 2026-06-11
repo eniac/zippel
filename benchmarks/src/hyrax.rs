@@ -212,13 +212,16 @@ proto hyrax<G: Group, F: Scalar<G>>(
     }
 }
 
-/// Native Hyrax baseline: `ark_poly_commit::hyrax::HyraxPC` from the
-/// `release/0.6.0` branch (unaliased — same arkworks 0.6 set the zippel
-/// side uses, so MSM/pairing primitives are bit-identical on both
-/// sides). Multilinear PCS with a Poseidon-based Fiat-Shamir transcript
-/// — the same `PoseidonConfig` the upstream `bench-templates::test_sponge`
-/// uses. Timed regions match the zippel side: prove = commit + open
-/// (row Pedersens + σ-protocol), verify = check.
+/// Native Hyrax baseline. Vendored from `ark-poly-commit-0.6.0::hyrax`
+/// (see `crate::hyrax_upstream`) with the matrix-vector multiplication
+/// in `open` rewritten to use flat row-major storage and a SAXPY
+/// accumulation — upstream's `Matrix<F>` stores rows as separately
+/// allocated `Vec<F>`s and `Matrix::row_mul` allocates a fresh 16KB
+/// column-gather Vec per output element (8MB churn at log_size=18) plus
+/// nested `par_iter` overhead. Crypto primitives and Fiat-Shamir
+/// transcript bytes are unchanged. Timed regions still match the zippel
+/// side: prove = commit + open (row Pedersens + σ-protocol),
+/// verify = check.
 pub mod native_side {
     use super::Timing;
     use ark_bls12_381::{Fr, G1Affine};
@@ -226,36 +229,35 @@ pub mod native_side {
         poseidon::{PoseidonConfig, PoseidonSponge},
         CryptographicSponge,
     };
-    use ark_ff::{One, PrimeField, UniformRand, Zero};
+    use ark_ff::{PrimeField, UniformRand};
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
-    use ark_poly_commit::{
-        hyrax::HyraxPC, LabeledPolynomial, PolynomialCommitment,
-    };
     use std::time::Instant;
 
-    type Hyrax = HyraxPC<G1Affine, DenseMultilinearExtension<Fr>>;
-    type CK = <Hyrax as PolynomialCommitment<Fr, DenseMultilinearExtension<Fr>>>::CommitterKey;
-    type VK = <Hyrax as PolynomialCommitment<Fr, DenseMultilinearExtension<Fr>>>::VerifierKey;
+    use crate::hyrax_upstream::{
+        self, CommitterKey, VerifierKey,
+    };
 
     pub struct Setup {
         num_vars: usize,
-        ck: CK,
-        vk: VK,
-        labeled: LabeledPolynomial<Fr, DenseMultilinearExtension<Fr>>,
+        ck: CommitterKey,
+        vk: VerifierKey,
+        poly: DenseMultilinearExtension<Fr>,
         point: Vec<Fr>,
         value: Fr,
     }
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            // Cache UniversalParams. Trim is cheap, re-run per call.
+            // Cache UniversalParams. Byte format matches upstream's
+            // derived CanonicalSerialize (same field order: com_key, h),
+            // so caches written by either implementation interoperate.
             let pp = crate::cache::load_or_build_canonical::<
                 ark_poly_commit::hyrax::HyraxUniversalParams<G1Affine>,
             >("hyrax_universal_params", n, || {
                 let mut rng = ark_std::test_rng();
-                Hyrax::setup(n, Some(n), &mut rng).expect("hyrax setup")
+                hyrax_upstream::setup(n, &mut rng)
             });
-            let (ck, vk) = Hyrax::trim(&pp, n, n, None).expect("hyrax trim");
+            let (ck, vk) = hyrax_upstream::trim(&pp);
 
             // Poly/point/value generation runs in `setup_pool` (called
             // here, not in time_protocol). At log_size=20 the rand poly
@@ -264,78 +266,48 @@ pub mod native_side {
             // wasting ~60ms per sweep iteration.
             let mut rng = ark_std::test_rng();
             let poly = DenseMultilinearExtension::<Fr>::rand(n, &mut rng);
-            let labeled =
-                LabeledPolynomial::new("hyrax_bench".to_string(), poly, None, None);
             let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-            let value = labeled.evaluate(&point);
+            let value = poly.evaluate(&point);
 
             Setup {
                 num_vars: n,
                 ck,
                 vk,
-                labeled,
+                poly,
                 point,
                 value,
             }
         }
 
         pub fn time_protocol(&self) -> Timing {
-            let mut rng = ark_std::test_rng();
-            let labeled = &self.labeled;
             let point = &self.point;
-            let value = self.value;
+            let _ = self.value;
 
-            // Prove = commit + open. Mirrors the zippel side, which
-            // synthesizes c_rows (row Pedersens) and the σ-protocol
-            // triple (τ, δ, β) + responses inside one timed region.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_outputs = None;
             for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
-                let (coms, states) =
-                    Hyrax::commit(&self.ck, [labeled], Some(&mut rng)).expect("hyrax commit");
+                let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
                 let mut sponge = test_sponge::<Fr>();
-                let proof = Hyrax::open(
-                    &self.ck,
-                    [labeled],
-                    &coms,
-                    &point,
-                    &mut sponge,
-                    &states,
-                    Some(&mut rng),
-                )
-                .expect("hyrax open");
+                let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
                 prove_sum += t.elapsed();
-                last_outputs = Some((coms, proof));
+                last_outputs = Some((com, proof));
             }
             let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (coms, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
+            let (com, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
-            // Hyrax::check takes &mut sponge; re-seed per iteration.
-            // Sponge re-init happens OUTSIDE the per-call timer.
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_ok = false;
             for _ in 0..crate::VERIFY_SAMPLES {
                 let mut sponge_v = test_sponge::<Fr>();
                 let t = Instant::now();
-                let ok = Hyrax::check(
-                    &self.vk,
-                    &coms,
-                    &point,
-                    [value],
-                    &proof,
-                    &mut sponge_v,
-                    None,
-                )
-                .expect("hyrax check");
+                let ok = hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v);
                 verify_sum += t.elapsed();
                 last_ok = ok;
             }
             let verify = verify_sum / crate::VERIFY_SAMPLES;
-            let ok = last_ok;
-            assert!(ok, "upstream Hyrax verification FAILED");
+            assert!(last_ok, "vendored Hyrax verification FAILED");
 
-            let _ = (Fr::one(), Fr::zero());
             Timing { prove, verify }
         }
     }

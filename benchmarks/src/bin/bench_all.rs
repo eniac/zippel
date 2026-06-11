@@ -116,6 +116,12 @@ const NATIVE_PARI_TRANSCRIPT_ERR_RS: &str =
 const NATIVE_PST13_MOD_RS: &str = include_str!("../../src/pst13_upstream/mod.rs");
 const NATIVE_PST13_DS_RS: &str = include_str!("../../src/pst13_upstream/data_structures.rs");
 
+// Hyrax native baseline is vendored + patched (see src/hyrax_upstream/).
+// Replaces upstream `Matrix<F>` (Vec<Vec<F>>) with flat row-major
+// storage and rewrites `row_mul` as a SAXPY accumulation — eliminates
+// the per-column 16KB temp Vec and the cache-hostile column gathers.
+const NATIVE_HYRAX_MOD_RS: &str = include_str!("../../src/hyrax_upstream/mod.rs");
+
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
@@ -127,7 +133,8 @@ const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifie
 // PST13 native NCLOC is computed dynamically from the vendored module
 // (see NATIVE_PST13_*_RS above); no static constant needed.
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
-const HYRAX_EXT_NCLOC: usize = 403;     // ark-poly-commit-0.6.0 src/hyrax/{mod,data_structures,utils}.rs
+// Hyrax native NCLOC is computed dynamically from the vendored module
+// (see NATIVE_HYRAX_MOD_RS above); no static constant needed.
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -243,7 +250,7 @@ fn native_ncloc(sys: &str) -> usize {
         }
         "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
-        "hyrax" => HYRAX_EXT_NCLOC,
+        "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
         "pari" => {
             count_ncloc_rust(NATIVE_PARI_MOD_RS)
                 + count_ncloc_rust(NATIVE_PARI_GEN_RS)
