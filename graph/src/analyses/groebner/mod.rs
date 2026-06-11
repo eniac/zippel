@@ -2788,30 +2788,19 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let evals_polys = Self::ref_vars(evals, &result.prefs);
         let n = evals_polys.len();
 
-        let xs: Option<Vec<C::F>> = match points.get() {
-            Op::Value(v) => Self::to_poly_value(v)
-                .iter()
-                .map(|p| {
-                    if p.is_constant() {
-                        p.leading_term().map(|(c, _)| c)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
+        let xs_polys: Vec<SparsePolynomial<C::F, T>> = match points.get() {
+            Op::Value(v) => Self::to_poly_value(v),
             Op::Ref(r, _) => {
                 let points_pref = result.find_ref(r);
                 points_pref
                     .slots()
                     .iter()
                     .map(|s| {
-                        result.pl.get(s).and_then(|p| {
-                            if p.is_constant() {
-                                p.leading_term().map(|(c, _)| c)
-                            } else {
-                                None
-                            }
-                        })
+                        result
+                            .pl
+                            .get(s)
+                            .cloned()
+                            .unwrap_or_else(|| SparsePolynomial::zero())
                     })
                     .collect()
             }
@@ -2823,34 +2812,124 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
         };
 
-        let Some(xs) = xs else {
-            Self::uncovered_op("dynamic-interpolate-points", &pr);
-        };
         assert_eq!(
             n,
-            xs.len(),
+            xs_polys.len(),
             "Interpolate: points and evals must have same length"
         );
-        for i in 0..xs.len() {
-            for j in (i + 1)..xs.len() {
-                if xs[i] == xs[j] {
-                    Self::uncovered_op("duplicate-interpolate-points", &pr);
-                }
-            }
-        }
 
-        let lag = lagrange_basis::<C::F>(&xs);
-        let pr_slots = pr.slots();
-        for (k, pf) in pr_slots.iter().enumerate() {
-            let mut acc = SparsePolynomial::<C::F, T>::zero();
-            for (i, y_i) in evals_polys.iter().enumerate() {
-                if k < lag[i].len() && lag[i][k] != C::F::zero() {
-                    let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
-                    acc += y_i * &weight;
+        let all_constant = xs_polys.iter().all(|p| p.is_constant());
+
+        if all_constant {
+            let xs: Vec<C::F> = xs_polys
+                .iter()
+                .map(|p| {
+                    p.leading_term()
+                        .map(|(c, _)| c)
+                        .expect("constant poly must have a leading term")
+                })
+                .collect();
+            for i in 0..xs.len() {
+                for j in (i + 1)..xs.len() {
+                    if xs[i] == xs[j] {
+                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                    }
                 }
             }
-            result.pl.insert(pf, &acc);
-            result.basis.push(acc - SparsePolynomial::var(pf));
+            let lag = lagrange_basis::<C::F>(&xs);
+            let pr_slots = pr.slots();
+            for (k, pf) in pr_slots.iter().enumerate() {
+                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                for (i, y_i) in evals_polys.iter().enumerate() {
+                    if k < lag[i].len() && lag[i][k] != C::F::zero() {
+                        let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
+                        acc += y_i * &weight;
+                    }
+                }
+                result.pl.insert(pf, &acc);
+                result.basis.push(acc - SparsePolynomial::var(pf));
+            }
+        } else {
+            for i in 0..xs_polys.len() {
+                for j in (i + 1)..xs_polys.len() {
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_zero() {
+                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                    }
+                }
+            }
+
+            let n_pts = xs_polys.len();
+            let mut denom_inverses: Vec<Vec<Option<PRef>>> = vec![vec![None; n_pts]; n_pts];
+            for i in 0..n_pts {
+                for j in 0..n_pts {
+                    if i == j {
+                        continue;
+                    }
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_constant() {
+                        continue;
+                    }
+                    let d_name = self.ns.next_name("interp_inv");
+                    let d = self.sentinel_pref(&d_name, ATyp::scalar(), result);
+                    result.basis.push(
+                        SparsePolynomial::var(&d) * diff
+                            - SparsePolynomial::<C::F, T>::lit(&C::F::one()),
+                    );
+                    denom_inverses[i][j] = Some(d);
+                }
+            }
+
+            let pr_slots = pr.slots();
+            let mut result_polys = vec![SparsePolynomial::<C::F, T>::zero(); pr_slots.len()];
+
+            for (i, y_i) in evals_polys.iter().enumerate() {
+                let mut lag_poly = vec![SparsePolynomial::<C::F, T>::lit(&C::F::one())];
+
+                for j in 0..n_pts {
+                    if j == i {
+                        continue;
+                    }
+                    let neg_xj = &xs_polys[j] * &SparsePolynomial::lit(&(-C::F::one()));
+                    let mut new_lag = vec![SparsePolynomial::<C::F, T>::zero(); lag_poly.len() + 1];
+                    for (deg, c) in lag_poly.iter().enumerate() {
+                        let shifted = c * &neg_xj;
+                        new_lag[deg] = &new_lag[deg] + &shifted;
+                        new_lag[deg + 1] = &new_lag[deg + 1] + c;
+                    }
+                    lag_poly = new_lag;
+                }
+
+                let mut denom_inv = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                for j in 0..n_pts {
+                    if j == i {
+                        continue;
+                    }
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_constant() {
+                        let c = diff
+                            .leading_term()
+                            .map(|(c, _)| c)
+                            .expect("non-zero constant poly has leading term");
+                        denom_inv *= SparsePolynomial::lit(&c.inverse().unwrap());
+                    } else {
+                        let d = denom_inverses[i][j]
+                            .as_ref()
+                            .expect("d-variable must exist for non-constant diff");
+                        denom_inv *= SparsePolynomial::var(d);
+                    }
+                }
+
+                for (k, coeff) in lag_poly.iter().enumerate() {
+                    let scaled = coeff * &denom_inv;
+                    result_polys[k] = &result_polys[k] + &(y_i * &scaled);
+                }
+            }
+
+            for (pf, poly) in pr_slots.iter().zip(result_polys) {
+                result.pl.insert(pf, &poly);
+                result.basis.push(poly - SparsePolynomial::var(pf));
+            }
         }
     }
 
@@ -6210,10 +6289,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-interpolate-points"
-    )]
-    fn test_add_op_interpolate_variable_points_panics_explicitly() {
+    fn test_add_op_interpolate_symbolic_points() {
         use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6221,27 +6297,106 @@ mod tests {
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
+        // Two symbolic points x0, x1 stored as PRef variables
+        let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_points = PRef::from_node(
+        let pref_x0 = PRef::from_node(
             NodeIndex::new(0),
-            vec_t.clone(),
+            scalar_t.clone(),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_evals = PRef::from_node(
+        let pref_x1 = PRef::from_node(
             NodeIndex::new(1),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_x0);
+        gresult.register(&pref_x1);
+
+        // Points = [x0, x1]
+        let pref_points = PRef::from_node(
+            NodeIndex::new(2),
             vec_t.clone(),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
         gresult.register(&pref_points);
-        gresult.register(&pref_evals);
+        let x0_slot = pref_points
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let x1_slot = pref_points
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        gresult
+            .pl
+            .insert(&x0_slot, &SparsePolynomial::var(&pref_x0));
+        gresult
+            .pl
+            .insert(&x1_slot, &SparsePolynomial::var(&pref_x1));
 
+        // Evals = [y0, y1]
+        let pref_y0 = PRef::from_node(
+            NodeIndex::new(3),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_y1 = PRef::from_node(
+            NodeIndex::new(4),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_y0);
+        gresult.register(&pref_y1);
+
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(5),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_evals);
+        let y0_slot = pref_evals
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y1_slot = pref_evals
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        gresult
+            .pl
+            .insert(&y0_slot, &SparsePolynomial::var(&pref_y0));
+        gresult
+            .pl
+            .insert(&y1_slot, &SparsePolynomial::var(&pref_y1));
+
+        // Result = interpolate([x0, x1], [y0, y1])
+        // p(t) = y0 * (t - x1) / (x0 - x1) + y1 * (t - x0) / (x1 - x0)
+        //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
+        // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let result_typ = ATyp::uni(2);
         let pref_result = PRef::from_node(
-            NodeIndex::new(2),
+            NodeIndex::new(6),
             result_typ.clone(),
             0,
             Qualifier::Private,
@@ -6249,12 +6404,81 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
-        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
+        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(2)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(5)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        // Verify: basis should contain d-variable equations and result equations.
+        // For interpolate([x0, x1], [y0, y1]) with 2 symbolic points:
+        // L_0(t) = d01*(t - x1), L_1(t) = d10*(t - x0)
+        // p[0] = -y0*d01*x1 - y1*d10*x0  (constant term)
+        // p[1] = y0*d01 + y1*d10          (linear coefficient)
+        // p[2] = 0                         (no quadratic term)
+        let r0 = pref_result.clone().with_slot(0).unwrap();
+        let r1 = pref_result.clone().with_slot(1).unwrap();
+        let r2 = pref_result.clone().with_slot(2).unwrap();
+
+        let d_vars: Vec<_> = gresult
+            .var_order
+            .iter()
+            .filter(|v| {
+                v.name
+                    .as_ref()
+                    .map_or(false, |vid| vid.0.contains("interp_inv"))
+            })
+            .collect();
+        assert_eq!(d_vars.len(), 2, "should have 2 d-variables");
+        let d01 = d_vars[0];
+        let d10 = d_vars[1];
+
+        let r0_poly = gresult.pl.get(&r0).cloned().unwrap();
+        let r1_poly = gresult.pl.get(&r1).cloned().unwrap();
+        let r2_poly = gresult.pl.get(&r2).cloned().unwrap();
+
+        let neg_one = -<ark_bls12_381::Fr as ark_ff::One>::one();
+        // Expected: p[0] = -y0*d01*x1 - y1*d10*x0, p[1] = y0*d01 + y1*d10
+        // evals_polys uses slot PRefs (y0_slot, y1_slot) as monomial variables.
+        // xs_polys uses resolved PRefs from pl (pref_x0, pref_x1) as monomial variables.
+        let expected_r0 = SparsePolynomial::var(&y0_slot)
+            * (SparsePolynomial::var(d01)
+                * SparsePolynomial::lit(&neg_one)
+                * SparsePolynomial::var(&pref_x1))
+            + SparsePolynomial::var(&y1_slot)
+                * (SparsePolynomial::var(d10)
+                    * SparsePolynomial::lit(&neg_one)
+                    * SparsePolynomial::var(&pref_x0));
+        let expected_r1 = SparsePolynomial::var(&y0_slot) * SparsePolynomial::var(d01)
+            + SparsePolynomial::var(&y1_slot) * SparsePolynomial::var(d10);
+
+        assert_eq!(
+            r0_poly, expected_r0,
+            "p[0] should equal expected constant term"
+        );
+        assert_eq!(
+            r1_poly, expected_r1,
+            "p[1] should equal expected linear coefficient"
+        );
+        assert!(r2_poly.is_zero(), "p[2] should be zero");
+
+        // Verify: result equations in basis (p[k] - r_k = 0)
+        let r0_eq = &r0_poly - &SparsePolynomial::var(&r0);
+        let r1_eq = &r1_poly - &SparsePolynomial::var(&r1);
+        let r2_eq = &r2_poly - &SparsePolynomial::var(&r2);
+        assert!(
+            gresult.basis.iter().any(|p| *p == r0_eq),
+            "basis should contain p[0] - r0 equation"
+        );
+        assert!(
+            gresult.basis.iter().any(|p| *p == r1_eq),
+            "basis should contain p[1] - r1 equation"
+        );
+        assert!(
+            gresult.basis.iter().any(|p| *p == r2_eq),
+            "basis should contain p[2] - r2 equation"
+        );
     }
 
     #[test]
