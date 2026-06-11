@@ -30,36 +30,62 @@ pub const DEFAULT_N: usize = 10;
 // ---------------------------------------------------------------------------
 
 pub mod shared {
-    use ark_bls12_381::{Fr, G1Projective, G2Projective};
-    use ark_ec::CurveGroup;
-    use ark_ff::{One, Zero};
+    use ark_bls12_381::{Fr, G1Affine, G1Projective, G2Projective};
+    use ark_ec::AffineRepr;
+    use ark_ec::scalar_mul::{BatchMulPreprocessing, ScalarMul};
+    use ark_ff::One;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
     use ark_std::rand::SeedableRng;
+    use rayon::prelude::*;
 
+    /// Shared per-size SRS + statement data, consumed by both the zippel
+    /// and native PST13 sides. Cached to disk via
+    /// `crate::cache::load_or_build_canonical` so the ~262K G1 scalar muls
+    /// at n=18 only happen once per binary across the full thread sweep.
+    ///
+    /// Previously had a `ck: Vec<G1Projective>` field — unused (only the
+    /// affine view ever flows into the bench), dropped to halve the
+    /// in-memory footprint and cache file size.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
     pub struct Shared {
         pub n: usize,
         pub g_gen: G1Projective,
         pub h_gen: G2Projective,
         pub alpha: Vec<Fr>,
-        /// ck[i] = eq_N(α, i) · g_gen for i ∈ {0, 1}^N, MSB-first indexing
-        /// (bit `n-1-j` of `i` is the value of variable j).
-        pub ck: Vec<G1Projective>,
-        /// Affine view of `ck` — avoids per-prove `normalize_batch` like in
-        /// the Groth16 bench fix.
-        pub ck_affine: Vec<ark_bls12_381::G1Affine>,
+        /// ck_affine[i] = eq_N(α, i) · g_gen for i ∈ {0, 1}^N, MSB-first
+        /// indexing (bit `n-1-j` of `i` is the value of variable j).
+        /// Already-affine so `MultilinearPC::commit` / zippel's
+        /// `dot(VecG1Affine, VecScalar)` skip per-call `normalize_batch`.
+        pub ck_affine: Vec<G1Affine>,
         pub alpha_h: Vec<G2Projective>,
         pub p: Vec<Fr>,
         pub z: Vec<Fr>,
         pub y: Fr,
     }
 
-    /// Seeded build so multiple calls at the same `n` produce identical data,
-    /// matching how Groth16/KZG benches reseed inside `Setup::new`.
+    /// Seeded build so multiple calls at the same `n` produce identical
+    /// data. First call at a given `n` builds + writes to
+    /// `artifacts/pst13_shared_log<n>.bin`; subsequent calls (across
+    /// thread-sweep iterations or even across separate `bench_all`
+    /// invocations) instant-load.
+    ///
+    /// Build-side fixes vs the previous version:
+    ///   * `ck` computation uses `BatchMulPreprocessing` instead of N×1
+    ///     scalar muls — at n=18 this is ~10× faster than `iter().map(...)`
+    ///     because the window precompute amortizes across the 262K muls.
+    ///   * `ck_scalars` and `y` use `par_iter` — the previous serial fold
+    ///     pinned the build to one core even though we run it inside
+    ///     `setup_pool().install(...)`.
     pub fn build(n: usize) -> Shared {
         assert!((1..=20).contains(&n), "n must be in 1..=20");
+
+        crate::cache::load_or_build_canonical("pst13_shared", n, || build_uncached(n))
+    }
+
+    fn build_uncached(n: usize) -> Shared {
         let size = 1usize << n;
 
-        // Distinct seed per n so successive sweep rows don't share state.
         let mut seed_bytes = [0u8; 32];
         seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
         let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
@@ -71,8 +97,10 @@ pub mod shared {
         let alpha: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
         let one_m_alpha: Vec<Fr> = alpha.iter().map(|a| one - *a).collect();
 
-        // ck[i] = Π_j L_j(b_j) · g_gen, b = MSB-first bits of i.
+        // ck_scalars[i] = Π_j L_j(b_j), b = MSB-first bits of i. Parallel
+        // over i — each entry's fold is independent.
         let ck_scalars: Vec<Fr> = (0..size)
+            .into_par_iter()
             .map(|i| {
                 (0..n).fold(one, |acc, j| {
                     let bit = (i >> (n - 1 - j)) & 1;
@@ -84,16 +112,25 @@ pub mod shared {
                 })
             })
             .collect();
-        let ck: Vec<G1Projective> = ck_scalars.iter().map(|s| g_gen * s).collect();
-        let ck_affine = G1Projective::normalize_batch(&ck);
 
-        let alpha_h: Vec<G2Projective> = alpha.iter().map(|a| h_gen * a).collect();
+        // `BatchMulPreprocessing::batch_mul` window-precomputes a table for
+        // g_gen once, then does each ck_scalars[i] mul in ~10µs — vs ~200µs
+        // for `g_gen * s` per entry. Returns affines directly, so no
+        // separate `normalize_batch` pass.
+        let g_table = BatchMulPreprocessing::new(g_gen, n);
+        let ck_affine: Vec<G1Affine> = g_table.batch_mul(&ck_scalars);
+
+        let alpha_h: Vec<G2Projective> = h_gen.batch_mul(&alpha)
+            .iter()
+            .map(|aff| aff.into_group())
+            .collect();
 
         let p: Vec<Fr> = (0..size).map(|_| Fr::rand(&mut rng)).collect();
         let z: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
 
-        // y = p̃(z) = Σ_i p_i · eq_N(z, i), same bit order as ck.
+        // y = p̃(z) = Σ_i p_i · eq_N(z, i), parallel reduction.
         let y: Fr = (0..size)
+            .into_par_iter()
             .map(|i| {
                 let eq_z_i = (0..n).fold(one, |prod, j| {
                     let bit = (i >> (n - 1 - j)) & 1;
@@ -105,14 +142,13 @@ pub mod shared {
                 });
                 p[i] * eq_z_i
             })
-            .fold(Fr::zero(), |acc, v| acc + v);
+            .sum();
 
         Shared {
             n,
             g_gen,
             h_gen,
             alpha,
-            ck,
             ck_affine,
             alpha_h,
             p,
