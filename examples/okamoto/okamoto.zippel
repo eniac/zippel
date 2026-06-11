@@ -1,0 +1,15 @@
+proto pedersen_schnorr<G: Group, F: Scalar<G>>(
+    private x: F,
+    private r: F,
+    public g: G,
+    public h: G,
+    public comm: G
+) where comm == g*x + h*r {
+    let rx = random<F>;
+    let rr = random<F>;
+    t <- g*rx + h*rr;
+    c <- challenge<F*>;
+    sx <- rx + x*c;
+    sr <- rr + r*c;
+    verify(g*sx + h*sr == t + comm*c)
+}

@@ -98,6 +98,10 @@ name = "schnorr"
 path = "examples/schnorr/main.rs"
 
 [[example]]
+name = "okamoto"
+path = "examples/okamoto/main.rs"
+
+[[example]]
 name = "cp"
 path = "examples/cp/main.rs"
 

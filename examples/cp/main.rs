@@ -54,7 +54,15 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
-    println!("Analysis time:  {analysis_elapsed:.2?}");
+
+    let soundness_start = Instant::now();
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    let soundness_elapsed = soundness_start.elapsed();
+    match &soundness_result {
+        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+        Err(e) => println!("Soundness:      ✗ {}", e),
+    }
+    println!("Analysis time:  {analysis_elapsed:.2?} + {soundness_elapsed:.2?} soundness");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
