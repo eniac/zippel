@@ -91,18 +91,19 @@ pub(crate) fn valid_extractor<C: ArkConfig, T: Monomial>(
 ///
 /// Computes a Gröbner basis with a pure-lex elimination ordering that
 /// prioritises non-arg variables, then scans the basis for polynomials whose
-/// leading term is a single non-arg variable with all remaining variables
-/// visible (args or already extracted).  Each such polynomial is an
+/// leading term is a single non-arg variable. Each such polynomial is an
 /// *extractor* for that variable.
 ///
-/// Candidates are processed in ascending NodeIndex order so that
-/// earlier-introduced variables are extracted first and become visible
-/// when checking later ones.
+/// No visibility check is imposed on remainder variables: a local `e`
+/// extracted as `e = poly(d, args)` is valid even if `d` itself has no
+/// extractor.
+///
+/// Candidates are processed in ascending `LocalRank` order so that
+/// earlier-introduced variables are extracted first.
 ///
 /// This is best-effort: if no extractor exists for a given variable
-/// (e.g. the leading term is not a single variable, or the remainder
-/// contains invisible variables), the variable is simply skipped.  The
-/// caller decides how to handle unextracted variables.
+/// (e.g. the leading term is not a single variable), the variable is simply
+/// skipped. The caller decides how to handle unextracted variables.
 ///
 /// ## Two-phase construction
 ///
@@ -172,24 +173,6 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
 
     for (var, poly) in candidates {
         if extracted.contains(&var) {
-            continue;
-        }
-
-        let remainder_vars: Set<PRef> = poly
-            .terms
-            .iter()
-            .filter(|(t, _)| {
-                let tv = t.vars();
-                let tp = t.powers();
-                !(tv.len() == 1 && tv[0] == var && tp[0] == 1)
-            })
-            .flat_map(|(t, _)| t.vars())
-            .collect();
-
-        let all_visible = remainder_vars
-            .iter()
-            .all(|v| get_local_rank(v).is_none() || extracted.contains(v));
-        if !all_visible {
             continue;
         }
 
