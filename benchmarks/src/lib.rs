@@ -16,12 +16,21 @@ pub struct Timing {
 /// Number of verifier samples to take per `time_protocol` call. Each
 /// `Timing { verify }` returned by a `*_side::Setup::time_protocol(...)`
 /// is the MEAN of this many independent verifier invocations on the same
-/// proof; `prove` stays single-shot because provers are slow and one run
-/// already takes seconds-to-minutes at log_size=20.
+/// proof.
 ///
 /// IPA is the exception — its verifier is O(N) MSM, ~tens of seconds per
 /// call at S=20, so it stays single-sample. See `ipa::*::time_protocol`.
 pub const VERIFY_SAMPLES: u32 = 100;
+
+/// Number of prover samples to take per `time_protocol` call. Each
+/// `Timing { prove }` is the MEAN of this many independent prover
+/// invocations on the same inputs. Smaller than `VERIFY_SAMPLES`
+/// because each prover run is seconds-to-minutes at log_size=18-20,
+/// so 100 samples would make the sweep wall-clock prohibitive.
+///
+/// Schnorr is the exception — its prover is ~0.1ms, dominated by jitter,
+/// so it samples at `VERIFY_SAMPLES` rate (100). See `schnorr::*::time_protocol`.
+pub const PROVER_SAMPLES: u32 = 10;
 
 pub mod cache;
 pub mod groth16;

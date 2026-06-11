@@ -529,21 +529,29 @@ pub mod zippel_side {
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
 
-            let t = Instant::now();
-            let mut h_coeffs = witness_map(
-                &self.translated.mat,
-                self.translated.num_inputs,
-                self.translated.num_constraints,
-                &self.translated.full_assignment,
-            );
-            h_coeffs.resize(self.translated.h_size, GitFr::zero());
-            let mut inputs = self.inputs_base.clone();
-            inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("zippel groth16 prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let t = Instant::now();
+                let mut h_coeffs = witness_map(
+                    &self.translated.mat,
+                    self.translated.num_inputs,
+                    self.translated.num_constraints,
+                    &self.translated.full_assignment,
+                );
+                h_coeffs.resize(self.translated.h_size, GitFr::zero());
+                let mut inputs = self.inputs_base.clone();
+                inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs)
+                    .expect("zippel groth16 prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             self.handler.set_public_inputs(self.public_inputs.clone());
             let verifier_scheduled = self.handler.default_schedule_verifier();
@@ -650,19 +658,26 @@ pub mod native_side {
             // explicitly to produce h_coeffs; native prove does it as the
             // first step of `prove(...)`). Subtracting on one side biased
             // the comparison.
-            let t = Instant::now();
-            let proof = prove(
-                &self.keys,
-                &self.translated.mat,
-                self.translated.num_inputs,
-                self.translated.num_constraints,
-                &self.translated.full_assignment,
-                &self.translated.witness_assignment,
-                self.translated.h_size,
-                r,
-                s,
-            );
-            let prove_t = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let proof = prove(
+                    &self.keys,
+                    &self.translated.mat,
+                    self.translated.num_inputs,
+                    self.translated.num_constraints,
+                    &self.translated.full_assignment,
+                    &self.translated.witness_assignment,
+                    self.translated.h_size,
+                    r,
+                    s,
+                );
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove_t = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier convention: drop the leading constant-1 from the
             // public-input vector (matches ark-groth16's verify_proof).

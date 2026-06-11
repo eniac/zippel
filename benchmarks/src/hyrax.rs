@@ -86,12 +86,21 @@ pub mod zippel_side {
 
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, self.inputs.clone())
-                .expect("zippel hyrax prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = self.inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel hyrax prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
             let mut verify_sum = std::time::Duration::ZERO;
@@ -279,21 +288,28 @@ pub mod native_side {
             // Prove = commit + open. Mirrors the zippel side, which
             // synthesizes c_rows (row Pedersens) and the σ-protocol
             // triple (τ, δ, β) + responses inside one timed region.
-            let t = Instant::now();
-            let (coms, states) =
-                Hyrax::commit(&self.ck, [labeled], Some(&mut rng)).expect("hyrax commit");
-            let mut sponge = test_sponge::<Fr>();
-            let proof = Hyrax::open(
-                &self.ck,
-                [labeled],
-                &coms,
-                &point,
-                &mut sponge,
-                &states,
-                Some(&mut rng),
-            )
-            .expect("hyrax open");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let (coms, states) =
+                    Hyrax::commit(&self.ck, [labeled], Some(&mut rng)).expect("hyrax commit");
+                let mut sponge = test_sponge::<Fr>();
+                let proof = Hyrax::open(
+                    &self.ck,
+                    [labeled],
+                    &coms,
+                    &point,
+                    &mut sponge,
+                    &states,
+                    Some(&mut rng),
+                )
+                .expect("hyrax open");
+                prove_sum += t.elapsed();
+                last_outputs = Some((coms, proof));
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let (coms, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             // Hyrax::check takes &mut sponge; re-seed per iteration.
             // Sponge re-init happens OUTSIDE the per-call timer.

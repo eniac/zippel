@@ -203,11 +203,18 @@ pub mod native_side {
             // zippel side measures (`c_p <- pst13_commit(...)` plus the
             // open recursion). The MLE evaluation is the prover's
             // statement-of-fact and is implicit in the proof structure.
-            let t = Instant::now();
-            let comm = Pcs::commit(&self.ck, &poly);
-            let value = poly.evaluate(&point);
-            let proof = Pcs::open(&self.ck, &poly, &point);
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let comm = Pcs::commit(&self.ck, &poly);
+                let value = poly.evaluate(&point);
+                let proof = Pcs::open(&self.ck, &poly, &point);
+                prove_sum += t.elapsed();
+                last_outputs = Some((comm, value, proof));
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let (comm, value, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_ok = false;
@@ -434,12 +441,21 @@ pub mod zippel_side {
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
 
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, self.inputs_base.clone())
-                .expect("zippel pst13 prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = self.inputs_base.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel pst13 prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
             let mut verify_sum = std::time::Duration::ZERO;

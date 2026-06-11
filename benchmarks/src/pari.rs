@@ -450,14 +450,23 @@ pub mod zippel_side {
                 (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            // --- Time prove ---
+            // --- Time prove (mean of PROVER_SAMPLES samples) ---
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("zippel pari prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel pari prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // --- Time verify (mean of VERIFY_SAMPLES samples) ---
             self.handler.set_public_inputs(public_inputs);
@@ -568,16 +577,23 @@ pub mod native_side {
         }
 
         pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
-            let t = Instant::now();
-            let proof = Pari::<E>::prove_from_sr1cs(
-                &self.a_mat,
-                &self.b_mat,
-                &self.instance_assignment,
-                &self.witness_assignment,
-                &self.pk,
-            )
-            .expect("Pari::prove_from_sr1cs failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let proof = Pari::<E>::prove_from_sr1cs(
+                    &self.a_mat,
+                    &self.b_mat,
+                    &self.instance_assignment,
+                    &self.witness_assignment,
+                    &self.pk,
+                )
+                .expect("Pari::prove_from_sr1cs failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_ok = false;

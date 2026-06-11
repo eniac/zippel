@@ -177,12 +177,21 @@ pub mod zippel_side {
             ]);
 
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("run_prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("run_prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
             // Average over VERIFY_SAMPLES verifier runs on the same proof.
@@ -312,34 +321,39 @@ pub mod native_side {
             // threads ≥ 8 intra-MSM parallelism saturates and the gap
             // closes on its own; this fix matters most at threads = 1–4.
             let powers = self.powers.as_powers();
-            let t = Instant::now();
-            let (comm_out, proof_out) = {
-                use std::sync::Mutex;
-                use ark_poly_commit::PCCommitmentState;
-                let comm_out: Mutex<Option<_>> = Mutex::new(None);
-                let proof_out: Mutex<Option<_>> = Mutex::new(None);
-                let rand = ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
-                rayon::scope(|sc| {
-                    sc.spawn(|_| {
-                        let (comm, _r) =
-                            Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
-                        *comm_out.lock().unwrap() = Some(comm);
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs: Option<(_, _)> = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let (comm_out, proof_out) = {
+                    use std::sync::Mutex;
+                    use ark_poly_commit::PCCommitmentState;
+                    let comm_out: Mutex<Option<_>> = Mutex::new(None);
+                    let proof_out: Mutex<Option<_>> = Mutex::new(None);
+                    let rand =
+                        ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
+                    rayon::scope(|sc| {
+                        sc.spawn(|_| {
+                            let (comm, _r) =
+                                Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
+                            *comm_out.lock().unwrap() = Some(comm);
+                        });
+                        sc.spawn(|_| {
+                            let proof =
+                                Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
+                            *proof_out.lock().unwrap() = Some(proof);
+                        });
                     });
-                    sc.spawn(|_| {
-                        // `open` does the poly division + the witness MSM.
-                        // With `hiding_bound = None` on the commit side,
-                        // `Randomness::empty()` is the correct rand to
-                        // pair with it.
-                        let proof = Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
-                        *proof_out.lock().unwrap() = Some(proof);
-                    });
-                });
-                (
-                    comm_out.into_inner().unwrap().unwrap(),
-                    proof_out.into_inner().unwrap().unwrap(),
-                )
-            };
-            let prove = t.elapsed();
+                    (
+                        comm_out.into_inner().unwrap().unwrap(),
+                        proof_out.into_inner().unwrap().unwrap(),
+                    )
+                };
+                prove_sum += t.elapsed();
+                last_outputs = Some((comm_out, proof_out));
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let (comm_out, proof_out) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             // Average over VERIFY_SAMPLES verifier runs on the same proof.
             // Kzg::check borrows everything, so no clone needed in the loop.

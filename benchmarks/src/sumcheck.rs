@@ -74,12 +74,21 @@ pub mod zippel_side {
             ]);
 
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("run_prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("run_prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
             let mut verify_sum = std::time::Duration::ZERO;
@@ -149,11 +158,18 @@ pub mod native_side {
             poly.add_mle_list(vec![mle.clone(); md], Fr::one())
                 .expect("add_mle_list");
 
-            let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
-            let t = Instant::now();
-            let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
-                .expect("hyperplonk prove failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..crate::PROVER_SAMPLES {
+                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
+                let t = Instant::now();
+                let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
+                    .expect("hyperplonk prove failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let aux = poly.aux_info.clone();
             // Verify takes &mut transcript; we re-init transcript per

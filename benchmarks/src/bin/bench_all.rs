@@ -555,15 +555,24 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                     (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
                 });
 
-            let mut pt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
+            // Prover sampled PROVER_SAMPLES times. Each iteration
+            // re-inits the transcript (NIZK::prove takes &mut and consumes it).
+            let mut prove_sum = Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..benchmarks::PROVER_SAMPLES {
+                let mut pt = Transcript::new(b"bench_all_spartan");
+                let t = Instant::now();
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
+                }
+                let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
+                prove_sum += t.elapsed().saturating_sub(n_matvec);
+                last_proof = Some(proof);
             }
-            let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
-            let native_prove = t.elapsed().saturating_sub(n_matvec);
+            let native_prove = prove_sum / benchmarks::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier sampled VERIFY_SAMPLES times. Transcript
             // construction is the same trivial work the original timer
