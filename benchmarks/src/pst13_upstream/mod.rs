@@ -165,11 +165,12 @@ impl<E: Pairing> MultilinearPC<E> {
         polynomial: &impl MultilinearExtension<E::ScalarField>,
     ) -> Commitment<E> {
         let nv = polynomial.num_vars();
-        let scalars: Vec<_> = polynomial
-            .to_evaluations()
-            .into_iter()
-            .map(|x| x.into_bigint())
-            .collect();
+        // Parallel into_bigint. Upstream uses `.into_iter().map().collect()`
+        // — serial over 2^n elements; at n=18 that's 262K conversions on
+        // one thread, ~10-30ms of wasted wall-clock regardless of how
+        // many cores you have.
+        let evals = polynomial.to_evaluations();
+        let scalars: Vec<_> = evals.par_iter().map(|&x| x.into_bigint()).collect();
         let g_product =
             <E::G1 as VariableBaseMSM>::msm_bigint(&ck.powers_of_g[0], scalars.as_slice())
                 .into_affine();
@@ -177,6 +178,17 @@ impl<E: Pairing> MultilinearPC<E> {
     }
 
     /// Outputs an opening proof. PATCHED vs upstream — see module docs.
+    ///
+    /// Single fused dataflow pipeline (no Phase 1 → Phase 2 barrier):
+    /// the per-level folding loop dispatches round `i`'s MSM the moment
+    /// its `q_i` is computed, instead of accumulating all `q_levels`
+    /// first. Round `i`'s MSM therefore runs **concurrently** with
+    /// round `i+1`'s folding — matching zippel's dataflow scheduling,
+    /// where `pi_curr <- dot(q, ck_nxt)` becomes a graph node that
+    /// fires the moment `q` and `ck_nxt` are ready while the recursion
+    /// continues. The two-phase version had to wait for all folding to
+    /// finish before any MSM could start; the largest (round-0) MSM
+    /// could already have been in flight.
     pub fn open(
         ck: &CommitterKey<E>,
         polynomial: &impl MultilinearExtension<E::ScalarField>,
@@ -185,55 +197,47 @@ impl<E: Pairing> MultilinearPC<E> {
         assert_eq!(polynomial.num_vars(), ck.nv, "Invalid size of polynomial");
         let nv = polynomial.num_vars();
 
-        // ---- Phase 1: sequential per-level folding (the recursion). ----
-        // r_prev is folded down to r_next at each level; q_k is captured
-        // and held aside for the parallel MSM phase below. Inner b-loop
-        // parallelized via par_iter — within a level each b is independent.
-        let mut r_prev: Vec<E::ScalarField> = polynomial.to_evaluations();
-        let mut q_levels: Vec<Vec<E::ScalarField>> = Vec::with_capacity(nv);
-
-        for i in 0..nv {
-            let k = nv - i;
-            let point_at_k = point[i];
-            let one_minus_z = E::ScalarField::one() - &point_at_k;
-            let half = 1usize << (k - 1);
-
-            let (q_k, r_next): (Vec<_>, Vec<_>) = (0..half)
-                .into_par_iter()
-                .map(|b| {
-                    let r_lo = r_prev[b << 1];
-                    let r_hi = r_prev[(b << 1) + 1];
-                    let q_b = r_hi - r_lo;
-                    let r_next_b = r_lo * one_minus_z + r_hi * point_at_k;
-                    (q_b, r_next_b)
-                })
-                .unzip();
-
-            q_levels.push(q_k);
-            r_prev = r_next;
-        }
-
-        // ---- Phase 2: round MSMs run concurrently via rayon::scope. ----
-        // Each level's MSM:
-        //   1. pre-sums adjacent base pairs (Fix 1) — halves MSM size.
-        //   2. runs in parallel with other rounds (Fix 2) — critical
-        //      path is the first (largest) MSM, not the sum of all.
         let proofs_slot: Vec<Mutex<Option<E::G2Affine>>> =
             (0..nv).map(|_| Mutex::new(None)).collect();
+        let ck_powers_h = &ck.powers_of_h;
 
         rayon::scope(|sc| {
+            let mut r_prev: Vec<E::ScalarField> = polynomial.to_evaluations();
+
             for i in 0..nv {
                 let k = nv - i;
+                let point_at_k = point[i];
+                let one_minus_z = E::ScalarField::one() - &point_at_k;
                 let half = 1usize << (k - 1);
-                let ck_full: &Vec<E::G2Affine> = &ck.powers_of_h[i];
-                let q_k = &q_levels[i];
+
+                // Compute q_k and r_next in one parallel pass. The outer
+                // recursion is genuinely sequential (round i+1's folding
+                // needs r_next from round i), so this is the one synch
+                // point per level — but it's all we wait on before
+                // launching the MSM.
+                let (q_k, r_next): (Vec<E::ScalarField>, Vec<E::ScalarField>) = (0..half)
+                    .into_par_iter()
+                    .map(|b| {
+                        let r_lo = r_prev[b << 1];
+                        let r_hi = r_prev[(b << 1) + 1];
+                        let q_b = r_hi - r_lo;
+                        let r_next_b = r_lo * one_minus_z + r_hi * point_at_k;
+                        (q_b, r_next_b)
+                    })
+                    .unzip();
+
+                // Hand `q_k` off to the spawned MSM task by moving it
+                // into the closure. The next iteration only needs
+                // `r_next`, so the round-i MSM can run unhindered while
+                // round i+1's folding starts on free cores.
+                let ck_full: &Vec<E::G2Affine> = &ck_powers_h[i];
                 let slot = &proofs_slot[i];
 
                 sc.spawn(move |_| {
-                    // Fix 1: pre-sum adjacent pairs of bases. The original
-                    // MSM is over `2^k` bases with q[b] duplicated at
-                    // indices 2b and 2b+1 — equivalent to an MSM over
-                    // `2^(k-1)` summed bases scaled by q[b].
+                    // Fix 1: pre-sum adjacent pairs of bases — the
+                    // upstream MSM is over `2^k` bases with q[b]
+                    // duplicated at indices 2b and 2b+1, equivalent to
+                    // an MSM over `2^(k-1)` summed bases scaled by q[b].
                     let bases_summed_proj: Vec<E::G2> = (0..half)
                         .into_par_iter()
                         .map(|b| {
@@ -243,15 +247,14 @@ impl<E: Pairing> MultilinearPC<E> {
                     let bases_summed: Vec<E::G2Affine> =
                         E::G2::normalize_batch(&bases_summed_proj);
 
-                    let scalars: Vec<_> = q_k
-                        .par_iter()
-                        .map(|x| x.into_bigint())
-                        .collect();
+                    let scalars: Vec<_> = q_k.par_iter().map(|x| x.into_bigint()).collect();
 
                     let pi_h = <E::G2 as VariableBaseMSM>::msm_bigint(&bases_summed, &scalars)
                         .into_affine();
                     *slot.lock().unwrap() = Some(pi_h);
                 });
+
+                r_prev = r_next;
             }
         });
 

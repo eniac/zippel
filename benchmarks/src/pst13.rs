@@ -241,22 +241,35 @@ pub mod native_side {
             let poly = DenseMultilinearExtension::<Fr>::rand(self.n, &mut rng);
             let point: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
 
-            // Prove timer covers commit + evaluate + open — same scope the
-            // zippel side measures (`c_p <- pst13_commit(...)` plus the
-            // open recursion). The MLE evaluation is the prover's
-            // statement-of-fact and is implicit in the proof structure.
+            // The claimed evaluation `y = p̃(z)` is the prover's
+            // statement-of-fact — the zippel side takes it as a public
+            // input rather than recomputing it, so timing `poly.evaluate`
+            // here would penalize native for work the zippel proto
+            // simply skips. Compute it ONCE outside the timed region;
+            // the prover loop below times only commit + open, matching
+            // exactly what the zippel proto times.
+            let value = poly.evaluate(&point);
+
+            // Prove timer covers commit + open. `commit` (one MSM of size
+            // 2^n over G1) and `open` (the nv quotient MSMs over G2) have
+            // NO data dependency on each other — both read only `p` and
+            // `ck`. The zippel runtime schedules them concurrently in its
+            // dataflow graph; we mirror that with `rayon::join` so the
+            // commit MSM overlaps with the first round of open's folding
+            // + first G2 MSM, instead of idling cores while it runs.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_outputs = None;
             for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
-                let comm = Pcs::commit(&self.ck, &poly);
-                let value = poly.evaluate(&point);
-                let proof = Pcs::open(&self.ck, &poly, &point);
+                let (comm, proof) = rayon::join(
+                    || Pcs::commit(&self.ck, &poly),
+                    || Pcs::open(&self.ck, &poly, &point),
+                );
                 prove_sum += t.elapsed();
-                last_outputs = Some((comm, value, proof));
+                last_outputs = Some((comm, proof));
             }
             let prove = prove_sum / *crate::PROVER_SAMPLES;
-            let (comm, value, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
+            let (comm, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_ok = false;
