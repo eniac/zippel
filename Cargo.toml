@@ -214,11 +214,29 @@ path = "examples/tests/type_alias/main.rs"
 name = "r1cs_sigma"
 path = "examples/r1cs_sigma/main.rs"
 
-# Quarantined while migrating off removed public `marginalize(cfg)` syntax:
-# spartan, mle_sumcheck, hyperplonk_zerocheck, hyperplonk_productcheck,
-# hyperplonk_multiset, hyperplonk_permutation, hyperplonk.
-# Their sources remain on disk for follow-up migration but are intentionally
-# not registered as runnable Cargo examples in this iteration.
+[[example]]
+name = "hyperplonk"
+path = "examples/hyperplonk/main.rs"
+
+[[example]]
+name = "hyperplonk_zerocheck"
+path = "examples/hyperplonk_zerocheck/main.rs"
+
+[[example]]
+name = "hyperplonk_productcheck"
+path = "examples/hyperplonk_productcheck/main.rs"
+
+[[example]]
+name = "hyperplonk_multiset"
+path = "examples/hyperplonk_multiset/main.rs"
+
+[[example]]
+name = "hyperplonk_permutation"
+path = "examples/hyperplonk_permutation/main.rs"
+
+[[example]]
+name = "mle_sumcheck"
+path = "examples/mle_sumcheck/main.rs"
 
 [[example]]
 name = "sc_test_m3"
@@ -255,4 +273,8 @@ path = "examples/groth16/main.rs"
 [[example]]
 name = "dekart"
 path = "examples/dekart/main.rs"
+
+[[example]]
+name = "spartan"
+path = "examples/spartan/main.rs"
 

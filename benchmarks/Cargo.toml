@@ -150,9 +150,10 @@ path = "src/bin/bench_all.rs"
 name = "spartan_bench"
 path = "src/bin/spartan_bench.rs"
 
-# Zippel-Spartan comparison is quarantined while its embedded Zippel source
-# still uses the removed public `marginalize(cfg)` syntax. The native-only
-# `spartan_bench` binary above remains registered.
+[[bin]]
+name = "spartan_compare"
+path = "src/bin/spartan_compare.rs"
+
 [[bench]]
 name = "sumcheck"
 harness = false

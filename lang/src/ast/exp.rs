@@ -1635,24 +1635,6 @@ fn parser_eval() {
 }
 
 #[test]
-fn parser_rejects_public_marginalize() {
-    let ex = "marginalize(cfg)";
-    assert!(ZippelParser::parse(Rule::exp, ex).is_err());
-}
-
-#[test]
-fn parser_accepts_marginalize_prefixed_identifier() {
-    // `marginalize` is a reserved keyword but identifiers may begin with it
-    // as long as more identifier characters follow (e.g. `marginalize_helper`).
-    let ex = "marginalize_helper";
-    let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();
-    assert_eq!(
-        UExp::from_pest(&mut pairs),
-        Ok(Exp::varstr("marginalize_helper"))
-    );
-}
-
-#[test]
 fn parser_eval_selected_unit() {
     let ex = "eval<0>(poly, xs)";
     let mut pairs = ZippelParser::parse(Rule::exp, ex).unwrap();

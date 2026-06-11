@@ -556,7 +556,7 @@ fn knowledge_named_let_eval_product() {
     let ex = r#"
         proto ke<F: Field, N: Size>(public a: Uni<F, N>) where a == a {
             r1 <- challenge<F>;
-            let l = eval(a, [r1]);
+            let l = a(r1);
             verify(l == l)
         }"#;
 

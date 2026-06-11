@@ -1,11 +1,12 @@
-// Sample a univariate polynomial one point at a time. This intentionally avoids
-// `eval(p, points)`: a one-variable MLE residual would interpret `points` as one
-// multivariate coordinate vector instead of as a batch of scalar sample points.
+// Sample a univariate polynomial one point at a time via single-scalar
+// application `p(t)`. Binary `eval(p, vector)` on a univariate poly is a type
+// error: a one-variable residual would misread the vector as one multivariate
+// coordinate point instead of a batch of scalar sample points.
 fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
     public p: Poly<F, 1, MAX_DEGREE_CONST>,
     public points: [F; MAX_DEGREE_CONST + 1]
 ) -> [F; MAX_DEGREE_CONST + 1] {
-    [(let v = eval(p, [t]); v[0]) for t in points]
+    [p(t) for t in points]
 }
 
 // Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on the explicit
@@ -47,8 +48,7 @@ fn sumcheck_round<F: Field, NUM_VARS_CONST: Size, V: 3..NUM_VARS_CONST + 1, MAX_
 
     let g = interpolate(eval_points, evs_msg);
     r_next <- challenge<F>;
-    let next_prev_vec = eval(g, [r_next]);
-    let next_prev = next_prev_vec[0];
+    let next_prev = g(r_next);
 
     let next_challenges = challenges ++ [r_next];
     sumcheck_round(residual_poly, points, next_challenges, next_prev, r_next, curr_round + 1)
@@ -109,7 +109,6 @@ proto sumcheck<F: Field, NUM_VARS_CONST: Size, MAX_DEGREE_CONST: Size>(
 
     r1 <- challenge<F>;
     let g = interpolate(points, evs0_msg);
-    let prev_vec = eval(g, [r1]);
-    let prev = prev_vec[0];
+    let prev = g(r1);
     verify(sumcheck_round(poly, points, [r1], prev, r1, 1))
 }

@@ -4,8 +4,8 @@ proto univariate_zero_check<F: Field, S: Size, N: S>(
 ) where p == p {
     q <- p / v;
     r <- challenge<F>;
-    let left_hand = eval(p, [r]);
-    let right_hand = eval(q, [r]) * eval(v, [r]);
+    let left_hand = p(r);
+    let right_hand = q(r) * v(r);
     verify(left_hand == right_hand)
     // verify(p(r) == q(r) * v(r));
 }

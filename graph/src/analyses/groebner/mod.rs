@@ -13,7 +13,7 @@ mod speedup_bench;
 
 use crate::analyses::TransClos;
 use crate::pref::PRef;
-use crate::{GOp, HOp, Op, Ref};
+use crate::{GOp, HOp, Op, ReduceMapDomainFact, Ref, mk};
 use lang::ast::BinOp;
 use lang::id::Vid;
 
@@ -2117,9 +2117,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Evaluate(_, Some(_), None) => {
                 Self::uncovered_op("selected-evaluate-missing-points", &pr);
             }
-            Op::HypercubeReduceSelected(_, _, _) => {
-                Self::uncovered_op("hypercube-reduce-selected", &pr);
+            Op::Map(ref domain, ref body) => self.map_to_poly(pr, domain, body, &[], result),
+            Op::ReduceMap(rop, ref domain, ref body, fact) => {
+                self.reduce_map_to_poly(pr, rop, domain, body, fact, &[], result)
             }
+            Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &pr),
             // Phase 10: `Op::Reduce(op, v)` � left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
@@ -2402,7 +2404,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
 
         let v_src = PolySource::from_ref_vars(&result.prefs, v);
+        self.reduce_polysource(pr, rop, v_src, elem_t, n, result);
+    }
 
+    /// Shared fold for `Op::Reduce` and `Op::ReduceMap`: combine the `n`
+    /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `pr`.
+    fn reduce_polysource(
+        &mut self,
+        pr: PRef,
+        rop: BinOp,
+        v_src: PolySource<C, T>,
+        elem_t: ATyp,
+        n: usize,
+        result: &mut GroebnerResult<C, T>,
+    ) {
         match rop {
             BinOp::Add => {
                 let mut acc: PolySource<C, T> = PolySource::new(
@@ -2535,6 +2550,243 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 unreachable!("reduce(dot, _) is rejected by the type checker");
             }
         }
+    }
+
+    /// Materialize an inline Map/ReduceMap body op-tree into registered
+    /// sentinel PRefs and return the PRef bound to its result.
+    /// `loops[level]` is the element PRef of the enclosing loop at de Bruijn
+    /// `level`. Returns `None` for an op the encoding cannot model (caller
+    /// then diverges via `uncovered_op`).
+    fn body_to_poly(
+        &mut self,
+        body: &HOp<C>,
+        loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) -> Option<PRef> {
+        match body.get() {
+            Op::Ref(r, _) => Some(result.find_ref(r)),
+            Op::LoopParam(level, _) => loops.get(*level).cloned(),
+            Op::Value(_) => {
+                let name = self.ns.next_name("gb_map_body");
+                let pf = self.sentinel_pref(&name, body.typ());
+                result.register(&pf);
+                self.add_op(pf.clone(), body.get().clone(), result);
+                Some(pf)
+            }
+            Op::Map(d, b) => {
+                let name = self.ns.next_name("gb_map_body");
+                let pf = self.sentinel_pref(&name, body.typ());
+                result.register(&pf);
+                self.map_to_poly(pf.clone(), d, b, loops, result);
+                Some(pf)
+            }
+            Op::ReduceMap(rop, d, b, fact) => {
+                let name = self.ns.next_name("gb_map_body");
+                let pf = self.sentinel_pref(&name, body.typ());
+                result.register(&pf);
+                self.reduce_map_to_poly(pf.clone(), *rop, d, b, *fact, loops, result);
+                Some(pf)
+            }
+            _ => {
+                let rebuilt = self.rebuild_body_op(body, loops, result)?;
+                let name = self.ns.next_name("gb_map_body");
+                let pf = self.sentinel_pref(&name, body.typ());
+                result.register(&pf);
+                self.add_op(pf.clone(), rebuilt, result);
+                Some(pf)
+            }
+        }
+    }
+
+    /// Materialize a body child to an add_op-ready operand: `Op::Value` and
+    /// `Op::Ref` stay verbatim (both resolve in `ref_vars`); everything else
+    /// is bound to a fresh sentinel and referenced by `Op::Ref`.
+    fn body_child(
+        &mut self,
+        child: &HOp<C>,
+        loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) -> Option<HOp<C>> {
+        match child.get() {
+            Op::Value(_) | Op::Ref(_, _) => Some(child.clone()),
+            _ => {
+                let pf = self.body_to_poly(child, loops, result)?;
+                Some(mk::<C>(Op::Ref(pf.reference, pf.typ.clone())))
+            }
+        }
+    }
+
+    /// Rebuild a compound body op with each child replaced by an add_op-ready
+    /// operand (see `body_child`). Returns `None` for an unsupported variant.
+    fn rebuild_body_op(
+        &mut self,
+        body: &HOp<C>,
+        loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) -> Option<GOp<C>> {
+        Some(match body.get() {
+            Op::Bin(op, a, b, typ) => Op::Bin(
+                *op,
+                self.body_child(a, loops, result)?,
+                self.body_child(b, loops, result)?,
+                typ.clone(),
+            ),
+            Op::Ram(a, b) => Op::Ram(
+                self.body_child(a, loops, result)?,
+                self.body_child(b, loops, result)?,
+            ),
+            Op::Evaluate(p, range, pts) => Op::Evaluate(
+                self.body_child(p, loops, result)?,
+                *range,
+                match pts {
+                    Some(x) => Some(self.body_child(x, loops, result)?),
+                    None => None,
+                },
+            ),
+            Op::Poly(a) => Op::Poly(self.body_child(a, loops, result)?),
+            Op::Coef(a) => Op::Coef(self.body_child(a, loops, result)?),
+            Op::Mle(a) => Op::Mle(self.body_child(a, loops, result)?),
+            Op::Ifft(a) => Op::Ifft(self.body_child(a, loops, result)?),
+            Op::Fft(a) => Op::Fft(self.body_child(a, loops, result)?),
+            Op::Interpolate(pts, evals) => Op::Interpolate(
+                self.body_child(pts, loops, result)?,
+                self.body_child(evals, loops, result)?,
+            ),
+            Op::Proj(a, field, typ) => Op::Proj(
+                self.body_child(a, loops, result)?,
+                field.clone(),
+                typ.clone(),
+            ),
+            Op::Vec(vs) => {
+                let mut children = Vec::with_capacity(vs.len());
+                for v in vs {
+                    children.push(self.body_child(v, loops, result)?);
+                }
+                Op::Vec(children)
+            }
+            Op::Record(fields) => {
+                let mut out: Ctx<String, HOp<C>> = Ctx::new();
+                for (k, v) in fields.iter() {
+                    let child = self.body_child(v, loops, result)?;
+                    out.insert(k, &child);
+                }
+                Op::Record(out)
+            }
+            _ => return None,
+        })
+    }
+
+    /// Explode a domain `v: [F; n]` into `n` registered element PRefs, each
+    /// bound (`elem_i[j] = domain[i][j]`) so it is independently Ref-addressable.
+    fn explode_domain(
+        &mut self,
+        domain: &HOp<C>,
+        loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) -> Option<Vec<PRef>> {
+        let (elem_t, n) = match domain.typ() {
+            ATyp::Vec(box e, n) => (e, n),
+            _ => return None,
+        };
+        let src: PolySource<C, T> = match domain.get() {
+            Op::Ref(_, _) | Op::Value(_) => PolySource::from_ref_vars(&result.prefs, domain.get()),
+            _ => {
+                let dp = self.body_to_poly(domain, loops, result)?;
+                PolySource::new(
+                    dp.slots()
+                        .into_iter()
+                        .map(|s| SparsePolynomial::var(&s))
+                        .collect(),
+                    dp.typ.clone(),
+                )
+            }
+        };
+        let mut elems = Vec::with_capacity(n);
+        for i in 0..n {
+            let es = src.at_index(i)?;
+            let name = self.ns.next_name("gb_map_elem");
+            let elem_pf = self.sentinel_pref(&name, elem_t.clone());
+            result.register(&elem_pf);
+            for (slot, poly) in elem_pf.slots().into_iter().zip(es.polys) {
+                result.pl.insert(&slot, &poly);
+                result.basis.push(poly - SparsePolynomial::var(&slot));
+            }
+            elems.push(elem_pf);
+        }
+        Some(elems)
+    }
+
+    /// `Op::Map`: explode the domain, apply the body to each element, and
+    /// link result slot `i` to the body's output for element `i`.
+    fn map_to_poly(
+        &mut self,
+        pr: PRef,
+        domain: &HOp<C>,
+        body: &HOp<C>,
+        parent_loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        let elems = match self.explode_domain(domain, parent_loops, result) {
+            Some(e) => e,
+            None => Self::uncovered_op("map-domain", &pr),
+        };
+        for (i, elem) in elems.iter().enumerate() {
+            let mut loops = parent_loops.to_vec();
+            loops.push(elem.clone());
+            match self.body_to_poly(body, &loops, result) {
+                Some(vi) => self.link_to_witness(&pr.with_index(i).unwrap(), &vi, result),
+                None => Self::uncovered_op("map-body", &pr),
+            }
+        }
+    }
+
+    /// `Op::ReduceMap`: the `CompleteBooleanHypercube` fast path stays opaque
+    /// (its 2^k domain must never be exploded). Otherwise explode the domain,
+    /// map the body per element, and fold with `reduce_polysource`.
+    #[allow(clippy::too_many_arguments)]
+    fn reduce_map_to_poly(
+        &mut self,
+        pr: PRef,
+        rop: BinOp,
+        domain: &HOp<C>,
+        body: &HOp<C>,
+        fact: ReduceMapDomainFact,
+        parent_loops: &[PRef],
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        if let ReduceMapDomainFact::CompleteBooleanHypercube { .. } = fact {
+            Self::uncovered_op("reduce-map-hypercube", &pr);
+        }
+        let elems = match self.explode_domain(domain, parent_loops, result) {
+            Some(e) => e,
+            None => Self::uncovered_op("reduce-map-domain", &pr),
+        };
+        let n = elems.len();
+        if n == 0 {
+            Self::uncovered_op("reduce-map-empty", &pr);
+        }
+        let mut mapped: Vec<PRef> = Vec::with_capacity(n);
+        for elem in elems.iter() {
+            let mut loops = parent_loops.to_vec();
+            loops.push(elem.clone());
+            match self.body_to_poly(body, &loops, result) {
+                Some(vi) => mapped.push(vi),
+                None => Self::uncovered_op("reduce-map-body", &pr),
+            }
+        }
+        if n == 1 {
+            self.link_to_witness(&pr, &mapped[0], result);
+            return;
+        }
+        let elem_t = mapped[0].typ.clone();
+        let combined = PolySource::new(
+            mapped
+                .iter()
+                .flat_map(|p| p.slots().into_iter().map(|s| SparsePolynomial::var(&s)))
+                .collect(),
+            ATyp::vec(&elem_t, n),
+        );
+        self.reduce_polysource(pr, rop, combined, elem_t, n, result);
     }
 }
 
@@ -4931,6 +5183,162 @@ mod tests {
             Some(expected),
             "pl[result] should map to v0+v1+v2"
         );
+    }
+
+    /// Build a generic (`Unknown`-fact) `Op::ReduceMap(+, xs, body)` over
+    /// `xs : [F; 3]` (node 0) into `result : F` (node 1). `add_op` must
+    /// complete without an `uncovered_op` panic — reaching the return proves
+    /// the op is modeled, not dropped.
+    fn build_reduce_map_case(
+        body: GOp<ArkBls12_381>,
+    ) -> (
+        GroebnerResult<ArkBls12_381, GrevLexTerm>,
+        crate::PRef,
+        crate::PRef,
+    ) {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_v);
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::ReduceMap(
+            BinOp::Add,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
+            mk::<ArkBls12_381>(body),
+            ReduceMapDomainFact::Unknown,
+        );
+        builder.add_op(result.clone(), op, &mut gresult);
+        (gresult, pref_v, result)
+    }
+
+    /// Verify a generic reduce-map encoding by a concrete witness: derive the
+    /// full trace from `pl` to a fixpoint, confirm every ideal generator
+    /// vanishes at the witness, the derived `result` equals `expected`, and
+    /// the ideal forces `result = symbolic`.
+    fn assert_reduce_map_encoding(
+        gresult: &GroebnerResult<ArkBls12_381, GrevLexTerm>,
+        pref_v: &crate::PRef,
+        result: &crate::PRef,
+        xs: [ark_bls12_381::Fr; 3],
+        expected: ark_bls12_381::Fr,
+        symbolic: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm>,
+    ) {
+        use ark_bls12_381::Fr;
+        let lit = |f: Fr| SparsePolynomial::<Fr, GrevLexTerm>::lit(&f);
+        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+
+        // 1. Seed inputs, then resolve `pl` to a fixpoint.
+        let mut subst: Ctx<crate::PRef, SparsePolynomial<Fr, GrevLexTerm>> = Ctx::new();
+        for (k, x) in [0usize, 1, 2]
+            .iter()
+            .map(|&i| (pref_v.clone().with_slot(i).unwrap(), xs[i]))
+        {
+            subst.insert(&k, &lit(x));
+        }
+        let keys = gresult.pl.keys();
+        loop {
+            let mut progress = false;
+            for k in keys.iter() {
+                if subst.contains(k) {
+                    continue;
+                }
+                let resolved = gresult.pl.get(k).unwrap().clone().inline_vars(&subst).0;
+                if resolved.is_constant() {
+                    subst.insert(k, &resolved);
+                    progress = true;
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
+
+        // 2. Every generator vanishes at the witness (ideal is satisfiable).
+        for b in gresult.basis.iter() {
+            assert!(
+                b.clone().inline_vars(&subst).0.is_zero(),
+                "generator does not vanish at witness: {:?}",
+                b
+            );
+        }
+
+        // 3. The encoding's derived result equals the externally-computed answer.
+        assert_eq!(
+            subst.get(result).cloned(),
+            Some(lit(expected)),
+            "reduce-map result wrong under concrete witness"
+        );
+
+        // 4. The ideal *forces* result to the symbolic reduce-map sum.
+        let membership = &var(result) - &symbolic;
+        assert!(
+            gresult.basis.buchberger::<8>().reduce(membership).is_zero(),
+            "ideal does not force result to the symbolic reduce-map sum"
+        );
+    }
+
+    #[test]
+    fn test_reduce_map_groebner_identity_body() {
+        // reduce(+, [x for x in xs]) == x0 + x1 + x2
+        let body: GOp<ArkBls12_381> = Op::LoopParam(0, ATyp::scalar());
+        let (gresult, pref_v, result) = build_reduce_map_case(body);
+
+        use ark_bls12_381::Fr;
+        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+        let xs = [Fr::from(3u64), Fr::from(5u64), Fr::from(7u64)];
+        let symbolic = &var(&pref_v.clone().with_slot(0).unwrap())
+            + &(&var(&pref_v.clone().with_slot(1).unwrap())
+                + &var(&pref_v.clone().with_slot(2).unwrap()));
+        assert_reduce_map_encoding(
+            &gresult,
+            &pref_v,
+            &result,
+            xs,
+            xs[0] + xs[1] + xs[2],
+            symbolic,
+        );
+    }
+
+    #[test]
+    fn test_reduce_map_groebner_square_body() {
+        use lang::ast::BinOp;
+        // reduce(+, [x*x for x in xs]) == x0^2 + x1^2 + x2^2
+        let scalar_t = ATyp::scalar();
+        let body: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Mul,
+            mk::<ArkBls12_381>(Op::LoopParam(0, scalar_t.clone())),
+            mk::<ArkBls12_381>(Op::LoopParam(0, scalar_t.clone())),
+            scalar_t,
+        );
+        let (gresult, pref_v, result) = build_reduce_map_case(body);
+
+        use ark_bls12_381::Fr;
+        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
+        let sq = |p: &crate::PRef| &var(p) * &var(p);
+        let symbolic = &(&sq(&pref_v.clone().with_slot(0).unwrap())
+            + &sq(&pref_v.clone().with_slot(1).unwrap()))
+            + &sq(&pref_v.clone().with_slot(2).unwrap());
+        let xs = [Fr::from(3u64), Fr::from(5u64), Fr::from(7u64)];
+        let expected = xs[0] * xs[0] + xs[1] * xs[1] + xs[2] * xs[2];
+        assert_reduce_map_encoding(&gresult, &pref_v, &result, xs, expected, symbolic);
     }
 
     #[test]

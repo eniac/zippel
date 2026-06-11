@@ -26,6 +26,14 @@ use std::sync::RwLock;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug, Hash)]
 pub struct Ref(pub NodeIndex);
 
+/// Domain knowledge for a fused `Op::ReduceMap`. `CompleteBooleanHypercube`
+/// marks the sumcheck fast path whose 2^k domain is never materialized.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Ord, PartialOrd, Hash)]
+pub enum ReduceMapDomainFact {
+    Unknown,
+    CompleteBooleanHypercube { tail_num_vars: usize },
+}
+
 /// Typed operations are expressions which are not important
 /// enough to be nodes in the graph.
 #[derive(PartialEq, Eq, Clone, Debug, Ord, PartialOrd, Hash)]
@@ -85,11 +93,15 @@ pub enum Op<C: ArkConfig, R> {
     /// `(Some(range), Some(fixed))` keeps `range` free and fixes the rest.
     Evaluate(HOp<C>, Option<CRange>, Option<HOp<C>>),
 
-    /// Private fused sumcheck round reduction over Boolean tails.
-    ///
-    /// This represents `reduce(+, [eval<range>(poly, tail) for tail in
-    /// boolean_hypercube])` without constructing the selected-eval vector.
-    HypercubeReduceSelected(HOp<C>, CRange, usize),
+    /// Placeholder for the current element of an enclosing Map/ReduceMap body.
+    /// `usize` is a de Bruijn LEVEL into the runtime loop-parameter stack.
+    LoopParam(usize, ATyp),
+
+    /// Persistent map: `[body for x in domain]`. `body` may contain `LoopParam`.
+    Map(HOp<C>, HOp<C>),
+
+    /// Explicit-domain fused reduce-map: `reduce(op, [body for x in domain])`.
+    ReduceMap(BinOp, HOp<C>, HOp<C>, ReduceMapDomainFact),
 
     /// Assertion or verification check
     Check(HOp<C>),
@@ -198,7 +210,9 @@ impl<C: ArkConfig, R> Op<C, R> {
             Op::Check(_) => 21,
             Op::Poly(_) => 22,
             Op::Evaluate(_, _, _) => 23,
-            Op::HypercubeReduceSelected(_, _, _) => 24,
+            Op::Map(_, _) => 30,
+            Op::ReduceMap(_, _, _, _) => 31,
+            Op::LoopParam(_, _) => 32,
             Op::Coef(_) => 25,
             Op::Mle(_) => 26,
             Op::Reduce(_, _) => 27,
@@ -270,23 +284,21 @@ impl<C: ArkConfig, R> Op<C, R> {
                     // Compute the result type of evaluating polynomial `p` at
                     // the k-length vector of points `x`.
                     //
-                    // Shapes (k = |x|):
-                    //   Uni(_) / VPoly(1, _)        at Vec(b, k) / Uni(k) -> Vec(b, k)  (batched)
+                    // Shapes (k = |x|); a vector point is ONE multivariate point.
+                    // (A univariate Uni at a vector is a type error, caught in lang::infer.)
                     //   VPoly(n, _)   with k == n   at Vec(b, n)          -> b           (full)
                     //   VPoly(n, m)   with k <  n   at Vec(b, k)          -> VPoly(n-k, m) (partial)
                     //   Mle(n)        with k == n   at Vec(b, n)          -> b           (full)
                     //   Mle(n)        with k <  n   at Vec(b, k)          -> Mle(n - k)  (partial)
                     let x_typ = x.typ();
-                    let (elem_typ, k) = match x_typ.clone() {
-                        ATyp::Vec(box t, n) => (t, n),
-                        ATyp::Uni(n) => (ATyp::scalar(), n),
+                    let k = match &x_typ {
+                        ATyp::Vec(_, n) => *n,
+                        ATyp::Uni(n) => *n,
                         _ => return x_typ,
                     };
                     match p.typ() {
-                        ATyp::Uni(_) => ATyp::Vec(Box::new(elem_typ), k),
-                        ATyp::VPoly(1, _) => ATyp::Vec(Box::new(elem_typ), k),
-                        ATyp::VPoly(n, _) if k == n => elem_typ,
-                        ATyp::Mle(n) if k == n => elem_typ,
+                        ATyp::VPoly(n, _) if k == n => ATyp::scalar(),
+                        ATyp::Mle(n) if k == n => ATyp::scalar(),
                         ATyp::VPoly(n, m) if k < n => ATyp::VPoly(n - k, m),
                         ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
                         _ => x_typ,
@@ -298,7 +310,31 @@ impl<C: ArkConfig, R> Op<C, R> {
                     panic!("Op::Evaluate selected mode requires explicit points/fixed values")
                 }
             },
-            Op::HypercubeReduceSelected(p, range, _) => selected_eval_typ(p, range),
+            Op::LoopParam(_, typ) => typ.clone(),
+            Op::Map(domain, body) => {
+                let (_, n) = domain.typ().into_vec();
+                ATyp::vec(&body.typ(), n)
+            }
+            Op::ReduceMap(op, domain, body, fact) => {
+                let n = match fact {
+                    ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars } => 1usize
+                        .checked_shl(*tail_num_vars as u32)
+                        .expect("ReduceMap hypercube arity overflow"),
+                    ReduceMapDomainFact::Unknown => domain.typ().into_vec().1,
+                };
+                let elem = body.typ();
+                let mut acc = elem.clone();
+                for _ in 1..n {
+                    let next = ATyp::lub_op(*op, &acc, &elem, &Nothing).unwrap_or_else(|_| {
+                        panic!("ReduceMap: incompatible body type {:?} for {:?}", elem, op)
+                    });
+                    if next == acc {
+                        break;
+                    }
+                    acc = next;
+                }
+                acc
+            }
             // Op::Coef(p) flattens a polynomial to its coefficient vector.
             // The resulting Vec length equals the polynomial's coefficient
             // count (see ATyp::size).
@@ -426,8 +462,16 @@ impl<C: HasOpFactory> GOp<C> {
         Op::Evaluate(mk::<C>(p), Some(range), Some(mk::<C>(fixed)))
     }
 
-    pub fn hypercube_reduce_selected(p: Self, range: CRange, tail_num_vars: usize) -> Self {
-        Op::HypercubeReduceSelected(mk::<C>(p), range, tail_num_vars)
+    pub fn loop_param(level: usize, typ: ATyp) -> Self {
+        Op::LoopParam(level, typ)
+    }
+
+    pub fn map(domain: Self, body: Self) -> Self {
+        Op::Map(mk::<C>(domain), mk::<C>(body))
+    }
+
+    pub fn reduce_map(op: BinOp, domain: Self, body: Self, fact: ReduceMapDomainFact) -> Self {
+        Op::ReduceMap(op, mk::<C>(domain), mk::<C>(body), fact)
     }
 
     /// Random access simplifications
@@ -885,7 +929,10 @@ impl<C: ArkConfig> GOp<C> {
                 None => p.references(),
                 Some(x) => p.references().into_iter().chain(x.references()).collect(),
             },
-            Op::HypercubeReduceSelected(p, _, _) => p.references(),
+            Op::LoopParam(_, _) => vec![],
+            Op::Map(d, b) | Op::ReduceMap(_, d, b, _) => {
+                d.references().into_iter().chain(b.references()).collect()
+            }
             Op::Vec(vs) => vs.iter().flat_map(|v| v.references()).collect(),
             Op::Record(fields) => fields.iter().flat_map(|(_, v)| v.references()).collect(),
             Op::Interpolate(points, v) => points
@@ -937,9 +984,17 @@ impl<C: HasOpFactory> GOp<C> {
                 *range,
                 points.as_ref().map(|b| mk::<C>(b.map_node_indices(f))),
             ),
-            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
-                Op::HypercubeReduceSelected(mk::<C>(p.map_node_indices(f)), *range, *tail_num_vars)
-            }
+            Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
+            Op::Map(d, b) => Op::Map(
+                mk::<C>(d.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+            ),
+            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+                *op,
+                mk::<C>(d.map_node_indices(f)),
+                mk::<C>(b.map_node_indices(f)),
+                *fact,
+            ),
             Op::Poly(op) => Op::Poly(mk::<C>(op.map_node_indices(f))),
             Op::Coef(op) => Op::Coef(mk::<C>(op.map_node_indices(f))),
             Op::Check(op) => Op::Check(mk::<C>(op.map_node_indices(f))),
@@ -992,8 +1047,10 @@ impl<C: HasOpFactory> GOp<C> {
                 *range,
                 x.as_ref().map(|x| mk::<C>(x.map_refs(f))),
             ),
-            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
-                Op::HypercubeReduceSelected(mk::<C>(p.map_refs(f)), *range, *tail_num_vars)
+            Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
+            Op::Map(d, b) => Op::Map(mk::<C>(d.map_refs(f)), mk::<C>(b.map_refs(f))),
+            Op::ReduceMap(op, d, b, fact) => {
+                Op::ReduceMap(*op, mk::<C>(d.map_refs(f)), mk::<C>(b.map_refs(f)), *fact)
             }
             Op::Mle(op) => Op::Mle(mk::<C>(op.map_refs(f))),
             Op::Proj(op, field, typ) => {
@@ -1058,9 +1115,17 @@ impl<C: HasOpFactory> GOp<C> {
                 *range,
                 points.as_ref().map(|x| mk::<C>(x.inline(vars, except))),
             ),
-            Op::HypercubeReduceSelected(p, range, tail_num_vars) => {
-                Op::HypercubeReduceSelected(mk::<C>(p.inline(vars, except)), *range, *tail_num_vars)
-            }
+            Op::LoopParam(i, t) => Op::LoopParam(*i, t.clone()),
+            Op::Map(d, b) => Op::Map(
+                mk::<C>(d.inline(vars, except)),
+                mk::<C>(b.inline(vars, except)),
+            ),
+            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+                *op,
+                mk::<C>(d.inline(vars, except)),
+                mk::<C>(b.inline(vars, except)),
+                *fact,
+            ),
             _ => self.clone(),
         }
     }
@@ -1293,14 +1358,20 @@ where
                 p.get().clone().pretty(allocator),
                 allocator.text(")"),
             ]),
-            Op::HypercubeReduceSelected(p, range, tail_num_vars) => allocator.concat([
-                allocator.text("(hypercube-reduce-selected<"),
-                range.pretty(allocator),
-                allocator.text(", tails="),
-                allocator.text(format!("{}", tail_num_vars)),
-                allocator.text("> "),
-                p.get().clone().pretty(allocator),
+            Op::LoopParam(i, t) => allocator.text(format!("loop_param#{}: {}", i, t)),
+            Op::Map(d, b) => allocator.concat([
+                allocator.text("(map "),
+                d.get().clone().pretty(allocator),
+                allocator.text(" "),
+                b.get().clone().pretty(allocator),
                 allocator.text(")"),
+            ]),
+            Op::ReduceMap(op, d, b, fact) => allocator.concat([
+                allocator.text(format!("(reduce_map {} ", op)),
+                d.get().clone().pretty(allocator),
+                allocator.text(", "),
+                b.get().clone().pretty(allocator),
+                allocator.text(format!(" [{:?}])", fact)),
             ]),
             Op::Mle(v) => allocator.concat([
                 allocator.text("(mle "),

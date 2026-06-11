@@ -63,6 +63,9 @@ pub enum TypeError {
     #[error("EvaluateError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
     Evaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
+    #[error("EvaluateUnivariateVectorError: A univariate polynomial Poly<F,1,_> cannot be evaluated at a vector of points. Evaluate at a single scalar with `p(x)`, or write `[p(x) for x in points]` to evaluate at many points:\n\t{0}, {1} |- eval {2} {3}")]
+    EvaluateUnivariateVector(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
+
     #[error("SelectedEvaluateError: Arguments to [eval<{4}>] must be a polynomial Poly<F,N,D>, a nonempty contiguous free range within N, and exactly N-(range length) fixed scalars:\n\t{0}, {1} |- eval<{4}> {2} {3}")]
     SelectedEvaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp, Range<usize>),
 
@@ -217,6 +220,14 @@ impl TypeError {
     }
     pub fn evaluate(kctx: &Ctx<Tid, CKind>, vctx: &Ctx<Vid, CTyp>, p: &CExp, x: &CExp) -> Self {
         TypeError::Evaluate(kctx.clone(), vctx.clone(), p.clone(), x.clone())
+    }
+    pub fn evaluate_univariate_vector(
+        kctx: &Ctx<Tid, CKind>,
+        vctx: &Ctx<Vid, CTyp>,
+        p: &CExp,
+        x: &CExp,
+    ) -> Self {
+        TypeError::EvaluateUnivariateVector(kctx.clone(), vctx.clone(), p.clone(), x.clone())
     }
     pub fn evaluate_selected(
         kctx: &Ctx<Tid, CKind>,
@@ -543,23 +554,32 @@ impl Typeable for CExp {
                                 }
                                 Ok(CTyp::Base(i))
                             }
-                            // Univariate polynomial evaluated at a vector of points:
-                            (CTyp::Poly(_i, 1, _n), CTyp::Vec(b, len_vec)) => {
-                                let _i = b
-                                    .to_scalar(kctx)
-                                    .ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
-                                Ok(CTyp::Vec(b, len_vec))
+                            // Univariate polynomial evaluated at a vector of points is a
+                            // hard type error: evaluate at a single scalar via `p(x)`, or
+                            // write `[p(x) for x in points]` to evaluate at many points.
+                            (CTyp::Poly(_i, 1, _n), CTyp::Vec(_b, _len)) => {
+                                Err(TypeError::evaluate_univariate_vector(kctx, vctx, p, x))
                             }
                             // Multivariate polynomial (MLE, virtual, etc.): n > 1.
-                            (CTyp::Poly(_i, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
-                                let i = b
-                                    .to_scalar(kctx)
-                                    .ok_or(TypeError::evaluate(kctx, vctx, p, x))?;
+                            (CTyp::Poly(i_poly, n, d), CTyp::Vec(b, len_vec)) if n > 1 => {
+                                // Boolean (or Fin<0..2>) hypercube points evaluate the MLE by
+                                // table index; any scalar-castable point evaluates generically.
+                                // Both yield the polynomial's field element.
+                                let elem_is_bool = matches!(*b, CTyp::Bool);
+                                let scalar_tid = b.to_scalar(kctx);
+                                if !elem_is_bool && scalar_tid.is_none() {
+                                    return Err(TypeError::evaluate(kctx, vctx, p, x));
+                                }
                                 if len_vec == n {
-                                    return Ok(*b);
+                                    return Ok(if elem_is_bool { CTyp::Base(i_poly) } else { *b });
                                 }
                                 if len_vec < n {
-                                    return Ok(CTyp::Poly(i, n - len_vec, d));
+                                    let resid_tid = if elem_is_bool {
+                                        i_poly
+                                    } else {
+                                        scalar_tid.unwrap()
+                                    };
+                                    return Ok(CTyp::Poly(resid_tid, n - len_vec, d));
                                 }
                                 Err(TypeError::evaluate_mle_too_many_arguments(kctx, vctx, p, x))
                             }
@@ -2463,6 +2483,32 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_univariate_vector_rejected() {
+        let fctx = Set::new();
+        let vctx = VAR_CTX.clone();
+
+        // eval(p, v1): a univariate Poly<F,1,_> at a vector of points is a hard
+        // type error (evaluate at a single scalar via p(x), or comprehend with
+        // [p(x) for x in points]).
+        let banned = CExp::evaluate_at(CExp::varstr("p"), CExp::varstr("v1"));
+        assert!(
+            matches!(
+                banned.infer(&KIND_CTX, &fctx, &vctx),
+                Err(TypeError::EvaluateUnivariateVector(_, _, _, _))
+            ),
+            "eval(Poly<F,1,_>, [F; k]) must be rejected with EvaluateUnivariateVector, got {:?}",
+            banned.infer(&KIND_CTX, &fctx, &vctx)
+        );
+
+        // eval(p, f1): a univariate poly at a single scalar still yields a scalar.
+        let scalar_eval = CExp::evaluate_at(CExp::varstr("p"), CExp::varstr("f1"));
+        assert_eq!(
+            scalar_eval.infer(&KIND_CTX, &fctx, &vctx),
+            Ok(CTyp::Base(Tid::from("F")))
+        );
+    }
+
+    #[test]
     fn test_selected_eval_inference() {
         let fctx = Set::new();
         let mut vctx = VAR_CTX.clone();
@@ -2592,6 +2638,29 @@ mod tests {
             }
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_mle_eval_bool_point() {
+        let fctx = Set::new();
+        let mut vctx = VAR_CTX.clone();
+        vctx.insert(&Vid::from("m3"), &CTyp::Poly(Tid::from("F"), 3, 1));
+        vctx.insert(&Vid::from("bvec3"), &CTyp::Vec(Box::new(CTyp::Bool), 3));
+        vctx.insert(&Vid::from("bvec1"), &CTyp::Vec(Box::new(CTyp::Bool), 1));
+
+        // Full boolean hypercube eval -> the polynomial's field element.
+        let full = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("bvec3"));
+        assert_eq!(
+            full.infer(&KIND_CTX, &fctx, &vctx),
+            Ok(CTyp::Base(Tid::from("F")))
+        );
+
+        // Partial boolean prefix -> residual MLE in the remaining variables.
+        let partial = CExp::evaluate_at(CExp::varstr("m3"), CExp::varstr("bvec1"));
+        assert_eq!(
+            partial.infer(&KIND_CTX, &fctx, &vctx),
+            Ok(CTyp::Poly(Tid::from("F"), 2, 1))
+        );
     }
 
     #[test]

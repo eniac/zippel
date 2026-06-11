@@ -665,6 +665,20 @@ impl<F: ark_ff::PrimeField> VirtualPolynomial<F> {
         Ok(result)
     }
 
+    /// Sum-of-products evaluation at a boolean hypercube vertex (little-endian
+    /// table index). Mirrors `evaluate_mv` without constructing a field point.
+    pub fn evaluate_at_boolean_index(&self, index: usize) -> F {
+        let mut result = F::zero();
+        for (coeff, indices) in &self.products {
+            let mut prod = *coeff;
+            for &idx in indices {
+                prod *= self.flattened_polys[idx].evaluate_at_boolean_index(index);
+            }
+            result += prod;
+        }
+        result
+    }
+
     /// Check if the virtual polynomial is zero
     pub fn is_zero(&self) -> bool {
         self.products.is_empty() || self.products.iter().all(|(coeff, _)| coeff.is_zero())

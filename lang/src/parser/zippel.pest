@@ -19,7 +19,7 @@ and_op = @{ "&&" }
 unary_minus = @{ "-" }
 
 /// Identifiers for functions, variables, type variables
-keyword = {"let" | "fn" | "proto" | "type" | "marginalize" }
+keyword = {"let" | "fn" | "proto" | "type" }
 id = @{ !(keyword ~ !(ASCII_ALPHANUMERIC | "_" | "'")) ~ (ASCII_ALPHANUMERIC | "_" | "'" )+ }
 ids = _{ id ~ ("," ~ id)* }
 

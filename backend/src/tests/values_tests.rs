@@ -111,13 +111,27 @@ fn interpolate_with_points_uses_general_interpolation() {
         Fr::from(7u64),
     ]);
     let poly = coeffs.value_poly();
-    let points = Value::<TestConfig>::VecScalar(vec![
+    let point_scalars = [
         Fr::from(1u64),
         Fr::from(2u64),
         Fr::from(4u64),
         Fr::from(8u64),
-    ]);
-    let evals = poly.clone().value_eval(points.clone());
+    ];
+    let points = Value::<TestConfig>::VecScalar(point_scalars.to_vec());
+    // Evaluate the univariate poly at each point individually (post-ban form:
+    // batched eval(Uni, vector) is no longer supported; univariate evaluation
+    // is single-scalar via the (Poly, Scalar) arm).
+    let evals = Value::<TestConfig>::VecScalar(
+        point_scalars
+            .iter()
+            .map(
+                |x| match poly.clone().value_eval(Value::<TestConfig>::Scalar(*x)) {
+                    Value::Scalar(s) => s,
+                    other => panic!("expected scalar eval, got {other:?}"),
+                },
+            )
+            .collect(),
+    );
 
     let recovered_poly = evals.value_interpolate(Some(&points));
     assert_deq!(&recovered_poly, &poly);
@@ -1018,21 +1032,15 @@ fn test_value_eval() {
     ));
     let poly = Value::<TestConfig>::Poly(VirtualPolynomial::from_poly(poly_variant));
 
-    // Evaluate at points [0, 1, 2]
-    let points =
-        Value::<TestConfig>::VecScalar(vec![Fr::from(0u64), Fr::from(1u64), Fr::from(2u64)]);
-    let result = poly.value_eval(points);
-    match result {
-        Value::VecScalar(v) => {
-            // At x=0: 1
-            // At x=1: 1 + 2 + 3 = 6
-            // At x=2: 1 + 4 + 12 = 17
-            assert_eq!(v[0], Fr::from(1u64));
-            assert_eq!(v[1], Fr::from(6u64));
-            assert_eq!(v[2], Fr::from(17u64));
-        }
-        _ => panic!("Expected VecScalar"),
-    }
+    // Evaluate at a single scalar point x = 2: 1 + 2·2 + 3·4 = 17.
+    let result = poly
+        .clone()
+        .value_eval(Value::<TestConfig>::Scalar(Fr::from(2u64)));
+    assert_deq!(result, Value::<TestConfig>::Scalar(Fr::from(17u64)));
+
+    // The same point given as an Index yields the same scalar evaluation.
+    let result_idx = poly.value_eval(Value::<TestConfig>::Index(2));
+    assert_deq!(result_idx, Value::<TestConfig>::Scalar(Fr::from(17u64)));
 }
 
 #[test]

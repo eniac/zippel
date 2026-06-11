@@ -6,12 +6,24 @@ use backend::poly_variant::PolyVariant;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
 
 const NUM_VARS: usize = 10;
+const MLE_SUMCHECK_EXAMPLE_STACK_SIZE: usize = 256 * 1024 * 1024;
 
 fn main() {
+    let worker = thread::Builder::new()
+        .name("zippel-mle-sumcheck-example".to_string())
+        .stack_size(MLE_SUMCHECK_EXAMPLE_STACK_SIZE)
+        .spawn(run_mle_sumcheck)
+        .expect("failed to spawn mle_sumcheck example worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_mle_sumcheck() {
     let zippel_file =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mle_sumcheck/mle_sumcheck.zippel");
     let num_vars = NUM_VARS;
@@ -21,7 +33,8 @@ fn main() {
     let args = ZippelArgs::new(zippel_file.clone());
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &10); // Not used in this example, but keep for compatibility if needed
+    sizes.insert(&Tid::new("NUM_VARS"), &num_vars);
+    sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &1usize);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs(num_vars);

@@ -487,24 +487,30 @@ fn draw_taus<G: Group, F: Scalar<G>, DK: 2..21>(public placeholder: [F; DK]) -> 
     prev ++ [t]
 }}
 
-fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
+fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 3..SC + 1>(
     public curr_poly:       Poly<F, V, 3>,
     public points:          [F; 4],
-    public prev_challenges: [F; SC - V],
+    public prev_challenges: [F; SC - V + 1],
     public prev_eval:       F,
     public round_challenge: F,
     public curr_round:      Fin<SC>,
     public g_evs_d3:        [G; 4],
     public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
-    let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
-    let out = marginalize(cfg);
-    evs <- out.evaluations;
+    let residual_poly = eval(curr_poly, [round_challenge]);
+    let round_poly = reduce(+, [
+        eval<0>(residual_poly, tail)
+        for tail in [
+            [points[(i / (2^j)) % 2] for j in 0..(V - 2)]
+            for i in 0..(2^(V - 2))
+        ]
+    ]);
+    let evs_local = [round_poly(t) for t in points];
+    evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_next <- challenge<F>;
-    let next_vec = eval(g, [r_next]);
-    let next_prev = next_vec[0];
+    let next_prev = g(r_next);
     let new_challenges = prev_challenges ++ [r_next];
 
     let r_poly_sc = random<F>;
@@ -524,10 +530,10 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     let zk_check_sc = dot(g_evs_d3, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
     verify(zk_check_sc);
 
-    sc_recurse_d3(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
+    sc_recurse_d3(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d3, h_evs)
 }}
 fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
-    public curr_poly:       Poly<F, 1, 3>,
+    public curr_poly:       Poly<F, 2, 3>,
     public points:          [F; 4],
     public prev_challenges: [F; SC - 1],
     public prev_eval:       F,
@@ -536,14 +542,14 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
     public g_evs_d3:        [G; 4],
     public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
-    let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 3, round: curr_round, challenge: round_challenge |}};
-    let out = marginalize(cfg);
-    evs <- out.evaluations;
+    let residual_poly = eval(curr_poly, [round_challenge]);
+    let evs_local = [residual_poly(t) for t in points];
+    evs <- evs_local;
+    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_final <- challenge<F>;
-    let final_vec = eval(g, [r_final]);
-    let final_eval = final_vec[0];
+    let final_eval = g(r_final);
 
     let r_poly_sc = random<F>;
     comm_evs <- dot(g_evs_d3, evs) + h_evs * r_poly_sc;
@@ -565,24 +571,30 @@ fn sc_recurse_d3<G: Group, F: Scalar<G>, SC: Size>(
     {{| final_eval: final_eval, challenges: prev_challenges ++ [r_final] |}}
 }}
 
-fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
+fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 3..SC + 1>(
     public curr_poly:       Poly<F, V, 2>,
     public points:          [F; 3],
-    public prev_challenges: [F; SC - V],
+    public prev_challenges: [F; SC - V + 1],
     public prev_eval:       F,
     public round_challenge: F,
     public curr_round:      Fin<SC>,
     public g_evs_d2:        [G; 3],
     public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
-    let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
-    let out = marginalize(cfg);
-    evs <- out.evaluations;
+    let residual_poly = eval(curr_poly, [round_challenge]);
+    let round_poly = reduce(+, [
+        eval<0>(residual_poly, tail)
+        for tail in [
+            [points[(i / (2^j)) % 2] for j in 0..(V - 2)]
+            for i in 0..(2^(V - 2))
+        ]
+    ]);
+    let evs_local = [round_poly(t) for t in points];
+    evs <- evs_local;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_next <- challenge<F>;
-    let next_vec = eval(g, [r_next]);
-    let next_prev = next_vec[0];
+    let next_prev = g(r_next);
     let new_challenges = prev_challenges ++ [r_next];
 
     let r_poly_sc = random<F>;
@@ -602,10 +614,10 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size, V: 2..SC>(
     let zk_check_sc = dot(g_evs_d2, z_vec_sc) + h_evs * z_delta_sc == comm_evs * c_sc + delta_sc;
     verify(zk_check_sc);
 
-    sc_recurse_d2(out.next_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
+    sc_recurse_d2(residual_poly, points, new_challenges, next_prev, r_next, curr_round + 1, g_evs_d2, h_evs)
 }}
 fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
-    public curr_poly:       Poly<F, 1, 2>,
+    public curr_poly:       Poly<F, 2, 2>,
     public points:          [F; 3],
     public prev_challenges: [F; SC - 1],
     public prev_eval:       F,
@@ -614,14 +626,14 @@ fn sc_recurse_d2<G: Group, F: Scalar<G>, SC: Size>(
     public g_evs_d2:        [G; 3],
     public h_evs:           G
 ) -> {{ final_eval: F, challenges: [F; SC] }} {{
-    let cfg = {{| poly: curr_poly, num_variables: SC, max_degree: 2, round: curr_round, challenge: round_challenge |}};
-    let out = marginalize(cfg);
-    evs <- out.evaluations;
+    let residual_poly = eval(curr_poly, [round_challenge]);
+    let evs_local = [residual_poly(t) for t in points];
+    evs <- evs_local;
+    let _drop_round = curr_round;
     verify(prev_eval == evs[0] + evs[1]);
     let g = interpolate(points, evs);
     r_final <- challenge<F>;
-    let final_vec = eval(g, [r_final]);
-    let final_eval = final_vec[0];
+    let final_eval = g(r_final);
 
     let r_poly_sc = random<F>;
     comm_evs <- dot(g_evs_d2, evs) + h_evs * r_poly_sc;
@@ -779,15 +791,20 @@ proto spartan<G: Group, F: Scalar<G>>(
     let g_sub   = f_a * f_b + f_c * neg_one;
     let g_poly  = g_sub * eq_tau;
 
-    let pts3   = [i for i in 0..4];
-    let cfg1_0 = {{| poly: g_poly, num_variables: {m_lit}, max_degree: 3, round: 0, challenge: zero |}};
-    let out1_0 = marginalize(cfg1_0);
-    evs1_0 <- out1_0.evaluations;
+    let pts3   = [zero, one, one + one, one + one + one];
+    let round_poly1_0 = reduce(+, [
+        eval<0>(g_poly, tail)
+        for tail in [
+            [pts3[(i / (2^j)) % 2] for j in 0..({m_lit} - 1)]
+            for i in 0..(2^({m_lit} - 1))
+        ]
+    ]);
+    let evs1_0_local = [round_poly1_0(t) for t in pts3];
+    evs1_0 <- evs1_0_local;
     verify(zero == evs1_0[0] + evs1_0[1]);
     let g1_r1     = interpolate(pts3, evs1_0);
     rx0           <- challenge<F>;
-    let prev1_vec = eval(g1_r1, [rx0]);
-    let prev1     = prev1_vec[0];
+    let prev1 = g1_r1(rx0);
 
     let r_poly_10 = random<F>;
     comm_evs_10 <- dot(g_evs_d3, evs1_0) + h_evs * r_poly_10;
@@ -806,7 +823,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     let zk_check_10 = dot(g_evs_d3, z_vec_10) + h_evs * z_delta_10 == comm_evs_10 * c_10 + delta_10;
     verify(zk_check_10);
 
-    let sc1 = sc_recurse_d3(out1_0.next_poly, pts3, [rx0], prev1, rx0, 1, g_evs_d3, h_evs);
+    let sc1 = sc_recurse_d3(g_poly, pts3, [rx0], prev1, rx0, 1, g_evs_d3, h_evs);
     let rx  = sc1.challenges;
     let e_x = sc1.final_eval;
 
@@ -877,15 +894,20 @@ proto spartan<G: Group, F: Scalar<G>>(
     let z_mle  = mle(z);
     let m_poly = l_mle * z_mle;
 
-    let pts2   = [i for i in 0..3];
-    let cfg2_0 = {{| poly: m_poly, num_variables: {m_lit}, max_degree: 2, round: 0, challenge: zero |}};
-    let out2_0 = marginalize(cfg2_0);
-    evs2_0 <- out2_0.evaluations;
+    let pts2   = [zero, one, one + one];
+    let round_poly2_0 = reduce(+, [
+        eval<0>(m_poly, tail)
+        for tail in [
+            [pts2[(i / (2^j)) % 2] for j in 0..({m_lit} - 1)]
+            for i in 0..(2^({m_lit} - 1))
+        ]
+    ]);
+    let evs2_0_local = [round_poly2_0(t) for t in pts2];
+    evs2_0 <- evs2_0_local;
     verify(t2 == evs2_0[0] + evs2_0[1]);
     let g2_r1     = interpolate(pts2, evs2_0);
     ry0           <- challenge<F>;
-    let prev2_vec = eval(g2_r1, [ry0]);
-    let prev2     = prev2_vec[0];
+    let prev2 = g2_r1(ry0);
 
     let r_poly_20 = random<F>;
     comm_evs_20 <- dot(g_evs_d2, evs2_0) + h_evs * r_poly_20;
@@ -904,7 +926,7 @@ proto spartan<G: Group, F: Scalar<G>>(
     let zk_check_20 = dot(g_evs_d2, z_vec_20) + h_evs * z_delta_20 == comm_evs_20 * c_20 + delta_20;
     verify(zk_check_20);
 
-    let sc2 = sc_recurse_d2(out2_0.next_poly, pts2, [ry0], prev2, ry0, 1, g_evs_d2, h_evs);
+    let sc2 = sc_recurse_d2(m_poly, pts2, [ry0], prev2, ry0, 1, g_evs_d2, h_evs);
     let ry  = sc2.challenges;
     let e_y = sc2.final_eval;
 

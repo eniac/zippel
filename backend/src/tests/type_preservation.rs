@@ -567,7 +567,7 @@ mod vec_ops {
 //   - `Op::Evaluate::typ()` semantic gaps: partial-MLE / partial-VPoly evals
 //     return flat `VecScalar` in the runtime instead of a `Value::Poly(Mle)`,
 //     and single-point full-MLE eval returns `VecScalar([s])` instead of
-//     `Scalar`; batched-uni eval pads to the next power-of-two.
+//     `Scalar`.
 // =============================================================================
 
 mod cross_layer {
@@ -837,57 +837,41 @@ mod cross_layer {
     // -------------------------------------------------------------------------
     // `value_eval`
     //
-    // `Op::Evaluate(p, x)::typ()` handles four cases:
-    //   Uni(_)/VPoly(1,_) × Vec → Vec  (batched)
+    // `Op::Evaluate(p, x)::typ()` cases (a vector point is ONE multivariate
+    // point; `eval(Uni, vector)` is banned at the source level — univariate
+    // eval is at a single scalar):
+    //   Uni(_) × Scalar → Scalar
     //   VPoly(n,_)/Mle(n) × Vec(n)  → Scalar  (full)
     //   VPoly(n,m) × Vec(k<n) → VPoly(n-k, m)  (partial)
     //   Mle(n) × Vec(k<n) → Mle(n-k)  (partial)
     //
-    // Gaps: FFT-padding on batched uni eval; runtime returns VecScalar for
-    // partial/full Mle where the spec says Mle/Scalar; n=1 Mle full eval
-    // returns VecScalar([s]) instead of Scalar.
+    // Gaps: runtime returns VecScalar for partial/full Mle where the spec says
+    // Mle/Scalar; n=1 Mle full eval returns VecScalar([s]) instead of Scalar.
     // -------------------------------------------------------------------------
 
-    /// Batched univariate eval at a single point `k=1`: both layers agree.
+    /// Univariate eval at a single scalar point: `op.typ()` is `Scalar` and the
+    /// runtime returns a `Scalar`. This is the post-ban univariate evaluation
+    /// form — `eval(Uni, vector)` is rejected at the source level in
+    /// `lang::infer`, so only the single-scalar path remains.
     #[test]
-    fn pbt_eval_uni_batched_single_point() {
+    fn pbt_eval_uni_scalar_point() {
         arbtest::arbtest(|u| {
             let t: AnyUniATyp = u.arbitrary()?;
             let m = t.m;
             let mut rng = test_rng();
             let p: V = Value::random(&mut rng, &ATyp::uni(m));
-            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(1));
+            let x: V = Value::random(&mut rng, &ATyp::scalar());
             let op = eval_op(&p, &x);
             let expected = op.typ();
-            let actual = p.value_eval(x);
-            assert!(
-                has_atyp(&actual, &expected),
-                "value_eval(Uni({m}), Vec(F,1)) -> {} fails has_atyp(_, {expected})",
-                vty(&actual)
+            assert_eq!(
+                expected,
+                ATyp::scalar(),
+                "eval(Uni({m}), Scalar) must have a scalar result type, got {expected}"
             );
-            Ok(())
-        });
-    }
-
-    /// Batched univariate eval at `k > 1` points now returns an exact
-    /// `VecScalar(k)` (the explicit-eval migration replaced the old FFT-padded
-    /// MLE output), so type preservation holds. Gap closed.
-    #[test]
-    fn pbt_eval_uni_batched_multi_point() {
-        arbtest::arbtest(|u| {
-            let tm: AnyUniATyp = u.arbitrary()?;
-            let m = tm.m;
-            // k ∈ 2..=5 — never a pow2-aligned single eval
-            let k: usize = u.int_in_range(2..=5)?;
-            let mut rng = test_rng();
-            let p: V = Value::random(&mut rng, &ATyp::uni(m));
-            let x: V = Value::random(&mut rng, &ATyp::vec_scalar(k));
-            let op = eval_op(&p, &x);
-            let expected = op.typ();
             let actual = p.value_eval(x);
             assert!(
                 has_atyp(&actual, &expected),
-                "value_eval(Uni({m}), Vec(F,{k})) -> {} fails has_atyp(_, {expected})",
+                "value_eval(Uni({m}), Scalar) -> {} fails has_atyp(_, {expected})",
                 vty(&actual)
             );
             Ok(())

@@ -101,11 +101,9 @@ proto dekart<
     // Step 9: challenge evaluation point gamma
     gamma <- challenge<f>;
 
-    let a_hat_gamma_vec = eval(f_hat, [gamma]);
-    let a_hat_gamma = a_hat_gamma_vec[0];
-    let a_h_gamma_vec = eval(h, [gamma]);
-    let a_h_gamma = a_h_gamma_vec[0];
-    let a_j_gamma = [ (let v = eval(f_j_vec[j], [gamma]); v[0]) for j in 0..l_chunk ];
+    let a_hat_gamma = f_hat(gamma);
+    let a_h_gamma = h(gamma);
+    let a_j_gamma = [ (let pj = f_j_vec[j]; pj(gamma)) for j in 0..l_chunk ];
 
     a <- a_hat_gamma;
     a_h <- a_h_gamma;
@@ -136,8 +134,7 @@ proto dekart<
     verify(pairing_lhs == pairing_rhs);
 
     // Verifier Step 11: verify radix decomposition quotient check
-    let v_s_at_gamma_vec = eval(v_s, [gamma]);
-    let v_s_at_gamma = v_s_at_gamma_vec[0];
+    let v_s_at_gamma = v_s(gamma);
     let prod_j = [ reduce(*, [a_j_log[j] - d for d in b_vals]) for j in 0..l_chunk ];
     let sum_val = reduce(+, [ beta_pow[j] * prod_j[j] for j in 0..l_chunk ]);
     let diff_val = a - reduce(+, [ a_j_log[j] * b_pow[j] for j in 0..l_chunk ]);

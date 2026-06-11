@@ -1,6 +1,7 @@
 use crate::{Op, UDags};
 use backend::ArkBls12_381;
-use lang::ast::UModule;
+use backend::op::ReduceMapDomainFact;
+use lang::ast::{BinOp, UModule};
 use share::Ctx;
 
 type B = ArkBls12_381;
@@ -21,9 +22,17 @@ fn count_fused_hypercube_reduce(graphs: &UDags<B>) -> usize {
             dag.op_nodes()
                 .into_iter()
                 .filter(|node| {
-                    dag[*node]
-                        .op()
-                        .is_some_and(|op| matches!(op.get(), Op::HypercubeReduceSelected(_, _, _)))
+                    dag[*node].op().is_some_and(|op| {
+                        matches!(
+                            op.get(),
+                            Op::ReduceMap(
+                                BinOp::Add,
+                                _,
+                                _,
+                                ReduceMapDomainFact::CompleteBooleanHypercube { .. }
+                            )
+                        )
+                    })
                 })
                 .count()
         })
@@ -55,11 +64,25 @@ fn inline_canonical_sumcheck_reduce_lowers_to_private_hypercube_reduce() {
     for node_index in dag.op_nodes() {
         if let Some(op) = dag[node_index].op() {
             match op.get() {
-                Op::HypercubeReduceSelected(_, range, tail_num_vars) => {
+                Op::ReduceMap(
+                    BinOp::Add,
+                    _,
+                    body,
+                    ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars },
+                ) => {
                     fused += 1;
-                    assert_eq!(range.start, 0);
-                    assert_eq!(range.end, 1);
                     assert_eq!(*tail_num_vars, 2);
+                    match body.get() {
+                        Op::Evaluate(_, Some(range), Some(fixed)) => {
+                            assert_eq!(range.start, 0);
+                            assert_eq!(range.end, 1);
+                            assert!(
+                                matches!(fixed.get(), Op::LoopParam(0, _)),
+                                "fused reduce-map body must fix the loop binder at level 0"
+                            );
+                        }
+                        _ => panic!("fused reduce-map body must be a selected eval"),
+                    }
                 }
                 Op::Evaluate(_, Some(_), Some(_)) => selected_eval += 1,
                 Op::Vec(children) => {

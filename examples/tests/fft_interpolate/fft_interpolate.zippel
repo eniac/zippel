@@ -6,11 +6,11 @@ proto fft_interpolate_roots<F: Field>(
     public coeffs: [F; 16],
     public points: [F; 16]
 ) where let p = poly(coeffs);
-        let evs = eval(p, points);
+        let evs = [p(x) for x in points];
         let p_back = interpolate(points, evs);
         coef(p_back) == coeffs {
     let p = poly(coeffs);
-    let evs = eval(p, points);
+    let evs = [p(x) for x in points];
     let p_back = interpolate(points, evs);
     verify(coef(p_back) == coeffs)
 }
@@ -23,11 +23,11 @@ proto fft_interpolate_random<F: Field>(
     public coeffs: [F; 16],
     public points: [F; 16]
 ) where let p = poly(coeffs);
-        let evs = eval(p, points);
+        let evs = [p(x) for x in points];
         let p_back = interpolate(points, evs);
         coef(p_back) == coeffs {
     let p = poly(coeffs);
-    let evs = eval(p, points);
+    let evs = [p(x) for x in points];
     let p_back = interpolate(points, evs);
     verify(coef(p_back) == coeffs)
 }
