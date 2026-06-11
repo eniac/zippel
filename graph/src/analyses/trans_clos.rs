@@ -284,10 +284,16 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
                 range,
                 xs.map(|xs| mk::<C>(self.trans_clos_op(dag, xs.get().clone(), index))),
             ),
-            Op::HypercubeReduceSelected(p, range, tail_num_vars) => Op::HypercubeReduceSelected(
-                mk::<C>(self.trans_clos_op(dag, p.get().clone(), index)),
-                range,
-                tail_num_vars,
+            Op::LoopParam(i, t) => Op::LoopParam(i, t),
+            Op::Map(d, b) => Op::Map(
+                mk::<C>(self.trans_clos_op(dag, d.get().clone(), index)),
+                mk::<C>(self.trans_clos_op(dag, b.get().clone(), index)),
+            ),
+            Op::ReduceMap(op, d, b, fact) => Op::ReduceMap(
+                op,
+                mk::<C>(self.trans_clos_op(dag, d.get().clone(), index)),
+                mk::<C>(self.trans_clos_op(dag, b.get().clone(), index)),
+                fact,
             ),
             Op::Poly(v) => Op::Poly(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),
             Op::Mle(v) => Op::Mle(mk::<C>(self.trans_clos_op(dag, v.get().clone(), index))),

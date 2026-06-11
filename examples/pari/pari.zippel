@@ -142,10 +142,8 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     let w_a_poly  = interpolate(w_a_evals);
     let w_b_poly  = interpolate(w_b_evals);
 
-    let v_a_vec = eval(w_a_poly, [r]);
-    let v_b_vec = eval(w_b_poly, [r]);
-    let v_a_p   = v_a_vec[0];
-    let v_b_p   = v_b_vec[0];
+    let v_a_p = w_a_poly(r);
+    let v_b_p = w_b_poly(r);
 
     // === Prover: opening proof U ===
     let r_neg     = f_zero - r;
@@ -154,8 +152,7 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     let w_a_witness = (w_a_poly - v_a_p) / x_minus_r;
     let w_b_witness = (w_b_poly - v_b_p) / x_minus_r;
 
-    let q_at_r_vec  = eval(q_poly, [r]);
-    let q_at_r      = q_at_r_vec[0];
+    let q_at_r = q_poly(r);
     let w_q_witness = (q_poly - q_at_r) / x_minus_r;
 
     // Witness quotients: w_a, w_b have degree K-2 (K-1 coeffs);

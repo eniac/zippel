@@ -11,4 +11,7 @@ pub enum EvalError {
 
     #[error("Value operation error: {0}")]
     ValueError(String),
+
+    #[error("Loop parameter out of range: level {0}")]
+    LoopParam(usize),
 }

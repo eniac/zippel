@@ -544,7 +544,7 @@ mod tests {
         let ex = r#"
             proto named_uni<F: Field, N: Size>(public a: Uni<F, N>) where a == a {
                 r1 <- challenge<F>;
-                let l = eval(a, [r1]);
+                let l = a(r1);
                 verify(l == l)
             }"#;
 
@@ -587,8 +587,8 @@ mod tests {
             ) where a == a {
                 let p = a * b;
                 r1 <- challenge<F>;
-                let l = eval(p, [r1]);
-                let rr = eval(a, [r1]) * eval(b, [r1]);
+                let l = p(r1);
+                let rr = a(r1) * b(r1);
                 verify(l == rr)
             }"#;
 
@@ -627,21 +627,19 @@ mod tests {
             BOp::Evaluate(mk(p), None, Some(mk(x)))
         };
 
-        // Univariate batched: Uni(m) at Vec(scalar, k) → Vec(scalar, k).
-        let op = mk_eval(ATyp::Uni(3), ATyp::Vec(Box::new(ATyp::scalar()), 4));
+        // Univariate eval at a single scalar point → scalar. Batched
+        // eval(Uni, vector) is rejected at the source level (lang::infer), so
+        // the single-scalar point is the only univariate eval shape.
+        let op = mk_eval(ATyp::Uni(3), ATyp::scalar());
         assert_eq!(
             op.typ(),
-            ATyp::Vec(Box::new(ATyp::scalar()), 4),
-            "univariate batched eval should keep Vec(scalar, k)"
+            ATyp::scalar(),
+            "univariate eval at a scalar point should be scalar"
         );
 
-        // Univariate batched with Uni(k) on the right (equivalent shape).
-        let op = mk_eval(ATyp::Uni(3), ATyp::Uni(4));
-        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 4));
-
-        // VPoly(1, m) is effectively univariate, same rule.
-        let op = mk_eval(ATyp::VPoly(1, 3), ATyp::Vec(Box::new(ATyp::scalar()), 2));
-        assert_eq!(op.typ(), ATyp::Vec(Box::new(ATyp::scalar()), 2));
+        // VPoly(1, m) is effectively univariate; eval at a single scalar → scalar.
+        let op = mk_eval(ATyp::VPoly(1, 3), ATyp::scalar());
+        assert_eq!(op.typ(), ATyp::scalar());
 
         // Full multivariate VPoly: VPoly(n, m) at Vec(scalar, n) → scalar.
         let op = mk_eval(ATyp::VPoly(2, 2), ATyp::Vec(Box::new(ATyp::scalar()), 2));

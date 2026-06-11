@@ -16,10 +16,6 @@
 //!   pst13    : N           (multilinear KZG variables)
 //!   hyrax    : N           (Hyrax vector dimension parameter)
 //!
-//! The Zippel-Spartan path is quarantined until its embedded Zippel source no
-//! longer uses removed `marginalize(cfg)` syntax; use `spartan_bench` for the
-//! native-only Spartan sweep.
-//!
 //! Thread sweeping is done by running this binary multiple times with
 //! different `RAYON_NUM_THREADS`. The wrapper script `run_all.sh` does that
 //! and concatenates the CSVs. We tried `rayon::ThreadPool::install` to vary
@@ -405,10 +401,6 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
         })
         .collect()
 }
-
-// Zippel-Spartan is intentionally absent from bench_all until the embedded
-// Zippel template in benchmarks/src/spartan.rs is migrated off `marginalize(cfg)`.
-// Use the native-only `spartan_bench` binary for Microsoft Spartan sweeps.
 
 fn main() {
     let args = Args::parse();

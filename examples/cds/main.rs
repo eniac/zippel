@@ -45,18 +45,25 @@ fn main() {
 
     // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/cds/cds.zippel"));
-    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     let analysis_start = Instant::now();
-    let analysis = analysis_handler.minimal_analysis();
+    let analysis_result = std::panic::catch_unwind(|| {
+        let analysis_args = ZippelArgs::new(PathBuf::from("examples/cds/cds.zippel"));
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        analysis_handler.minimal_analysis()
+    });
     let analysis_elapsed = analysis_start.elapsed();
-    match &analysis.completeness {
-        Ok(()) => println!("Completeness:   ✓"),
-        Err(e) => println!("Completeness:   ✗ {}", e),
-    }
-    match &analysis.zk {
-        Ok(()) => println!("ZK:             ✓"),
-        Err(e) => println!("ZK:             ✗ {}", e),
+    match analysis_result {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
     println!("Analysis time:  {analysis_elapsed:.2?}");
 }

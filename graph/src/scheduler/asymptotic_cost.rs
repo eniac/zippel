@@ -4,7 +4,7 @@ use lang::typ::CRange;
 use log::debug;
 
 use crate::scheduler::{Cost, CostModel};
-use crate::{GOp, Op, Ref};
+use crate::{GOp, Op, ReduceMapDomainFact, Ref};
 use ark_ff::{Field, PrimeField};
 use backend::{ABase, ATyp, ArkConfig};
 use std::marker::PhantomData;
@@ -217,13 +217,30 @@ impl<C: ArkConfig> CostModel<C, Ref> for AsymptoticCost<C> {
             Op::Evaluate(p, _, Some(points)) => {
                 cost += self.cost(p, nthreads).0 + self.cost(points, nthreads).0 + 1.0
             }
-            Op::HypercubeReduceSelected(p, _, tail_num_vars) => {
-                let tail_count = 1usize
-                    .checked_shl(*tail_num_vars as u32)
-                    .unwrap_or(usize::MAX);
-                cost += self.cost(p, nthreads).0
-                    + (tail_count as f64 * Self::SCALAR_MUL / nthreads as f64)
+            Op::LoopParam(_, _) => {}
+            Op::Map(d, b) => {
+                let (_, n) = d.typ().into_vec();
+                cost += self.cost(d, nthreads).0 + (n as f64) * self.cost(b, nthreads).0;
             }
+            Op::ReduceMap(_, d, b, fact) => match fact {
+                ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars } => {
+                    let tail = 1usize
+                        .checked_shl(*tail_num_vars as u32)
+                        .unwrap_or(usize::MAX);
+                    let poly_cost = if let Op::Evaluate(p, _, _) = b.get() {
+                        self.cost(p, nthreads).0
+                    } else {
+                        self.cost(b, nthreads).0
+                    };
+                    cost += poly_cost + (tail as f64 * Self::SCALAR_MUL / nthreads as f64);
+                }
+                ReduceMapDomainFact::Unknown => {
+                    let (_, n) = d.typ().into_vec();
+                    cost += self.cost(d, nthreads).0
+                        + (n as f64) * self.cost(b, nthreads).0
+                        + (n as f64 - 1.0) * Self::SCALAR_MUL;
+                }
+            },
             Op::Coef(_op) => cost += 1.0,
             Op::Reduce(_, v) => {
                 let (_, n) = v.typ().into_vec();

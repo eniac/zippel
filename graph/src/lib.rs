@@ -20,7 +20,7 @@ pub mod scheduler;
 #[cfg(test)]
 mod tests;
 
-pub use backend::op::{GOp, HOp, HasOpFactory, Op, Ref, mk};
+pub use backend::op::{GOp, HOp, HasOpFactory, Op, ReduceMapDomainFact, Ref, mk};
 pub use dep::{Dep, DepType};
 use log::debug;
 pub use node::{ArgKind, Node};
@@ -1411,86 +1411,425 @@ impl<C: HasOpFactory> UDag<C> {
         }
     }
 
-    fn try_lower_hypercube_reduce_selected(
+    /// Lower a Map/ReduceMap body to an inline `GOp` op-tree (no graph nodes).
+    /// `binders` are the enclosing loop binders by de Bruijn level (index =
+    /// level); `vctx` is already extended with their CTyps. `Ok(None)` means
+    /// the template declines and the caller falls back to the unroll lowerer.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_loop_body_template(
         &mut self,
-        reduce_op: BinOp,
-        reduce_input: &CExp,
-        transcr: &mut NodeIndex,
-        edge_type: DepType,
+        exp: &CExp,
+        binders: &[(Vid, ATyp)],
         kctx: &Ctx<Tid, CKind>,
         fctx: &Ctx<CSig, CBody>,
         vctx: &Ctx<Vid, CTyp>,
         vars: &Ctx<Vid, GOp<C>>,
         provenance: &LoweringProvenance,
     ) -> Result<Option<GOp<C>>, GraphError> {
-        if reduce_op != BinOp::Add {
-            return Ok(None);
+        match exp {
+            CExp::Lit(n) => Ok(Some(GOp::Value(Value::Index(*n)))),
+            CExp::Bool(b) => Ok(Some(GOp::Value(Value::Bool(*b)))),
+            CExp::Range(r) => Ok(Some(GOp::range(*r))),
+            CExp::Var(id) => {
+                if let Some(level) = binders.iter().rposition(|(v, _)| v == id) {
+                    Ok(Some(GOp::loop_param(level, binders[level].1.clone())))
+                } else {
+                    Ok(Some(Self::op_from_var(id, vars)?))
+                }
+            }
+            CExp::Bin(op, a, b) => {
+                let Some(la) =
+                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                let Some(lb) =
+                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                let ctyp = exp.infer(kctx, &fctx.keys(), vctx)?;
+                let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
+                    return Ok(None);
+                };
+                Ok(Some(GOp::bin(*op, la, lb, atyp)))
+            }
+            CExp::Ram(a, b) => {
+                let Some(la) =
+                    self.lower_loop_body_template(a, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                let Some(lb) =
+                    self.lower_loop_body_template(b, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(GOp::ram(la, lb)))
+            }
+            CExp::Vec(xs) => {
+                let mut out = Vec::with_capacity(xs.0.len());
+                for e in xs.0.iter() {
+                    let Some(le) = self
+                        .lower_loop_body_template(e, binders, kctx, fctx, vctx, vars, provenance)?
+                    else {
+                        return Ok(None);
+                    };
+                    out.push(le);
+                }
+                Ok(Some(GOp::vec(out)))
+            }
+            CExp::Evaluate(p, selector, opt_points) => {
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                match (selector, opt_points) {
+                    (None, None) => Ok(Some(GOp::evaluate_grid(lp))),
+                    (None, Some(x)) => {
+                        let Some(lx) = self.lower_loop_body_template(
+                            x, binders, kctx, fctx, vctx, vars, provenance,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        Ok(Some(GOp::evaluate(lp, lx)))
+                    }
+                    (Some(range), Some(fixed)) => {
+                        let Some(lfixed) = self.lower_loop_body_template(
+                            fixed, binders, kctx, fctx, vctx, vars, provenance,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        Ok(Some(GOp::evaluate_selected(lp, *range, lfixed)))
+                    }
+                    (Some(_), None) => Ok(None),
+                }
+            }
+            CExp::Poly(p) => {
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(Op::Poly(mk::<C>(lp))))
+            }
+            CExp::Coef(p) => {
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(Op::Coef(mk::<C>(lp))))
+            }
+            CExp::Mle(p) => {
+                let Some(lp) =
+                    self.lower_loop_body_template(p, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(Op::Mle(mk::<C>(lp))))
+            }
+            CExp::Interpolate(points_opt, evals) => {
+                let Some(levals) = self
+                    .lower_loop_body_template(evals, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                match points_opt {
+                    None => Ok(Some(Op::Ifft(mk::<C>(levals)))),
+                    Some(p) => {
+                        let Some(lp) = self.lower_loop_body_template(
+                            p, binders, kctx, fctx, vctx, vars, provenance,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        Ok(Some(Op::Interpolate(mk::<C>(lp), mk::<C>(levals))))
+                    }
+                }
+            }
+            CExp::Proj(r, field) => {
+                let Some(lr) =
+                    self.lower_loop_body_template(r, binders, kctx, fctx, vctx, vars, provenance)?
+                else {
+                    return Ok(None);
+                };
+                let ctyp = exp.infer(kctx, &fctx.keys(), vctx)?;
+                let Some(atyp) = ATyp::from_ctyp(&ctyp, kctx) else {
+                    return Ok(None);
+                };
+                Ok(Some(Op::Proj(mk::<C>(lr), field.clone(), atyp)))
+            }
+            CExp::Record(fields) => {
+                let mut out: Ctx<String, HOp<C>> = Ctx::new();
+                for (k, v) in fields.iter() {
+                    let Some(lv) = self
+                        .lower_loop_body_template(v, binders, kctx, fctx, vctx, vars, provenance)?
+                    else {
+                        return Ok(None);
+                    };
+                    out.insert(k, &mk::<C>(lv));
+                }
+                Ok(Some(Op::Record(out)))
+            }
+            CExp::Map(body, binder, domain) => {
+                let domain_typ = domain.infer(kctx, &fctx.keys(), vctx)?;
+                let (elem_ctyp, _) = match domain_typ {
+                    CTyp::Vec(box e, n) => (e, n),
+                    _ => return Ok(None),
+                };
+                let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
+                    return Ok(None);
+                };
+                let Some(ld) = self.lower_loop_body_template(
+                    domain, binders, kctx, fctx, vctx, vars, provenance,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let mut inner_binders = binders.to_vec();
+                inner_binders.push((binder.clone(), binder_atyp));
+                let mut inner_vctx = vctx.clone();
+                inner_vctx.insert(binder, &elem_ctyp);
+                let inner_prov = provenance.shadow_binding(binder);
+                let Some(lb) = self.lower_loop_body_template(
+                    body,
+                    &inner_binders,
+                    kctx,
+                    fctx,
+                    &inner_vctx,
+                    vars,
+                    &inner_prov,
+                )?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(GOp::map(ld, lb)))
+            }
+            CExp::Reduce(rop, v) => {
+                if let CExp::Map(body, binder, domain) = v.as_ref() {
+                    self.try_build_reduce_map(
+                        *rop,
+                        body.as_ref().clone(),
+                        binder.clone(),
+                        domain.as_ref().clone(),
+                        binders,
+                        kctx,
+                        fctx,
+                        vctx,
+                        vars,
+                        provenance,
+                    )
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
         }
+    }
 
-        let CExp::Map(body, tail_var, tail_domain) = reduce_input else {
-            return Ok(None);
+    /// Capture-avoiding substitution of `replacement` for free `target` in
+    /// `exp`. Handles pure value/arithmetic/polynomial forms precisely; any
+    /// binder-introducing or effectful form is kept verbatim when it does not
+    /// mention `target`, else declines (`None`) so composition stays safe.
+    fn substitute_var(exp: CExp, target: &Vid, replacement: &CExp) -> Option<CExp> {
+        Some(match exp {
+            CExp::Var(id) => {
+                if &id == target {
+                    replacement.clone()
+                } else {
+                    CExp::Var(id)
+                }
+            }
+            CExp::Lit(_)
+            | CExp::Bool(_)
+            | CExp::Range(_)
+            | CExp::Random(_, _)
+            | CExp::Challenge(_, _) => exp,
+            CExp::Bin(op, a, b) => CExp::Bin(
+                op,
+                Box::new(Self::substitute_var(*a, target, replacement)?),
+                Box::new(Self::substitute_var(*b, target, replacement)?),
+            ),
+            CExp::Ram(a, b) => CExp::Ram(
+                Box::new(Self::substitute_var(*a, target, replacement)?),
+                Box::new(Self::substitute_var(*b, target, replacement)?),
+            ),
+            CExp::Pair(a, b) => CExp::Pair(
+                Box::new(Self::substitute_var(*a, target, replacement)?),
+                Box::new(Self::substitute_var(*b, target, replacement)?),
+            ),
+            CExp::Vec(xs) => {
+                let mut out = Vec::with_capacity(xs.0.len());
+                for e in xs.0 {
+                    out.push(Self::substitute_var(e, target, replacement)?);
+                }
+                CExp::vec(out)
+            }
+            CExp::Evaluate(p, sel, pts) => CExp::Evaluate(
+                Box::new(Self::substitute_var(*p, target, replacement)?),
+                sel,
+                match pts {
+                    Some(x) => Some(Box::new(Self::substitute_var(*x, target, replacement)?)),
+                    None => None,
+                },
+            ),
+            CExp::Poly(p) => CExp::Poly(Box::new(Self::substitute_var(*p, target, replacement)?)),
+            CExp::Coef(p) => CExp::Coef(Box::new(Self::substitute_var(*p, target, replacement)?)),
+            CExp::Mle(p) => CExp::Mle(Box::new(Self::substitute_var(*p, target, replacement)?)),
+            CExp::Interpolate(pts, evals) => CExp::Interpolate(
+                match pts {
+                    Some(p) => Some(Box::new(Self::substitute_var(*p, target, replacement)?)),
+                    None => None,
+                },
+                Box::new(Self::substitute_var(*evals, target, replacement)?),
+            ),
+            CExp::Proj(p, field) => CExp::Proj(
+                Box::new(Self::substitute_var(*p, target, replacement)?),
+                field,
+            ),
+            other => {
+                if Self::exp_mentions_free_var(&other, target) {
+                    return None;
+                }
+                other
+            }
+        })
+    }
+
+    /// Fuse `reduce(rop, [f(x) for x in [g(y) for y in D]])` into a single
+    /// reduce-map over `D` with body `f(g(y))`, repeatedly while the inner
+    /// comprehension and outer body are pure and substitution is capture-safe.
+    /// Returns the maximally composed `(body, binder, domain)` (unchanged when
+    /// no safe composition applies).
+    fn compose_nested_map_domain(
+        mut body: CExp,
+        mut binder: Vid,
+        mut domain: CExp,
+    ) -> (CExp, Vid, CExp) {
+        while let CExp::Map(g, y, d2) = domain.clone() {
+            if !body.is_pure() || !g.is_pure() {
+                break;
+            }
+            let Some(b2) = Self::substitute_var(body.clone(), &binder, g.as_ref()) else {
+                break;
+            };
+            body = b2;
+            binder = y;
+            domain = *d2;
+        }
+        (body, binder, domain)
+    }
+
+    /// Classify whether `reduce(rop, [body for binder in domain])` is the
+    /// canonical fused sumcheck shape. Mirrors the old
+    /// `try_lower_hypercube_reduce_selected` recognizer exactly.
+    #[allow(clippy::too_many_arguments)]
+    fn classify_reduce_map_fact(
+        rop: BinOp,
+        body: &CExp,
+        binder: &Vid,
+        domain: &CExp,
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>,
+        provenance: &LoweringProvenance,
+    ) -> Result<ReduceMapDomainFact, GraphError> {
+        if rop != BinOp::Add {
+            return Ok(ReduceMapDomainFact::Unknown);
+        }
+        let CExp::Evaluate(poly, Some(range), Some(fixed)) = body else {
+            return Ok(ReduceMapDomainFact::Unknown);
         };
-        let CExp::Evaluate(poly_exp, Some(range), Some(fixed_exp)) = body.as_ref() else {
-            return Ok(None);
+        let CExp::Var(fv) = fixed.as_ref() else {
+            return Ok(ReduceMapDomainFact::Unknown);
         };
-        let CExp::Var(fixed_var) = fixed_exp.as_ref() else {
-            return Ok(None);
+        if fv != binder || range.start != 0 || range.step != 1 || range.len() != 1 {
+            return Ok(ReduceMapDomainFact::Unknown);
+        }
+        if Self::exp_mentions_free_var(poly, binder) {
+            return Ok(ReduceMapDomainFact::Unknown);
+        }
+        if !Self::is_poly_hoist_safe(poly) {
+            return Ok(ReduceMapDomainFact::Unknown);
+        }
+        let poly_typ = poly.infer(kctx, &fctx.keys(), vctx)?;
+        let Some(poly_atyp) = ATyp::from_ctyp(&poly_typ, kctx) else {
+            return Ok(ReduceMapDomainFact::Unknown);
         };
-        if fixed_var != tail_var || range.start != 0 || range.step != 1 || range.len() != 1 {
-            return Ok(None);
-        }
-
-        // The private fused op evaluates a single polynomial once over all
-        // Boolean tails. If the selected-eval polynomial operand mentions the
-        // map binder, ordinary map/reduce semantics must handle it with the
-        // binder in scope; probing type/lowering here would be premature.
-        if Self::exp_mentions_free_var(poly_exp, tail_var) {
-            return Ok(None);
-        }
-
-        // Fusion lowers the selected-eval polynomial operand once outside the
-        // tail map. Only do that when the operand is already a bound value or
-        // when a conservative syntactic proof shows it is pure and effect-free;
-        // otherwise ordinary map/reduce lowering preserves per-tail effects.
-        if !Self::is_poly_hoist_safe(poly_exp) {
-            return Ok(None);
-        }
-
-        let poly_typ = poly_exp.infer(kctx, &fctx.keys(), vctx)?;
-        let poly_atyp = ATyp::from_ctyp(&poly_typ, kctx).ok_or_else(|| {
-            TypeError::next(
-                TypeError::exp(kctx, vctx, poly_exp),
-                TypeError::ark(kctx, vctx, poly_exp, &poly_typ),
-            )
-        })?;
-        let input_num_vars = match poly_atyp {
+        let arity = match poly_atyp {
             ATyp::Uni(_) => 1,
             ATyp::Mle(n) | ATyp::VPoly(n, _) => n,
+            _ => return Ok(ReduceMapDomainFact::Unknown),
+        };
+        let Some(tail_num_vars) = arity.checked_sub(range.len()) else {
+            return Ok(ReduceMapDomainFact::Unknown);
+        };
+        if !Self::is_boolean_hypercube_tail_domain(domain, tail_num_vars, provenance) {
+            return Ok(ReduceMapDomainFact::Unknown);
+        }
+        Ok(ReduceMapDomainFact::CompleteBooleanHypercube { tail_num_vars })
+    }
+
+    /// Build an inline `Op::ReduceMap` for `reduce(rop, [body for binder in
+    /// domain])`. Classifies the fast-path fact on the un-composed form, fuses
+    /// nested-map domains for the generic case, then lowers domain and body via
+    /// the template. Declines (`None`) if any sub-lowering declines.
+    #[allow(clippy::too_many_arguments)]
+    fn try_build_reduce_map(
+        &mut self,
+        rop: BinOp,
+        body: CExp,
+        binder: Vid,
+        domain: CExp,
+        binders: &[(Vid, ATyp)],
+        kctx: &Ctx<Tid, CKind>,
+        fctx: &Ctx<CSig, CBody>,
+        vctx: &Ctx<Vid, CTyp>,
+        vars: &Ctx<Vid, GOp<C>>,
+        provenance: &LoweringProvenance,
+    ) -> Result<Option<GOp<C>>, GraphError> {
+        let fact = Self::classify_reduce_map_fact(
+            rop, &body, &binder, &domain, kctx, fctx, vctx, provenance,
+        )?;
+        let (body, binder, domain) = match fact {
+            ReduceMapDomainFact::Unknown => Self::compose_nested_map_domain(body, binder, domain),
+            ReduceMapDomainFact::CompleteBooleanHypercube { .. } => (body, binder, domain),
+        };
+        let domain_typ = domain.infer(kctx, &fctx.keys(), vctx)?;
+        let (elem_ctyp, _) = match domain_typ {
+            CTyp::Vec(box e, n) => (e, n),
             _ => return Ok(None),
         };
-        let Some(tail_num_vars) = input_num_vars.checked_sub(range.len()) else {
+        let Some(binder_atyp) = ATyp::from_ctyp(&elem_ctyp, kctx) else {
             return Ok(None);
         };
-        if !Self::is_boolean_hypercube_tail_domain(tail_domain.as_ref(), tail_num_vars, provenance)
-        {
+        let Some(domain_op) =
+            self.lower_loop_body_template(&domain, binders, kctx, fctx, vctx, vars, provenance)?
+        else {
             return Ok(None);
-        }
-
-        let poly_op = self.add_exp_with_provenance(
-            poly_exp.as_ref().clone(),
-            transcr,
-            edge_type,
+        };
+        let mut body_binders = binders.to_vec();
+        body_binders.push((binder.clone(), binder_atyp));
+        let mut body_vctx = vctx.clone();
+        body_vctx.insert(&binder, &elem_ctyp);
+        let body_prov = provenance.shadow_binding(&binder);
+        let Some(body_op) = self.lower_loop_body_template(
+            &body,
+            &body_binders,
             kctx,
             fctx,
-            vctx,
+            &body_vctx,
             vars,
-            provenance,
-        )?;
-        let fused_op = GOp::hypercube_reduce_selected(poly_op.clone(), *range, tail_num_vars);
-        let atyp = fused_op.typ();
-        let nfused = self.add_node(Node::Op(mk::<C>(fused_op), Nothing));
-        self.add_edges(edge_type, nfused, poly_op);
-        Ok(Some(GOp::underscore(nfused, atyp)))
+            &body_prov,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(GOp::reduce_map(rop, domain_op, body_op, fact)))
     }
 
     fn is_boolean_hypercube_tail_domain(
@@ -2138,6 +2477,26 @@ impl<C: HasOpFactory> UDag<C> {
                 CExp::Range(r) => return Ok(GOp::range(r)),
 
                 CExp::Map(box l, x, box e) => {
+                    let map_atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                        TypeError::next(
+                            TypeError::exp(kctx, &vctx, &exp),
+                            TypeError::ark(kctx, &vctx, &exp, &typ),
+                        )
+                    })?;
+                    // Fast path: lower to a persistent `Op::Map` when the body
+                    // and domain are pure. Falls back to the unroll otherwise.
+                    if let Some(map_op) = self.lower_loop_body_template(
+                        &CExp::Map(Box::new(l.clone()), x.clone(), Box::new(e.clone())),
+                        &[],
+                        kctx,
+                        fctx,
+                        &vctx,
+                        &vars,
+                        &provenance,
+                    )? {
+                        return Ok(self.materialize(map_op, edge_type, map_atyp));
+                    }
+
                     let te = e.infer(kctx, &fctx.keys(), &vctx)?;
 
                     // Op for [e]
@@ -2198,18 +2557,30 @@ impl<C: HasOpFactory> UDag<C> {
                 }
 
                 CExp::Reduce(op, box v) => {
-                    if let Some(fused) = self.try_lower_hypercube_reduce_selected(
-                        op,
-                        &v,
-                        transcr,
-                        edge_type,
-                        kctx,
-                        fctx,
-                        &vctx,
-                        &vars,
-                        &provenance,
-                    )? {
-                        return Ok(fused);
+                    let reduce_map = if let CExp::Map(box body, binder, box domain) = v.clone() {
+                        self.try_build_reduce_map(
+                            op,
+                            body,
+                            binder,
+                            domain,
+                            &[],
+                            kctx,
+                            fctx,
+                            &vctx,
+                            &vars,
+                            &provenance,
+                        )?
+                    } else {
+                        None
+                    };
+                    if let Some(rm) = reduce_map {
+                        let atyp = ATyp::from_ctyp(&typ, kctx).ok_or_else(|| {
+                            TypeError::next(
+                                TypeError::exp(kctx, &vctx, &exp),
+                                TypeError::ark(kctx, &vctx, &exp, &typ),
+                            )
+                        })?;
+                        return Ok(self.materialize(rm, edge_type, atyp));
                     }
                     let ov = self.add_exp_with_provenance(
                         v,

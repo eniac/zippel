@@ -40,7 +40,7 @@ proto cds<G: Group, F: Scalar<G>, N: 10, K: 5>(
     let p = interpolate(pts, evals);
     
     // Evaluate p to find the true challenges for all instances (indices 1..N)
-    let c_prover = eval(p, eval_points);
+    let c_prover = [p(x) for x in eval_points];
     c_transcript <- c_prover;
     
     // Step 4: Prover Responses
@@ -61,7 +61,7 @@ proto cds<G: Group, F: Scalar<G>, N: 10, K: 5>(
     let p_verif = interpolate(verifier_pts, verifier_evals);
     
     let verifier_check_pts = [eval_points[i + K] for i in 0..N-K];
-    let verifier_check_evals = eval(p_verif, verifier_check_pts);
+    let verifier_check_evals = [p_verif(x) for x in verifier_check_pts];
     
     let polynomial_checks = [ c_transcript[i + K] == verifier_check_evals[i] for i in 0..N-K ];
     verify(reduce(&&, polynomial_checks))

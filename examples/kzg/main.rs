@@ -11,7 +11,7 @@ fn main() {
     let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &2);
+    sizes.insert(&Tid::new("N"), &2);
     handler.compile(&sizes);
 
     let inputs = prover_create_inputs();

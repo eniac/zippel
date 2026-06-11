@@ -7,7 +7,7 @@ proto hadamard<F: Field, S: Size, N: 1..S>(
     let p = p_A * p_B - p_C;
     let q = p / v_H;
     r <- challenge<F>;
-    left_hand <- eval(p_A, [r]) * eval(p_B, [r]) - eval(p_C, [r]);
-    right_hand <- eval(q, [r]) * eval(v_H, [r]);
+    left_hand <- p_A(r) * p_B(r) - p_C(r);
+    right_hand <- q(r) * v_H(r);
     verify(left_hand == right_hand)
 }

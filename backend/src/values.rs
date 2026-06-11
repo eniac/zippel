@@ -1791,7 +1791,7 @@ impl<C: ArkConfig> Value<C> {
         };
 
         if let Some(round) =
-            hypercube_reduce_selected_dense_mle_products::<C>(&poly, tail_num_vars, shape)
+            hypercube_reduce_selected_mle_products::<C>(&poly, tail_num_vars, shape)
         {
             record_hypercube_reduce_fused();
             return Value::Poly(round);
@@ -2073,17 +2073,6 @@ impl<C: ArkConfig> Value<C> {
                 let n_points = b.len();
                 let points: Vec<C::F> = b.iter().map(|i| C::FOps::from_usize(*i)).collect();
 
-                let uni_input = poly.is_univariate();
-                if uni_input {
-                    *other = Value::VecScalar(
-                        points
-                            .par_iter()
-                            .map(|point| poly.evaluate_uv(point))
-                            .collect(),
-                    );
-                    return;
-                }
-
                 let original_num_vars = poly.num_vars();
                 let result_poly = if let Ok(scalar) = poly.evaluate_mv(&points) {
                     VirtualPolynomial::from_scalar(scalar)
@@ -2110,13 +2099,6 @@ impl<C: ArkConfig> Value<C> {
             }
             (Value::Poly(poly), Value::VecScalar(v)) => {
                 let n_points = v.len();
-                let uni_input = poly.is_univariate();
-                if uni_input {
-                    *other = Value::VecScalar(
-                        v.par_iter().map(|point| poly.evaluate_uv(point)).collect(),
-                    );
-                    return;
-                }
 
                 let original_num_vars = poly.num_vars();
                 let result_poly = if let Ok(scalar) = poly.evaluate_mv(v) {
@@ -2140,6 +2122,52 @@ impl<C: ArkConfig> Value<C> {
                 } else {
                     Value::Poly(result_poly)
                 };
+            }
+            (Value::Poly(poly), Value::VecBool(bits)) => {
+                let n_points = bits.len();
+                if poly.num_vars() == Some(n_points) {
+                    // Full boolean evaluation: direct table index, no field point.
+                    let scalar = poly.evaluate_at_boolean_index(boolean_index(bits));
+                    *other = if n_points == 1 {
+                        Value::VecScalar(vec![scalar])
+                    } else {
+                        Value::Scalar(scalar)
+                    };
+                } else {
+                    // Partial boolean prefix: fall back via 0/1 field point.
+                    let points: Vec<C::F> = bits
+                        .iter()
+                        .map(|b| C::FOps::from_usize(*b as usize))
+                        .collect();
+                    let original_num_vars = poly.num_vars();
+                    let result_poly = if let Ok(scalar) = poly.evaluate_mv(&points) {
+                        VirtualPolynomial::from_scalar(scalar)
+                    } else {
+                        poly.evaluate_or_fix_mle(&points)
+                            .expect("MLE evaluation failed")
+                    };
+                    let keep_typed_residual = original_num_vars.is_some_and(|n| n_points < n)
+                        && result_poly.num_vars().is_some();
+                    *other = if !keep_typed_residual {
+                        if let Some(scalar) = result_poly.to_scalar() {
+                            if n_points == 1 {
+                                Value::VecScalar(vec![scalar])
+                            } else {
+                                Value::Scalar(scalar)
+                            }
+                        } else {
+                            Value::Poly(result_poly)
+                        }
+                    } else {
+                        Value::Poly(result_poly)
+                    };
+                }
+            }
+            (Value::Poly(poly), Value::Scalar(x)) => {
+                *other = Value::Scalar(poly.evaluate_uv(x));
+            }
+            (Value::Poly(poly), Value::Index(i)) => {
+                *other = Value::Scalar(poly.evaluate_uv(&C::FOps::from_usize(*i)));
             }
             _ => panic!("Cannot eval if not poly or index"),
         }
@@ -2957,7 +2985,7 @@ impl<C: ArkConfig> Value<C> {
     }
 
     /// Convert a vector Value into a Vec of element Values.
-    fn into_elements(self) -> Vec<Value<C>> {
+    pub fn into_elements(self) -> Vec<Value<C>> {
         match self {
             Value::VecScalar(v) => v.into_iter().map(Value::Scalar).collect(),
             Value::VecIndex(v) => v.into_iter().map(Value::Index).collect(),
@@ -2973,7 +3001,16 @@ impl<C: ArkConfig> Value<C> {
     }
 }
 
-fn hypercube_reduce_selected_dense_mle_products<C: ArkConfig>(
+/// Little-endian boolean hypercube index: variable `i` is bit `i`.
+fn boolean_index(bits: &[bool]) -> usize {
+    bits.iter()
+        .enumerate()
+        .filter(|(_, b)| **b)
+        .map(|(i, _)| 1usize << i)
+        .sum()
+}
+
+fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     poly: &VirtualPolynomial<C::F>,
     tail_num_vars: usize,
     shape: SelectedEvalShape,
@@ -2989,7 +3026,7 @@ fn hypercube_reduce_selected_dense_mle_products<C: ArkConfig>(
         for tail_index in 0..tail_count {
             let mut term = vec![*coefficient];
             for &idx in indices {
-                let factor = dense_mle_factor_as_univariate::<C>(
+                let factor = factor_as_univariate::<C>(
                     poly.flattened_polys[idx].as_ref(),
                     shape.input_num_vars,
                     tail_index,
@@ -3023,6 +3060,39 @@ fn dense_mle_factor_as_univariate<C: ArkConfig>(
     let v0 = *mle.evaluations.get(base_idx)?;
     let v1 = *mle.evaluations.get(base_idx | 1)?;
     Some([v0, v1 - v0])
+}
+
+fn sparse_mle_factor_as_univariate<C: ArkConfig>(
+    poly: &PolyVariant<C::F>,
+    input_num_vars: usize,
+    tail_index: usize,
+) -> Option<[C::F; 2]> {
+    let PolyVariant::SparseMle { num_vars, evals } = poly else {
+        return None;
+    };
+    if *num_vars != input_num_vars {
+        return None;
+    }
+    let base_idx = tail_index.checked_shl(1)?;
+    let mut v0 = C::F::zero();
+    let mut v1 = C::F::zero();
+    for (i, val) in evals {
+        if *i == base_idx {
+            v0 += *val;
+        } else if *i == (base_idx | 1) {
+            v1 += *val;
+        }
+    }
+    Some([v0, v1 - v0])
+}
+
+fn factor_as_univariate<C: ArkConfig>(
+    poly: &PolyVariant<C::F>,
+    input_num_vars: usize,
+    tail_index: usize,
+) -> Option<[C::F; 2]> {
+    dense_mle_factor_as_univariate::<C>(poly, input_num_vars, tail_index)
+        .or_else(|| sparse_mle_factor_as_univariate::<C>(poly, input_num_vars, tail_index))
 }
 
 fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
@@ -3741,6 +3811,110 @@ mod value_tests {
 
     fn random_g2() -> TestValue {
         TestValue::G2(G2Projective::rand(&mut thread_rng()))
+    }
+
+    #[test]
+    fn sparse_reduce_factor_univariate() {
+        // tail_index 1 -> base_idx = 1<<1 = 2; v0 = entries at idx 2 (5+1), v1 = idx 3 (7).
+        let poly = PolyVariant::<Fr>::SparseMle {
+            num_vars: 3,
+            evals: vec![
+                (2, Fr::from(5u64)),
+                (3, Fr::from(7u64)),
+                (2, Fr::from(1u64)),
+            ],
+        };
+        assert_eq!(
+            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 3, 1),
+            Some([Fr::from(6u64), Fr::from(1u64)])
+        );
+        assert_eq!(
+            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 4, 1),
+            None
+        );
+    }
+
+    #[test]
+    fn sparse_reduce_matches_generic() {
+        // A single SparseMle factor forces the sparse fused path; the round poly
+        // must match the trusted generic per-(t, tail) evaluate_mv oracle.
+        let evals = vec![
+            (0, Fr::from(2u64)),
+            (3, Fr::from(5u64)),
+            (5, Fr::from(7u64)),
+        ];
+        let vp = VirtualPolynomial::from_poly(PolyVariant::SparseMle { num_vars: 3, evals });
+        let shape = SelectedEvalShape::new(3, 1, 1);
+        let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, 2, shape)
+            .expect("sparse fast path must fire");
+        for t_u in [0u64, 1, 2, 3, 4] {
+            let t = Fr::from(t_u);
+            let mut expected = Fr::zero();
+            for tail in 0..4usize {
+                let b0 = if tail & 1 == 1 { Fr::one() } else { Fr::zero() };
+                let b1 = if (tail >> 1) & 1 == 1 {
+                    Fr::one()
+                } else {
+                    Fr::zero()
+                };
+                expected += vp.evaluate_mv(&[t, b0, b1]).unwrap();
+            }
+            assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
+        }
+    }
+
+    #[test]
+    fn boolean_eval_dense_full() {
+        let table: Vec<Fr> = (0..8).map(|i| Fr::from(i as u64)).collect();
+        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+            DenseMultilinearExtension::from_evaluations_vec(3, table),
+        )));
+        // [true,false,true] -> little-endian index 1 + 4 = 5 -> table[5] = 5.
+        assert_eq!(
+            poly.value_eval(TestValue::VecBool(vec![true, false, true])),
+            TestValue::Scalar(Fr::from(5u64))
+        );
+    }
+
+    #[test]
+    fn boolean_eval_sparse_full() {
+        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
+            num_vars: 3,
+            evals: vec![
+                (5, Fr::from(10u64)),
+                (5, Fr::from(7u64)),
+                (2, Fr::from(3u64)),
+            ],
+        }));
+        // index 5: duplicate entries sum 10 + 7 = 17.
+        assert_eq!(
+            poly.clone()
+                .value_eval(TestValue::VecBool(vec![true, false, true])),
+            TestValue::Scalar(Fr::from(17u64))
+        );
+        // index 7 absent -> 0.
+        assert_eq!(
+            poly.value_eval(TestValue::VecBool(vec![true, true, true])),
+            TestValue::Scalar(Fr::zero())
+        );
+    }
+
+    #[test]
+    fn boolean_eval_equals_scalar_point() {
+        let table: Vec<Fr> = (0..8).map(|i| Fr::from((i * i + 1) as u64)).collect();
+        let poly = TestValue::Poly(VirtualPolynomial::from_poly(PolyVariant::DenseMle(
+            DenseMultilinearExtension::from_evaluations_vec(3, table),
+        )));
+        for idx in 0..8usize {
+            let bits = vec![idx & 1 == 1, (idx >> 1) & 1 == 1, (idx >> 2) & 1 == 1];
+            let via_bool = poly.clone().value_eval(TestValue::VecBool(bits.clone()));
+            let scalars: Vec<Fr> = bits
+                .iter()
+                .map(|b| if *b { Fr::one() } else { Fr::zero() })
+                .collect();
+            let via_scalar = poly.clone().value_eval(TestValue::VecScalar(scalars));
+            assert_eq!(via_bool, via_scalar, "mismatch at idx {idx}");
+        }
     }
 
     // Helper trait to extract inner values

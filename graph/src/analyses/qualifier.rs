@@ -1,4 +1,4 @@
-use crate::{Dag, GOp, Node, Op, QDag, UDag};
+use crate::{Dag, GOp, Node, Op, QDag, ReduceMapDomainFact, UDag};
 use backend::ArkConfig;
 use lang::typ::Qualifier;
 use petgraph::Direction;
@@ -14,39 +14,68 @@ pub struct QualifierPropagation {
 impl QualifierPropagation {
     #[allow(clippy::wrong_self_convention)]
     fn from_op<C: ArkConfig>(&self, op: &GOp<C>) -> Option<Qualifier> {
+        self.from_op_loops(op, &[])
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn from_op_loops<C: ArkConfig>(&self, op: &GOp<C>, loops: &[Qualifier]) -> Option<Qualifier> {
         match op {
             Op::Value(_) => Some(Qualifier::Public),
             Op::Check(_) => Some(Qualifier::Public),
             Op::Ref(r, _) => self.quals.get(&r.node()).cloned(),
-            Op::Ram(a, _) => self.from_op(a),
-            Op::Poly(a) => self.from_op(a),
-            Op::Mle(a) => self.from_op(a),
-            Op::Coef(a) => self.from_op(a),
-            Op::Reduce(_, v) => self.from_op(v),
-            Op::HypercubeReduceSelected(p, _, _) => self.from_op(p),
-            Op::Evaluate(p, _, None) => self.from_op(p),
+            Op::Ram(a, _) => self.from_op_loops(a, loops),
+            Op::Poly(a) => self.from_op_loops(a, loops),
+            Op::Mle(a) => self.from_op_loops(a, loops),
+            Op::Coef(a) => self.from_op_loops(a, loops),
+            Op::Reduce(_, v) => self.from_op_loops(v, loops),
+            Op::LoopParam(i, _) => loops.get(*i).cloned(),
+            Op::Map(d, b) => {
+                let qd = self.from_op_loops(d, loops)?;
+                let mut next = loops.to_vec();
+                next.push(qd);
+                self.from_op_loops(b, &next)
+            }
+            Op::ReduceMap(_, d, b, fact) => match fact {
+                ReduceMapDomainFact::CompleteBooleanHypercube { .. } => match b.get() {
+                    // Mirror the old HypercubeReduceSelected: delegate to the poly child.
+                    Op::Evaluate(p, Some(_), Some(_)) => self.from_op_loops(p, loops),
+                    _ => {
+                        let qd = self.from_op_loops(d, loops)?;
+                        let mut next = loops.to_vec();
+                        next.push(qd);
+                        self.from_op_loops(b, &next)
+                    }
+                },
+                ReduceMapDomainFact::Unknown => {
+                    let qd = self.from_op_loops(d, loops)?;
+                    let mut next = loops.to_vec();
+                    next.push(qd);
+                    self.from_op_loops(b, &next)
+                }
+            },
+            Op::Evaluate(p, _, None) => self.from_op_loops(p, loops),
             Op::Evaluate(p, _, Some(x)) => {
-                let qual_p = self.from_op(p)?;
-                let qual_x = self.from_op(x)?;
+                let qual_p = self.from_op_loops(p, loops)?;
+                let qual_x = self.from_op_loops(x, loops)?;
                 Some(qual_p.join(&qual_x))
             }
             Op::Interpolate(points, evals) => {
-                let q_points = self.from_op(points)?;
-                let q_evals = self.from_op(evals)?;
+                let q_points = self.from_op_loops(points, loops)?;
+                let q_evals = self.from_op_loops(evals, loops)?;
                 Some(q_points.join(&q_evals))
             }
-            Op::Ifft(a) => self.from_op(a),
-            Op::Fft(a) => self.from_op(a),
-            Op::Proj(a, _, _) => self.from_op(a),
+            Op::Ifft(a) => self.from_op_loops(a, loops),
+            Op::Fft(a) => self.from_op_loops(a, loops),
+            Op::Proj(a, _, _) => self.from_op_loops(a, loops),
             Op::Bin(_, a, b, _) | Op::Pair(a, b, _) => {
-                let qual_a = self.from_op(a)?;
-                let qual_b = self.from_op(b)?;
+                let qual_a = self.from_op_loops(a, loops)?;
+                let qual_b = self.from_op_loops(b, loops)?;
                 Some(qual_a.join(&qual_b))
             }
             Op::Vec(vs) => {
                 let mut qual = Qualifier::Public;
                 for v in vs {
-                    let q = self.from_op(v)?;
+                    let q = self.from_op_loops(v, loops)?;
                     qual = qual.join(&q);
                 }
                 Some(qual)
@@ -54,7 +83,7 @@ impl QualifierPropagation {
             Op::Record(fields) => {
                 let mut qual = Qualifier::Public;
                 for (_, v) in fields.iter() {
-                    let q = self.from_op(v)?;
+                    let q = self.from_op_loops(v, loops)?;
                     qual = qual.join(&q);
                 }
                 Some(qual)

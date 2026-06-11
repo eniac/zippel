@@ -21,8 +21,6 @@ pub mod pari;
 pub mod pari_native;
 pub mod pst13;
 pub mod schnorr;
-// Quarantined: benchmarks/src/spartan.rs embeds Zippel sources that still call
-// the removed public `marginalize(cfg)` syntax. Keep native Spartan in the
-// standalone spartan_bench binary, but do not compile/register the Zippel path.
+pub mod spartan;
 pub mod sumcheck;
 pub mod sumcheck_gate;

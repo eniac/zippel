@@ -1,92 +1,117 @@
 // Multilinear Sumcheck
 // A simplified sumcheck protocol specifically for multilinear polynomials.
 
-// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse
-fn sumcheck_round<F: Field, NUM_VARS: 10, V: 2..10>(
+// Sample a univariate polynomial one point at a time via single-scalar
+// application `p(t)`. Binary `eval(p, vector)` on a univariate poly is a type
+// error: a one-variable residual would misread the vector as one multivariate
+// coordinate point instead of a batch of scalar sample points.
+fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
+    public p: Poly<F, 1, MAX_DEGREE_CONST>,
+    public points: [F; MAX_DEGREE_CONST + 1]
+) -> [F; MAX_DEGREE_CONST + 1] {
+    [p(t) for t in points]
+}
+
+// Round 2 onward (prover): check g(0)+g(1) = previous g(r), then recurse on the
+// explicit residual polynomial until the residual is `Poly<F,2>`.
+fn sumcheck_round<F: Field, NUM_VARS: Size, V: 3..NUM_VARS + 1>(
     public orig_poly: Poly<F, NUM_VARS, 1>,
     public curr_poly: Poly<F, V, 1>,
-    public challenges: [F; NUM_VARS - V],
+    public challenges: [F; NUM_VARS - V + 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
-    
-    // Prover sends evaluations over the boolean hypercube (g(0), g(1))
-    evs <- out.evaluations;
-    verify(prev_eval == evs[0] + evs[1]);
+    let residual_poly = eval(curr_poly, [challenge]);
+    let zero = challenge - challenge;
+    let one = zero + 1;
+    // Canonical fusion shape: keep the Boolean-tail comprehension inline in the
+    // reduce map so graph lowering can emit the fused hypercube-reduction op.
+    let round_poly = reduce(+, [
+        eval<0>(residual_poly, tail)
+        for tail in [
+            [(((i / (2^j)) % 2) * one) for j in 0..(V - 2)]
+            for i in 0..(2^(V - 2))
+        ]
+    ]);
+    let points = [i * one for i in 0..2];
+    let evs = sample_univariate(round_poly, points);
 
-    // Verifier interpolates the evaluations to form the round polynomial g(X)
-    let points = [i for i in 0..2];
-    let g = interpolate(points, evs);
-    
-    // Verifier draws a random challenge and evaluates g(r_next)
+    evs_msg <- evs;
+    verify(prev_eval == evs_msg[0] + evs_msg[1]);
+
+    let g = interpolate(points, evs_msg);
     r_next <- challenge<F>;
-    let next_prev_vec = eval(g, [r_next]);
-    let next_prev = next_prev_vec[0];
+    let next_prev = g(r_next);
 
-    // Recurse to the next round
     let next_challenges = challenges ++ [r_next];
-    sumcheck_round(orig_poly, out.next_poly, next_challenges, next_prev, r_next, curr_round + 1)
+    sumcheck_round(orig_poly, residual_poly, next_challenges, next_prev, r_next, curr_round + 1)
 }
 
-// Final round: check g(0)+g(1) = previous g(r), then evaluate original polynomial
-fn sumcheck_round<F: Field, NUM_VARS: 10>(
+// Final round: residual is `Poly<F,2>`; fix to a univariate, sample, then check the
+// round polynomial against the original polynomial at the full challenge point.
+fn sumcheck_round<F: Field, NUM_VARS: Size>(
     public orig_poly: Poly<F, NUM_VARS, 1>,
-    public curr_poly: Poly<F, 1, 1>,
+    public curr_poly: Poly<F, 2, 1>,
     public challenges: [F; NUM_VARS - 1],
     public prev_eval: F,
     public challenge: F,
     public curr_round: Fin<NUM_VARS>
 ) -> Bool {
-    let cfg = {| poly: curr_poly, num_variables: NUM_VARS, max_degree: 1, round: curr_round, challenge: challenge |};
-    let out = marginalize(cfg);
-    
-    evs <- out.evaluations;
-    verify(prev_eval == evs[0] + evs[1]);
+    let residual_poly = eval(curr_poly, [challenge]);
+    let zero = challenge - challenge;
+    let one = zero + 1;
+    let points = [i * one for i in 0..2];
+    let evs = sample_univariate(residual_poly, points);
+    evs_msg <- evs;
+    verify(prev_eval == evs_msg[0] + evs_msg[1]);
 
-    let points = [i for i in 0..2];
-    let g = interpolate(points, evs);
-    
+    let g = interpolate(points, evs_msg);
     r_final <- challenge<F>;
-    let from_round_vec = eval(g, [r_final]);
-    let from_round = from_round_vec[0];
-    
-    // Evaluate the original polynomial at the chosen random challenge point
+    let from_round = g(r_final);
+
+    // Evaluate the original polynomial at the full challenge point
     let full_challenges = challenges ++ [r_final];
     let from_orig = eval(orig_poly, full_challenges);
 
-    // Final check: the evaluation from the round polynomial must match the original
+    let _drop_round = curr_round;
+    // Final check: the round-polynomial evaluation must match the original
     from_round == from_orig
 }
 
 // Initial round: fold round-1 message
-proto sumcheck<F: Field, NUM_VARS: 10>(
+proto sumcheck<F: Field, NUM_VARS: Size>(
     public claimed_sum: F,
     public poly: Poly<F, NUM_VARS, 1>
 ) where let zero: F = 0;
-        let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
-        let out0 = marginalize(cfg0);
-        let evs0 = out0.evaluations;
+        let one = zero + 1;
+        let points = [i * one for i in 0..2];
+        let round_poly0 = reduce(+, [
+            eval<0>(poly, tail)
+            for tail in [
+                [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS - 1)]
+                for i in 0..(2^(NUM_VARS - 1))
+            ]
+        ]);
+        let evs0 = sample_univariate(round_poly0, points);
         claimed_sum == evs0[0] + evs0[1] {
-        
-    let zero: F = 0;
-    let cfg0 = {| poly: poly, num_variables: NUM_VARS, max_degree: 1, round: 0, challenge: zero |};
-    let out0 = marginalize(cfg0);
-    
-    // Prover sends the first evaluations
-    evs0 <- out0.evaluations;
-    
-    // Verifier checks that g(0) + g(1) = claimed sum
-    verify(claimed_sum == evs0[0] + evs0[1]);
 
-    // Verifier interpolates and draws the first challenge
-    let points = [i for i in 0..2];
-    let g = interpolate(points, evs0);
+    let zero: F = 0;
+    let one = zero + 1;
+    let points = [i * one for i in 0..2];
+    let round_poly0 = reduce(+, [
+        eval<0>(poly, tail)
+        for tail in [
+            [(((i / (2^j)) % 2) * one) for j in 0..(NUM_VARS - 1)]
+            for i in 0..(2^(NUM_VARS - 1))
+        ]
+    ]);
+    let evs0 = sample_univariate(round_poly0, points);
+    evs0_msg <- evs0;
+    verify(claimed_sum == evs0_msg[0] + evs0_msg[1]);
+
     r1 <- challenge<F>;
-    let prev_vec = eval(g, [r1]);
-    let prev = prev_vec[0];
-    
-    verify(sumcheck_round(poly, out0.next_poly, [r1], prev, r1, 1))
+    let g = interpolate(points, evs0_msg);
+    let prev = g(r1);
+    verify(sumcheck_round(poly, poly, [r1], prev, r1, 1))
 }

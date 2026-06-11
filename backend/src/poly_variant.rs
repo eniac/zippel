@@ -617,6 +617,24 @@ impl<F: Field> PolyVariant<F> {
         }
     }
 
+    /// Evaluate at a boolean hypercube vertex given as a little-endian table
+    /// index, without constructing a field point. DenseMle reads the table;
+    /// SparseMle sums matching entries; a degree-0 univariate is its constant.
+    pub fn evaluate_at_boolean_index(&self, index: usize) -> F {
+        match self {
+            PolyVariant::DenseMle(mle) => mle.evaluations[index],
+            PolyVariant::SparseMle { evals, .. } => evals
+                .iter()
+                .filter(|(i, _)| *i == index)
+                .map(|(_, v)| *v)
+                .sum(),
+            PolyVariant::DenseUni(p) if p.degree() == 0 => {
+                p.coeffs.first().copied().unwrap_or_else(F::zero)
+            }
+            other => panic!("evaluate_at_boolean_index on non-MLE factor: {other}"),
+        }
+    }
+
     // ========== Arithmetic Operations ==========
 
     /// Add two polynomials
