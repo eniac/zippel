@@ -53,6 +53,7 @@ tempfile = "3"
 spartan = { version = "0.9", features = ["multicore"] }
 curve25519-dalek = { version = "4", features = ["serde", "rand_core"] }
 bincode = "1.3"
+serde = { version = "1", features = ["derive"] }
 
 # Native PARI baseline: code vendored from alireza-shirzad/garuda-pari
 # (see benchmarks/src/pari_upstream/). Uses zippel's already-pinned

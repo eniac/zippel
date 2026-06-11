@@ -1,11 +1,11 @@
 use ark_ec::pairing::Pairing;
 use ark_ff::Field;
-use ark_poly::Radix2EvaluationDomain;
-use ark_serialize::CanonicalSerialize;
+use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Valid};
 
 /// The proving key for Pari
 /// The naming matches the one in the figure 6, item 8 of the paper: https://eprint.iacr.org/2024/1245.pdf
-#[derive(CanonicalSerialize, Clone)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct ProvingKey<E>
 where
     E: Pairing,
@@ -68,9 +68,60 @@ impl<E: Pairing> CanonicalSerialize for VerifyingKey<E> {
     }
 }
 
+impl<E: Pairing> Valid for VerifyingKey<E> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        // Field types each implement Valid; running them through unit
+        // returns Ok since they were produced by canonical encoding.
+        Ok(())
+    }
+}
+
+impl<E: Pairing> CanonicalDeserialize for VerifyingKey<E> {
+    fn deserialize_with_mode<R: std::io::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        // Mirrors the manual serialize impl above. `_prep` fields and
+        // `domain` are NOT in the wire format — they're derived from the
+        // affine points / succinct_index after deserialize. This is
+        // canonical-ish: the wire format is small but the structure
+        // round-trips at the level of "everything the prover/verifier
+        // actually uses".
+        let succinct_index =
+            SuccinctIndex::deserialize_with_mode(&mut reader, compress, validate)?;
+        let alpha_g = E::G1Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+        let beta_g = E::G1Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+        let delta_two_h = E::G2Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+        let tau_h = E::G2Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+        let g = E::G1Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+        let h = E::G2Affine::deserialize_with_mode(&mut reader, compress, validate)?;
+
+        let delta_two_h_prep = delta_two_h.into();
+        let tau_h_prep = tau_h.into();
+        let h_prep = h.into();
+        let domain = Radix2EvaluationDomain::<E::ScalarField>::new(succinct_index.num_constraints)
+            .ok_or(ark_serialize::SerializationError::InvalidData)?;
+
+        Ok(Self {
+            succinct_index,
+            g,
+            alpha_g,
+            beta_g,
+            delta_two_h,
+            delta_two_h_prep,
+            tau_h,
+            tau_h_prep,
+            h,
+            h_prep,
+            domain,
+        })
+    }
+}
+
 /// The succinct index for GARUDA
 /// This contains enough information from the GR1CS to verify the proof
-#[derive(CanonicalSerialize, Clone, Debug)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct SuccinctIndex {
     /// The log of number of constraints rounded up, will be translated to the number of variables in the ml extensions
     pub num_constraints: usize,

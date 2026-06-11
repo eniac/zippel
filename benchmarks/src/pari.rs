@@ -476,13 +476,25 @@ pub mod native_side {
             // Verifier's public input is `instance_assignment[1..]` (the
             // constant-1 at position 0 is implicit) — matches upstream.
             let public_inputs = instance_assignment[1..].to_vec();
-            let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
-            let (pk, vk) = Pari::<E>::keygen_from_sr1cs(
-                &inst.a_mat,
-                &inst.b_mat,
-                inst.instance_len,
-                inst.num_vars,
-                &mut rng,
+            // Cache (pk, vk) — these depend only on the matrices and the
+            // seeded rng. log_size = log_2(k).
+            let log_size = inst.k.trailing_zeros() as usize;
+            let (pk, vk) = crate::cache::load_or_build_canonical::<(
+                crate::pari_upstream::data_structures::ProvingKey<E>,
+                crate::pari_upstream::data_structures::VerifyingKey<E>,
+            )>(
+                "pari_keys",
+                log_size,
+                || {
+                    let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
+                    Pari::<E>::keygen_from_sr1cs(
+                        &inst.a_mat,
+                        &inst.b_mat,
+                        inst.instance_len,
+                        inst.num_vars,
+                        &mut rng,
+                    )
+                },
             );
             Setup {
                 instance_assignment,

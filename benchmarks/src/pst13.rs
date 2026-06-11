@@ -174,13 +174,17 @@ pub mod native_side {
         /// matters for the comparison.
         pub fn new(shared: &Shared) -> Self {
             let n = shared.n;
-            // Seeded to match `shared::build`'s seed family so successive
-            // sweep rows don't share state with prior runs.
-            let mut seed_bytes = [0u8; 32];
-            seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
-            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-
-            let pp = Pcs::setup(n, &mut rng);
+            // Cache UniversalParams — the heavy setup at n=20. Re-trim
+            // per call (cheap slice over cached params). Seed is fixed
+            // per `n` so the cache key is well-defined.
+            let pp = crate::cache::load_or_build_canonical::<
+                ark_poly_commit::multilinear_pc::data_structures::UniversalParams<Bls12_381>,
+            >("pst13_universal_params", n, || {
+                let mut seed_bytes = [0u8; 32];
+                seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
+                let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+                Pcs::setup(n, &mut rng)
+            });
             let (ck, vk) = Pcs::trim(&pp, n);
 
             Setup { n, ck, vk }

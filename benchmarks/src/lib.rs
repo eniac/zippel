@@ -23,6 +23,7 @@ pub struct Timing {
 /// call at S=20, so it stays single-sample. See `ipa::*::time_protocol`.
 pub const VERIFY_SAMPLES: u32 = 100;
 
+pub mod cache;
 pub mod groth16;
 pub mod hyrax;
 pub mod ipa;

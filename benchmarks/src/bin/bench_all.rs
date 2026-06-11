@@ -87,7 +87,11 @@ const ZIPPEL_KZG: &str = include_str!("../../../examples/kzg/kzg.zippel");
 const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
 const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
-const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
+// `examples/hyrax/hyrax.zippel` is intentionally NOT pulled in here —
+// the bench renders a sized proto at run time via
+// `hyrax::zippel_side::render_proto(l, m)`, and `zippel_ncloc("hyrax")`
+// counts THAT rendered text so the printed LOC matches exactly what
+// the benchmark actually executes (not the hardcoded n=8 example file).
 const SPARTAN_WRAPPER_RS: &str = include_str!("../../src/spartan.rs");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
@@ -210,7 +214,12 @@ fn zippel_ncloc(sys: &str) -> usize {
         "pari" => count_ncloc_line_comments(ZIPPEL_PARI),
         "groth16" => count_ncloc_line_comments(ZIPPEL_GROTH16),
         "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
-        "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
+        // The hyrax bench RENDERS a sized proto from a template at
+        // run time rather than running examples/hyrax/hyrax.zippel
+        // verbatim, so count the rendered text (defaulting to the
+        // l=m=4 → n=8 instance — any size is structurally identical).
+        // This guarantees the LOC matches exactly what's executed.
+        "hyrax" => count_ncloc_line_comments(&hyrax::zippel_side::render_proto(4, 4)),
         "spartan" => spartan_zippel_ncloc(),
         _ => 0,
     }
@@ -429,7 +438,13 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
             // inside the same install closure and pass them out as a
             // tuple. `translated` outlives both setups for the duration
             // of `time_protocol`, which is what the borrow requires.
-            let translated = setup_pool().install(|| groth16::build_translated(num_constraints));
+            let translated = setup_pool().install(|| {
+                benchmarks::cache::load_or_build_canonical(
+                    "groth16_translated",
+                    log_size,
+                    || groth16::build_translated(num_constraints),
+                )
+            });
             let (mut z, n) = setup_pool().install(|| {
                 (
                     groth16::zippel_side::Setup::new(&translated),

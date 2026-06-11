@@ -119,12 +119,24 @@ pub mod native_side {
     impl Setup {
         pub fn new(s_const: usize) -> Self {
             let n = 1usize << s_const;
-            let mut rng = ark_std::test_rng();
-            let g_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
-            let h_proj: Vec<Projective> = (0..n).map(|_| Projective::rand(&mut rng)).collect();
-            let g_vec = Projective::normalize_batch(&g_proj);
-            let h_vec = Projective::normalize_batch(&h_proj);
-            let q = Projective::rand(&mut rng);
+            // Cache the SRS (g_vec, h_vec, q). At s=20, this is 2 ×
+            // 2^20 secp256k1 affine points (~96 MB), built via 2 ×
+            // 2^20 Projective::rand + normalize_batch.
+            let (g_vec, h_vec, q) = crate::cache::load_or_build_canonical::<(
+                Vec<SecpAffine>,
+                Vec<SecpAffine>,
+                Projective,
+            )>("ipa_srs", s_const, || {
+                let mut rng = ark_std::test_rng();
+                let g_proj: Vec<Projective> =
+                    (0..n).map(|_| Projective::rand(&mut rng)).collect();
+                let h_proj: Vec<Projective> =
+                    (0..n).map(|_| Projective::rand(&mut rng)).collect();
+                let g_vec = Projective::normalize_batch(&g_proj);
+                let h_vec = Projective::normalize_batch(&h_proj);
+                let q = Projective::rand(&mut rng);
+                (g_vec, h_vec, q)
+            });
             Setup { n, g_vec, h_vec, q }
         }
 

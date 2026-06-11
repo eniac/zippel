@@ -138,7 +138,7 @@ pub mod zippel_side {
         out
     }
 
-    fn render_proto(l: usize, m: usize) -> String {
+    pub fn render_proto(l: usize, m: usize) -> String {
         let nrows = 1usize << l;
         let ncols = 1usize << m;
         let ntot = nrows * ncols;
@@ -236,8 +236,13 @@ pub mod native_side {
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            let mut rng = ark_std::test_rng();
-            let pp = Hyrax::setup(n, Some(n), &mut rng).expect("hyrax setup");
+            // Cache UniversalParams. Trim is cheap, re-run per call.
+            let pp = crate::cache::load_or_build_canonical::<
+                ark_poly_commit::hyrax::HyraxUniversalParams<G1Affine>,
+            >("hyrax_universal_params", n, || {
+                let mut rng = ark_std::test_rng();
+                Hyrax::setup(n, Some(n), &mut rng).expect("hyrax setup")
+            });
             let (ck, vk) = Hyrax::trim(&pp, n, n, None).expect("hyrax trim");
             Setup { num_vars: n, ck, vk }
         }

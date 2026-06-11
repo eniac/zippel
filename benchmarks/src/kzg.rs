@@ -240,10 +240,21 @@ pub mod native_side {
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            let mut rng = ark_std::test_rng();
             // n coefficients => degree n-1
             let degree = n - 1;
-            let pp = Kzg::setup(degree, false, &mut rng).expect("kzg setup");
+            // Cache UniversalParams (the heavy bit — 2^log_size G1 powers
+            // + a few G2). build_powers + build_vk are cheap slices over
+            // the cached params, so we re-derive them per call rather
+            // than caching the derived (Powers, VK) too.
+            let log_size = n.trailing_zeros() as usize;
+            let pp = crate::cache::load_or_build_canonical(
+                "kzg_universal_params",
+                log_size,
+                || {
+                    let mut rng = ark_std::test_rng();
+                    Kzg::setup(degree, false, &mut rng).expect("kzg setup")
+                },
+            );
             let powers = build_powers(&pp, degree);
             let vk = build_vk(&pp);
             Setup { powers, vk, n }

@@ -238,6 +238,7 @@ pub mod bridge {
     }
 
     /// Proving + verifying key fields, projected into git-main BLS12-381.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitKeys {
         pub alpha_g1: GitG1Proj,
         pub beta_g1: GitG1Proj,
@@ -254,6 +255,7 @@ pub mod bridge {
     }
 
     /// Constraint matrices, projected into git-main field.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitMatrices {
         pub a: Vec<Vec<(GitFr, usize)>>,
         pub b: Vec<Vec<(GitFr, usize)>>,
@@ -261,6 +263,7 @@ pub mod bridge {
     }
 
     /// All inputs both sides need, expressed entirely in git-main types.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct Translated {
         pub keys: GitKeys,
         pub mat: GitMatrices,
