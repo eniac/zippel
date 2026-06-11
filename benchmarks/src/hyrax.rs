@@ -88,7 +88,7 @@ pub mod zippel_side {
             let prover_scheduled = self.handler.default_schedule_prover();
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let sched = prover_scheduled.clone();
                 let inputs_c = self.inputs.clone();
                 let t = Instant::now();
@@ -99,7 +99,7 @@ pub mod zippel_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
@@ -290,7 +290,7 @@ pub mod native_side {
             // triple (τ, δ, β) + responses inside one timed region.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_outputs = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
                 let (coms, states) =
                     Hyrax::commit(&self.ck, [labeled], Some(&mut rng)).expect("hyrax commit");
@@ -308,7 +308,7 @@ pub mod native_side {
                 prove_sum += t.elapsed();
                 last_outputs = Some((coms, proof));
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let (coms, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             // Hyrax::check takes &mut sponge; re-seed per iteration.

@@ -531,7 +531,7 @@ pub mod zippel_side {
 
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let sched = prover_scheduled.clone();
                 let t = Instant::now();
                 let mut h_coeffs = witness_map(
@@ -550,7 +550,7 @@ pub mod zippel_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             self.handler.set_public_inputs(self.public_inputs.clone());
@@ -660,7 +660,7 @@ pub mod native_side {
             // the comparison.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
                 let proof = prove(
                     &self.keys,
@@ -676,7 +676,7 @@ pub mod native_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove_t = prove_sum / crate::PROVER_SAMPLES;
+            let prove_t = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier convention: drop the leading constant-1 from the

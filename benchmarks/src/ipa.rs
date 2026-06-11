@@ -156,7 +156,7 @@ pub mod zippel_side {
             let prover_scheduled = self.handler.default_schedule_prover();
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let sched = prover_scheduled.clone();
                 let inputs_c = inputs.clone();
                 let t = Instant::now();
@@ -167,7 +167,7 @@ pub mod zippel_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
@@ -248,7 +248,7 @@ pub mod native_side {
             // ---- Prover (sampled PROVER_SAMPLES times) ----
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_state: Option<(Fr, Fr, Vec<(Projective, Projective)>)> = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let mut prover_transcript = Transcript::new(b"ipa-bench");
                 let t = Instant::now();
                 absorb_point(&mut prover_transcript, b"p_initial", &p_initial);
@@ -310,7 +310,7 @@ pub mod native_side {
                 prove_sum += t.elapsed();
                 last_state = Some((final_a, final_b, proofs));
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let (final_a, final_b, proofs) = last_state.expect("PROVER_SAMPLES > 0");
 
             // ---- Verifier (naive: fold bases each round, matching upstream) ----

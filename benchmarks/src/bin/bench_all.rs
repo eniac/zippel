@@ -110,6 +110,12 @@ const NATIVE_PARI_TRANSCRIPT_RS: &str =
 const NATIVE_PARI_TRANSCRIPT_ERR_RS: &str =
     include_str!("../../src/pari_upstream/transcript/errors.rs");
 
+// PST13 native baseline is vendored + patched (see src/pst13_upstream/).
+// NCLOC counts mod.rs + data_structures.rs of our vendored version,
+// reflecting what code actually runs in the bench.
+const NATIVE_PST13_MOD_RS: &str = include_str!("../../src/pst13_upstream/mod.rs");
+const NATIVE_PST13_DS_RS: &str = include_str!("../../src/pst13_upstream/data_structures.rs");
+
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
@@ -118,7 +124,8 @@ const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.6.0 src/signa
 const SUMCHECK_EXT_NCLOC: usize = 1544; // vendored from hyperplonk: src/sumcheck_upstream/{arithmetic,poly_iop,transcript}/*.rs (ported to ark 0.6)
 const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.6.0 src/kzg10/mod.rs
 const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
-const PST13_EXT_NCLOC: usize = 297;     // ark-poly-commit-0.6.0 src/multilinear_pc/{mod,data_structures}.rs
+// PST13 native NCLOC is computed dynamically from the vendored module
+// (see NATIVE_PST13_*_RS above); no static constant needed.
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
 const HYRAX_EXT_NCLOC: usize = 403;     // ark-poly-commit-0.6.0 src/hyrax/{mod,data_structures,utils}.rs
 
@@ -231,7 +238,9 @@ fn native_ncloc(sys: &str) -> usize {
         "sumcheck" => SUMCHECK_EXT_NCLOC,
         "kzg" => KZG_EXT_NCLOC,
         "groth16" => GROTH16_EXT_NCLOC,
-        "pst13" => PST13_EXT_NCLOC,
+        "pst13" => {
+            count_ncloc_rust(NATIVE_PST13_MOD_RS) + count_ncloc_rust(NATIVE_PST13_DS_RS)
+        }
         "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
         "hyrax" => HYRAX_EXT_NCLOC,
@@ -559,7 +568,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
             // re-inits the transcript (NIZK::prove takes &mut and consumes it).
             let mut prove_sum = Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..benchmarks::PROVER_SAMPLES {
+            for _ in 0..*benchmarks::PROVER_SAMPLES {
                 let mut pt = Transcript::new(b"bench_all_spartan");
                 let t = Instant::now();
                 {
@@ -571,7 +580,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 prove_sum += t.elapsed().saturating_sub(n_matvec);
                 last_proof = Some(proof);
             }
-            let native_prove = prove_sum / benchmarks::PROVER_SAMPLES;
+            let native_prove = prove_sum / *benchmarks::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier sampled VERIFY_SAMPLES times. Transcript

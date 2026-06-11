@@ -76,7 +76,7 @@ pub mod zippel_side {
             let prover_scheduled = self.handler.default_schedule_prover();
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let sched = prover_scheduled.clone();
                 let inputs_c = inputs.clone();
                 let t = Instant::now();
@@ -87,7 +87,7 @@ pub mod zippel_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
@@ -160,7 +160,7 @@ pub mod native_side {
 
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
                 let t = Instant::now();
                 let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
@@ -168,7 +168,7 @@ pub mod native_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let aux = poly.aux_info.clone();

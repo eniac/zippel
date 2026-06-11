@@ -138,26 +138,32 @@ pub mod shared {
 // Performance comparison only — no cross-side byte equality.
 // ---------------------------------------------------------------------------
 
-/// Native PST13 baseline: `ark_poly_commit::multilinear_pc::MultilinearPC`
-/// (0.6 from crates.io, same arkworks set the zippel side uses — so
-/// MSM/pairing primitives are bit-identical on both sides). Replaces the
-/// previous hyperplonk `MultilinearKzgPCS` baseline that was locked at
-/// arkworks 0.4. Same setup/commit/open/check shape — only API rename:
-/// `gen_srs_for_testing` → `setup`, `verify` → `check`, `open` no longer
-/// returns `value` so we evaluate the MLE inside the prove timer (which
-/// is correct — the prover has to compute it to build the proof).
+/// Native PST13 baseline: VENDORED + PATCHED `MultilinearPC` from
+/// ark-poly-commit-0.6 (see `crate::pst13_upstream`). Two algorithmic
+/// fixes vs upstream:
+///   1. `open()` collapses each round's MSM from 2^k → 2^(k-1) by
+///      pre-summing adjacent base pairs (upstream silently does an
+///      MSM with duplicated scalars).
+///   2. `open()` fans out the `nv` round MSMs into a single
+///      `rayon::scope` so they run concurrently — upstream emits them
+///      serially even though they're data-independent.
+///
+/// Setup / trim / commit / check are byte-identical to upstream, so the
+/// proofs produced here pass the upstream verifier and vice versa.
+/// The patches make this an honest "PST13 done well" baseline rather
+/// than the crates.io version which has two performance bugs that
+/// inflate native cost by ~4×.
 pub mod native_side {
     use super::Timing;
     use super::shared::Shared;
     use ark_bls12_381::{Bls12_381, Fr};
     use ark_ff::UniformRand;
     use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
-    use ark_poly_commit::multilinear_pc::{
-        data_structures::{CommitterKey, VerifierKey},
-        MultilinearPC,
-    };
     use ark_std::rand::SeedableRng;
     use std::time::Instant;
+
+    use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
+    use crate::pst13_upstream::MultilinearPC;
 
     type Pcs = MultilinearPC<Bls12_381>;
 
@@ -178,7 +184,7 @@ pub mod native_side {
             // per call (cheap slice over cached params). Seed is fixed
             // per `n` so the cache key is well-defined.
             let pp = crate::cache::load_or_build_canonical::<
-                ark_poly_commit::multilinear_pc::data_structures::UniversalParams<Bls12_381>,
+                crate::pst13_upstream::data_structures::UniversalParams<Bls12_381>,
             >("pst13_universal_params", n, || {
                 let mut seed_bytes = [0u8; 32];
                 seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
@@ -205,7 +211,7 @@ pub mod native_side {
             // statement-of-fact and is implicit in the proof structure.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_outputs = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
                 let comm = Pcs::commit(&self.ck, &poly);
                 let value = poly.evaluate(&point);
@@ -213,7 +219,7 @@ pub mod native_side {
                 prove_sum += t.elapsed();
                 last_outputs = Some((comm, value, proof));
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let (comm, value, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
             let mut verify_sum = std::time::Duration::ZERO;
@@ -443,7 +449,7 @@ pub mod zippel_side {
 
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
-            for _ in 0..crate::PROVER_SAMPLES {
+            for _ in 0..*crate::PROVER_SAMPLES {
                 let sched = prover_scheduled.clone();
                 let inputs_c = self.inputs_base.clone();
                 let t = Instant::now();
@@ -454,7 +460,7 @@ pub mod zippel_side {
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
-            let prove = prove_sum / crate::PROVER_SAMPLES;
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
