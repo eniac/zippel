@@ -199,12 +199,6 @@ test = true
 harness = false
 
 [[example]]
-name = "multi_schnorr"
-path = "examples/multi_schnorr/main.rs"
-test = true
-harness = false
-
-[[example]]
 name = "commitment_equality"
 path = "examples/commitment_equality/main.rs"
 test = true
@@ -323,4 +317,3 @@ name = "schnorr_3round"
 path = "examples/schnorr_3round/main.rs"
 test = true
 harness = false
-

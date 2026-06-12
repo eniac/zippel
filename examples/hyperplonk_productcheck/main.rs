@@ -70,6 +70,32 @@ fn run() {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
     }
+
+    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        println!("\n--- Static Analysis ---");
+        let analysis_args = ZippelArgs::new(zippel_file.clone());
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        let mut analysis_sizes = Ctx::new();
+        analysis_sizes.insert(&Tid::new("S"), &S);
+        analysis_handler.compile(&analysis_sizes);
+
+        let completeness_start = Instant::now();
+        match analysis_handler.analyze_completeness() {
+            Ok(()) => println!("Completeness:    ✓"),
+            Err(e) => println!("Completeness:    ✗ {}", e),
+        }
+        println!("Completeness time: {:.2?}", completeness_start.elapsed());
+
+        let zk_start = Instant::now();
+        match analysis_handler.analyze_knowledge() {
+            Ok(()) => println!("ZK:              ✓"),
+            Err(e) => println!("ZK:              ✗ {}", e),
+        }
+        println!("ZK time:         {:.2?}", zk_start.elapsed());
+    }));
+    if analysis_result.is_err() {
+        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
+    }
 }
 
 /// A satisfying ProductCheck instance: leaves `f` of length `num_leaves`,
