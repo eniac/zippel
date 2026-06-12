@@ -40,7 +40,7 @@ fn analyze_complete(rel_path: &'static str, sizes: Vec<(&'static str, usize)>) -
 }
 
 #[test]
-#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; debugging separately with div_q"]
+#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; out of scope for the div_q fix"]
 fn sumcheck_completeness() {
     // MAX_DEGREE_CONST = 1 keeps the completeness Gröbner basis tractable for
     // CI. The analysis now *models* the materialized hypercube reduce and
@@ -55,7 +55,7 @@ fn sumcheck_completeness() {
 }
 
 #[test]
-#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; debugging separately with div_q"]
+#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; out of scope for the div_q fix"]
 fn mle_sumcheck_completeness() {
     assert!(analyze_complete(
         "examples/mle_sumcheck/mle_sumcheck.zippel",

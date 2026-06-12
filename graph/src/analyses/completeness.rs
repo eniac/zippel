@@ -1,8 +1,10 @@
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
+use lang::ast::BinOp;
 use share::Set;
 
 use crate::DQDag;
+use crate::Op;
 use crate::PRef;
 use crate::Ref;
 use crate::analyses::TransClos;
@@ -17,12 +19,21 @@ pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerResult<C, GrevLexTerm>,
     pub verifier: GroebnerResult<C, GrevLexTerm>,
     pub public_args: Set<PRef>,
+    /// Verifier transitive closure, retained for `extract_locals` (elimination-
+    /// ordered local extractors) in `run`.
     verifier_tc: TransClos<C>,
+    /// Verifier closure with `verify`-assertion (`Op::Bin(Equ,..)`) entries
+    /// neutralised to `Op::Ref`, built on an independent clone of the shared
+    /// `GroebnerBuilder` (identical starting state) so its witness PRefs
+    /// coincide with `verifier`. Its basis is the honest verifier computation
+    /// facts (no assertions), incl. the polynomial-division convolution.
+    verifier_comp: GroebnerResult<C, GrevLexTerm>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let mut builder = GroebnerBuilder::new();
+        builder.enable_exact_division();
 
         let prover_tc = TransClos::prover(dag);
         let mut prover_result = builder.build(prover_tc);
@@ -42,12 +53,31 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
                 if pref.is_public() { Some(pref) } else { None }
             })
             .collect();
+        // Build the Equ-stripped computation closure on an independent CLONE of
+        // the builder so the original's witness/sentinel name counters are not
+        // advanced: `verifier_result` (built on `builder`) must allocate the
+        // same witness PRefs that `extract_locals` (a fresh builder) will, and
+        // `verifier_comp` (the clone, starting from the identical builder state)
+        // allocates witnesses identical to `verifier_result`. Each build is a
+        // fresh `div_wit` miss, so the division convolution lands in both bases
+        // referencing the very witnesses the verify rows use.
+        let mut comp_builder = builder.clone();
+        let mut verifier_no_equ = verifier_tc.clone();
+        for entry in &mut verifier_no_equ.clos {
+            if let Op::Bin(BinOp::Equ, ..) = entry.1 {
+                let pr = entry.0.clone();
+                entry.1 = Op::Ref(pr.reference, pr.typ.clone());
+            }
+        }
+        let verifier_comp = comp_builder.build(verifier_no_equ);
+
         let verifier_result = builder.build(verifier_tc.clone());
 
         Self {
             prover: prover_result,
             verifier: verifier_result,
             public_args,
+            verifier_comp,
             verifier_tc,
         }
     }
@@ -57,10 +87,22 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// W is the packed monomial width. Caller must ensure W is appropriate
     /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+        // Carry the verifier's honest computation facts as prover hypotheses so
+        // verifier assertions reduce against the honest execution (protocols
+        // where the verifier recomputes public values rather than receiving
+        // them via the transcript). Two complementary, assertion-free sources,
+        // both built so their witness PRefs coincide with `self.verifier`:
+        //   * `extract_locals` expresses verifier-local intermediates in terms
+        //     of arguments via an elimination ordering.
+        //   * `verifier_comp.basis` carries the raw computation rows, including
+        //     the polynomial-division convolution `a = b·q_wit + r_wit` whose
+        //     multi-variable leading term `extract_locals` cannot isolate.
         let local_extractors = extract_locals(&self.verifier_tc);
-
         for (_, lex_poly) in &local_extractors {
             self.prover.basis.push(lex_poly.clone());
+        }
+        for p in self.verifier_comp.basis.iter() {
+            self.prover.basis.push(p.clone());
         }
 
         self.prover.run::<128>();
@@ -1043,7 +1085,6 @@ mod tests {
     /// The verifier's basis has the same verify rows, which reduce to 0
     /// modulo the prover's Gröbner basis.
     #[test]
-    #[ignore = "div_q: reduce-all completeness needs an extractor for polynomial division witnesses (div_q appears multiplied by the divisor, so extract_locals cannot isolate it); debugging separately"]
     fn poly_div_exact_completeness() {
         let ex = r#"
             proto poly_div_exact<F: Field>(
@@ -1078,7 +1119,6 @@ mod tests {
     /// `p − d·q − r = 0` (after linking q→q_wit, r→r_wit) reduces to
     /// this identity row directly.
     #[test]
-    #[ignore = "div_q: reduce-all completeness needs an extractor for polynomial division witnesses (div_q appears multiplied by the divisor, so extract_locals cannot isolate it); debugging separately"]
     fn poly_divmod_identity_completeness() {
         let ex = r#"
             proto poly_divmod<F: Field>(
@@ -1159,14 +1199,13 @@ mod tests {
     /// identity `P = D·Q + 0` after recognising `R = 0` (degree-0 slot
     /// of a Poly(F,1,0) witness).
     #[test]
-    #[ignore = "div_q: reduce-all completeness needs an extractor for polynomial division witnesses (div_q appears multiplied by the divisor, so extract_locals cannot isolate it); debugging separately"]
     fn kzg_opening_shape_completeness() {
         let ex = r#"
             proto kzg_shape<F: Field>(
                 public p_val: Poly<F, 1, 2>,
                 public z: F,
                 public y: F
-            ) where p_val == p_val {
+            ) where let zero: F = 0; poly([zero]) == (p_val - y) % poly([-z, 1]) {
                 let d_val = poly([-z, 1]);
                 let diff = p_val - y;
                 let q_val = diff / d_val;
@@ -1198,16 +1237,6 @@ mod tests {
     /// With both layers, the KZG opening check
     ///   `pair(pi, h_val − h·z) == pair(c − y·g, h)`
     /// reduces to `0` under the combined prover basis.
-    ///
-    /// **Blocked (not phase 13)**: `CTyp::lub_div` in `lang/src/typ/lub.rs:767`
-    /// returns `Poly<F, 1, ma - mb>` but `poly([F;n])` → `Poly<F,1,n>` and
-    /// `coef(Poly<F,1,n>)` → `[F;n]` treat the parameter as *coefficient
-    /// count*, not degree. So for `p : [F; N]`, the expression
-    /// `(p_val - y) / poly([-z, 1])` yields `q_val : Poly<F,1,N-2>` whose
-    /// `coef` has length `N-2`, but the intended length `N-1` is required
-    /// for `dot(pi_val, ss[0..N-1])` to type-check. Fixing this is a
-    /// phase-7 follow-up (the off-by-one was introduced by the phase-7 fix
-    /// that landed before the coef/poly/eval conventions were reconciled).
     #[test]
     fn full_kzg_completeness() {
         use lang::id::Tid;

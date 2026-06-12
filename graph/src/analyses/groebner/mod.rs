@@ -818,6 +818,14 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
 #[derive(Clone)]
 pub struct GroebnerBuilder<C: ArkConfig, T: Monomial = GrevLexTerm> {
     pub ns: GroebnerNamespace<C>,
+    /// When true, `a / b` where `a`'s op is `Mul(cofactor, b)` (or `Mul(b, cofactor)`)
+    /// lowers as the exact-division copy `q = cofactor` instead of the generic
+    /// quotient/remainder convolution. Set only by the completeness analysis.
+    detect_exact_division: bool,
+    /// Per-`build()` map from a node's `Ref` to its op, used to recognise the
+    /// `Mul`-then-`Div` exact-division pattern. Populated only when
+    /// `detect_exact_division` is set.
+    node_ops: HashMap<Ref, GOp<C>>,
     _phantom: PhantomData<T>,
 }
 
@@ -831,8 +839,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     pub fn new() -> Self {
         Self {
             ns: GroebnerNamespace::new(),
+            detect_exact_division: false,
+            node_ops: HashMap::new(),
             _phantom: PhantomData,
         }
+    }
+
+    /// Enable structural exact-division detection (completeness analysis only).
+    pub fn enable_exact_division(&mut self) {
+        self.detect_exact_division = true;
     }
 
     /// Panic with a clear, searchable message when an operation has no
@@ -863,6 +878,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     pub fn fork_with_clean_div_witness_cache(&self) -> Self {
         let mut fork = Self {
             ns: self.ns.clone(),
+            detect_exact_division: self.detect_exact_division,
+            node_ops: self.node_ops.clone(),
             _phantom: PhantomData,
         };
         fork.clear_div_witness_cache();
@@ -874,6 +891,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// namespace keeps generated witness/sentinel allocation stable.
     pub fn build(&mut self, tc: TransClos<C>) -> GroebnerResult<C, T> {
         let mut result = GroebnerResult::new();
+        if self.detect_exact_division {
+            self.node_ops.clear();
+            for (pr, op) in tc.clos.iter() {
+                self.node_ops.insert(pr.reference, op.clone());
+            }
+        }
         for new_arg in tc.prefs.iter() {
             result.register(new_arg);
         }
@@ -910,6 +933,36 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let q_wit = self.sentinel_pref(&q_name, quotient_typ, result);
         let r_wit = self.sentinel_pref(&r_name, remainder_typ, result);
         (q_wit, r_wit)
+    }
+
+    /// If exact-division detection is enabled and dividend `a` is a `Ref` to a
+    /// node whose op is `Mul(x, y)` with one factor structurally equal to divisor
+    /// `b`, return the *other* factor (the cofactor). Then `a / b` is exact:
+    /// quotient = cofactor, remainder = 0.
+    fn exact_division_cofactor(&self, a: &HOp<C>, b: &HOp<C>) -> Option<HOp<C>> {
+        if !self.detect_exact_division {
+            return None;
+        }
+        let Op::Ref(div_ref, _) = b.get() else {
+            return None;
+        };
+        let Op::Ref(prod_ref, _) = a.get() else {
+            return None;
+        };
+        let Op::Bin(BinOp::Mul, x, y, _) = self.node_ops.get(prod_ref)? else {
+            return None;
+        };
+        if let Op::Ref(xr, _) = x.get()
+            && xr == div_ref
+        {
+            return Some(y.clone());
+        }
+        if let Op::Ref(yr, _) = y.get()
+            && yr == div_ref
+        {
+            return Some(x.clone());
+        }
+        None
     }
 
     fn canonical_div_typ(t: &ATyp) -> Option<CanonPolyTyp> {
@@ -2278,9 +2331,18 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.dot_op(&pr, &a_src, &b_src, result);
             }
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
-                let a_src = PolySource::from_ref_vars(&result.prefs, a);
-                let b_src = PolySource::from_ref_vars(&result.prefs, b);
-                self.div_rem_op(&pr, &a_src, &b_src, false, true, result);
+                if let Some(cofactor) = self.exact_division_cofactor(a, b) {
+                    let cof_src = PolySource::from_ref_vars(&result.prefs, &cofactor);
+                    let lifted = cof_src.lift_to(&pr.typ);
+                    for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
+                        result.pl.insert(&pf, &p);
+                        result.basis.push(p - SparsePolynomial::var(&pf));
+                    }
+                } else {
+                    let a_src = PolySource::from_ref_vars(&result.prefs, a);
+                    let b_src = PolySource::from_ref_vars(&result.prefs, b);
+                    self.div_rem_op(&pr, &a_src, &b_src, false, true, result);
+                }
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a);
