@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use zippel::*;
 
-const N: usize = 3;
+const N: usize = 2;
 const K: usize = 1;
 
 fn main() {
@@ -45,14 +45,21 @@ fn main() {
     }
 
     // Static analysis
-    // Note: CDS uses interpolate() with non-constant (symbolic) points.
-    // The GB analyzer now handles this by introducing inverse variables, but the resulting
-    // polynomial system is too large for the Gröbner basis computation to complete in
-    // reasonable time, even for small N. The two interpolate calls plus the b[i] selector
-    // pattern create high-degree non-linear relations.
     println!("\n--- Static Analysis ---");
-    println!("Soundness:      ⚠ CDS polynomial system too large for GB analysis");
-    println!("                 (two symbolic interpolations + selector pattern)");
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/cds/cds.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    let analysis_start = Instant::now();
+    let analysis = analysis_handler.minimal_analysis();
+    let analysis_elapsed = analysis_start.elapsed();
+    match &analysis.completeness {
+        Ok(()) => println!("Completeness:   ✓"),
+        Err(e) => println!("Completeness:   ✗ {}", e),
+    }
+    match &analysis.zk {
+        Ok(()) => println!("ZK:             ✓"),
+        Err(e) => println!("ZK:             ✗ {}", e),
+    }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
