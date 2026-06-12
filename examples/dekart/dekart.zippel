@@ -14,7 +14,7 @@ proto dekart<
     // Private inputs (witness)
     private f_evals: [f; n+1],
     private chunks_evals: [[f; n+1]; l_chunk],
-    
+
     // Blinding factors (private)
     private rho: f,
     private delta_rho: f,
@@ -33,7 +33,12 @@ proto dekart<
     public s0_commit: g1,
     private srs_g1_n: [g1; n+1],
     private srs_g1_h: [g1; h_deg+1]
-) where srs_g1_n[0] == gen_g1 && srs_g1_h[0] == gen_g1 {
+) where srs_g1_n[0] == gen_g1 && srs_g1_h[0] == gen_g1 &&
+    reduce(&&, [pair(srs_g1_n[i], srs_g2_tau) == pair(srs_g1_n[i+1], gen_g2) for i in 0..n]) &&
+    reduce(&&, [pair(srs_g1_h[i], srs_g2_tau) == pair(srs_g1_h[i+1], gen_g2) for i in 0..h_deg]) &&
+    pair(xi_g1, gen_g2) == pair(gen_g1, srs_g2_xi) &&
+    reduce(&&, [ f_evals[i] == reduce(+, [ (let chunk_j = chunks_evals[j]; chunk_j[i] * b_pow[j]) for j in 0..l_chunk ]) for i in 1..n+1 ])
+{
 
     let f_zero = f_one - f_one;
 

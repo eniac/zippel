@@ -18,7 +18,6 @@ use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerResult<C, GrevLexTerm>,
     pub verifier: GroebnerResult<C, GrevLexTerm>,
-    pub public_args: Set<PRef>,
     /// Verifier transitive closure, retained for `extract_locals` (elimination-
     /// ordered local extractors) in `run`.
     verifier_tc: TransClos<C>,
@@ -45,14 +44,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         prover_result.inline(&transcript_refs);
 
         let verifier_tc = TransClos::verifier(dag);
-        let public_args: Set<PRef> = dag
-            .input_args()
-            .into_iter()
-            .filter_map(|n| {
-                let pref = dag[n].arg_pref(n)?;
-                if pref.is_public() { Some(pref) } else { None }
-            })
-            .collect();
+
         // Build the Equ-stripped computation closure on an independent CLONE of
         // the builder so the original's witness/sentinel name counters are not
         // advanced: `verifier_result` (built on `builder`) must allocate the
@@ -76,7 +68,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         Self {
             prover: prover_result,
             verifier: verifier_result,
-            public_args,
             verifier_comp,
             verifier_tc,
         }
@@ -136,6 +127,8 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// variables that never cancel, leaving honest verifier equations
     /// irreducible. Rewrite every basis polynomial so each `(reference, index)`
     /// uses one canonical `PRef` (the `Ord`-minimal occurrence).
+    ///
+    /// TODO: extract this to TransClos
     fn canonicalize_node_slot_vars(&mut self) {
         use std::collections::HashMap;
         type SP<C> = crate::analyses::groebner::SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
