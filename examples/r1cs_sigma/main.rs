@@ -1,4 +1,3 @@
-use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
@@ -98,9 +97,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     // A selects x: [1, 0]
     // B selects x: [1, 0]
     // C selects w: [0, 1]
-    let mat_A = vec![F::from(1u64), F::from(0u64)];
-    let mat_B = vec![F::from(1u64), F::from(0u64)];
-    let mat_C = vec![F::from(0u64), F::from(1u64)];
+    let mat_a = vec![F::from(1u64), F::from(0u64)];
+    let mat_b = vec![F::from(1u64), F::from(0u64)];
+    let mat_c = vec![F::from(0u64), F::from(1u64)];
 
     let ck = G1::rand(&mut rng);
     let h_base = G1::rand(&mut rng);
@@ -108,9 +107,9 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("ck".to_string()), Value::VecG1(vec![ck])),
         (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("mat_A".to_string()), Value::VecScalar(mat_A)),
-        (Vid("mat_B".to_string()), Value::VecScalar(mat_B)),
-        (Vid("mat_C".to_string()), Value::VecScalar(mat_C)),
+        (Vid("mat_A".to_string()), Value::VecScalar(mat_a)),
+        (Vid("mat_B".to_string()), Value::VecScalar(mat_b)),
+        (Vid("mat_C".to_string()), Value::VecScalar(mat_c)),
         (Vid("x".to_string()), Value::VecScalar(vec![x0])),
         (Vid("w".to_string()), Value::VecScalar(vec![w0])),
     ])

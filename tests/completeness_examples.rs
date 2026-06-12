@@ -32,7 +32,13 @@ fn analyze_complete(rel_path: &'static str, sizes: Vec<(&'static str, usize)>) -
                 ctx.insert(&Tid::new(name), &value);
             }
             handler.compile(&ctx);
-            handler.analyze_completeness().is_ok()
+            match handler.analyze_completeness() {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("COMPLETENESS ERROR [{rel_path}]: {e}");
+                    false
+                }
+            }
         })
         .expect("failed to spawn completeness worker thread")
         .join()
@@ -66,4 +72,19 @@ fn mle_sumcheck_completeness() {
 #[test]
 fn kzg_completeness() {
     assert!(analyze_complete("examples/kzg/kzg.zippel", vec![("N", 2)]));
+}
+
+#[test]
+#[ignore = "reduce(*) widening panic is fixed and the analysis now runs to completion; membership completeness still fails on the div_r remainder of its /X and KZG divisions — a division-exactness gap (cf. the div_q note above), not the reduce(*) widening this guards"]
+fn membership_completeness() {
+    // Guards the `Op::ReduceMap` Mul degree-widening fix end to end:
+    // `reduce(*, [poly_f - r for r in s])` (membership.zippel:15) folds M copies
+    // of `Uni(N-1)` into a degree `(N-1)*M` product. Pre-fix this panicked with
+    // "multi-index missing in result"; post-fix the Gröbner analysis runs to
+    // completion (then reports the div_r incompleteness noted in #[ignore]).
+    // N=2, M=2 (=> L=2, S=2) already widen Uni(1)·Uni(1) -> Uni(2).
+    assert!(analyze_complete(
+        "examples/membership/membership.zippel",
+        vec![("N", 2), ("M", 2), ("S", 2)],
+    ));
 }

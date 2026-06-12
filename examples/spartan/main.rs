@@ -171,11 +171,11 @@ fn run_one(m: usize, invalid: bool, manual_zippel: Option<&str>) -> RunResult {
     let mut inputs = prover_create_inputs(m);
     if invalid {
         type F = <ArkCurve25519 as ArkConfig>::F;
-        if let Some(v) = inputs.get(&Vid("az".to_string())) {
-            if let Value::VecScalar(mut a) = v.clone() {
-                a[0] = a[0] + F::from(7u64);
-                inputs.insert(&Vid("az".to_string()), &Value::VecScalar(a));
-            }
+        if let Some(v) = inputs.get(&Vid("az".to_string()))
+            && let Value::VecScalar(mut a) = v.clone()
+        {
+            a[0] += F::from(7u64);
+            inputs.insert(&Vid("az".to_string()), &Value::VecScalar(a));
         }
     }
 

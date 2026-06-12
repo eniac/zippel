@@ -15,6 +15,55 @@
 // Groth16 and PARI verifiers in this repo.
 
 // =============================================================================
+// eq_mle(z) — multilinear-equality basis at z, MSB-first.
+//
+// Returns the [F; 2^K] vector whose i-th entry is
+//     eq(z, i) = Π_j ( bit_j(i) ? z[j] : 1 - z[j] ),
+// where bit_j(i) = (i >> (K-1-j)) & 1 — i.e. z[0] is the high bit and is
+// peeled first. This matches the recursion in `pst13_open_rounds` (which
+// folds on `z_curr[0]` after splitting `p_curr` on its high half) and the
+// `ck_n_scalars` construction in the Rust `prover_create_inputs`.
+//
+// Used in the proto's `where` clause to express the canonical PCS
+// evaluation statement:  y == dot(eq_mle(z), p) == p̃(z).
+// =============================================================================
+fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    public z: [F; 1]
+) -> [F; 2] {
+    [ 1 - z[0], z[0] ]
+}
+fn eq_mle<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
+    public z: [F; K]
+) -> [F; 2^K] {
+    let a    = z[0];          // first variable = MSB (peeled first)
+    let rest = z[1..K];
+    let prev = eq_mle(rest);  // [F; 2^(K-1)] over the K-1 low-bit variables
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// Same as eq_mle but accepts `private z`. Used by the proto's `where`
+// clause to expand the trusted-setup trapdoor α into its corresponding
+// Lagrange-basis weights, so the static analyzer can see the structural
+// identity ck_N[i] == eq_N(α, i) · g_gen. The body is identical to
+// eq_mle; only the parameter qualifier (and consequently the result
+// qualifier) differs. We carry a parallel name rather than overloading
+// on qualifier because qualifier-poly function dispatch isn't
+// established elsewhere in the language.
+fn eq_mle_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>>(
+    private z: [F; 1]
+) -> [F; 2] {
+    [ 1 - z[0], z[0] ]
+}
+fn eq_mle_priv<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, K: 2..21>(
+    private z: [F; K]
+) -> [F; 2^K] {
+    let a    = z[0];
+    let rest = z[1..K];
+    let prev = eq_mle_priv(rest);
+    (prev * (1 - a)) ++ (prev * a)
+}
+
+// =============================================================================
 // PST.Commit  (generic over M = number of variables)
 //   C_p = dot(p, ck_N) = p(alpha) * G
 // =============================================================================
@@ -93,8 +142,19 @@ proto pst13<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Siz
     private ck_N: [G1; 2^N],     // [eq_N(α, i)·G  for i in {0,1}^N]
     public g_gen: G1,
     public h_gen: G2,
-    public alpha_H: [G2; N]      // [α_i · H  for i in 1..N]
-) where g_gen == g_gen
+    public alpha_H: [G2; N],     // [α_i · H  for i in 1..N]
+    // Relation-only witness: the trusted-setup trapdoor α. The proto body
+    // and the verifier do not reference it; it exists so the `where`
+    // clause can declare the structural identities
+    //   ck_N[i] == eq_N(α, i) · g_gen   and   alpha_H[j] == α[j] · h_gen.
+    // Without these the static completeness analyzer can't close the
+    // verifier's multi-pairing accumulator.
+    private alpha: [F; N]
+) where
+    let eq_alpha = eq_mle_priv(alpha);
+    y == dot(eq_mle(z), p)
+    && reduce(&&, [ck_N[i] == g_gen * eq_alpha[i] for i in 0..2^N])
+    && reduce(&&, [alpha_H[j] == h_gen * alpha[j] for j in 0..N])
 {
     // First prover move: commitment to p.
     c_p <- pst13_commit(p, ck_N);

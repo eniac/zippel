@@ -1110,10 +1110,10 @@ impl<F: Field> PolyVariant<F> {
                     let mut new_term = Vec::with_capacity(term.len());
                     for &(var_idx, pow) in term.iter() {
                         if var_idx < free_range.start {
-                            new_coeff *= fixed[var_idx].pow(&[pow as u64]);
+                            new_coeff *= fixed[var_idx].pow([pow as u64]);
                         } else if var_idx >= free_range.end {
                             let fixed_idx = free_range.start + (var_idx - free_range.end);
-                            new_coeff *= fixed[fixed_idx].pow(&[pow as u64]);
+                            new_coeff *= fixed[fixed_idx].pow([pow as u64]);
                         } else {
                             new_term.push((var_idx - free_range.start, pow));
                         }

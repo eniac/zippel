@@ -456,7 +456,7 @@ impl Lub for CTyp {
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
                 let mut result_fields = share::Ctx::new();
                 for (name, typ_a) in fields_a.iter() {
-                    if let Some(typ_b) = fields_b.get(&name) {
+                    if let Some(typ_b) = fields_b.get(name) {
                         let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
                             .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
                         result_fields.insert(name, &lub_typ);
@@ -2312,8 +2312,8 @@ mod ctyp_lub_poly_tests {
         let num_fields = u.int_in_range(1..=3)?;
         let mut fields = share::Ctx::new();
         let names = ["x", "y", "z", "w"];
-        for i in 0..num_fields {
-            fields.insert(&names[i].to_string(), &arb_ctyp(u)?);
+        for name in names.iter().take(num_fields) {
+            fields.insert(&name.to_string(), &arb_ctyp(u)?);
         }
         Ok(CTyp::Record(fields))
     }

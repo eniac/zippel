@@ -107,11 +107,30 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 
         self.prover.run::<128>();
 
+        let dbg = std::env::var_os("ZIPPEL_DEBUG_COMPLETENESS").is_some();
+        if dbg {
+            let n: usize = self.prover.basis.iter().count();
+            eprintln!("=== PROVER BASIS ({n} rows); filtered ===");
+            for p in self.prover.basis.iter() {
+                let s = format!("{p}");
+                if ["evs", "round_poly", "claimed", "n17", "n18", "n19", "g_", "interp"]
+                    .iter()
+                    .any(|k| s.contains(k))
+                {
+                    eprintln!("  P: {s}");
+                }
+            }
+            eprintln!("=== VERIFIER ASSERTIONS ===");
+        }
+
         for p in self.verifier.basis.iter() {
             if p.is_zero() {
                 continue;
             }
             let remainder = self.prover.basis.reduce(p.clone());
+            if dbg {
+                eprintln!("  V: {p}\n     rem: {remainder}");
+            }
             if !remainder.is_zero() {
                 return Err(AnalysisError::Incomplete(remainder));
             }

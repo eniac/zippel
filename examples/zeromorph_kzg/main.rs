@@ -17,7 +17,7 @@ fn main() {
     sizes.insert(&Tid::new("N"), &n_size);
     handler.compile(&sizes);
 
-    let inputs = prover_create_inputs(n_size as usize);
+    let inputs = prover_create_inputs(n_size);
     let public_inputs = inputs
         .clone()
         .into_iter()
@@ -131,8 +131,8 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
 
     let mut v_input = <ArkBls12_381 as ArkConfig>::F::zero();
     let mut u_pow = <ArkBls12_381 as ArkConfig>::F::one();
-    for i in 0..n_size {
-        v_input += p_coeffs_unwrapped[i] * u_pow;
+    for coeff in p_coeffs_unwrapped.iter().take(n_size) {
+        v_input += *coeff * u_pow;
         u_pow *= u_input;
     }
     let v_val = Value::Scalar(v_input);

@@ -504,7 +504,7 @@ impl Lub for ATyp {
             (ATyp::Record(fields_a), ATyp::Record(fields_b)) => {
                 let mut result_fields = Ctx::new();
                 for (name, typ_a) in fields_a.iter() {
-                    if let Some(typ_b) = fields_b.get(&name) {
+                    if let Some(typ_b) = fields_b.get(name) {
                         let lub_typ = ATyp::lub_equ(typ_a, typ_b, &Nothing)
                             .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
                         result_fields.insert(name, &lub_typ);

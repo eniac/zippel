@@ -750,16 +750,16 @@ mod tests {
 
         for (i, (_, op)) in tc.clos.iter().enumerate() {
             for r in op.references() {
-                if let Some(&dep_pos) = node_to_pos.get(&r.node()) {
-                    if dep_pos != i {
-                        assert!(
-                            dep_pos < i,
-                            "topo violation: dependency at clos[{}] ({:?}) appears after dependent at clos[{}]",
-                            dep_pos,
-                            r.node(),
-                            i
-                        );
-                    }
+                if let Some(&dep_pos) = node_to_pos.get(&r.node())
+                    && dep_pos != i
+                {
+                    assert!(
+                        dep_pos < i,
+                        "topo violation: dependency at clos[{}] ({:?}) appears after dependent at clos[{}]",
+                        dep_pos,
+                        r.node(),
+                        i
+                    );
                 }
             }
         }

@@ -11,8 +11,6 @@
 //! `_huge` test goes up to Katsura-5 / Cyclic-5, which under the legacy
 //! path takes ≥ 60 s.
 
-#![cfg(test)]
-
 use std::time::{Duration, Instant};
 
 use ark_bls12_381::Fr;

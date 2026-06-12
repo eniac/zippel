@@ -2507,13 +2507,11 @@ impl<C: HasOpFactory> UDag<C> {
                                         Op::Ref(r, _op_typ) => {
                                             // If the DAG node stores a Record, extract the
                                             // field directly (avoiding an unnecessary Proj node).
-                                            if let Some(inner) = self[r.node()].op() {
-                                                if let Op::Record(fields) = inner.get() {
-                                                    if let Some(field_op) = fields.get(&field_name)
-                                                    {
-                                                        return Ok(field_op.get().clone());
-                                                    }
-                                                }
+                                            if let Some(inner) = self[r.node()].op()
+                                                && let Op::Record(fields) = inner.get()
+                                                && let Some(field_op) = fields.get(&field_name)
+                                            {
+                                                return Ok(field_op.get().clone());
                                             }
                                             // Record produced by a node (e.g. a record-typed op); add Proj node
                                             let field_typ_atyp =

@@ -63,30 +63,46 @@ fn main() {
         std::process::exit(1);
     }
 
-    let analysis_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        println!("\n--- Static Analysis ---");
+    // Static analysis (completeness, ZK, and special soundness).
+    // Wrapped in `catch_unwind` so a non-polynomial-op panic in the
+    // Groebner pipeline gets reported instead of aborting the process
+    // (precedent: examples/ipa/main.rs, examples/multi_schnorr/main.rs).
+    println!("\n--- Static Analysis ---");
+    let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("N"), &n);
-        analysis_handler.compile(&analysis_sizes);
-
-        let completeness_start = Instant::now();
-        match analysis_handler.analyze_completeness() {
-            Ok(()) => println!("Completeness:    ✓"),
-            Err(e) => println!("Completeness:    ✗ {}", e),
+        let analysis = analysis_handler.minimal_analysis();
+        let soundness_start = Instant::now();
+        // `analyze_special_soundness` requires `analyze_graph` to already
+        // be populated, which `minimal_analysis()` does via its internal
+        // `compile(&minimal_sizes)`. The proto has no `challenge<F>`
+        // calls (z is a public input, not a Fiat-Shamir challenge), so
+        // (2)-special soundness is expected to be uninformative here —
+        // we still run the call per the schnorr template and report
+        // whatever the analysis returns.
+        let soundness = analysis_handler.analyze_special_soundness(vec![2]);
+        let soundness_time = soundness_start.elapsed();
+        (analysis, soundness, soundness_time)
+    });
+    match analysis_result {
+        Ok((analysis, soundness, soundness_time)) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            println!("Completeness time:  {:.2?}", analysis.completeness_time);
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+            println!("ZK time:            {:.2?}", analysis.zk_time);
+            match &soundness {
+                Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+                Err(e) => println!("Soundness:      ✗ {}", e),
+            }
+            println!("Soundness time:     {:.2?}", soundness_time);
         }
-        println!("Completeness time: {:.2?}", completeness_start.elapsed());
-
-        let zk_start = Instant::now();
-        match analysis_handler.analyze_knowledge() {
-            Ok(()) => println!("ZK:              ✓"),
-            Err(e) => println!("ZK:              ✗ {}", e),
-        }
-        println!("ZK time:         {:.2?}", zk_start.elapsed());
-    }));
-    if analysis_result.is_err() {
-        println!("Analysis:        ⚠ not supported (non-polynomial operations)");
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
 }
 
@@ -153,5 +169,7 @@ fn prover_create_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
         (Vid("g_gen".to_string()), Value::G1(gen_g)),
         (Vid("h_gen".to_string()), Value::G2(gen_h)),
         (Vid("alpha_H".to_string()), alpha_h),
+        // Relation-only witness: see proto's `where` clause in pst13.zippel.
+        (Vid("alpha".to_string()), Value::VecScalar(alpha.clone())),
     ])
 }

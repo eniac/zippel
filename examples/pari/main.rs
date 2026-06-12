@@ -122,17 +122,15 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     let mut rng = test_rng();
 
     // --- z = [1, x[1..N], w[0..M_WIT], aux[0..N]],  aux[i] = z[i]^2 ---
-    let mut z = vec![F::zero(); K_VARS];
+    let mut z = [F::zero(); K_VARS];
     z[0] = F::one();
     // With `N_PUB = 1` this loop is empty, but it stays here so the layout
-    // generalizes if N_PUB is bumped. Silencing the clippy lint that flags
-    // `1..1` as a reversed/empty range literal.
-    #[allow(clippy::reversed_empty_ranges)]
-    for i in 1..N_PUB {
-        z[i] = nonzero(&mut rng);
+    // generalizes if N_PUB is bumped.
+    for z_i in z.iter_mut().take(N_PUB).skip(1) {
+        *z_i = nonzero(&mut rng);
     }
-    for j in N_PUB..N_PUB + M_WIT {
-        z[j] = nonzero(&mut rng);
+    for z_j in z.iter_mut().skip(N_PUB).take(M_WIT) {
+        *z_j = nonzero(&mut rng);
     }
     for i in 0..N_PUB {
         z[N_PUB + M_WIT + i] = z[i] * z[i];
@@ -179,7 +177,7 @@ fn build_inputs() -> (Ctx<Vid, Value<C>>, Ctx<Vid, Value<C>>) {
     }
 
     // ŵ_M = ẑ_M − x̂_M on the constraint domain.
-    let mut x_padded = vec![F::zero(); K_VARS];
+    let mut x_padded = [F::zero(); K_VARS];
     x_padded[..N_PUB].copy_from_slice(&z[..N_PUB]);
     let x_a_evals: Vec<F> = (0..K)
         .map(|i| (0..K_VARS).map(|j| a_mat[i][j] * x_padded[j]).sum::<F>())

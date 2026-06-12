@@ -407,7 +407,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         }
         self.var_order.extend(other.var_order.iter().cloned());
         for (k, v) in other.prefs.iter() {
-            self.prefs.entry(k.clone()).or_insert_with(|| v.clone());
+            self.prefs.entry(*k).or_insert_with(|| v.clone());
         }
     }
 }
@@ -1909,11 +1909,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         match (a_src.typ(), &b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let elem_exps = self.resolve_const_exps_vec(b, *na);
-                for i in 0..*na {
+                for (i, exp) in elem_exps.iter().enumerate().take(*na) {
                     let t_i = pr.with_index(i).unwrap();
                     let elem_a = a_src.at_index(i).unwrap();
-                    if let Some(k) = elem_exps[i] {
-                        self.pow_const(&t_i, &elem_a, r_inner, k, result);
+                    if let Some(k) = exp {
+                        self.pow_const(&t_i, &elem_a, r_inner, *k, result);
                     } else {
                         Self::uncovered_op("dynamic-pow", &t_i);
                     }
@@ -1933,10 +1933,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             (_, ATyp::Vec(_, nb), ATyp::Vec(_, _)) => {
                 let elem_exps = self.resolve_const_exps_vec(b, *nb);
-                for i in 0..*nb {
+                for (i, exp) in elem_exps.iter().enumerate().take(*nb) {
                     let t_i = pr.with_index(i).unwrap();
-                    if let Some(k) = elem_exps[i] {
-                        self.pow_const(&t_i, &a_src, &t_i.typ, k, result);
+                    if let Some(k) = exp {
+                        self.pow_const(&t_i, &a_src, &t_i.typ, *k, result);
                     } else {
                         Self::uncovered_op("dynamic-pow", &t_i);
                     }
@@ -2782,11 +2782,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             for (i, y_i) in evals_polys.iter().enumerate() {
                 let mut lag_poly = vec![SparsePolynomial::<C::F, T>::lit(&C::F::one())];
 
-                for j in 0..n_pts {
+                for (j, xj_poly) in xs_polys.iter().enumerate().take(n_pts) {
                     if j == i {
                         continue;
                     }
-                    let neg_xj = &xs_polys[j] * &SparsePolynomial::lit(&(-C::F::one()));
+                    let neg_xj = xj_poly * &SparsePolynomial::lit(&(-C::F::one()));
                     let mut new_lag = vec![SparsePolynomial::<C::F, T>::zero(); lag_poly.len() + 1];
                     for (deg, c) in lag_poly.iter().enumerate() {
                         let shifted = c * &neg_xj;
@@ -3068,22 +3068,21 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             BinOp::Mul => {
                 let mut acc = v_src.at_index(0).unwrap();
+                let mut acc_typ = elem_t.clone();
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
-                    let acc_name = self.ns.next_name("reduce_mul_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
-                    self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
-                    acc = PolySource::new(
-                        acc_pref
-                            .slots()
-                            .into_iter()
-                            .map(|s| SparsePolynomial::var(&s))
-                            .collect(),
-                        elem_t.clone(),
-                    );
-                }
-                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
-                    result.basis.push(p - SparsePolynomial::var(&pf));
+                    let step_typ = ATyp::lub_mul(&acc_typ, elem.typ(), &Nothing)
+                        .expect("reduce(*): type checker guarantees lub_mul");
+                    let is_last = i == n - 1;
+                    let acc_pref = if is_last {
+                        pr.clone()
+                    } else {
+                        let acc_name = self.ns.next_name("reduce_mul_acc");
+                        self.sentinel_pref(&acc_name, step_typ.clone(), result)
+                    };
+                    self.mul_op(&acc_pref, &acc, &elem, &step_typ, result);
+                    acc = PolySource::from_pref_vars(&acc_pref, step_typ.clone());
+                    acc_typ = step_typ;
                 }
             }
             BinOp::Concat => {
@@ -6031,14 +6030,14 @@ mod tests {
             basis_vars.iter().any(|p| p
                 .name
                 .as_ref()
-                .map_or(false, |n| n.0.starts_with("__zippel::gb::div_q"))),
+                .is_some_and(|n| n.0.starts_with("__zippel::gb::div_q"))),
             "basis.vars() should contain div_q witnesses"
         );
         assert!(
             basis_vars.iter().any(|p| p
                 .name
                 .as_ref()
-                .map_or(false, |n| n.0.starts_with("__zippel::gb::div_r"))),
+                .is_some_and(|n| n.0.starts_with("__zippel::gb::div_r"))),
             "basis.vars() should contain div_r witnesses"
         );
     }
@@ -6074,12 +6073,12 @@ mod tests {
             .next()
             .expect("div_wit should have exactly one (q_wit, r_wit) entry");
         assert!(
-            q_wit.name.as_ref().map_or(false, |n| n.0.contains("div_q")),
+            q_wit.name.as_ref().is_some_and(|n| n.0.contains("div_q")),
             "q_wit should be named div_q..., got {:?}",
             q_wit.name
         );
         assert!(
-            r_wit.name.as_ref().map_or(false, |n| n.0.contains("div_r")),
+            r_wit.name.as_ref().is_some_and(|n| n.0.contains("div_r")),
             "r_wit should be named div_r..., got {:?}",
             r_wit.name
         );
@@ -6819,7 +6818,7 @@ mod tests {
             .filter(|v| {
                 v.name
                     .as_ref()
-                    .map_or(false, |vid| vid.0.contains("interp_inv"))
+                    .is_some_and(|vid| vid.0.contains("interp_inv"))
             })
             .collect();
         assert_eq!(d_vars.len(), 2, "should have 2 d-variables");
@@ -7244,6 +7243,60 @@ mod tests {
         assert!(
             gresult.basis.iter().any(|row| row.contains(&high_slot)),
             "reduce(*) should lower the widened Uni(3) accumulator all the way to the final high-degree slot"
+        );
+    }
+
+    /// Regression: `reduce(*, [..])` lowered to `Op::ReduceMap` must widen the
+    /// accumulator type as the product degree grows, exactly like `Op::Reduce`.
+    /// Pre-fix, `reduce_polysource`'s Mul arm typed every accumulator at the
+    /// element type `Uni(1)`, so the first product (degree 2) overflowed the
+    /// `r_idx` table in `mul_op` and panicked with "multi-index missing in
+    /// result". This is the `Op::ReduceMap` twin of
+    /// `reduce_mul_poly_accumulator_widens`.
+    #[test]
+    fn reduce_map_mul_poly_accumulator_widens() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let elem_t = ATyp::Uni(1);
+        let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&result);
+
+        // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
+        // length-3 vector of degree-1 univariates → degree-3 product (Uni(3)).
+        let domain = mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t));
+        let body = mk::<ArkBls12_381>(Op::LoopParam(0, elem_t.clone()));
+        builder.add_op(
+            result.clone(),
+            Op::ReduceMap(BinOp::Mul, domain, body),
+            &mut gresult,
+        );
+
+        let high_slot = result.with_slot(3).unwrap();
+        assert!(
+            gresult.basis.iter().any(|row| row.contains(&high_slot)),
+            "reduce(*) via ReduceMap must widen the Uni(1) accumulator to the Uni(3) product"
         );
     }
 
@@ -9789,11 +9842,10 @@ mod tests {
         let has_gt_sentinel = basis_vars.iter().any(|pr| {
             pr.name
                 .as_ref()
-                .map_or(false, |n| n.0.starts_with("__zippel::gb::gt"))
+                .is_some_and(|n| n.0.starts_with("__zippel::gb::gt"))
         });
         assert!(!has_gt_sentinel, "GT sentinel should not exist");
     }
-
 
     // -----------------------------------------------------------------
     // Task 5: record_projection_resolves_without_np_lookup

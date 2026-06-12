@@ -14,7 +14,7 @@ fn compile_protocol<C: backend::ArkConfig + backend::HasOpFactory>(
     let args = ZippelArgs::new(zippel_path);
     let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
     handler.compile(&sizes);
-    
+
     let elapsed = start_total.elapsed().as_secs_f64();
     println!("Compiled {:<25} in {:.4} seconds", name, elapsed);
     elapsed
@@ -39,7 +39,8 @@ fn generate_proto(m: usize) -> String {
     let ncols = 1usize << m_h;
     assert_eq!(nrows * ncols, two_nw);
 
-    format!(r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
+    format!(
+        r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
 }}
 fn eq_weights<G: Group, F: Scalar<G>, EK: 2..21>(public x: [F; EK]) -> [F; 2^EK] {{

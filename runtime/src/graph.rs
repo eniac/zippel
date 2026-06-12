@@ -30,7 +30,7 @@ const FS_DIGEST_THRESHOLD_BYTES: usize = 64 * 1024;
 
 /// Domain separator for the Blake3 digest path. Hashing context-prefix
 /// + value bytes prevents a digest from being confused with raw value
-/// bytes if both schemes were ever fed into the same sponge.
+///   bytes if both schemes were ever fed into the same sponge.
 const FS_DIGEST_DOMAIN: &[u8] = b"zippel-fs-pubinp-digest-v1";
 
 /// Absorb a public input value into the Fiat-Shamir sponge.
@@ -101,6 +101,12 @@ pub struct RuntimeInformation<C: ArkConfig> {
     /// Number of unfinished dependencies. Atomically decremented;
     /// when it reaches zero, this node is ready to execute.
     pub remaining_deps: AtomicUsize,
+}
+
+impl<C: ArkConfig> Default for RuntimeInformation<C> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<C: ArkConfig> RuntimeInformation<C> {
@@ -333,7 +339,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                 }
                 let return_val = self.handle_op(&**operation, inputs)?;
                 if annotation.return_value.set(return_val).is_err() {
-                    log_double_execute("Transcr (set-race)", node_curr, operation.discriminant_order());
+                    log_double_execute(
+                        "Transcr (set-race)",
+                        node_curr,
+                        operation.discriminant_order(),
+                    );
                 }
             }
             Node::Inp(_) => {}
@@ -474,10 +484,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         // spawned a SECOND time, causing the runtime invariant violation.
         for ni in initial_roots {
             if is_sync_node(&g, ni) {
-                debug!(
-                    "[run_graph] init: pushing sync root node {:?}",
-                    ni
-                );
+                debug!("[run_graph] init: pushing sync root node {:?}", ni);
                 tx.push(ni);
             } else {
                 let g_clone = Arc::clone(&g);
@@ -490,13 +497,7 @@ impl<C: ArkConfig> MutexGraph<C> {
                         return;
                     }
                     match g_clone.handle_node(ni, &inputs_clone) {
-                        Ok(()) => update_successors(
-                            &g_clone,
-                            &inputs_clone,
-                            tx,
-                            ni,
-                            &error_slot,
-                        ),
+                        Ok(()) => update_successors(&g_clone, &inputs_clone, tx, ni, &error_slot),
                         Err(e) => record_error(&error_slot, e),
                     }
                 });
