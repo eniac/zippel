@@ -6,7 +6,17 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
-    println!("=== Reuse Randomness (ArkBls12_381) ===");
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
+    println!("=== Multi Schnorr (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from(
         "examples/multi_schnorr/multi_schnorr.zippel",
     ));
