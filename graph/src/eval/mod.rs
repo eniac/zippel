@@ -308,20 +308,23 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
                 // Case 2: Multiplied bit extraction (scaling)
                 Op::Bin(BinOp::Mul, lhs, rhs, _) => {
                     if match_bit_extraction_ast(lhs.get(), outer_level, inner_level) {
-                        let x_val = eval_op_with_loop_params(rhs, env, rng, loop_params)?;
-                        return Ok(is_value_one(&x_val));
+                        if let Ok(x_val) = eval_op_with_loop_params(rhs, env, rng, loop_params) {
+                            return Ok(is_value_one(&x_val));
+                        }
                     }
                     if match_bit_extraction_ast(rhs.get(), outer_level, inner_level) {
-                        let x_val = eval_op_with_loop_params(lhs, env, rng, loop_params)?;
-                        return Ok(is_value_one(&x_val));
+                        if let Ok(x_val) = eval_op_with_loop_params(lhs, env, rng, loop_params) {
+                            return Ok(is_value_one(&x_val));
+                        }
                     }
                     Ok(false)
                 }
                 // Case 3: Array index of bit extraction (e.g. pts3[(i / 2^j) % 2])
                 Op::Ram(array, index) => {
                     if match_bit_extraction_ast(index.get(), outer_level, inner_level) {
-                        let array_val = eval_op_with_loop_params(array, env, rng, loop_params)?;
-                        return Ok(has_zero_one_at_start(&array_val));
+                        if let Ok(array_val) = eval_op_with_loop_params(array, env, rng, loop_params) {
+                            return Ok(has_zero_one_at_start(&array_val));
+                        }
                     }
                     Ok(false)
                 }
