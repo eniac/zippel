@@ -134,9 +134,13 @@ impl FlatMatrix {
 
 fn pedersen_commit(key: &[G1Affine], scalars: &[Fr]) -> G1Projective {
     assert_eq!(key.len(), scalars.len());
-    // Avoid nested par_iter at threads=1 — the outer commit loop is
-    // already a par_iter, and rayon's scheduler queues every nested
-    // par_iter task even when there's no parallelism to gain.
+    // Always go through `msm_bigint` — Pippenger's bucket structure is
+    // intrinsically faster than naive `Σ b_i · s_i` at N=512 (~5-10ms
+    // per MSM via Pippenger vs ~25-40ms via naive scalar muls), even
+    // at threads=1 where the internal par_iter collapses to serial
+    // with some queueing overhead. The OUTER commit loop already has
+    // a serial fast path at threads=1 to avoid the worst nested
+    // par_iter blowup.
     let scalars_bigint: Vec<_> = if rayon::current_num_threads() <= 1 {
         scalars.iter().map(|s| s.into_bigint()).collect()
     } else {
