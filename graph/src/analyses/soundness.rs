@@ -329,7 +329,10 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 pub_prefs.push(pr.clone());
             }
         }
-        let grev_rel_result = grev_builder.build(rel_tc.clone());
+        let mut grev_rel_result = grev_builder.build(rel_tc.clone());
+        grev_rel_result.inline();
+
+        grev_search.merge(&grev_rel_result);
 
         // Phase 2: Install rank guard assigning lex priority to every variable.
         // Public args get lowest ranks (lowest elimination priority), private args
@@ -360,20 +363,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut lex_search = GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_search);
         let mut lex_validity =
             GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_validity);
-
-        let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result
-            .basis
-            .iter()
-            .filter_map(|p| {
-                if p.is_zero() {
-                    return None;
-                }
-                Some(SparsePolynomial::reconstruct_from(p))
-            })
-            .collect();
-        for p in &lex_rel_polys {
-            lex_search.basis.push(p.clone());
-        }
 
         lex_search.inline();
 
@@ -468,6 +457,16 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         lex_validity.inline();
         lex_validity.run::<128>();
 
+        let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result
+            .basis
+            .iter()
+            .filter_map(|p| {
+                if p.is_zero() {
+                    return None;
+                }
+                Some(SparsePolynomial::reconstruct_from(p))
+            })
+            .collect();
         for r in &lex_rel_polys {
             if r.is_zero() {
                 continue;
