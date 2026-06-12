@@ -66,7 +66,6 @@ fn run_kzg_example() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
     let analysis_start = Instant::now();
     // Analyze completeness/ZK at the same (small) N the prover demonstrates.
@@ -105,45 +104,37 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
 
     let n_size = 2;
-    let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
+    let gen_g1_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let gen_g1: Value<ArkBls12_381> = Value::G1(gen_g1_input);
 
-    let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
+    let gen_g2_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
+    let gen_g2: Value<ArkBls12_381> = Value::G2(gen_g2_input);
 
-    let s_temp: Value<ArkBls12_381> = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng));
-
-    // let a = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-    // let b = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-
-    // let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::Uni(n_size));
-    let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
-    let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let poly_coeffs: Value<ArkBls12_381> =
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    // let tau = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-    let tau = Value::<ArkBls12_381>::Scalar(tau_input);
 
-    let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
+    let srs_g1: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| gen_g1_input).collect())
+        * Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
 
-    let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
+    let eval_point_val: Value<ArkBls12_381> = Value::Vec(
+        (0..n_size)
+            .map(|i| eval_point.clone() ^ Value::Index(i))
+            .collect(),
+    );
 
-    let ss = ss_g.clone() * ss_index.clone();
-    let _s = s_temp.clone() * tau.clone();
+    let eval_result: Value<ArkBls12_381> = poly_coeffs.clone().dot(eval_point_val);
 
-    let z_val: Value<ArkBls12_381> =
-        Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
-
-    let y: Value<ArkBls12_381> = p.clone().dot(z_val.clone());
-    // let y =  Value::<ArBls12_381>::random(&mut rng, &ATyp::scalar());
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let srs_g2_s: Value<ArkBls12_381> = Value::G2(gen_g2_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("poly_coeffs".to_string()), p),
-        (Vid("gen_g1".to_string()), g),
-        (Vid("gen_g2".to_string()), h),
-        (Vid("eval_point".to_string()), z),
-        (Vid("eval_result".to_string()), y),
-        (Vid("srs_g1".to_string()), ss),
-        (Vid("srs_g2_s".to_string()), h_val),
+        (Vid("poly_coeffs".to_string()), poly_coeffs),
+        (Vid("eval_point".to_string()), eval_point),
+        (Vid("eval_result".to_string()), eval_result),
+        (Vid("srs_g1".to_string()), srs_g1),
+        (Vid("gen_g1".to_string()), gen_g1),
+        (Vid("gen_g2".to_string()), gen_g2),
+        (Vid("srs_g2_s".to_string()), srs_g2_s),
     ])
 }

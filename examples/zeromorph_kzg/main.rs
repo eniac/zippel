@@ -6,12 +6,14 @@ use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
+const PUBLIC_INPUT_NAMES: &[&str] = &["u", "v", "srs_g1", "gen_g1", "gen_g2", "srs_g2"];
+
 fn main() {
     println!("=== Zeromorph Hiding KZG ===");
     let args = ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     let mut sizes = Ctx::new();
-    let n_size = 4;
+    let n_size = 2;
     sizes.insert(&Tid::new("N"), &n_size);
     handler.compile(&sizes);
 
@@ -19,7 +21,7 @@ fn main() {
     let public_inputs = inputs
         .clone()
         .into_iter()
-        .filter(|(vid, _)| vid.0 != "p_coeffs")
+        .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
 
     let prover_scheduled = handler.default_schedule_prover();
@@ -55,6 +57,36 @@ fn main() {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
     }
+
+    println!("\n--- Static Analysis ---");
+    let analysis_start = Instant::now();
+    let analysis_result = std::panic::catch_unwind(|| {
+        let analysis_args =
+            ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
+        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+        let mut analysis_sizes = Ctx::new();
+        analysis_sizes.insert(&Tid::new("N"), &n_size);
+        analysis_handler.compile(&analysis_sizes);
+        AnalysisResult {
+            completeness: analysis_handler.analyze_completeness(),
+            zk: analysis_handler.analyze_knowledge(),
+        }
+    });
+    let analysis_elapsed = analysis_start.elapsed();
+    match analysis_result {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    }
+    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
@@ -69,7 +101,6 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let xi_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
 
-    // srs_g1 = [1, tau, ..., tau^{N-1}, xi] * g
     let mut srs_g1_vec = vec![];
     for i in 0..n_size {
         srs_g1_vec.push(g_input * tau_input.pow([i as u64]));
@@ -77,19 +108,15 @@ fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
     srs_g1_vec.push(g_input * xi_input);
     let srs_g1 = Value::VecG1(srs_g1_vec);
 
-    // srs_g2 = [tau, xi] * h
     let tau_g2 = h_input * tau_input;
     let xi_g2 = h_input * xi_input;
     let srs_g2 = Value::VecG2(vec![tau_g2, xi_g2]);
 
-    // Random polynomial p of degree N-1
     let p_coeffs_val = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
 
-    // Eval point u
     let u_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
     let u_val = Value::Scalar(u_input);
 
-    // Compute v = p(u)
     let p_coeffs_unwrapped = match &p_coeffs_val {
         Value::VecScalar(v) => v.clone(),
         _ => panic!("Expected VecScalar"),

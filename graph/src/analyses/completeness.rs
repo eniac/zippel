@@ -4,6 +4,7 @@ use share::Set;
 
 use crate::DQDag;
 use crate::PRef;
+use crate::Ref;
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
 use crate::analyses::extractor::extract_locals;
@@ -28,6 +29,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
+
+        let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
+        prover_result.inline(&transcript_refs);
 
         let verifier_tc = TransClos::verifier(dag);
         let public_args: Set<PRef> = dag
@@ -1210,19 +1214,19 @@ mod tests {
         use lang::id::Tid;
         let ex = r#"
             proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
-                    (private p: [F; N], public z: F, public y: F, public ss: [G1; N],
-                    public g: G1, public h: G2, public h_val: G2)
-                    where p == p {
-                let p_val = poly(p);
-                c <- dot(p, ss);
-                let q_val = (p_val - y) / poly([-z, 1]);
-                let pi_val = coef(q_val);
-                let test = ss[0..N-1];
-                pi <- dot(pi_val, test);
-                let lhs = pair(pi, (h_val) - (h * z));
-                let rhs = pair(c - y * g, h);
-                verify(lhs == rhs)
-            }"#;
+                    (private poly_coeffs: [F; N], public eval_point: F, public eval_result: F, private srs_g1: [G1; N],
+                    public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
+                    where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
+                let poly_x = poly(poly_coeffs);
+                commitment <- dot(poly_coeffs, srs_g1);
+                let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
+                let quotient_coeffs = coef(quotient_poly);
+                let srs_g1_truncated = srs_g1[0..N-1];
+                proof <- dot(quotient_coeffs, srs_g1_truncated);
+                let pairing_lhs = pair(proof, srs_g2_s - gen_g2 * eval_point);
+                let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
+                verify(pairing_lhs == pairing_rhs)
+             }"#;
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &3);
         let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
@@ -1261,6 +1265,29 @@ mod tests {
         assert!(
             ca.run().is_err(),
             "verifier equation must be reduced or rejected, not silently skipped"
+        );
+    }
+
+    #[test]
+    fn transcript_inline_completeness() {
+        let ex = r#"
+            proto simple<F: Field>(public a: F, public b: F) where a == a {
+                c <- a * b;
+                verify(c == a * b)
+            }"#;
+
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "c = a*b, verify c == a*b should be complete"
         );
     }
 }

@@ -10,10 +10,10 @@
 //
 // SRS needs N+1 elements (one extra) to commit to the degree-N blinded polynomial.
 
-proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: 2>
+proto zk_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p: [F; N], public z: F, public y: F, public ss: [G1; N+1],
-        public g: G1, public h: G2, h_val: G2)
-        where dot(p, [z ^ i for i in 0..N]) == y {
+        public g: G1, public h: G2, public h_val: G2)
+        where dot(p, [z ^ i for i in 0..N]) == y && ss[0] == g && reduce(&&, [pair(ss[i], h_val) == pair(ss[i+1], h) for i in 0..N]) {
 
         // Sample blinding factors
         let b0 = random<F>;

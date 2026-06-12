@@ -1,13 +1,10 @@
+use ark_ff::fields::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
-
-const N: usize = 3; // Total dimension of z
-const N_PUB: usize = 1; // Public input dimension
-const M: usize = 1; // Number of constraints (rows in A, B, C)
 
 fn main() {
     let worker = std::thread::Builder::new()
@@ -90,58 +87,32 @@ fn run_example() {
     println!("Soundness time: {soundness_elapsed:.2?}");
 }
 
-/// Build a valid R1CS instance (A, B, C, x, w) such that Az ∘ Bz = Cz.
-///
-/// We construct a simple 1x3 system with 1 constraint over z = (x0, w0, w1):
-///   Constraint 0:  x0 * w0 = w1        (1 public variable by private variable constraint)
-///
-/// Row-major 1×3 matrices:
-///   A = [[1,0,0]]   selects: x0
-///   B = [[0,1,0]]   selects: w0
-///   C = [[0,0,1]]   selects: w1
-///
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     type F = <ArkBls12_381 as ArkConfig>::F;
+    type G1 = <ArkBls12_381 as ArkConfig>::G1;
     let mut rng = rand::rngs::OsRng;
 
-    // Pick a random public input x0 and private w0
     let x0 = F::rand(&mut rng);
-    let w0 = F::rand(&mut rng);
+    let w0 = x0 * x0; // w = x^2 so that A*z * B*z = C*z
 
-    // Derive w1 from constraints
-    let w1 = x0 * w0;
+    // Constraint: x * x = w, i.e. x^2 = w
+    // A selects x: [1, 0]
+    // B selects x: [1, 0]
+    // C selects w: [0, 1]
+    let mat_A = vec![F::from(1u64), F::from(0u64)];
+    let mat_B = vec![F::from(1u64), F::from(0u64)];
+    let mat_C = vec![F::from(0u64), F::from(1u64)];
 
-    // A (1×3)
-    let mat_a: Vec<F> = vec![F::from(1u64), F::from(0u64), F::from(0u64)];
-
-    // B (1×3)
-    let mat_b: Vec<F> = vec![F::from(0u64), F::from(1u64), F::from(0u64)];
-
-    // C (1×3)
-    let mat_c: Vec<F> = vec![F::from(0u64), F::from(0u64), F::from(1u64)];
-
-    // Verify the R1CS relation: Az ∘ Bz = Cz
-    let z = [x0, w0, w1];
-    for i in 0..M {
-        let az_i: F = (0..N).map(|j| mat_a[i * N + j] * z[j]).sum();
-        let bz_i: F = (0..N).map(|j| mat_b[i * N + j] * z[j]).sum();
-        let cz_i: F = (0..N).map(|j| mat_c[i * N + j] * z[j]).sum();
-        assert_eq!(az_i * bz_i, cz_i, "R1CS constraint {} failed", i);
-    }
-
-    // Commitment key: random group elements
-    let ck: Vec<<ArkBls12_381 as ArkConfig>::G1> = (0..M)
-        .map(|_| <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng))
-        .collect();
-    let h_base = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
+    let ck = G1::rand(&mut rng);
+    let h_base = G1::rand(&mut rng);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("ck".to_string()), Value::VecG1(ck)),
+        (Vid("ck".to_string()), Value::VecG1(vec![ck])),
         (Vid("h_base".to_string()), Value::G1(h_base)),
-        (Vid("mat_A".to_string()), Value::VecScalar(mat_a)),
-        (Vid("mat_B".to_string()), Value::VecScalar(mat_b)),
-        (Vid("mat_C".to_string()), Value::VecScalar(mat_c)),
+        (Vid("mat_A".to_string()), Value::VecScalar(mat_A)),
+        (Vid("mat_B".to_string()), Value::VecScalar(mat_B)),
+        (Vid("mat_C".to_string()), Value::VecScalar(mat_C)),
         (Vid("x".to_string()), Value::VecScalar(vec![x0])),
-        (Vid("w".to_string()), Value::VecScalar(vec![w0, w1])),
+        (Vid("w".to_string()), Value::VecScalar(vec![w0])),
     ])
 }

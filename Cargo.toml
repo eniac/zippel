@@ -117,6 +117,10 @@ test = true
 harness = false
 
 [[example]]
+name = "okamoto"
+path = "examples/okamoto/main.rs"
+
+[[example]]
 name = "cp"
 path = "examples/cp/main.rs"
 test = true

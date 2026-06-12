@@ -364,6 +364,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
             }
             Op::Random(t, b) => Op::Random(t, b),
             Op::Challenge(t, b) => Op::Challenge(t, b),
+
             Op::Proj(op, field, typ) => Op::Proj(
                 mk::<C>(self.trans_clos_op(dag, op.get().clone(), seen)),
                 field.clone(),

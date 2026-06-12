@@ -54,7 +54,7 @@ fn run_example() {
         std::process::exit(1);
     }
 
-    // Static analysis
+    // Static analysis — completeness, ZK & soundness
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
