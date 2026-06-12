@@ -64,7 +64,6 @@ fn mle_sumcheck_completeness() {
 }
 
 #[test]
-#[ignore = "div_q: reduce-all completeness needs an extractor for polynomial division witnesses; debugging separately"]
 fn kzg_completeness() {
     assert!(analyze_complete("examples/kzg/kzg.zippel", vec![("N", 2)]));
 }

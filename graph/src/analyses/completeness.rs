@@ -1209,7 +1209,6 @@ mod tests {
     /// phase-7 follow-up (the off-by-one was introduced by the phase-7 fix
     /// that landed before the coef/poly/eval conventions were reconciled).
     #[test]
-    #[ignore = "div_q: reduce-all completeness needs an extractor for polynomial division witnesses (div_q appears multiplied by the divisor, so extract_locals cannot isolate it); debugging separately"]
     fn full_kzg_completeness() {
         use lang::id::Tid;
         let ex = r#"
