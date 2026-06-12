@@ -1,6 +1,6 @@
 // The Cramer-Damgård-Schoenmakers (CDS) protocol for proofs of partial knowledge.
 // Proves knowledge of (N-K) out of N discrete logs (Schnorr witnesses).
-proto cds<G: Group, F: Scalar<G>, N: 3, K: 1>(
+proto cds<G: Group, F: Scalar<G>, N: 2, K: 1>(
     // Public inputs
     public g: G,
     public public_keys: [G; N],

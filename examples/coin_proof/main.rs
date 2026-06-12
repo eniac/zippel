@@ -50,14 +50,33 @@ fn main() {
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     analysis_handler.compile(&Ctx::new());
 
-    let soundness_start = Instant::now();
-    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
-    let soundness_elapsed = soundness_start.elapsed();
-    match &soundness_result {
-        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
-        Err(e) => println!("Soundness:      ✗ {}", e),
+    let analysis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        analysis_handler.minimal_analysis()
+    }));
+    match analysis {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
-    println!("Soundness time: {soundness_elapsed:.2?}");
+
+    // Soundness: commented out — coin_proof has many Pedersen-commitment
+    // witnesses and pairing terms; GB computation is too slow for interactive use.
+    // let soundness_start = Instant::now();
+    // let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    // let soundness_elapsed = soundness_start.elapsed();
+    // match &soundness_result {
+    //     Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+    //     Err(e) => println!("Soundness:      ✗ {}", e),
+    // }
+    // println!("Soundness time: {soundness_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

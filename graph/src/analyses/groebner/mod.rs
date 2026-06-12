@@ -193,7 +193,6 @@ pub struct DivWitnessKey {
 pub struct GroebnerNamespace<C: ArkConfig> {
     pub div_wit: Ctx<DivWitnessKey, (PRef, PRef)>,
     sentinel_counter: usize,
-    gt_sentinel: Option<PRef>,
     name_counters: HashMap<String, usize>,
     _phantom: PhantomData<C>,
 }
@@ -209,7 +208,6 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         Self {
             div_wit: Ctx::new(),
             sentinel_counter: usize::MAX,
-            gt_sentinel: None,
             name_counters: HashMap::new(),
             _phantom: PhantomData,
         }
@@ -229,17 +227,6 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         let name = format!("{}{}::{}", GB_GENERATED_NAME_PREFIX, key, counter);
         *counter += 1;
         name
-    }
-
-    /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
-    /// Idempotent — allocates once, then returns the cached PRef.
-    pub fn gt_pref(&mut self) -> PRef {
-        if let Some(pr) = self.gt_sentinel.as_ref() {
-            return pr.clone();
-        }
-        let pr = self.sentinel_pref("__zippel::gb::gt", ATyp::gt());
-        self.gt_sentinel = Some(pr.clone());
-        pr
     }
 }
 
@@ -879,23 +866,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         result
     }
 
-    /// Phase 12: lazy accessor for the GT generator sentinel `__zippel::gb::gt`.
-    ///
-    /// `Op::Pair(a, b)` emits the basis row
-    ///   `var(pr) − ref_vars(a)·ref_vars(b)·var(__zippel::gb::gt) = 0`
-    /// which encodes the pairing axiom
-    ///   `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
-    /// combined with bilinearity:
-    ///   `pair(α·g1, β·g2) = α·β·gt`.
-    fn gt_pref(&mut self, result: &mut GroebnerResult<C, T>) -> PRef {
-        let was_cached = self.ns.gt_sentinel.is_some();
-        let pr = self.ns.gt_pref();
-        if !was_cached {
-            result.var_order.push(pr.clone());
-        }
-        pr
-    }
-
     pub(crate) fn sentinel_pref(
         &mut self,
         name: &str,
@@ -1258,15 +1228,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// - Same-type poly op → straightforward slot-wise
     fn broadcast_equ(
         &mut self,
-        pr: &PRef,
+        _pr: &PRef,
         a: &PolySource<C, T>,
         b: &PolySource<C, T>,
         result: &mut GroebnerResult<C, T>,
     ) {
         self.emit_equ_diffs(a, b, result);
-        for pf in pr.slots() {
-            result.basis.push(SparsePolynomial::var(&pf));
-        }
+        // NOTE: We do NOT emit `pr.slots()` as basis polynomials here.
+        // `==` is used as an assertion, not to compute the boolean
+        // result of equality checking.
     }
 
     fn emit_equ_diffs(
@@ -1737,28 +1707,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 }
             }
             (ATyp::Base(_), ATyp::Base(_)) => {
-                // Pairing multiplication: G1 * G2 → GT requires the GT
-                // sentinel to encode the bilinear pairing axiom, just like
-                // pair_op. Scalar multiplication (G1 * Scalar → G1, etc.)
-                // falls through to regular slot-wise multiplication.
-                let needs_gt = matches!(r_typ, ATyp::Base(ABase::GT))
-                    || matches!(r_typ, ATyp::Vec(box ATyp::Base(ABase::GT), _));
-                if needs_gt {
-                    let gt = self.gt_pref(result);
-                    let gt_var = SparsePolynomial::var(&gt);
-                    let target_slots = target.slots();
-                    for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
-                        let prod = ap * bp * gt_var.clone();
-                        result.pl.insert(pf, &prod);
-                        result.basis.push(prod - SparsePolynomial::var(pf));
-                    }
-                } else {
-                    let target_slots = target.slots();
-                    for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
-                        let prod = ap * bp;
-                        result.pl.insert(pf, &prod);
-                        result.basis.push(prod - SparsePolynomial::var(pf));
-                    }
+                let target_slots = target.slots();
+                for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
+                    let prod = ap * bp;
+                    result.pl.insert(pf, &prod);
+                    result.basis.push(prod - SparsePolynomial::var(pf));
                 }
             }
             _ => {
@@ -1838,10 +1791,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         b: &PolySource<C, T>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        let gt = self.gt_pref(result);
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
-                let gt_var = SparsePolynomial::var(&gt);
                 for i in 0..*na {
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
@@ -1849,7 +1800,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let a_lifted = a_elem.lift_to(r_inner);
                     let b_lifted = b_elem.lift_to(r_inner);
                     for (j, pf) in t_i.slots().iter().enumerate() {
-                        let e = &a_lifted.polys()[j] * &b_lifted.polys()[j] * gt_var.clone();
+                        let e = &a_lifted.polys()[j] * &b_lifted.polys()[j];
                         result.pl.insert(pf, &e);
                         result.basis.push(&e - &SparsePolynomial::var(pf));
                     }
@@ -1857,14 +1808,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
             (ATyp::Base(_), ATyp::Base(_), ATyp::Base(_)) => {
                 let pr_slots = pr.slots();
-                let gt_var = SparsePolynomial::var(&gt);
                 for (pf, e_a, e_b) in pr_slots
                     .iter()
                     .zip(a.polys())
                     .zip(b.polys())
                     .map(|((pf, a), b)| (pf, a, b))
                 {
-                    let e = e_a * e_b * gt_var.clone();
+                    let e = e_a * e_b;
                     result.pl.insert(pf, &e);
                     result.basis.push(&e - &SparsePolynomial::var(pf));
                 }
@@ -2491,17 +2441,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     Self::admit_unconstrained_identifier("dynamic-ram", &pr);
                 }
             },
-            // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing via the
-            // `__zippel::gb::gt` sentinel. For each slot position, the
-            // result is bound to the exponent-space bilinear form:
+            // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing.
+            // For each slot position, the result is bound to the
+            // exponent-space product:
             //
-            //   var(pr[i]) = var(a[i]) · var(b[i]) · var(__zippel::gb::gt)
+            //   var(pr[i]) = var(a[i]) · var(b[i])
             //
-            // which encodes both the pairing axiom
-            // `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
-            // and full bilinearity. Matching pair expressions on both
-            // sides of a `verify(lhs == rhs)` then cancel under Buchberger
-            // because their basis rows are identical F-polynomials.
+            // Matching pair expressions on both sides of a `verify(lhs == rhs)`
+            // cancel under Buchberger because their basis rows are identical
+            // F-polynomials.
             Op::Pair(ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a.get());
                 let b_src = PolySource::from_ref_vars(&result.prefs, b.get());
@@ -4719,7 +4667,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
         let r_wit = PRef::from_var(
@@ -4727,7 +4675,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
 
@@ -4859,7 +4807,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
         let scl = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
@@ -8782,11 +8730,11 @@ mod tests {
             "basis should contain a-b diff"
         );
         assert!(
-            gresult
+            !gresult
                 .basis
                 .iter()
                 .any(|p| *p == SparsePolynomial::var(&r_slot)),
-            "basis should contain var(r) constraint for Bool result"
+            "basis should NOT contain var(r) for Bool result (== is an assertion, not a computation)"
         );
     }
 
@@ -8838,11 +8786,11 @@ mod tests {
         let r_slot = pref_r.with_slot(0).unwrap();
 
         assert!(
-            gresult
+            !gresult
                 .basis
                 .iter()
                 .any(|p| *p == SparsePolynomial::var(&r_slot)),
-            "basis should contain var(r) for Bool result"
+            "basis should NOT contain var(r) for Bool result"
         );
 
         for j in 0..3 {
@@ -8910,11 +8858,11 @@ mod tests {
 
         let r_slot = pref_r.with_slot(0).unwrap();
         assert!(
-            gresult
+            !gresult
                 .basis
                 .iter()
                 .any(|p| *p == SparsePolynomial::var(&r_slot)),
-            "basis should contain var(r) for Bool result"
+            "basis should NOT contain var(r) for Bool result"
         );
 
         let lub_len = ATyp::Uni(4).physical_len();
@@ -9330,11 +9278,10 @@ mod tests {
         );
     }
 
-    /// Test that internal sentinels (like GT from Op::Pair) are visible through basis.vars()
-    /// without requiring an auxiliary registry entry.
-    /// This is a regression test for Task 4: sentinels are introduced by basis rows.
+    /// Test that Op::Pair emits a basis row binding the result to a*b
+    /// without any GT sentinel variable.
     #[test]
-    fn sentinel_visibility_through_basis_vars() {
+    fn pair_emits_product_without_sentinel() {
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9342,7 +9289,6 @@ mod tests {
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
-        // Create two G1 PRefs to use in a pair operation
         let g1_pref = PRef::from_node(
             NodeIndex::new(300),
             ATyp::g1(),
@@ -9361,7 +9307,6 @@ mod tests {
         );
         result.register(&g2_pref);
 
-        // Create a target PRef for the pairing result
         let pair_result_pref = PRef::from_node(
             NodeIndex::new(302),
             ATyp::gt(),
@@ -9371,7 +9316,6 @@ mod tests {
         );
         result.register(&pair_result_pref);
 
-        // Execute Op::Pair which internally uses the GT sentinel
         builder.add_op(
             pair_result_pref.clone(),
             Op::Pair(
@@ -9382,23 +9326,28 @@ mod tests {
             &mut result,
         );
 
-        // The GT sentinel should be visible through basis.vars() and result.vars()
+        // The basis should contain a row: pair_result - g1*g2 = 0
+        // (no GT sentinel variable)
         let basis_vars = result.basis.vars();
-        let gt_sentinel = basis_vars
-            .iter()
-            .find(|pr| {
-                if let Some(name) = &pr.name {
-                    name.0.starts_with("__zippel::gb::gt")
-                } else {
-                    false
-                }
-            })
-            .expect("GT sentinel must be visible in basis.vars()");
-
         assert!(
-            result.vars().contains(gt_sentinel),
-            "GT sentinel must be in result.vars()"
+            basis_vars.contains(&g1_pref),
+            "g1 must be visible through basis vars"
         );
+        assert!(
+            basis_vars.contains(&g2_pref),
+            "g2 must be visible through basis vars"
+        );
+        assert!(
+            basis_vars.contains(&pair_result_pref),
+            "pair result must be visible through basis vars"
+        );
+        // No GT sentinel should exist
+        let has_gt_sentinel = basis_vars.iter().any(|pr| {
+            pr.name
+                .as_ref()
+                .map_or(false, |n| n.0.starts_with("__zippel::gb::gt"))
+        });
+        assert!(!has_gt_sentinel, "GT sentinel should not exist");
     }
 
     // -----------------------------------------------------------------

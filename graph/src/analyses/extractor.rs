@@ -1,3 +1,4 @@
+use crate::Op;
 use crate::PRef;
 use crate::analyses::groebner::ark_gb_adapter::{LocalRankGuard, get_local_rank};
 use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
@@ -8,6 +9,7 @@ use ark_ff::Zero;
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
+use lang::ast::BinOp;
 use log::{info, warn};
 use share::Set;
 
@@ -105,6 +107,23 @@ pub(crate) fn valid_extractor<C: ArkConfig, T: Monomial>(
 /// (e.g. the leading term is not a single variable), the variable is simply
 /// skipped. The caller decides how to handle unextracted variables.
 ///
+/// ## Replacing Equality nodes
+///
+/// `Op::Bin(BinOp::Equ, ...)` entries in the verifier TC represent
+/// assertions (e.g. `verify(r == 0)` becomes `Bin(Equ, r, 0)` with result
+/// `n8`). When the GB builder processes `Bin(Equ, r, 0)`, it emits the
+/// assertion as a basis polynomial — `r` meaning `r = 0` in the ideal. For
+/// a free variable like a random challenge, this produces a single-variable
+/// polynomial that `extract_locals` would misinterpret as an extractor
+/// asserting `r = 0`.
+///
+/// Equality assertions are verifier-side statements, not prover computation
+/// facts. Rather than stripping them entirely (which would remove the PRef
+/// definition for the boolean result, breaking downstream references), each
+/// `Bin(Equ, a, b)` entry is replaced with `Op::Ref(pr)` — an identity
+/// operation that defines the result PRef without emitting any assertion
+/// polynomial.
+///
 /// ## Two-phase construction
 ///
 /// The polynomials are first built with `GrevLexTerm` (which has a stable
@@ -126,8 +145,16 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> Vec<(PR
         .map(|pr| pr.reference.node().index())
         .collect();
 
+    let mut tc_no_equ = tc.clone();
+    for entry in &mut tc_no_equ.clos {
+        if let Op::Bin(BinOp::Equ, ..) = entry.1 {
+            let pr = entry.0.clone();
+            entry.1 = Op::Ref(pr.reference, pr.typ.clone());
+        }
+    }
+
     let mut builder: GroebnerBuilder<C, GrevLexTerm> = GroebnerBuilder::new();
-    let grev_result = builder.build(tc.clone());
+    let grev_result = builder.build(tc_no_equ);
 
     let rank_map: std::collections::HashMap<usize, usize> = grev_result
         .var_order
