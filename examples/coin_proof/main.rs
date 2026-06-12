@@ -43,6 +43,21 @@ fn main() {
         println!("Verification:   ✗ FAILED");
         std::process::exit(1);
     }
+
+    // Static analysis
+    println!("\n--- Static Analysis ---");
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    analysis_handler.compile(&Ctx::new());
+
+    let soundness_start = Instant::now();
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    let soundness_elapsed = soundness_start.elapsed();
+    match &soundness_result {
+        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+        Err(e) => println!("Soundness:      ✗ {}", e),
+    }
+    println!("Soundness time: {soundness_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
