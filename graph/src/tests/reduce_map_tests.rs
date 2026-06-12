@@ -644,6 +644,127 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 }
 
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_loop_param() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
 
+    let src = r#"
+        fn test_non_canonical<F: Field>(
+            private poly: Poly<F, 3, 1>, 
+            private domain: [[F; 2]; 4]
+        ) -> Poly<F, 1, 1> {
+            reduce(+, [
+                eval<0>(poly, tail)
+                for tail in domain
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
 
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
 
+    // Construct a non-canonical coordinate domain: [[1, 1], [1, 1], [1, 1], [1, 1]]
+    let one = <B as backend::ArkConfig>::F::one();
+    let sub_vec = Value::VecScalar(vec![one, one]);
+    let domain_val = Value::Vec(vec![
+        sub_vec.clone(),
+        sub_vec.clone(),
+        sub_vec.clone(),
+        sub_vec.clone(),
+    ]);
+    inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does NOT fire because the domain is non-canonical coordinates!
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify correct unoptimized math result: R(t) = 4 * P(t, 1, 1)
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let expected = orig_poly.evaluate_mv(&vec![t, one, one]).unwrap() * <B as backend::ArkConfig>::F::from(4u64);
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_map() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    let src = r#"
+        fn test_non_canonical_indices<F: Field>(
+            private poly: Poly<F, 3, 1>,
+            private domain: [Fin<4>; 4]
+        ) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, [(((i / (2^j)) % 2) * one) for j in 0..2])
+                for i in domain
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    // Construct a non-canonical index domain: [10, 20, 30, 40]
+    let ten = 10usize;
+    let twenty = 20usize;
+    let thirty = 30usize;
+    let forty = 40usize;
+    let domain_val = Value::VecIndex(vec![ten, twenty, thirty, forty]);
+    inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does NOT fire because the domain is not canonical 0..3 indices!
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify correctness of unoptimized result:
+    // For each i in [10, 20, 30, 40], bit j is (i / 2^j) % 2.
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::zero();
+        for &idx in &[10usize, 20usize, 30usize, 40usize] {
+            let b0 = <B as backend::ArkConfig>::F::from((idx % 2) as u64);
+            let b1 = <B as backend::ArkConfig>::F::from(((idx / 2) % 2) as u64);
+            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}

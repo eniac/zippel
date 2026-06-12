@@ -201,6 +201,123 @@ fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
+fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize) -> bool {
+    match dom_val {
+        Value::VecIndex(v) => {
+            if v.len() != n {
+                return false;
+            }
+            v.iter().enumerate().all(|(i, &val)| val == i)
+        }
+        Value::VecScalar(v) => {
+            if v.len() != n {
+                return false;
+            }
+            v.iter().enumerate().all(|(i, &val)| {
+                val == <C::F as From<u64>>::from(i as u64)
+            })
+        }
+        Value::Vec(v) => {
+            if v.len() != n {
+                return false;
+            }
+            v.iter().enumerate().all(|(i, val)| match val {
+                Value::Index(idx) => *idx == i,
+                Value::Scalar(f) => *f == <C::F as From<u64>>::from(i as u64),
+                _ => false,
+            })
+        }
+        _ => false,
+    }
+}
+
+fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
+    dom_val: &Value<C>,
+    n: usize,
+    k: usize,
+) -> bool {
+    let check_element = |i: usize, val: &Value<C>| -> bool {
+        match val {
+            Value::VecScalar(v) => {
+                if v.len() != k {
+                    return false;
+                }
+                for j in 0..k {
+                    let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                    if v[j] != expected_bit {
+                        return false;
+                    }
+                }
+                true
+            }
+            Value::VecIndex(v) => {
+                if v.len() != k {
+                    return false;
+                }
+                for j in 0..k {
+                    let expected_bit = ((i >> j) & 1) as usize;
+                    if v[j] != expected_bit {
+                        return false;
+                    }
+                }
+                true
+            }
+            Value::VecBool(v) => {
+                if v.len() != k {
+                    return false;
+                }
+                for j in 0..k {
+                    let expected_bit = ((i >> j) & 1) == 1;
+                    if v[j] != expected_bit {
+                        return false;
+                    }
+                }
+                true
+            }
+            Value::Vec(v) => {
+                if v.len() != k {
+                    return false;
+                }
+                for j in 0..k {
+                    match &v[j] {
+                        Value::Scalar(f) => {
+                            let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                            if *f != expected_bit {
+                                return false;
+                            }
+                        }
+                        Value::Index(idx) => {
+                            let expected_bit = ((i >> j) & 1) as usize;
+                            if *idx != expected_bit {
+                                return false;
+                            }
+                        }
+                        Value::Bool(b) => {
+                            let expected_bit = ((i >> j) & 1) == 1;
+                            if *b != expected_bit {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    };
+
+    match dom_val {
+        Value::Vec(elements) => {
+            if elements.len() != n {
+                return false;
+            }
+            elements.iter().enumerate().all(|(i, val)| check_element(i, val))
+        }
+        _ => false,
+    }
+}
+
 fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
@@ -208,9 +325,6 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     loop_params: &[Arc<Value<C>>],
 ) -> Result<bool, EvalError> {
     match fixed.get() {
-        Op::LoopParam(level, _) => {
-            Ok(*level == loop_params.len())
-        }
         Op::Map(_inner_domain, inner_body) => {
             let outer_level = loop_params.len();
             let inner_level = loop_params.len() + 1;
@@ -252,12 +366,28 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
     env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,
     loop_params: &[Arc<Value<C>>],
+    dom_val: &Value<C>,
     n: usize,
     k: usize,
 ) -> Result<bool, EvalError> {
+    let get_elem = |i: usize| -> Arc<Value<C>> {
+        match dom_val {
+            Value::VecScalar(v) => Arc::new(Value::Scalar(v[i])),
+            Value::VecIndex(v) => Arc::new(Value::Index(v[i])),
+            Value::VecBool(v) => Arc::new(Value::Bool(v[i])),
+            Value::VecG1(v) => Arc::new(Value::G1(v[i])),
+            Value::VecG2(v) => Arc::new(Value::G2(v[i])),
+            Value::VecGT(v) => Arc::new(Value::GT(v[i])),
+            Value::VecG1Affine(v) => Arc::new(Value::G1Affine(v[i])),
+            Value::VecG2Affine(v) => Arc::new(Value::G2Affine(v[i])),
+            Value::Vec(v) => Arc::new(v[i].clone()),
+            _ => panic!("Expected vector, found {}", dom_val),
+        }
+    };
+
     for i in 0..n {
         let mut params = loop_params.to_vec();
-        params.push(Arc::new(Value::Index(i)));
+        params.push(get_elem(i));
         let coord_val = eval_op_with_loop_params(fixed, env, rng, &params)?;
         match coord_val.as_ref() {
             Value::VecScalar(v) => {
@@ -387,8 +517,16 @@ where
     let dom_val = Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
 
     // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates
-    let is_hypercube = try_match_canonical_hypercube_ast(fixed, env, rng, loop_params)?
-        || verify_hypercube_coordinates(fixed, env, rng, loop_params, n, tail_num_vars)?;
+    let is_hypercube = match fixed.get() {
+        Op::LoopParam(level, _) if *level == loop_params.len() => {
+            verify_domain_is_canonical_coordinates(&dom_val, n, tail_num_vars)
+        }
+        _ => {
+            verify_domain_is_canonical_indices(&dom_val, n)
+                && (try_match_canonical_hypercube_ast(fixed, env, rng, loop_params)?
+                    || verify_hypercube_coordinates(fixed, env, rng, loop_params, &dom_val, n, tail_num_vars)?)
+        }
+    };
 
     if is_hypercube {
         // Fast path — evaluate the polynomial and fuse
