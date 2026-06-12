@@ -231,88 +231,59 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
     }
 }
 
+/// Check whether a single `Value` represents canonical Boolean hypercube
+/// coordinates for the hypercube vertex at index `i` with `k` bits.
+///
+/// The expected coordinate vector for index `i` is
+/// `[bit(i,0), bit(i,1), ..., bit(i,k-1)]` where `bit(i,j) = (i >> j) & 1`.
+///
+/// Handles all runtime value representations: `VecScalar`, `VecIndex`,
+/// `VecBool`, and heterogeneous `Vec`.
+fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usize) -> bool {
+    match val {
+        Value::VecScalar(v) => {
+            v.len() == k
+                && (0..k).all(|j| {
+                    let expected = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                    v[j] == expected
+                })
+        }
+        Value::VecIndex(v) => {
+            v.len() == k && (0..k).all(|j| v[j] == ((i >> j) & 1))
+        }
+        Value::VecBool(v) => {
+            v.len() == k && (0..k).all(|j| v[j] == (((i >> j) & 1) == 1))
+        }
+        Value::Vec(v) => {
+            v.len() == k
+                && (0..k).all(|j| {
+                    let expected_bit = ((i >> j) & 1) == 1;
+                    match &v[j] {
+                        Value::Scalar(f) => {
+                            *f == if expected_bit { C::F::one() } else { C::F::zero() }
+                        }
+                        Value::Index(idx) => *idx == (expected_bit as usize),
+                        Value::Bool(b) => *b == expected_bit,
+                        _ => false,
+                    }
+                })
+        }
+        _ => false,
+    }
+}
+
 fn verify_domain_is_canonical_coordinates<C: ArkConfig>(
     dom_val: &Value<C>,
     n: usize,
     k: usize,
 ) -> bool {
-    let check_element = |i: usize, val: &Value<C>| -> bool {
-        match val {
-            Value::VecScalar(v) => {
-                if v.len() != k {
-                    return false;
-                }
-                for j in 0..k {
-                    let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
-                    if v[j] != expected_bit {
-                        return false;
-                    }
-                }
-                true
-            }
-            Value::VecIndex(v) => {
-                if v.len() != k {
-                    return false;
-                }
-                for j in 0..k {
-                    let expected_bit = ((i >> j) & 1) as usize;
-                    if v[j] != expected_bit {
-                        return false;
-                    }
-                }
-                true
-            }
-            Value::VecBool(v) => {
-                if v.len() != k {
-                    return false;
-                }
-                for j in 0..k {
-                    let expected_bit = ((i >> j) & 1) == 1;
-                    if v[j] != expected_bit {
-                        return false;
-                    }
-                }
-                true
-            }
-            Value::Vec(v) => {
-                if v.len() != k {
-                    return false;
-                }
-                for j in 0..k {
-                    match &v[j] {
-                        Value::Scalar(f) => {
-                            let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
-                            if *f != expected_bit {
-                                return false;
-                            }
-                        }
-                        Value::Index(idx) => {
-                            let expected_bit = ((i >> j) & 1) as usize;
-                            if *idx != expected_bit {
-                                return false;
-                            }
-                        }
-                        Value::Bool(b) => {
-                            let expected_bit = ((i >> j) & 1) == 1;
-                            if *b != expected_bit {
-                                return false;
-                            }
-                        }
-                        _ => return false,
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    };
-
     match dom_val {
         Value::Vec(elements) => {
-            if elements.len() != n {
-                return false;
-            }
-            elements.iter().enumerate().all(|(i, val)| check_element(i, val))
+            elements.len() == n
+                && elements
+                    .iter()
+                    .enumerate()
+                    .all(|(i, val)| is_canonical_hypercube_vector::<C>(val, i, k))
         }
         _ => false,
     }
@@ -389,58 +360,8 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
         let mut params = loop_params.to_vec();
         params.push(get_elem(i));
         let coord_val = eval_op_with_loop_params(fixed, env, rng, &params)?;
-        match coord_val.as_ref() {
-            Value::VecScalar(v) => {
-                if v.len() != k {
-                    return Ok(false);
-                }
-                for j in 0..k {
-                    let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
-                    if v[j] != expected_bit {
-                        return Ok(false);
-                    }
-                }
-            }
-            Value::VecIndex(v) => {
-                if v.len() != k {
-                    return Ok(false);
-                }
-                for j in 0..k {
-                    let expected_bit = ((i >> j) & 1) as usize;
-                    if v[j] != expected_bit {
-                        return Ok(false);
-                    }
-                }
-            }
-            Value::Vec(v) => {
-                if v.len() != k {
-                    return Ok(false);
-                }
-                for j in 0..k {
-                    match &v[j] {
-                        Value::Scalar(f) => {
-                            let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
-                            if *f != expected_bit {
-                                return Ok(false);
-                            }
-                        }
-                        Value::Index(idx) => {
-                            let expected_bit = ((i >> j) & 1) as usize;
-                            if *idx != expected_bit {
-                                return Ok(false);
-                            }
-                        }
-                        Value::Bool(b) => {
-                            let expected_bit = ((i >> j) & 1) == 1;
-                            if *b != expected_bit {
-                                return Ok(false);
-                            }
-                        }
-                        _ => return Ok(false),
-                    }
-                }
-            }
-            _ => return Ok(false),
+        if !is_canonical_hypercube_vector::<C>(coord_val.as_ref(), i, k) {
+            return Ok(false);
         }
     }
     Ok(true)
@@ -456,8 +377,12 @@ fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
 ///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
 ///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
 ///
-/// If matched, evaluates only the polynomial operand and calls
-/// value_hypercube_reduce_selected. Falls through to None otherwise.
+/// Returns `Ok(None)` if the structural pattern is not matched (the caller
+/// should proceed with the generic `ReduceMap` path). When the pattern *is*
+/// matched, the domain is eagerly evaluated for hypercube verification;
+/// if the domain turns out to be non-canonical, the function computes the
+/// result via the generic loop body and returns `Ok(Some(result))` to avoid
+/// re-evaluating the domain.
 fn try_eval_reduce_map_fused_hypercube<C, R>(
     op: BinOp,
     domain: &HOp<C>,

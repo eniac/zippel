@@ -4,7 +4,9 @@ use crate::optimization::{
 };
 use crate::poly_variant::PolyVariant;
 use crate::types::Lub;
-use crate::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+use crate::virtual_polynomial::{
+    SelectedEvalShape, VirtualPolynomial, add_coeffs_assign, trim_trailing_zero_coeffs,
+};
 use crate::{ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, to_bytes};
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, CurveGroup};
@@ -3042,11 +3044,11 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
                 )?;
                 term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
             }
-            add_coeffs_truncated(&mut total, &term);
+            add_coeffs_assign(&mut total, &term);
         }
     }
 
-    trim_coeffs(&mut total);
+    trim_trailing_zero_coeffs(&mut total);
     let mut round = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
         DensePolynomial::from_coefficients_vec(total),
     ));
@@ -3115,18 +3117,6 @@ fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) ->
         }
     }
     result
-}
-
-fn add_coeffs_truncated<F: Field>(target: &mut [F], addend: &[F]) {
-    for (target_coeff, addend_coeff) in target.iter_mut().zip(addend.iter()) {
-        *target_coeff += *addend_coeff;
-    }
-}
-
-fn trim_coeffs<F: Field>(coeffs: &mut Vec<F>) {
-    while coeffs.len() > 1 && coeffs.last().is_some_and(|coeff| coeff.is_zero()) {
-        coeffs.pop();
-    }
 }
 
 fn reduce_univariate_poly_sum<C: ArkConfig>(

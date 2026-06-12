@@ -157,7 +157,7 @@ fn univariate_factor_coeffs<F: PrimeField>(poly: &PolyVariant<F>) -> Option<Vec<
     }
 }
 
-fn add_coeffs_assign<F: Field>(target: &mut Vec<F>, addend: &[F]) {
+pub(crate) fn add_coeffs_assign<F: Field>(target: &mut Vec<F>, addend: &[F]) {
     if target.len() < addend.len() {
         target.resize(addend.len(), F::zero());
     }
@@ -166,7 +166,7 @@ fn add_coeffs_assign<F: Field>(target: &mut Vec<F>, addend: &[F]) {
     }
 }
 
-fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
+pub(crate) fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
     if left.is_empty() || right.is_empty() {
         return vec![F::zero()];
     }
@@ -180,7 +180,7 @@ fn mul_coeffs<F: Field>(left: &[F], right: &[F]) -> Vec<F> {
     result
 }
 
-fn trim_trailing_zero_coeffs<F: Field>(coeffs: &mut Vec<F>) {
+pub(crate) fn trim_trailing_zero_coeffs<F: Field>(coeffs: &mut Vec<F>) {
     while coeffs.len() > 1 && coeffs.last().is_some_and(|coeff| coeff.is_zero()) {
         coeffs.pop();
     }
