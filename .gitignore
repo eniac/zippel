@@ -7,3 +7,4 @@ gurobi.log
 target-small
 cargo-flamegraph.trace/
 flamegraph.svg
+__pycache__/

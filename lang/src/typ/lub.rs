@@ -451,17 +451,16 @@ impl Lub for CTyp {
                 &CTyp::lub_equ(a, b, ctx).map_err(|e| LubError::next(LubError::equ(&x, &y), e))?,
                 *n,
             )),
-            // Record types: strict field match (same names, same count, per-field lub_equ)
+            // Record types: width-subtyping. LUB is the intersection of common fields,
+            // each common field's type lub'd; fields present on only one side are dropped.
             (CTyp::Record(fields_a), CTyp::Record(fields_b)) => {
-                if fields_a.len() != fields_b.len() {
-                    return Err(LubError::equ(&x, &y));
-                }
                 let mut result_fields = share::Ctx::new();
                 for (name, typ_a) in fields_a.iter() {
-                    let typ_b = fields_b.get(&name).ok_or_else(|| LubError::equ(&x, &y))?;
-                    let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
-                        .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
-                    result_fields.insert(name, &lub_typ);
+                    if let Some(typ_b) = fields_b.get(&name) {
+                        let lub_typ = CTyp::lub_equ(typ_a, typ_b, ctx)
+                            .map_err(|e| LubError::next(LubError::equ(&x, &y), e))?;
+                        result_fields.insert(name, &lub_typ);
+                    }
                 }
                 Ok(CTyp::Record(result_fields))
             }
@@ -2320,7 +2319,7 @@ mod ctyp_lub_poly_tests {
     }
 
     #[test]
-    fn test_record_lub_width_mismatch_rejected() {
+    fn test_record_lub_width_intersection() {
         let ctx = kind_ctx();
         let mut fields_a = share::Ctx::new();
         fields_a.insert(&"x".to_string(), &tf());
@@ -2332,7 +2331,13 @@ mod ctyp_lub_poly_tests {
         let a = CTyp::Record(fields_a);
         let b = CTyp::Record(fields_b);
 
-        assert!(CTyp::lub_equ(&a, &b, &ctx).is_err());
+        // Width-subtyping: LUB drops the non-common field `y`, keeping `{x}`.
+        let mut expected_fields = share::Ctx::new();
+        expected_fields.insert(&"x".to_string(), &tf());
+        let expected = CTyp::Record(expected_fields);
+
+        assert_eq!(CTyp::lub_equ(&a, &b, &ctx), Ok(expected.clone()));
+        assert_eq!(CTyp::lub_equ(&b, &a, &ctx), Ok(expected));
     }
 
     #[test]

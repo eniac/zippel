@@ -502,15 +502,13 @@ impl Lub for ATyp {
             (ATyp::Mle(n1), ATyp::Mle(n2)) => Ok(ATyp::mle(*n1.max(n2))),
             (ATyp::VPoly(m1, n1), ATyp::VPoly(m2, n2)) => Ok(ATyp::vpoly(*m1.max(m2), *n1.max(n2))),
             (ATyp::Record(fields_a), ATyp::Record(fields_b)) => {
-                if fields_a.len() != fields_b.len() {
-                    return Err(LubError::equ(&a, &b));
-                }
                 let mut result_fields = Ctx::new();
                 for (name, typ_a) in fields_a.iter() {
-                    let typ_b = fields_b.get(&name).ok_or_else(|| LubError::equ(&a, &b))?;
-                    let lub_typ = ATyp::lub_equ(typ_a, typ_b, &Nothing)
-                        .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
-                    result_fields.insert(name, &lub_typ);
+                    if let Some(typ_b) = fields_b.get(&name) {
+                        let lub_typ = ATyp::lub_equ(typ_a, typ_b, &Nothing)
+                            .map_err(|e| LubError::next(LubError::equ(&a, &b), e))?;
+                        result_fields.insert(name, &lub_typ);
+                    }
                 }
                 Ok(ATyp::Record(result_fields))
             }
@@ -865,6 +863,24 @@ mod tests {
     fn vpoly_equ_same() {
         let result = ATyp::lub_equ(&ATyp::vpoly(2, 3), &ATyp::vpoly(2, 3), &Nothing).unwrap();
         assert_eq!(result, ATyp::vpoly(2, 3));
+    }
+
+    #[test]
+    fn record_lub_equ_intersects_widths() {
+        let mut a = Ctx::new();
+        a.insert(&"x".to_string(), &ATyp::scalar());
+        let mut b = Ctx::new();
+        b.insert(&"x".to_string(), &ATyp::scalar());
+        b.insert(&"y".to_string(), &ATyp::uni(3));
+        let ra = ATyp::Record(a);
+        let rb = ATyp::Record(b);
+
+        let mut expected_fields = Ctx::new();
+        expected_fields.insert(&"x".to_string(), &ATyp::scalar());
+        let expected = ATyp::Record(expected_fields);
+
+        assert_eq!(ATyp::lub_equ(&ra, &rb, &Nothing), Ok(expected.clone()));
+        assert_eq!(ATyp::lub_equ(&rb, &ra, &Nothing), Ok(expected));
     }
 
     #[test]

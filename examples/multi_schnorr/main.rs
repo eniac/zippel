@@ -17,9 +17,7 @@ fn main() {
 
 fn run_example() {
     println!("=== Multi Schnorr (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from(
-        "examples/multi_schnorr/multi_schnorr.zippel",
-    ));
+    let args = ZippelArgs::new(PathBuf::from("examples/multi_schnorr/multi_schnorr.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
@@ -55,9 +53,8 @@ fn run_example() {
     println!("\n--- Static Analysis ---");
     let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from(
-            "examples/multi_schnorr/multi_schnorr.zippel",
-        ));
+        let analysis_args =
+            ZippelArgs::new(PathBuf::from("examples/multi_schnorr/multi_schnorr.zippel"));
         let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
         analysis_handler.minimal_analysis()
     });
