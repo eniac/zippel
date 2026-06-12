@@ -250,21 +250,27 @@ pub mod native_side {
             // exactly what the zippel proto times.
             let value = poly.evaluate(&point);
 
-            // Prove timer covers commit + open. `commit` (one MSM of size
-            // 2^n over G1) and `open` (the nv quotient MSMs over G2) have
-            // NO data dependency on each other — both read only `p` and
-            // `ck`. The zippel runtime schedules them concurrently in its
-            // dataflow graph; we mirror that with `rayon::join` so the
-            // commit MSM overlaps with the first round of open's folding
-            // + first G2 MSM, instead of idling cores while it runs.
+            // Prove timer covers commit + open. `commit` (one MSM of
+            // size 2^n over G1) and `open` (the nv quotient MSMs over
+            // G2) have no data dependency on each other — both read
+            // only `p` and `ck` — so running them concurrently via
+            // `rayon::join` looks like a clean win on paper. In
+            // practice at threads≥8 it OVERCOMMITS rayon's worker pool:
+            // commit's internal par_iter, open's folding par_iter, and
+            // open's 18 spawned MSM tasks (each with its own nested
+            // par_iter) all fight for the same workers. Rayon's
+            // work-stealing scheduler thrashes, and t=8 native ended
+            // up SLOWER than t=4 (broken scaling) when commit and open
+            // ran concurrently. Sequential dispatch lets each phase
+            // own the worker pool exclusively; open's internal
+            // pipelining (in `pst13_upstream::open`) is preserved and
+            // still gives the t=1,2,4 wins.
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_outputs = None;
             for _ in 0..*crate::PROVER_SAMPLES {
                 let t = Instant::now();
-                let (comm, proof) = rayon::join(
-                    || Pcs::commit(&self.ck, &poly),
-                    || Pcs::open(&self.ck, &poly, &point),
-                );
+                let comm = Pcs::commit(&self.ck, &poly);
+                let proof = Pcs::open(&self.ck, &poly, &point);
                 prove_sum += t.elapsed();
                 last_outputs = Some((comm, proof));
             }
@@ -482,7 +488,8 @@ pub mod zippel_side {
             ]);
 
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
+            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"))
+                .with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &shared.n);

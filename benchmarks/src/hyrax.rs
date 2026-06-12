@@ -80,7 +80,7 @@ pub mod zippel_side {
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(source_file.path().to_path_buf());
+            let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
             let compile_time = compile_start.elapsed();
