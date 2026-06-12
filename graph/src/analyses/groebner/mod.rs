@@ -2,7 +2,9 @@ pub mod buchberger;
 pub use buchberger::GroebnerBasis;
 
 pub mod monomial;
-pub use monomial::{ElimTerm, GrevLexTerm, Monomial};
+pub use monomial::{ElimMono, ElimStrategy, GrevLexTerm, Monomial};
+pub mod tiered;
+pub use tiered::{TieredElimMono, TieredElimStrategy};
 pub mod sparsepoly;
 pub use sparsepoly::SparsePolynomial;
 
@@ -28,12 +30,17 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 
+// Keep record/projection materialization bounded. Large protocol helper records
+// can contain polynomial state with enormous flattened slot counts; failing
+// explicitly is preferable to attempting an allocation that aborts the process.
+const MAX_GROEBNER_MATERIALIZED_SLOTS: usize = 1 << 20;
+
 // ---------------------------------------------------------------------------
 // PRef-slot enumeration helpers for polynomial / MLE values.
 //
 // These define the canonical order in which the slots of a polynomial-typed
 // PRef are laid out (via `PRef::with_slot(i)`). They are NOT monomial / term
-// orderings — the existing `ElimTerm` / `GrevLexTerm` orderings in
+// orderings — the `GrevLexTerm` and `ElimMono<E>` orderings in
 // `monomial.rs` are untouched.
 //
 //   * VPoly<N, M> → C(N+M, M) slots, one per multi-index k with |k| ≤ M.
@@ -127,34 +134,32 @@ fn dft_row<F: Field, T: Monomial>(
 /// `L[i][k]` is the coefficient of `X^k` in the Lagrange basis polynomial
 /// `L_i(X) = Π_{j≠i} (X - x_j) / (x_i - x_j)`.
 fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
-    let n = xs.len();
-    let mut basis: Vec<Vec<F>> = Vec::with_capacity(n);
+    let mut basis: Vec<Vec<F>> = Vec::with_capacity(xs.len());
 
-    for i in 0..n {
-        let xi = xs[i];
+    for (i, xi) in xs.iter().copied().enumerate() {
         let mut denom = F::one();
-        for j in 0..n {
+        for (j, xj) in xs.iter().copied().enumerate() {
             if j != i {
-                denom *= xi - xs[j];
+                denom *= xi - xj;
             }
         }
         let denom_inv = denom.inverse().unwrap();
 
         let mut poly: Vec<F> = vec![F::one()];
-        for j in 0..n {
+        for (j, xj) in xs.iter().copied().enumerate() {
             if j == i {
                 continue;
             }
-            let neg_xj = -xs[j];
+            let neg_xj = -xj;
             let mut new_poly = vec![F::zero(); poly.len() + 1];
-            for (k, c) in poly.iter().enumerate() {
-                new_poly[k] = new_poly[k] + *c * neg_xj;
-                new_poly[k + 1] = new_poly[k + 1] + *c;
+            for (k, &c) in poly.iter().enumerate() {
+                new_poly[k] += c * neg_xj;
+                new_poly[k + 1] += c;
             }
             poly = new_poly;
         }
 
-        for c in poly.iter_mut() {
+        for c in &mut poly {
             *c *= denom_inv;
         }
 
@@ -164,14 +169,39 @@ fn lagrange_basis<F: Field>(xs: &[F]) -> Vec<Vec<F>> {
     basis
 }
 
+pub const GB_GENERATED_NAME_PREFIX: &str = "__zippel::gb::";
+
+/// Canonical polynomial shape used when comparing division witness operands.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct CanonPolyTyp {
+    num_vars: usize,
+    max_degree: usize,
+}
+
+/// Canonical operand-content key for source-level polynomial division witnesses.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct DivWitnessKey {
+    dividend_typ: CanonPolyTyp,
+    divisor_typ: CanonPolyTyp,
+    dividend_slots: Vec<String>,
+    divisor_slots: Vec<String>,
+}
+
 /// Namespace for division-witness and sentinel allocation shared across
 /// Groebner builders.
 #[derive(Clone)]
 pub struct GroebnerNamespace<C: ArkConfig> {
-    pub div_wit: Ctx<(HOp<C>, HOp<C>), (PRef, PRef)>,
+    pub div_wit: Ctx<DivWitnessKey, (PRef, PRef)>,
     sentinel_counter: usize,
     gt_sentinel: Option<PRef>,
     name_counters: HashMap<String, usize>,
+    _phantom: PhantomData<C>,
+}
+
+impl<C: ArkConfig + HasOpFactory> Default for GroebnerNamespace<C> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
@@ -181,6 +211,7 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
             sentinel_counter: usize::MAX,
             gt_sentinel: None,
             name_counters: HashMap::new(),
+            _phantom: PhantomData,
         }
     }
 
@@ -189,13 +220,13 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
         let vid = Vid::from(name);
         let idx = NodeIndex::new(self.sentinel_counter);
         self.sentinel_counter -= 1;
-        PRef::from_var(vid, idx, typ, 0, Qualifier::Public, Distribution::default())
+        PRef::from_var(vid, idx, typ, 0, Qualifier::Local, Distribution::default())
     }
 
     /// Return a unique name for the given key by appending a per-key counter.
     pub fn next_name(&mut self, key: &str) -> String {
         let counter = self.name_counters.entry(key.to_string()).or_insert(0);
-        let name = format!("__zippel::gb::{}::{}", key, counter);
+        let name = format!("{}{}::{}", GB_GENERATED_NAME_PREFIX, key, counter);
         *counter += 1;
         name
     }
@@ -219,6 +250,7 @@ pub struct GroebnerResult<C: ArkConfig, T: Monomial> {
     pub basis: GroebnerBasis<C::F, T>,
     pub pl: Ctx<PRef, SparsePolynomial<C::F, T>>,
     pub prefs: HashMap<Ref, PRef>,
+    pub var_order: Vec<PRef>,
 }
 
 impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
@@ -227,6 +259,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             basis: GroebnerBasis::empty(0),
             pl: Ctx::new(),
             prefs: HashMap::new(),
+            var_order: Vec::new(),
         }
     }
 
@@ -234,6 +267,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     /// for the same reference. Returns the previous entry if one existed.
     pub fn register(&mut self, pr: &PRef) -> Option<PRef> {
         self.prefs.insert(pr.reference, pr.clone())
+    }
+
+    pub fn reconstruct_from<T2: Monomial>(source: &GroebnerResult<C, T2>) -> Self
+    where
+        T: From<Vec<(PRef, usize)>>,
+    {
+        let basis = GroebnerBasis::reconstruct_from(&source.basis);
+        let mut pl = Ctx::new();
+        for (k, v) in source.pl.iter() {
+            let new_poly = SparsePolynomial::reconstruct_from(v);
+            pl.insert(k, &new_poly);
+        }
+        Self {
+            basis,
+            pl,
+            prefs: source.prefs.clone(),
+            var_order: source.var_order.clone(),
+        }
     }
 
     /// Look up a Ref in the namespace. Panics if not found.
@@ -346,6 +397,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
+        self.var_order.extend(other.var_order.iter().cloned());
+        for (k, v) in other.prefs.iter() {
+            self.prefs.entry(k.clone()).or_insert_with(|| v.clone());
+        }
     }
 }
 
@@ -392,8 +447,9 @@ impl<C: ArkConfig, T: Monomial> fmt::Display for GroebnerResult<C, T> {
 /// An owned slice of polynomial variables paired with their `ATyp`.
 ///
 /// Provides element-wise access for `Vec` types (via `at_index`),
-/// zero-padding lifts to wider types (via `lift_to`), and scalar
-/// broadcast (via `broadcast_scalar_to`).
+/// zero-padding lifts to wider types (via `lift_to`), all-slot scalar
+/// broadcast (via `broadcast_scalar_to`), and representation-aware
+/// scalar lifting for additive polynomial operations.
 struct PolySource<C: ArkConfig, T: Monomial> {
     polys: Vec<SparsePolynomial<C::F, T>>,
     typ: ATyp,
@@ -423,6 +479,32 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         let typ = op.typ();
         let polys = GroebnerBuilder::<C, T>::ref_vars(op, prefs);
         PolySource { polys, typ }
+    }
+
+    fn from_pref_vars(pref: &PRef, typ: ATyp) -> Self {
+        let polys = pref
+            .slots()
+            .into_iter()
+            .map(|slot| SparsePolynomial::var(&slot))
+            .collect();
+        PolySource { polys, typ }
+    }
+
+    fn embed_multi_indexed_polys(
+        polys: &[SparsePolynomial<C::F, T>],
+        source_indices: &[Vec<usize>],
+        target_indices: &[Vec<usize>],
+        target_arity: usize,
+    ) -> Vec<SparsePolynomial<C::F, T>> {
+        let mut out = vec![SparsePolynomial::<C::F, T>::zero(); target_indices.len()];
+        for (j, source_index) in source_indices.iter().enumerate() {
+            let mut padded = source_index.clone();
+            padded.resize(target_arity, 0);
+            if let Some(target_slot) = target_indices.iter().position(|target| target == &padded) {
+                out[target_slot] = polys[j].clone();
+            }
+        }
+        out
     }
 
     fn at_index(&self, i: usize) -> Option<PolySource<C, T>> {
@@ -524,6 +606,23 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                 }
             }
 
+            (ATyp::Mle(1), ATyp::Uni(m2)) if *m2 >= 1 => {
+                assert_eq!(
+                    self.polys.len(),
+                    2,
+                    "lift_to: Mle(1) source must have exactly two evaluation slots"
+                );
+                let g0 = self.polys[0].clone();
+                let g1 = self.polys[1].clone();
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); dst_len];
+                out[0] = g0.clone();
+                out[1] = &g1 - &g0;
+                PolySource {
+                    polys: out,
+                    typ: target.clone(),
+                }
+            }
+
             (ATyp::VPoly(n1, m1), ATyp::VPoly(n2, m2)) if n1 <= n2 && m1 <= m2 => {
                 if n1 == n2 {
                     let mut out = self.polys.clone();
@@ -535,14 +634,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                 } else {
                     let dst_idx = multi_indices(*n2, *m2);
                     let src_idx = multi_indices(*n1, *m1);
-                    let mut out = vec![SparsePolynomial::<C::F, T>::zero(); dst_idx.len()];
-                    for (j, src_k) in src_idx.iter().enumerate() {
-                        let mut padded = src_k.clone();
-                        padded.resize(*n2, 0);
-                        if let Some(dst_j) = dst_idx.iter().position(|dk| dk == &padded) {
-                            out[dst_j] = self.polys[j].clone();
-                        }
-                    }
+                    let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
                     PolySource {
                         polys: out,
                         typ: target.clone(),
@@ -561,14 +653,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
                 } else {
                     let dst_idx = multi_indices(*n2, *m2);
                     let src_idx = multi_indices(1, *m1);
-                    let mut out = vec![SparsePolynomial::<C::F, T>::zero(); dst_idx.len()];
-                    for (j, src_k) in src_idx.iter().enumerate() {
-                        let mut padded = src_k.clone();
-                        padded.resize(*n2, 0);
-                        if let Some(dst_j) = dst_idx.iter().position(|dk| dk == &padded) {
-                            out[dst_j] = self.polys[j].clone();
-                        }
-                    }
+                    let out = Self::embed_multi_indexed_polys(&self.polys, &src_idx, &dst_idx, *n2);
                     PolySource {
                         polys: out,
                         typ: target.clone(),
@@ -580,7 +665,7 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
             // coefficient form via Lagrange-basis expansion.
             //
             // Each Mle slot `j` (corresponding to hypercube point `b =
-            // (b1,…,b1_n1)`) stores the evaluation `f(b)`. The Lagrange
+            // (b1,…,b_n1)`) stores the evaluation `f(b)`. The Lagrange
             // basis polynomial `L_b(X)` satisfies `L_b(b') = δ_{b,b'}`.
             // In coefficient form, per variable: `L_0(x) = 1-x` has
             // coefficients `[1, -1]` and `L_1(x) = x` has coefficients
@@ -658,8 +743,55 @@ impl<C: ArkConfig, T: Monomial> PolySource<C, T> {
         }
     }
 
+    fn lift_scalar_for_add_sub_to(&self, poly_typ: &ATyp) -> PolySource<C, T> {
+        assert!(
+            Self::is_scalar_like(&self.typ),
+            "lift_scalar_for_add_sub_to requires a scalar-like source, got {}",
+            self.typ
+        );
+        assert_eq!(
+            self.polys.len(),
+            1,
+            "lift_scalar_for_add_sub_to requires exactly one source slot"
+        );
+
+        let scalar_poly = self.polys[0].clone();
+        let polys = match poly_typ {
+            ATyp::Base(_) => vec![scalar_poly],
+            ATyp::Uni(_) => {
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); poly_typ.physical_len()];
+                out[0] = scalar_poly;
+                out
+            }
+            ATyp::VPoly(n, m) => {
+                let indices = multi_indices(*n, *m);
+                let zero_slot = indices
+                    .iter()
+                    .position(|idx| idx.iter().all(|degree| *degree == 0))
+                    .expect("VPoly multi-index enumeration must include the constant slot");
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); indices.len()];
+                out[zero_slot] = scalar_poly;
+                out
+            }
+            ATyp::Mle(_) => vec![scalar_poly; poly_typ.physical_len()],
+            ATyp::Vec(_, _) | ATyp::Record(_) => unreachable!(
+                "lift_scalar_for_add_sub_to: unsupported scalar lift target {}",
+                poly_typ
+            ),
+        };
+
+        PolySource {
+            polys,
+            typ: poly_typ.clone(),
+        }
+    }
+
     fn is_poly(&self) -> bool {
         Self::poly_shape_static(&self.typ).is_some() || matches!(self.typ, ATyp::Mle(_))
+    }
+
+    fn is_scalar_like(t: &ATyp) -> bool {
+        matches!(t, ATyp::Base(ABase::Scalar | ABase::Fin(_)))
     }
 
     fn poly_shape_static(t: &ATyp) -> Option<(usize, usize)> {
@@ -709,21 +841,24 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     /// Admit a target PRef as an unconstrained free identifier: emit no
-    /// basis equations and no `pl` binding. The target
-    /// variable is therefore unconstrained and will be visible through
-    /// `basis.vars()` only if it is referenced by another operation that
-    /// does emit basis rows — effectively making it an opaque/symbolic
-    /// witness that the ideal does not constrain.
-    ///
-    /// This is the correct treatment for operations whose index cannot be
-    /// resolved at compile time (e.g. dynamic RAM reads): we cannot emit
-    /// equality constraints, but we also cannot panic because the variable
-    /// participates in later `verify` equations that *do* get constrained.
+    /// basis equations and no `pl` binding.
     #[allow(unused_variables)]
-    fn admit_unconstrained_identifier(context: &str, target: &PRef) {
-        // Intentionally a no-op: no basis and no pl binding.
-        // The target becomes a free symbolic variable in the ideal;
-        // proof completeness is checked separately at the call site.
+    fn admit_unconstrained_identifier(context: &str, target: &PRef) {}
+
+    /// Clear only cached polynomial division witnesses; keep sentinel and generated-name state intact.
+    pub fn clear_div_witness_cache(&mut self) {
+        self.ns.div_wit = Ctx::new();
+    }
+
+    /// Clone the namespace used for canonical variable naming, but force future
+    /// polynomial divisions to emit fresh quotient/remainder identity rows.
+    pub fn fork_with_clean_div_witness_cache(&self) -> Self {
+        let mut fork = Self {
+            ns: self.ns.clone(),
+            _phantom: PhantomData,
+        };
+        fork.clear_div_witness_cache();
+        fork
     }
 
     /// Build a `GroebnerResult` from a `TransClos`. Each call returns a
@@ -738,7 +873,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             result.register(pr);
         }
         for (pr, op) in tc.clos.into_iter() {
-            self.add_op(pr, op, &mut result);
+            self.add_op(pr.clone(), op, &mut result);
+            result.var_order.push(pr);
         }
         result
     }
@@ -751,35 +887,178 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///   `pair(__zippel::gb::g1, __zippel::gb::g2) = __zippel::gb::gt`
     /// combined with bilinearity:
     ///   `pair(α·g1, β·g2) = α·β·gt`.
-    fn gt_pref(&mut self) -> PRef {
-        self.ns.gt_pref()
+    fn gt_pref(&mut self, result: &mut GroebnerResult<C, T>) -> PRef {
+        let was_cached = self.ns.gt_sentinel.is_some();
+        let pr = self.ns.gt_pref();
+        if !was_cached {
+            result.var_order.push(pr.clone());
+        }
+        pr
     }
 
-    fn sentinel_pref(&mut self, name: &str, typ: ATyp) -> PRef {
-        self.ns.sentinel_pref(name, typ)
+    pub(crate) fn sentinel_pref(
+        &mut self,
+        name: &str,
+        typ: ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) -> PRef {
+        let pr = self.ns.sentinel_pref(name, typ);
+        result.var_order.push(pr.clone());
+        pr
     }
 
-    /// Canonical poly shape extraction → `(num_vars, max_total_degree)`.
-    ///
-    /// `VPoly(n, m)` stores `(n, m)` directly, where `m` is the max **total**
-    /// degree. When constructed from `CTyp::Poly(_, n, d)` via `from_ctyp`,
+    /// Allocate quotient/remainder witness sentinels without registering opaque operations.
+    fn alloc_div_witness_pair(
+        &mut self,
+        quotient_typ: ATyp,
+        remainder_typ: ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) -> (PRef, PRef) {
+        let q_name = self.ns.next_name("div_q");
+        let r_name = self.ns.next_name("div_r");
+        let q_wit = self.sentinel_pref(&q_name, quotient_typ, result);
+        let r_wit = self.sentinel_pref(&r_name, remainder_typ, result);
+        (q_wit, r_wit)
+    }
+
+    fn canonical_div_typ(t: &ATyp) -> Option<CanonPolyTyp> {
+        PolySource::<C, T>::poly_shape_static(t).map(|(num_vars, max_degree)| CanonPolyTyp {
+            num_vars,
+            max_degree,
+        })
+    }
+
+    fn div_witness_key(
+        &self,
+        a: &PolySource<C, T>,
+        b: &PolySource<C, T>,
+        result: &GroebnerResult<C, T>,
+    ) -> DivWitnessKey {
+        DivWitnessKey {
+            dividend_typ: Self::canonical_div_typ(a.typ()).expect("dividend must be polynomial"),
+            divisor_typ: Self::canonical_div_typ(b.typ()).expect("divisor must be polynomial"),
+            dividend_slots: Self::canonical_slot_keys(a, result),
+            divisor_slots: Self::canonical_slot_keys(b, result),
+        }
+    }
+
+    fn canonical_slot_keys(
+        source: &PolySource<C, T>,
+        result: &GroebnerResult<C, T>,
+    ) -> Vec<String> {
+        source
+            .polys()
+            .iter()
+            .map(|p| Self::canonical_poly_key(p, result, &mut Vec::new()))
+            .collect()
+    }
+
+    fn canonical_poly_key(
+        poly: &SparsePolynomial<C::F, T>,
+        result: &GroebnerResult<C, T>,
+        seen: &mut Vec<PRef>,
+    ) -> String {
+        if poly.is_zero() {
+            return "0".to_string();
+        }
+
+        let mut terms: Vec<String> = poly
+            .terms
+            .iter()
+            .map(|(term, coeff)| {
+                format!(
+                    "coeff={};monomial={}",
+                    coeff,
+                    Self::canonical_monomial_key(term, result, seen)
+                )
+            })
+            .collect();
+        terms.sort();
+        terms.join("|")
+    }
+
+    fn canonical_monomial_key(
+        term: &T,
+        result: &GroebnerResult<C, T>,
+        seen: &mut Vec<PRef>,
+    ) -> String {
+        let mut factors: Vec<String> = term
+            .vars()
+            .into_iter()
+            .zip(term.powers())
+            .map(|(pref, power)| Self::canonical_factor_key(&pref, power, result, seen))
+            .collect();
+        factors.sort();
+        factors.join("*")
+    }
+
+    fn canonical_factor_key(
+        pref: &PRef,
+        power: usize,
+        result: &GroebnerResult<C, T>,
+        seen: &mut Vec<PRef>,
+    ) -> String {
+        if Self::is_named_source_pref(pref) {
+            return format!("{}^{}", Self::canonical_pref_key(pref), power);
+        }
+
+        if let Some(def) = result.pl.get(pref)
+            && !seen.contains(pref)
+        {
+            seen.push(pref.clone());
+            let def_key = Self::canonical_poly_key(def, result, seen);
+            seen.pop();
+            return format!("def=({})^{}", def_key, power);
+        }
+
+        format!("{}^{}", Self::canonical_pref_key(pref), power)
+    }
+
+    fn is_named_source_pref(pref: &PRef) -> bool {
+        pref.name()
+            .map(|name| !name.to_string().starts_with(GB_GENERATED_NAME_PREFIX))
+            .unwrap_or(false)
+    }
+
+    fn canonical_pref_key(pref: &PRef) -> String {
+        let name = pref.name().map(|name| name.to_string());
+        match name {
+            Some(name) if !name.starts_with(GB_GENERATED_NAME_PREFIX) => format!(
+                "named:name={};slot={};typ={};qual={:?};dist={:?};transcript={}",
+                name, pref.index, pref.typ, pref.qualifier, pref.distribution, pref.from_transcript,
+            ),
+            name => format!(
+                "raw:ref={:?};slot={};typ={};qual={:?};dist={:?};transcript={};name={:?}",
+                pref.reference,
+                pref.index,
+                pref.typ,
+                pref.qualifier,
+                pref.distribution,
+                pref.from_transcript,
+                name,
+            ),
+        }
+    }
+
     /// Unified Div/Rem handler for both `add_op` and `reduce_op`.
     ///
     /// Dispatches based on operand types:
-    /// - Both VPoly/Uni → polynomial division with witness PRefs + cache
-    /// - Both non-poly (scalar/Vec) → slot-wise field division
-    /// - Either MLE, or mixed poly/non-poly → `unreachable!`
+    /// - Vec operands recurse element-wise, preserving witness caching for each element
+    /// - VPoly/Uni polynomial divisions use witness PRefs + cache
+    /// - Polynomial-like dividends divided by scalar-like divisors use slot-wise field division
+    /// - Non-polynomial Div uses slot-wise field division
+    /// - Remainder by scalar and unsupported MLE polynomial division remain `unreachable!`
     ///
-    /// When `cache_key` is `Some`, checks `div_wit` for a cached witness
-    /// pair before emitting identity rows, and inserts after emission.
-    /// This ensures Div+Rem on the same operand pair share witnesses.
+    /// Polynomial divisions use a canonical operand-content key in `div_wit`
+    /// before emitting identity rows, and insert after emission. This ensures
+    /// Div+Rem on equivalent named operands share witnesses across closures.
     fn div_rem_op(
         &mut self,
         target: &PRef,
         a: &PolySource<C, T>,
         b: &PolySource<C, T>,
         is_rem: bool,
-        cache_key: Option<(HOp<C>, HOp<C>)>,
+        cache_witness: bool,
         result: &mut GroebnerResult<C, T>,
     ) {
         match (a.typ(), b.typ()) {
@@ -788,21 +1067,40 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     let t_i = target.with_index(i).unwrap();
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
-                    self.div_rem_op(&t_i, &a_elem, &b_elem, is_rem, None, result);
+                    self.div_rem_op(&t_i, &a_elem, &b_elem, is_rem, cache_witness, result);
                 }
             }
-            (ATyp::Vec(_, na), ATyp::Base(ABase::Scalar)) => {
+            (ATyp::Vec(_, na), _) if PolySource::<C, T>::is_scalar_like(b.typ()) => {
                 for i in 0..*na {
                     let t_i = target.with_index(i).unwrap();
                     let a_elem = a.at_index(i).unwrap();
-                    self.div_rem_op(&t_i, &a_elem, b, is_rem, None, result);
+                    self.div_rem_op(&t_i, &a_elem, b, is_rem, cache_witness, result);
                 }
             }
-            (_, ATyp::Base(ABase::Scalar)) if a.is_poly() => {
-                unreachable!(
-                    "{}: polynomial ÷ scalar — type checker should produce a Mul-by-inverse, not Div",
-                    if is_rem { "Rem" } else { "Div" },
-                );
+            (_, ATyp::Vec(_, nb)) if PolySource::<C, T>::is_scalar_like(a.typ()) => {
+                if is_rem {
+                    unreachable!(
+                        "Rem: scalar-left vector remainder is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                for i in 0..*nb {
+                    let t_i = target.with_index(i).unwrap();
+                    let b_elem = b.at_index(i).unwrap();
+                    self.div_rem_op(&t_i, a, &b_elem, false, cache_witness, result);
+                }
+            }
+            _ if a.is_poly() && PolySource::<C, T>::is_scalar_like(b.typ()) => {
+                if is_rem {
+                    unreachable!(
+                        "Rem: polynomial-like remainder by scalar is undefined for {} % {} — type checker should prevent this",
+                        a.typ(),
+                        b.typ(),
+                    );
+                }
+                let b_broadcast = b.broadcast_scalar_to(a.typ());
+                self.slot_wise_div(target, a.polys(), b_broadcast.polys(), result);
             }
             _ if matches!(a.typ(), ATyp::Mle(_)) || matches!(b.typ(), ATyp::Mle(_)) => {
                 unreachable!(
@@ -814,8 +1112,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
             }
             _ if a.is_poly() && b.is_poly() => {
-                if let Some(ref key) = cache_key
-                    && let Some((q_wit, r_wit)) = self.ns.div_wit.get(key).cloned()
+                let key = cache_witness.then(|| self.div_witness_key(a, b, result));
+                if let Some((q_wit, r_wit)) = key
+                    .as_ref()
+                    .and_then(|key| self.ns.div_wit.get(key).cloned())
                 {
                     let wit = if is_rem { &r_wit } else { &q_wit };
                     self.link_to_witness(target, wit, result);
@@ -833,6 +1133,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     );
                 }
                 if ma < mb {
+                    if is_rem {
+                        let lifted = a.lift_to(&target.typ);
+                        for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
+                            result.pl.insert(&pf, &p);
+                            result.basis.push(p - SparsePolynomial::var(&pf));
+                        }
+                        return;
+                    }
                     unreachable!(
                         "{}: dividend degree < divisor degree ({} < {})",
                         if is_rem { "Rem" } else { "Div" },
@@ -841,10 +1149,11 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     );
                 }
                 if mb == 0 {
-                    let q_name = self.ns.next_name("div_q");
-                    let r_name = self.ns.next_name("div_r");
-                    let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(na, ma));
-                    let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(na, 0));
+                    let (q_wit, r_wit) = self.alloc_div_witness_pair(
+                        ATyp::VPoly(na, ma),
+                        ATyp::VPoly(na, 0),
+                        result,
+                    );
                     let a_idx = multi_indices(na, ma);
                     let b_poly = &b.polys()[0];
                     for (ka_pos, _k) in a_idx.iter().enumerate() {
@@ -857,7 +1166,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                     let wit = if is_rem { &r_wit } else { &q_wit };
                     self.link_to_witness(target, wit, result);
-                    if let Some(key) = cache_key {
+                    if let Some(key) = key {
                         self.ns.div_wit.insert(&key, &(q_wit, r_wit));
                     }
                     return;
@@ -867,10 +1176,8 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let mq = ma - mb;
                 let mr = mb - 1;
 
-                let q_name = self.ns.next_name("div_q");
-                let r_name = self.ns.next_name("div_r");
-                let q_wit = self.sentinel_pref(&q_name, ATyp::VPoly(nr, mq));
-                let r_wit = self.sentinel_pref(&r_name, ATyp::VPoly(nr, mr));
+                let (q_wit, r_wit) =
+                    self.alloc_div_witness_pair(ATyp::VPoly(nr, mq), ATyp::VPoly(nr, mr), result);
 
                 let a_idx = multi_indices(na, ma);
                 let b_idx = multi_indices(nb, mb);
@@ -914,7 +1221,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let wit = if is_rem { &r_wit } else { &q_wit };
                 self.link_to_witness(target, wit, result);
 
-                if let Some(key) = cache_key {
+                if let Some(key) = key {
                     self.ns.div_wit.insert(&key, &(q_wit, r_wit));
                 }
             }
@@ -976,6 +1283,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     self.emit_equ_diffs(&a_elem, &b_elem, result);
                 }
             }
+            _ if matches!(
+                (a.typ(), b.typ()),
+                (ATyp::Mle(_), ATyp::Uni(_)) | (ATyp::Uni(_), ATyp::Mle(_))
+            ) && a.typ().physical_len() == b.typ().physical_len() =>
+            {
+                for (ap, bp) in a.polys().iter().zip(b.polys()) {
+                    result.basis.push(ap - bp);
+                }
+            }
             _ => {
                 let lub = ATyp::lub_equ(a.typ(), b.typ(), &Nothing)
                     .expect("broadcast_equ: lub_equ failed");
@@ -986,6 +1302,34 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     result.basis.push(diff);
                 }
             }
+        }
+    }
+
+    fn bind_lifted_alias(
+        target: &PRef,
+        source: &PolySource<C, T>,
+        target_typ: &ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        let lifted = source.lift_to(target_typ);
+        for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
+            result.pl.insert(&pf, &p);
+            result.basis.push(p - SparsePolynomial::var(&pf));
+        }
+    }
+
+    fn bind_vec_aliases(
+        target: &PRef,
+        target_offset: usize,
+        source: &PolySource<C, T>,
+        source_len: usize,
+        elem_typ: &ATyp,
+        result: &mut GroebnerResult<C, T>,
+    ) {
+        for source_index in 0..source_len {
+            let target_elem = target.with_index(target_offset + source_index).unwrap();
+            let source_elem = source.at_index(source_index).unwrap();
+            Self::bind_lifted_alias(&target_elem, &source_elem, elem_typ, result);
         }
     }
 
@@ -1000,62 +1344,50 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ) {
         match (&pr.typ, a.typ(), b.typ()) {
             (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), ATyp::Vec(_, nb)) => {
-                for i in 0..*na {
-                    let t_i = pr.with_index(i).unwrap();
-                    let elem = a.at_index(i).unwrap();
-                    let lifted = elem.lift_to(r_elem);
-                    for (pf, p) in t_i.slots().into_iter().zip(lifted.polys) {
-                        result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
-                    }
-                }
-                for i in 0..*nb {
-                    let t_i = pr.with_index(na + i).unwrap();
-                    let elem = b.at_index(i).unwrap();
-                    let lifted = elem.lift_to(r_elem);
-                    for (pf, p) in t_i.slots().into_iter().zip(lifted.polys) {
-                        result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
-                    }
-                }
+                Self::bind_vec_aliases(pr, 0, a, *na, r_elem, result);
+                Self::bind_vec_aliases(pr, *na, b, *nb, r_elem, result);
             }
             (ATyp::Vec(r_elem, _), ATyp::Vec(_, na), _) => {
-                for i in 0..*na {
-                    let t_i = pr.with_index(i).unwrap();
-                    let elem = a.at_index(i).unwrap();
-                    let lifted = elem.lift_to(r_elem);
-                    for (pf, p) in t_i.slots().into_iter().zip(lifted.polys) {
-                        result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
-                    }
-                }
-                let t_last = pr.with_index(*na).unwrap();
-                let lifted = b.lift_to(r_elem);
-                for (pf, p) in t_last.slots().into_iter().zip(lifted.polys) {
-                    result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
-                }
+                Self::bind_vec_aliases(pr, 0, a, *na, r_elem, result);
+                let target_elem = pr.with_index(*na).unwrap();
+                Self::bind_lifted_alias(&target_elem, b, r_elem, result);
             }
             (ATyp::Vec(r_elem, _), _, ATyp::Vec(_, nb)) => {
-                let t_first = pr.with_index(0).unwrap();
-                let lifted = a.lift_to(r_elem);
-                for (pf, p) in t_first.slots().into_iter().zip(lifted.polys) {
-                    result.pl.insert(&pf, &p);
-                    result.basis.push(p - SparsePolynomial::var(&pf));
-                }
-                for i in 0..*nb {
-                    let t_i = pr.with_index(1 + i).unwrap();
-                    let elem = b.at_index(i).unwrap();
-                    let lifted = elem.lift_to(r_elem);
-                    for (pf, p) in t_i.slots().into_iter().zip(lifted.polys) {
-                        result.pl.insert(&pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(&pf));
-                    }
-                }
+                let target_elem = pr.with_index(0).unwrap();
+                Self::bind_lifted_alias(&target_elem, a, r_elem, result);
+                Self::bind_vec_aliases(pr, 1, b, *nb, r_elem, result);
             }
             _ => {
                 Self::uncovered_op("concat-non-vector", pr);
             }
+        }
+    }
+
+    fn emit_slotwise_binop(
+        &self,
+        pr: &PRef,
+        left: &[SparsePolynomial<C::F, T>],
+        right: &[SparsePolynomial<C::F, T>],
+        op: BinOp,
+        result: &mut GroebnerResult<C, T>,
+        context: &str,
+    ) {
+        let pr_slots = pr.slots();
+        assert_eq!(
+            pr_slots.len(),
+            left.len(),
+            "broadcast_binop {context}: result slot count must match left operand"
+        );
+        assert_eq!(
+            pr_slots.len(),
+            right.len(),
+            "broadcast_binop {context}: result slot count must match right operand"
+        );
+
+        for ((pf, left_poly), right_poly) in pr_slots.iter().zip(left).zip(right) {
+            let combined = self.apply_binop(op, left_poly, right_poly);
+            result.pl.insert(pf, &combined);
+            result.basis.push(combined - SparsePolynomial::var(pf));
         }
     }
 
@@ -1087,51 +1419,74 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     );
                 }
             }
-            (_, ATyp::Base(ABase::Scalar)) if a.physical_len() > 1 => {
-                let b_broadcast = b.broadcast_scalar_to(a.typ());
-                let pr_slots = pr.slots();
-                assert_eq!(
-                    pr_slots.len(),
-                    a.polys().len(),
-                    "broadcast_binop Scalar×Poly: pr slot count must match operand"
+            (_, _)
+                if matches!(op, BinOp::Add | BinOp::Sub)
+                    && PolySource::<C, T>::is_scalar_like(b.typ())
+                    && a.is_poly() =>
+            {
+                let a_lifted = a.lift_to(r_typ);
+                let b_lifted = b.lift_scalar_for_add_sub_to(r_typ);
+                self.emit_slotwise_binop(
+                    pr,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    result,
+                    "Poly×Scalar",
                 );
-                for (j, pf) in pr_slots.iter().enumerate() {
-                    let combined = self.apply_binop(op, &a.polys()[j], &b_broadcast.polys()[0]);
-                    result.pl.insert(pf, &combined);
-                    result.basis.push(combined - SparsePolynomial::var(pf));
-                }
             }
-            (ATyp::Base(ABase::Scalar), _) if b.physical_len() > 1 => {
-                let a_broadcast = a.broadcast_scalar_to(b.typ());
-                let pr_slots = pr.slots();
-                assert_eq!(
-                    pr_slots.len(),
-                    b.polys().len(),
-                    "broadcast_binop Poly×Scalar: pr slot count must match operand"
+            (_, _)
+                if matches!(op, BinOp::Add | BinOp::Sub)
+                    && PolySource::<C, T>::is_scalar_like(a.typ())
+                    && b.is_poly() =>
+            {
+                let a_lifted = a.lift_scalar_for_add_sub_to(r_typ);
+                let b_lifted = b.lift_to(r_typ);
+                self.emit_slotwise_binop(
+                    pr,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    result,
+                    "Scalar×Poly",
                 );
-                for (j, pf) in pr_slots.iter().enumerate() {
-                    let combined = self.apply_binop(op, &a_broadcast.polys()[0], &b.polys()[j]);
-                    result.pl.insert(pf, &combined);
-                    result.basis.push(combined - SparsePolynomial::var(pf));
-                }
+            }
+            (_, _) if PolySource::<C, T>::is_scalar_like(b.typ()) && a.physical_len() > 1 => {
+                let b_broadcast = b.broadcast_scalar_to(a.typ());
+                self.emit_slotwise_binop(
+                    pr,
+                    a.polys(),
+                    b_broadcast.polys(),
+                    op,
+                    result,
+                    "value×scalar",
+                );
+            }
+            (_, _) if PolySource::<C, T>::is_scalar_like(a.typ()) && b.physical_len() > 1 => {
+                let a_broadcast = a.broadcast_scalar_to(b.typ());
+                self.emit_slotwise_binop(
+                    pr,
+                    a_broadcast.polys(),
+                    b.polys(),
+                    op,
+                    result,
+                    "scalar×value",
+                );
             }
             _ if a.is_poly() || b.is_poly() || matches!(r_typ, ATyp::Mle(_)) => {
                 let a_lifted = a.lift_to(r_typ);
                 let b_lifted = b.lift_to(r_typ);
-                let pr_slots = pr.slots();
-                for (j, pf) in pr_slots.iter().enumerate() {
-                    let combined = self.apply_binop(op, &a_lifted.polys()[j], &b_lifted.polys()[j]);
-                    result.pl.insert(pf, &combined);
-                    result.basis.push(combined - SparsePolynomial::var(pf));
-                }
+                self.emit_slotwise_binop(
+                    pr,
+                    a_lifted.polys(),
+                    b_lifted.polys(),
+                    op,
+                    result,
+                    "poly/lifted",
+                );
             }
             _ => {
-                let pr_slots = pr.slots();
-                for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&pr_slots) {
-                    let combined = self.apply_binop(op, ap, bp);
-                    result.pl.insert(pf, &combined);
-                    result.basis.push(combined - SparsePolynomial::var(pf));
-                }
+                self.emit_slotwise_binop(pr, a.polys(), b.polys(), op, result, "slotwise");
             }
         }
     }
@@ -1389,7 +1744,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 let needs_gt = matches!(r_typ, ATyp::Base(ABase::GT))
                     || matches!(r_typ, ATyp::Vec(box ATyp::Base(ABase::GT), _));
                 if needs_gt {
-                    let gt = self.gt_pref();
+                    let gt = self.gt_pref(result);
                     let gt_var = SparsePolynomial::var(&gt);
                     let target_slots = target.slots();
                     for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
@@ -1431,7 +1786,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     vec![SparsePolynomial::zero(); r_elem_len];
                 for i in 0..*na {
                     let acc_name = self.ns.next_name("dot_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone());
+                    let acc_pref = self.sentinel_pref(&acc_name, pr.typ.clone(), result);
                     let a_elem = a.at_index(i).unwrap();
                     let b_elem = b.at_index(i).unwrap();
                     self.mul_op(&acc_pref, &a_elem, &b_elem, &pr.typ, result);
@@ -1483,7 +1838,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         b: &PolySource<C, T>,
         result: &mut GroebnerResult<C, T>,
     ) {
-        let gt = self.gt_pref();
+        let gt = self.gt_pref(result);
         match (a.typ(), b.typ(), &pr.typ) {
             (ATyp::Vec(_, na), ATyp::Vec(_, nb), ATyp::Vec(r_inner, _)) if na == nb => {
                 let gt_var = SparsePolynomial::var(&gt);
@@ -1626,7 +1981,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             let next_name = self.ns.next_name("pow_acc");
             let next_typ =
                 ATyp::lub_mul(acc.typ(), base.typ(), &Nothing).expect("pow_const: lub_mul");
-            let next_pref = self.sentinel_pref(&next_name, next_typ.clone());
+            let next_pref = self.sentinel_pref(&next_name, next_typ.clone(), result);
             self.mul_op(&next_pref, &acc, base, &next_typ, result);
             acc = PolySource::new(
                 next_pref
@@ -1720,9 +2075,9 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 );
                 let p_polys = Self::ref_vars(p, prefs);
                 let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                (0..k)
-                    .map(|i| {
-                        let xi = &xs_polys[i];
+                xs_polys
+                    .iter()
+                    .map(|xi| {
                         let mut acc = SparsePolynomial::<C::F, T>::zero();
                         let mut xi_pow = one.clone();
                         for aj in p_polys.iter() {
@@ -1831,86 +2186,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
-    /// Symbolic unit-range selected evaluation for coefficient-form virtual
-    /// polynomials. This mirrors `eval<i>(p, fixed)` at the coefficient level:
-    /// keep variable `i` as the residual univariate and substitute `fixed` for
-    /// variables `[0,i)` followed by `[i+1,N)`.
-    fn selected_eval_to_poly(
-        &mut self,
-        p: &GOp<C>,
-        range: &lang::typ::CRange,
-        fixed: &GOp<C>,
-        prefs: &HashMap<Ref, PRef>,
-    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
-        if range.step != 1 || range.len() != 1 {
-            return None;
-        }
-
-        let fixed_polys = Self::ref_vars(fixed, prefs);
-        match p.typ() {
-            ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
-                let p_polys = Self::ref_vars(p, prefs);
-                let all_indices = multi_indices(n, d);
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); d + 1];
-
-                for (idx, ki) in all_indices.iter().enumerate() {
-                    let free_exp = ki[range.start];
-                    let mut term = p_polys[idx].clone();
-                    let mut fixed_idx = 0usize;
-                    for (var_idx, &var_exp) in ki.iter().enumerate().take(n) {
-                        if var_idx == range.start {
-                            continue;
-                        }
-                        if var_exp > 0 {
-                            let mut fixed_pow = fixed_polys[fixed_idx].clone();
-                            fixed_pow.pow(var_exp);
-                            term = &term * &fixed_pow;
-                        }
-                        fixed_idx += 1;
-                    }
-                    out[free_exp] = &out[free_exp] + &term;
-                }
-                Some(out)
-            }
-            ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
-                let p_polys = Self::ref_vars(p, prefs);
-                let all_b = hypercube(n);
-                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
-                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
-                    if bi == 1 { x.clone() } else { &one - x }
-                };
-                let free = range.start;
-                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); 2];
-                for (idx, b) in all_b.iter().enumerate() {
-                    let mut w = one.clone();
-                    let mut fixed_idx = 0usize;
-                    for (var_idx, &bv) in b.iter().enumerate().take(n) {
-                        if var_idx == free {
-                            continue;
-                        }
-                        w = &w * &eq(bv, &fixed_polys[fixed_idx]);
-                        fixed_idx += 1;
-                    }
-                    let term = &p_polys[idx] * &w;
-                    if b[free] == 0 {
-                        out[0] = &out[0] + &term;
-                        out[1] = &out[1] - &term;
-                    } else {
-                        out[1] = &out[1] + &term;
-                    }
-                }
-                Some(out)
-            }
-            _ => None,
-        }
-    }
-
     /// Compute the slot offset of `field_name` within a record type.
-    ///
-    /// Fields are laid out in `Ctx` iteration order (alphabetical for `String`
-    /// keys), each occupying `ftyp.physical_len()` consecutive slots.
-    ///
-    /// Panics if `field_name` is not found in `fields`.
     fn record_field_offset(fields: &Ctx<String, ATyp>, field_name: &str) -> usize {
         let mut offset = 0;
         for (fname, ftyp) in fields.iter() {
@@ -1924,6 +2200,36 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             field_name,
             fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
         )
+    }
+
+    fn eval_to_poly_as(
+        &mut self,
+        p: &GOp<C>,
+        xs: &GOp<C>,
+        target_typ: &ATyp,
+        prefs: &HashMap<Ref, PRef>,
+    ) -> Vec<SparsePolynomial<C::F, T>> {
+        let polys = self.eval_to_poly(p, xs, prefs);
+        let raw_typ = {
+            let k = Self::ref_vars(xs, prefs).len();
+            match p.typ() {
+                ATyp::Mle(n) if k < n => ATyp::Mle(n - k),
+                ATyp::Mle(n) if k == n => ATyp::scalar(),
+                ATyp::VPoly(n, m) if n >= 2 && k < n => ATyp::VPoly(n - k, m),
+                ATyp::VPoly(n, _) if n >= 2 && k == n => ATyp::scalar(),
+                ATyp::Uni(_) | ATyp::VPoly(1, _) if target_typ.physical_len() == polys.len() => {
+                    target_typ.clone()
+                }
+                ATyp::Uni(_) | ATyp::VPoly(1, _) => ATyp::vec(&ATyp::scalar(), k),
+                other => other,
+            }
+        };
+        PolySource::<C, T> {
+            polys,
+            typ: raw_typ,
+        }
+        .lift_to(target_typ)
+        .polys
     }
 
     /// Resolve an `Op::Ref(v, typ)` to a vector of variable polynomials,
@@ -1951,7 +2257,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Value(v) => Self::to_poly_value(v),
             other => {
                 panic!(
-                    "ref_vars called with unsupported op variant: {:?} - children should be materialized to Ref",
+                    "ref_vars called with unsupported op variant: {:?} — children should be materialized to Ref",
                     std::mem::discriminant(other)
                 )
             }
@@ -1963,6 +2269,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     fn add_op(&mut self, pr: PRef, op: GOp<C>, result: &mut GroebnerResult<C, T>) {
         match op {
             Op::Ref(r, typ) => {
+                if pr.reference == r && pr.index == 0 && pr.typ == typ {
+                    return;
+                }
+
                 let ref_src: PolySource<C, T> =
                     PolySource::from_ref_vars(&result.prefs, &Op::Ref(r, typ.clone()));
                 let lifted = ref_src.lift_to(&pr.typ);
@@ -1999,26 +2309,12 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::Bin(BinOp::Div, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a);
                 let b_src = PolySource::from_ref_vars(&result.prefs, b);
-                self.div_rem_op(
-                    &pr,
-                    &a_src,
-                    &b_src,
-                    false,
-                    Some((a.clone(), b.clone())),
-                    result,
-                );
+                self.div_rem_op(&pr, &a_src, &b_src, false, true, result);
             }
             Op::Bin(BinOp::Rem, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a);
                 let b_src = PolySource::from_ref_vars(&result.prefs, b);
-                self.div_rem_op(
-                    &pr,
-                    &a_src,
-                    &b_src,
-                    true,
-                    Some((a.clone(), b.clone())),
-                    result,
-                );
+                self.div_rem_op(&pr, &a_src, &b_src, true, true, result);
             }
             Op::Bin(BinOp::Equ, a, b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, &a);
@@ -2096,7 +2392,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Three shapes are handled (dispatched on p.typ() × |xs slots|):
             //
             //   1. Univariate batched — p: Uni(_) or VPoly(1, _), xs: len k ≥ 1
-            //        result[i] = Σ_j a_j · xs[i]^j                  (Vec(F, k) output)
+            //        result[i] = Σ_j a_j · xs[i]^j                  (target-shaped k-slot output)
             //
             //   2. Multivariate in coefficient basis — p: VPoly(n, m) with n ≥ 2, k ≤ n
             //        full (k == n):  scalar = Σ_{|κ|≤m} a_κ · Π_i xs[i]^{κ_i}
@@ -2110,11 +2406,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             //        partial (k<n):  Mle<n-k>; eval at b′ =
             //                        Σ_{b_fixed} v_{(b_fixed,b′)} · Π_i eq(b_fixed,i, xs[i])
             //
-            // The input xs may statically have either `Uni(k)` or `Vec(_, k)`;
-            // `ref_vars` normalizes both to k scalar polys. Unsupported shapes
-            // fail explicitly rather than weakening the ideal.
+            // The type checker guarantees xs is non-empty and p has a supported
+            // polynomial type; unsupported shapes are unreachable.
             Op::Evaluate(ref p, None, Some(ref xs)) => {
-                let polys = self.eval_to_poly(p, xs, &result.prefs);
+                let polys = self.eval_to_poly_as(p, xs, &pr.typ, &result.prefs);
                 for (pf, poly) in pr.slots().into_iter().zip(polys) {
                     result.pl.insert(&pf, &poly);
                     result.basis.push(poly - SparsePolynomial::var(&pf));
@@ -2151,7 +2446,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 self.reduce_map_to_poly(pr, rop, domain, body, &[], &[], result)
             }
             Op::LoopParam(_, _) => Self::uncovered_op("loop-param", &pr),
-            // Phase 10: `Op::Reduce(op, v)` � left-fold of vector elements.
+            // Phase 10: `Op::Reduce(op, v)` — left-fold of vector elements.
             // See `reduce_op` for per-operator handling.
             Op::Reduce(rop, ref v) => {
                 self.reduce_op(pr, rop, v, result);
@@ -2248,19 +2543,28 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // For each field, emit basis rows linking record slots to
             // the field's polynomial values.
             Op::Record(ref fields) => {
-                let pr_slots = pr.slots();
+                let pr_len = pr.typ.physical_len();
+                if pr_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                    panic!(
+                        "Groebner Record has {} physical slots, above materialization limit {}",
+                        pr_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                    );
+                }
                 let mut slot_offset = 0usize;
                 for (_, field_op) in fields.iter() {
                     let field_polys = Self::ref_vars(field_op.get(), &result.prefs);
                     for (j, p) in field_polys.into_iter().enumerate() {
-                        let pf = &pr_slots[slot_offset + j];
-                        result.pl.insert(pf, &p);
-                        result.basis.push(p - SparsePolynomial::var(pf));
+                        let pf = pr
+                            .clone()
+                            .with_slot(slot_offset + j)
+                            .expect("record field slot must be within record physical layout");
+                        result.pl.insert(&pf, &p);
+                        result.basis.push(p - SparsePolynomial::var(&pf));
                     }
                     slot_offset += field_op.typ().physical_len();
                 }
             }
-            // Concat/Pow/Proj require explicit ideal treatment;
+            // Concat/Pow/Marginalize/Proj require explicit ideal treatment;
             // unsupported shapes fail instead of becoming hidden op state.
             Op::Bin(BinOp::Concat, ref a, ref b, _) => {
                 let a_src = PolySource::from_ref_vars(&result.prefs, a);
@@ -2328,27 +2632,20 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         let evals_polys = Self::ref_vars(evals, &result.prefs);
         let n = evals_polys.len();
 
-        let xs: Option<Vec<C::F>> = match points.get() {
-            Op::Value(v) => Self::to_poly_value(v)
-                .iter()
-                .map(|p| {
-                    if p.is_constant() {
-                        p.leading_term().map(|(c, _)| c)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
+        let xs_polys: Vec<SparsePolynomial<C::F, T>> = match points.get() {
+            Op::Value(v) => Self::to_poly_value(v),
             Op::Ref(r, _) => {
                 let points_pref = result.find_ref(r);
-                let polys: Vec<Option<SparsePolynomial<C::F, T>>> = points_pref
+                points_pref
                     .slots()
                     .iter()
-                    .map(|s| result.pl.get(s).cloned())
-                    .collect();
-                polys
-                    .into_iter()
-                    .map(|opt| opt.and_then(|p| Self::resolve_constant(&p, result)))
+                    .map(|s| {
+                        result
+                            .pl
+                            .get(s)
+                            .cloned()
+                            .unwrap_or_else(|| SparsePolynomial::zero())
+                    })
                     .collect()
             }
             other => {
@@ -2359,63 +2656,125 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             }
         };
 
-        let Some(xs) = xs else {
-            Self::uncovered_op("dynamic-interpolate-points", &pr);
-        };
         assert_eq!(
             n,
-            xs.len(),
+            xs_polys.len(),
             "Interpolate: points and evals must have same length"
         );
 
-        let lag = lagrange_basis::<C::F>(&xs);
-        let pr_slots = pr.slots();
-        for (k, pf) in pr_slots.iter().enumerate() {
-            let mut acc = SparsePolynomial::<C::F, T>::zero();
-            for (i, y_i) in evals_polys.iter().enumerate() {
-                if k < lag[i].len() && lag[i][k] != C::F::zero() {
-                    let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
-                    acc = acc + (y_i * &weight);
-                }
-            }
-            result.pl.insert(pf, &acc);
-            result.basis.push(acc - SparsePolynomial::var(pf));
-        }
-    }
+        let all_constant = xs_polys.iter().all(|p| p.is_constant());
 
-    /// Reduce `poly` to a field constant by iteratively inlining each variable
-    /// with its bound definition in `result.pl`, following the node DAG until
-    /// the polynomial is constant. Returns `None` if a genuine (unbound or
-    /// self-bound) input variable remains. Recognizes interpolation
-    /// x-coordinates like `[i * one]` where `one = zero + 1` and `zero = p - p`
-    /// are derived constants rather than syntactic literals.
-    fn resolve_constant(
-        poly: &SparsePolynomial<C::F, T>,
-        result: &GroebnerResult<C, T>,
-    ) -> Option<C::F> {
-        let mut p = poly.clone();
-        for _ in 0..256 {
-            if p.is_constant() {
-                return Some(p.leading_term().map(|(c, _)| c).unwrap_or_else(C::F::zero));
-            }
-            let mut subs: Ctx<PRef, SparsePolynomial<C::F, T>> = Ctx::new();
-            for v in p.vars() {
-                if let Some(binding) = result.pl.get(&v)
-                    && *binding != SparsePolynomial::var(&v)
-                {
-                    subs.insert(&v, binding);
+        if all_constant {
+            let xs: Vec<C::F> = xs_polys
+                .iter()
+                .map(|p| {
+                    p.leading_term()
+                        .map(|(c, _)| c)
+                        .expect("constant poly must have a leading term")
+                })
+                .collect();
+            for i in 0..xs.len() {
+                for j in (i + 1)..xs.len() {
+                    if xs[i] == xs[j] {
+                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                    }
                 }
             }
-            if subs.is_empty() {
-                return None;
+            let lag = lagrange_basis::<C::F>(&xs);
+            let pr_slots = pr.slots();
+            for (k, pf) in pr_slots.iter().enumerate() {
+                let mut acc = SparsePolynomial::<C::F, T>::zero();
+                for (i, y_i) in evals_polys.iter().enumerate() {
+                    if k < lag[i].len() && lag[i][k] != C::F::zero() {
+                        let weight = SparsePolynomial::<C::F, T>::lit(&lag[i][k]);
+                        acc += y_i * &weight;
+                    }
+                }
+                result.pl.insert(pf, &acc);
+                result.basis.push(acc - SparsePolynomial::var(pf));
             }
-            let (next, changed) = p.inline_vars(&subs);
-            if !changed {
-                return None;
+        } else {
+            for i in 0..xs_polys.len() {
+                for j in (i + 1)..xs_polys.len() {
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_zero() {
+                        Self::uncovered_op("duplicate-interpolate-points", &pr);
+                    }
+                }
             }
-            p = next;
+
+            let n_pts = xs_polys.len();
+            let mut denom_inverses: Vec<Vec<Option<PRef>>> = vec![vec![None; n_pts]; n_pts];
+            for i in 0..n_pts {
+                for j in 0..n_pts {
+                    if i == j {
+                        continue;
+                    }
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_constant() {
+                        continue;
+                    }
+                    let d_name = self.ns.next_name("interp_inv");
+                    let d = self.sentinel_pref(&d_name, ATyp::scalar(), result);
+                    result.basis.push(
+                        SparsePolynomial::var(&d) * diff
+                            - SparsePolynomial::<C::F, T>::lit(&C::F::one()),
+                    );
+                    denom_inverses[i][j] = Some(d);
+                }
+            }
+
+            let pr_slots = pr.slots();
+            let mut result_polys = vec![SparsePolynomial::<C::F, T>::zero(); pr_slots.len()];
+
+            for (i, y_i) in evals_polys.iter().enumerate() {
+                let mut lag_poly = vec![SparsePolynomial::<C::F, T>::lit(&C::F::one())];
+
+                for j in 0..n_pts {
+                    if j == i {
+                        continue;
+                    }
+                    let neg_xj = &xs_polys[j] * &SparsePolynomial::lit(&(-C::F::one()));
+                    let mut new_lag = vec![SparsePolynomial::<C::F, T>::zero(); lag_poly.len() + 1];
+                    for (deg, c) in lag_poly.iter().enumerate() {
+                        let shifted = c * &neg_xj;
+                        new_lag[deg] = &new_lag[deg] + &shifted;
+                        new_lag[deg + 1] = &new_lag[deg + 1] + c;
+                    }
+                    lag_poly = new_lag;
+                }
+
+                let mut denom_inv = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                for j in 0..n_pts {
+                    if j == i {
+                        continue;
+                    }
+                    let diff = &xs_polys[i] - &xs_polys[j];
+                    if diff.is_constant() {
+                        let c = diff
+                            .leading_term()
+                            .map(|(c, _)| c)
+                            .expect("non-zero constant poly has leading term");
+                        denom_inv *= SparsePolynomial::lit(&c.inverse().unwrap());
+                    } else {
+                        let d = denom_inverses[i][j]
+                            .as_ref()
+                            .expect("d-variable must exist for non-constant diff");
+                        denom_inv *= SparsePolynomial::var(d);
+                    }
+                }
+
+                for (k, coeff) in lag_poly.iter().enumerate() {
+                    let scaled = coeff * &denom_inv;
+                    result_polys[k] = &result_polys[k] + &(y_i * &scaled);
+                }
+            }
+
+            for (pf, poly) in pr_slots.iter().zip(result_polys) {
+                result.pl.insert(pf, &poly);
+                result.basis.push(poly - SparsePolynomial::var(pf));
+            }
         }
-        None
     }
 
     /// Left-fold of vector elements:
@@ -2432,15 +2791,15 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     ///
     /// - **Concat**: passes through all physical slots.
     ///
-    /// - **Div**: intermediate sentinel PRefs for each fold step with
-    ///   per-slot constraints `acc - elem * var(target) = 0`.
+    /// - **Div/Rem**: lower as true left folds. Polynomial folds use
+    ///   division/remainder witness identities for each step, while scalar
+    ///   division uses per-slot constraints `acc - elem * var(target) = 0`.
     ///
-    /// - **Rem/Equ/Pow**: opaque. Rem is pointwise opaque; chained
-    ///   equality can't be cleanly encoded in the polynomial basis; Pow's
-    ///   left-fold `(a^b)^c` requires `a^(b*c)` which is only valid for
-    ///   constant b, c and produces potentially very-high-degree terms —
-    ///   better handled by the `BinOp::Pow` handler in `add_op` which
-    ///   sees a single exponent directly.
+    /// - **Equ/Pow**: opaque. Chained equality can't be cleanly encoded in
+    ///   the polynomial basis; Pow's left-fold `(a^b)^c` requires `a^(b*c)`
+    ///   which is only valid for constant b, c and produces potentially
+    ///   very-high-degree terms — better handled by the `BinOp::Pow` handler
+    ///   in `add_op` which sees a single exponent directly.
     ///
     /// - **Dot**: unreachable (type checker rejects `reduce(dot, _)`).
     fn reduce_op(&mut self, pr: PRef, rop: BinOp, v: &HOp<C>, result: &mut GroebnerResult<C, T>) {
@@ -2464,9 +2823,132 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
 
         let v_src = PolySource::from_ref_vars(&result.prefs, v);
-        self.reduce_polysource(pr, rop, v_src, elem_t, n, result);
-    }
 
+        match rop {
+            BinOp::Add => {
+                let mut acc: PolySource<C, T> = PolySource::new(
+                    (0..elem_t.physical_len())
+                        .map(|_| SparsePolynomial::zero())
+                        .collect(),
+                    elem_t.clone(),
+                );
+                for i in 0..n {
+                    let elem = v_src.at_index(i).unwrap();
+                    let lifted = elem.lift_to(&elem_t);
+                    for (j, p) in acc.polys.iter_mut().enumerate() {
+                        *p = &*p + &lifted.polys[j];
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::And => {
+                let mut acc = v_src.at_index(0).unwrap();
+                for i in 1..n {
+                    let elem = v_src.at_index(i).unwrap();
+                    let acc_name = self.ns.next_name("reduce_and_acc");
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
+                    self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
+                    acc = PolySource::new(
+                        acc_pref
+                            .slots()
+                            .into_iter()
+                            .map(|s| SparsePolynomial::var(&s))
+                            .collect(),
+                        elem_t.clone(),
+                    );
+                }
+                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Sub => {
+                let mut acc = v_src.at_index(0).unwrap();
+                for i in 1..n {
+                    let elem = v_src.at_index(i).unwrap();
+                    let lifted = elem.lift_to(&elem_t);
+                    for (j, p) in acc.polys.iter_mut().enumerate() {
+                        *p = &*p - &lifted.polys[j];
+                    }
+                }
+                for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Mul => {
+                let mut acc = v_src.at_index(0).unwrap();
+                let mut acc_typ = elem_t.clone();
+                for i in 1..n {
+                    let elem = v_src.at_index(i).unwrap();
+                    let step_typ = ATyp::lub_mul(&acc_typ, elem.typ(), &Nothing)
+                        .expect("reduce(*): type checker guarantees lub_mul");
+                    let is_last = i == n - 1;
+                    let acc_pref = if is_last {
+                        pr.clone()
+                    } else {
+                        let acc_name = self.ns.next_name("reduce_mul_acc");
+                        self.sentinel_pref(&acc_name, step_typ.clone(), result)
+                    };
+                    self.mul_op(&acc_pref, &acc, &elem, &step_typ, result);
+                    acc = PolySource::from_pref_vars(&acc_pref, step_typ.clone());
+                    acc_typ = step_typ;
+                }
+            }
+            BinOp::Concat => {
+                for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
+                    result.pl.insert(&pf, &p);
+                    result.basis.push(p - SparsePolynomial::var(&pf));
+                }
+            }
+            BinOp::Div | BinOp::Rem => {
+                let is_rem = rop == BinOp::Rem;
+                let is_poly = PolySource::<C, T>::poly_shape_static(&elem_t).is_some();
+                let mut acc_src = v_src.at_index(0).unwrap();
+                let mut acc_typ = elem_t.clone();
+                for step in 0..n - 1 {
+                    let is_last = step == n - 2;
+                    let elem_src = v_src.at_index(step + 1).unwrap();
+                    if !is_poly && is_rem {
+                        unreachable!(
+                            "Rem: non-polynomial remainder is undefined for Vec<{}>",
+                            elem_t,
+                        );
+                    }
+                    let step_typ = ATyp::lub_op(rop, &acc_typ, elem_src.typ(), &Nothing)
+                        .expect("reduce(/,%): type checker guarantees lub");
+                    let target = if is_last {
+                        pr.clone()
+                    } else {
+                        let acc_name = self.ns.next_name(if is_rem {
+                            "reduce_rem_acc"
+                        } else {
+                            "reduce_div_acc"
+                        });
+                        self.sentinel_pref(&acc_name, step_typ.clone(), result)
+                    };
+                    if is_poly {
+                        self.div_rem_op(&target, &acc_src, &elem_src, is_rem, false, result);
+                    } else {
+                        self.slot_wise_div(&target, acc_src.polys(), elem_src.polys(), result);
+                    }
+                    acc_src = PolySource::from_pref_vars(&target, step_typ.clone());
+                    acc_typ = step_typ;
+                }
+            }
+            BinOp::Equ | BinOp::Pow => {
+                Self::uncovered_op("reduce-equ-or-pow", &pr);
+            }
+            BinOp::Dot => {
+                unreachable!("reduce(dot, _) is rejected by the type checker");
+            }
+        }
+    }
+}
+
+impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     /// Shared fold for `Op::Reduce` and `Op::ReduceMap`: combine the `n`
     /// elements of `v_src` (each of type `elem_t`) under `rop`, binding `pr`.
     fn reduce_polysource(
@@ -2503,7 +2985,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_and_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone());
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
                     self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
                     acc = PolySource::new(
                         acc_pref
@@ -2537,7 +3019,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                 for i in 1..n {
                     let elem = v_src.at_index(i).unwrap();
                     let acc_name = self.ns.next_name("reduce_mul_acc");
-                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone());
+                    let acc_pref = self.sentinel_pref(&acc_name, elem_t.clone(), result);
                     self.mul_op(&acc_pref, &acc, &elem, &elem_t, result);
                     acc = PolySource::new(
                         acc_pref
@@ -2572,7 +3054,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                         } else {
                             "reduce_div_acc"
                         });
-                        self.sentinel_pref(&acc_name, elem_t.clone())
+                        self.sentinel_pref(&acc_name, elem_t.clone(), result)
                     };
                     let elem_src = v_src.at_index(step + 1).unwrap();
                     if is_poly {
@@ -2581,7 +3063,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             &acc_src,
                             &elem_src,
                             is_rem && is_last,
-                            None,
+                            false,
                             result,
                         );
                     } else {
@@ -2612,12 +3094,82 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         }
     }
 
+    /// Selected evaluation: keep variable `range.start` free and substitute
+    /// `fixed` for the remaining variables. Returns the residual univariate
+    /// coefficient polys, or `None` for unsupported shapes.
+    fn selected_eval_to_poly(
+        &mut self,
+        p: &GOp<C>,
+        range: &lang::typ::CRange,
+        fixed: &GOp<C>,
+        prefs: &HashMap<Ref, PRef>,
+    ) -> Option<Vec<SparsePolynomial<C::F, T>>> {
+        if range.step != 1 || range.len() != 1 {
+            return None;
+        }
+
+        let fixed_polys = Self::ref_vars(fixed, prefs);
+        match p.typ() {
+            ATyp::VPoly(n, d) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+                let p_polys = Self::ref_vars(p, prefs);
+                let all_indices = multi_indices(n, d);
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); d + 1];
+
+                for (idx, ki) in all_indices.iter().enumerate() {
+                    let free_exp = ki[range.start];
+                    let mut term = p_polys[idx].clone();
+                    let mut fixed_idx = 0usize;
+                    for (var_idx, &var_exp) in ki.iter().enumerate().take(n) {
+                        if var_idx == range.start {
+                            continue;
+                        }
+                        if var_exp > 0 {
+                            let mut fixed_pow = fixed_polys[fixed_idx].clone();
+                            fixed_pow.pow(var_exp);
+                            term = &term * &fixed_pow;
+                        }
+                        fixed_idx += 1;
+                    }
+                    out[free_exp] = &out[free_exp] + &term;
+                }
+                Some(out)
+            }
+            ATyp::Mle(n) if range.end <= n && fixed_polys.len() == n.saturating_sub(1) => {
+                let p_polys = Self::ref_vars(p, prefs);
+                let all_b = hypercube(n);
+                let one = SparsePolynomial::<C::F, T>::lit(&C::F::one());
+                let eq = |bi: usize, x: &SparsePolynomial<C::F, T>| -> SparsePolynomial<C::F, T> {
+                    if bi == 1 { x.clone() } else { &one - x }
+                };
+                let free = range.start;
+                let mut out = vec![SparsePolynomial::<C::F, T>::zero(); 2];
+                for (idx, b) in all_b.iter().enumerate() {
+                    let mut w = one.clone();
+                    let mut fixed_idx = 0usize;
+                    for (var_idx, &bv) in b.iter().enumerate().take(n) {
+                        if var_idx == free {
+                            continue;
+                        }
+                        w = &w * &eq(bv, &fixed_polys[fixed_idx]);
+                        fixed_idx += 1;
+                    }
+                    let term = &p_polys[idx] * &w;
+                    if b[free] == 0 {
+                        out[0] = &out[0] + &term;
+                        out[1] = &out[1] - &term;
+                    } else {
+                        out[1] = &out[1] + &term;
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        }
+    }
+
     /// Constant-fold an integer (`Fin`/`Bool`) subexpression over the enclosing
     /// loop indices. Returns `Some(value)` only when `op` is integer-typed and
-    /// every enclosing loop binder has a concrete value (literal/range domains);
-    /// otherwise `None`. This collapses bit-extraction (`(i / 2^j) % 2`) and
-    /// loop-index exponents (`x ^ i`) to literals so `pow_op` and friends never
-    /// see a non-constant `Fin` operand.
+    /// every enclosing loop binder has a concrete value; otherwise `None`.
     fn const_eval_int(&self, op: &HOp<C>, loop_vals: &[Option<Value<C>>]) -> Option<Value<C>> {
         let t = op.typ();
         if !(t.is_fin() || t.is_bool()) {
@@ -2636,9 +3188,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 
     /// Materialize an inline Map/ReduceMap body op-tree into registered
     /// sentinel PRefs and return the PRef bound to its result.
-    /// `loops[level]` is the element PRef of the enclosing loop at de Bruijn
-    /// `level`. Returns `None` for an op the encoding cannot model (caller
-    /// then diverges via `uncovered_op`).
     fn body_to_poly(
         &mut self,
         body: &HOp<C>,
@@ -2651,21 +3200,21 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             Op::LoopParam(level, _) => loops.get(*level).cloned(),
             Op::Value(_) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ());
+                let pf = self.sentinel_pref(&name, body.typ(), result);
                 result.register(&pf);
                 self.add_op(pf.clone(), body.get().clone(), result);
                 Some(pf)
             }
             Op::Map(d, b) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ());
+                let pf = self.sentinel_pref(&name, body.typ(), result);
                 result.register(&pf);
                 self.map_to_poly(pf.clone(), d, b, loops, loop_vals, result);
                 Some(pf)
             }
             Op::ReduceMap(rop, d, b) => {
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ());
+                let pf = self.sentinel_pref(&name, body.typ(), result);
                 result.register(&pf);
                 self.reduce_map_to_poly(pf.clone(), *rop, d, b, loops, loop_vals, result);
                 Some(pf)
@@ -2673,14 +3222,14 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             _ => {
                 if let Some(v) = self.const_eval_int(body, loop_vals) {
                     let name = self.ns.next_name("gb_map_body");
-                    let pf = self.sentinel_pref(&name, body.typ());
+                    let pf = self.sentinel_pref(&name, body.typ(), result);
                     result.register(&pf);
                     self.add_op(pf.clone(), Op::Value(v), result);
                     return Some(pf);
                 }
                 let rebuilt = self.rebuild_body_op(body, loops, loop_vals, result)?;
                 let name = self.ns.next_name("gb_map_body");
-                let pf = self.sentinel_pref(&name, body.typ());
+                let pf = self.sentinel_pref(&name, body.typ(), result);
                 result.register(&pf);
                 self.add_op(pf.clone(), rebuilt, result);
                 Some(pf)
@@ -2689,8 +3238,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     /// Materialize a body child to an add_op-ready operand: `Op::Value` and
-    /// `Op::Ref` stay verbatim (both resolve in `ref_vars`); everything else
-    /// is bound to a fresh sentinel and referenced by `Op::Ref`.
+    /// `Op::Ref` stay verbatim; everything else is bound to a fresh sentinel.
     fn body_child(
         &mut self,
         child: &HOp<C>,
@@ -2771,8 +3319,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         })
     }
 
-    /// Explode a domain `v: [F; n]` into `n` registered element PRefs, each
-    /// bound (`elem_i[j] = domain[i][j]`) so it is independently Ref-addressable.
+    /// Explode a domain `v: [F; n]` into `n` registered element PRefs.
     fn explode_domain(
         &mut self,
         domain: &HOp<C>,
@@ -2805,7 +3352,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
         for i in 0..n {
             let es = src.at_index(i)?;
             let name = self.ns.next_name("gb_map_elem");
-            let elem_pf = self.sentinel_pref(&name, elem_t.clone());
+            let elem_pf = self.sentinel_pref(&name, elem_t.clone(), result);
             result.register(&elem_pf);
             for (slot, poly) in elem_pf.slots().into_iter().zip(es.polys) {
                 result.pl.insert(&slot, &poly);
@@ -2844,8 +3391,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
     }
 
     /// `Op::ReduceMap`: explode the domain, map the body per element, and fold
-    /// the results with `reduce_polysource`. Integer (`Fin`/`Bool`)
-    /// subexpressions over concrete loop indices are constant-folded first.
+    /// the results with `reduce_polysource`.
     #[allow(clippy::too_many_arguments)]
     fn reduce_map_to_poly(
         &mut self,
@@ -2929,35 +3475,6 @@ mod tests {
         let g = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         TransClos::verifier(&g)
-    }
-    #[test]
-    fn canonical_hypercube_reduce_vpoly_extracts() {
-        // Degree-2 canonical Boolean-tail hypercube reduce (the sumcheck round
-        // shape). The bit-extraction `(i / 2^j) % 2` is const-folded over the
-        // loop indices and the selected eval on a `VPoly` is modeled, so
-        // `build` (extraction) completes without an `uncovered_op` panic.
-        let src = r#"
-            proto round<F: Field>(public claimed_sum: F, public poly: Poly<F, 3, 2>)
-                where claimed_sum == claimed_sum {
-                let zero: F = 0;
-                let one = zero + 1;
-                let round_poly0 = reduce(+, [
-                    eval<0>(poly, tail)
-                    for tail in [
-                        [(((i / (2 ^ j)) % 2) * one) for j in 0..2]
-                        for i in 0..4
-                    ]
-                ]);
-                let cs = coef(round_poly0);
-                verify(claimed_sum == cs[0])
-            }"#;
-        let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
-        let gr = builder.build(tc);
-        assert!(
-            !gr.pl.is_empty(),
-            "degree-2 hypercube extraction should bind the round-poly chain"
-        );
     }
 
     #[test]
@@ -3309,6 +3826,38 @@ mod tests {
     /// Helper: a PRef registered with the builder so `find_ref` can locate
     /// it, returning the pref for caller use. The slot type isn't important
     /// here; we only need the reference node / index to resolve.
+
+    #[test]
+    fn mle1_to_uni1_lift_converts_evals_to_coeffs() {
+        use crate::PRef;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let src = PRef::from_node(
+            NodeIndex::new(10),
+            ATyp::Mle(1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let g0 = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(
+            &src.clone().with_slot(0).unwrap(),
+        );
+        let g1 = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(
+            &src.clone().with_slot(1).unwrap(),
+        );
+        let lifted = PolySource::<ArkBls12_381, GrevLexTerm> {
+            polys: vec![g0.clone(), g1.clone()],
+            typ: ATyp::Mle(1),
+        }
+        .lift_to(&ATyp::Uni(1));
+
+        assert_eq!(lifted.typ, ATyp::Uni(1));
+        assert_eq!(lifted.polys.len(), 2);
+        assert_eq!(lifted.polys[0], g0);
+        assert_eq!(lifted.polys[1], &g1 - &g0);
+    }
+
     #[test]
     fn test_add_op_eval_univariate_batched() {
         use crate::{PRef, Ref};
@@ -4510,7 +5059,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX),
             ATyp::VPoly(1, 1),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
         let r_wit = PRef::from_var(
@@ -4518,7 +5067,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
 
@@ -4650,7 +5199,7 @@ mod tests {
             petgraph::graph::NodeIndex::new(usize::MAX - 1),
             ATyp::VPoly(1, 0),
             0,
-            Qualifier::Public,
+            Qualifier::Local,
             Distribution::default(),
         );
         let scl = |p: &PRef, i: usize| p.clone().with_slot(i).unwrap();
@@ -4688,7 +5237,7 @@ mod tests {
 
     #[test]
     fn test_add_op_div_then_rem_shares_witness() {
-        // Both `a/b` and `a%b` on the same `(a,b)` HOp pair share the
+        // Both `a/b` and `a%b` on the same source-level operand pair share the
         // witness side-table. Second op should NOT emit new identity rows.
         use crate::{PRef, Ref};
         use lang::ast::BinOp;
@@ -4773,10 +5322,131 @@ mod tests {
     }
 
     #[test]
+    fn test_add_op_div_rem_shares_equivalent_named_derived_operands() {
+        // PR #153 regression: two closure-local derived nodes can carry the
+        // same named-source expression (`a * b - c`) while still having
+        // distinct raw HOp refs. Div and Rem over those equivalent operands
+        // should share a single witness pair.
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::id::Vid;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        for (idx, name, typ) in [
+            (0, "a", ATyp::VPoly(1, 1)),
+            (1, "b", ATyp::VPoly(1, 1)),
+            (2, "c", ATyp::VPoly(1, 2)),
+            (3, "d", ATyp::VPoly(1, 1)),
+        ] {
+            let pref = PRef::from_var(
+                Vid::new(name),
+                NodeIndex::new(idx),
+                typ,
+                0,
+                Qualifier::Public,
+                Distribution::default(),
+            );
+            gresult.register(&pref);
+        }
+
+        let mk_ref = |idx, typ| mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(idx)), typ));
+
+        let mut add_derived_operand = |mul_idx, sub_idx| {
+            let mul_ref = PRef::from_node(
+                NodeIndex::new(mul_idx),
+                ATyp::VPoly(1, 2),
+                0,
+                Qualifier::Private,
+                Distribution::default(),
+            );
+            gresult.register(&mul_ref);
+            builder.add_op(
+                mul_ref.clone(),
+                Op::Bin(
+                    BinOp::Mul,
+                    mk_ref(0, ATyp::VPoly(1, 1)),
+                    mk_ref(1, ATyp::VPoly(1, 1)),
+                    ATyp::VPoly(1, 2),
+                ),
+                &mut gresult,
+            );
+
+            let sub_ref = PRef::from_node(
+                NodeIndex::new(sub_idx),
+                ATyp::VPoly(1, 2),
+                0,
+                Qualifier::Private,
+                Distribution::default(),
+            );
+            gresult.register(&sub_ref);
+            builder.add_op(
+                sub_ref.clone(),
+                Op::Bin(
+                    BinOp::Sub,
+                    mk_ref(mul_idx, ATyp::VPoly(1, 2)),
+                    mk_ref(2, ATyp::VPoly(1, 2)),
+                    ATyp::VPoly(1, 2),
+                ),
+                &mut gresult,
+            );
+            sub_ref
+        };
+
+        add_derived_operand(10, 11);
+        add_derived_operand(12, 13);
+
+        let q = PRef::from_node(
+            NodeIndex::new(20),
+            ATyp::VPoly(1, 1),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            q,
+            Op::Bin(
+                BinOp::Div,
+                mk_ref(11, ATyp::VPoly(1, 2)),
+                mk_ref(3, ATyp::VPoly(1, 1)),
+                ATyp::VPoly(1, 1),
+            ),
+            &mut gresult,
+        );
+
+        let r = PRef::from_node(
+            NodeIndex::new(21),
+            ATyp::VPoly(1, 0),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        builder.add_op(
+            r,
+            Op::Bin(
+                BinOp::Rem,
+                mk_ref(13, ATyp::VPoly(1, 2)),
+                mk_ref(3, ATyp::VPoly(1, 1)),
+                ATyp::VPoly(1, 0),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            builder.ns.div_wit.len(),
+            1,
+            "equivalent named derived operands should share one div_wit entry"
+        );
+    }
+
+    #[test]
     fn test_add_op_div_scalar_fallback() {
         // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
-        // `div_witnesses` returns None (poly_shape fails on scalar), so no
-        // witness side-table entry is created.
+        // Scalar fallback does not build a canonical polynomial witness key, so
+        // no witness side-table entry is created.
         use crate::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4833,6 +5503,227 @@ mod tests {
             builder.ns.div_wit.len(),
             0,
             "div_wit stays empty on scalar Div"
+        );
+    }
+
+    #[test]
+    fn test_add_op_scalar_div_vec_scalar_recurses_without_div_wit() {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::vec_scalar(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let op: GOp<ArkBls12_381> = Op::Bin(
+            BinOp::Div,
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::scalar())),
+            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::vec_scalar(2))),
+            ATyp::vec_scalar(2),
+        );
+
+        let before = gresult.basis.len();
+        builder.add_op(result.clone(), op, &mut gresult);
+
+        assert_eq!(gresult.basis.len() - before, 2);
+        let var = |p: &PRef| SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(p);
+        for i in 0..2 {
+            let b_i = pref_b.clone().with_index(i).unwrap();
+            let r_i = result.clone().with_index(i).unwrap();
+            let expected = &var(&pref_a) - &(&var(&b_i) * &var(&r_i));
+            assert!(
+                gresult.basis.iter().any(|row| row == &expected),
+                "basis missing scalar/vector div row {i}"
+            );
+        }
+        assert_eq!(builder.ns.div_wit.len(), 0);
+    }
+
+    #[test]
+    fn test_add_op_uni_div_scalar_slot_wise_without_div_wit() {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let before = gresult.basis.len();
+        builder.add_op(
+            result.clone(),
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Uni(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
+                ATyp::Uni(2),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(gresult.basis.len() - before, 3);
+        assert_eq!(builder.ns.div_wit.len(), 0);
+    }
+
+    #[test]
+    fn test_add_op_mle_div_scalar_slot_wise_without_div_wit() {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::scalar(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Mle(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let before = gresult.basis.len();
+        builder.add_op(
+            result,
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), ATyp::Mle(2))),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), ATyp::scalar())),
+                ATyp::Mle(2),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(gresult.basis.len() - before, 4);
+        assert_eq!(builder.ns.div_wit.len(), 0);
+    }
+
+    #[test]
+    fn test_add_op_vector_poly_div_rem_propagates_witness_cache() {
+        use crate::{PRef, Ref};
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+        let vec_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 2)), 2);
+        let div_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 1)), 2);
+        let rem_typ = ATyp::Vec(Box::new(ATyp::VPoly(1, 0)), 2);
+        for idx in 0..2 {
+            gresult.register(&PRef::from_node(
+                NodeIndex::new(idx),
+                vec_typ.clone(),
+                0,
+                Qualifier::Private,
+                Distribution::default(),
+            ));
+        }
+
+        builder.add_op(
+            PRef::from_node(
+                NodeIndex::new(2),
+                div_typ.clone(),
+                0,
+                Qualifier::Private,
+                Distribution::default(),
+            ),
+            Op::Bin(
+                BinOp::Div,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_typ.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec_typ.clone())),
+                div_typ,
+            ),
+            &mut gresult,
+        );
+        assert_eq!(builder.ns.div_wit.len(), 2);
+        let after_div = gresult.basis.len();
+
+        builder.add_op(
+            PRef::from_node(
+                NodeIndex::new(3),
+                rem_typ.clone(),
+                0,
+                Qualifier::Private,
+                Distribution::default(),
+            ),
+            Op::Bin(
+                BinOp::Rem,
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_typ.clone())),
+                mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), vec_typ)),
+                rem_typ,
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(builder.ns.div_wit.len(), 2);
+        assert_eq!(
+            gresult.basis.len() - after_div,
+            2,
+            "cached vector Rem should add only one link row per element"
         );
     }
 
@@ -5053,7 +5944,7 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
         // Two div_witnesses calls: inner (a/b) and outer ((a/b)/c).
@@ -5110,7 +6001,7 @@ mod tests {
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("N"), &4);
         let tc = trans_clos_from_src_sized(src, &sizes);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let mut gr = builder.build(tc);
 
         // Single (a, b) pair → one div_witnesses call → 1 div_wit cache entry (q_wit, r_wit).
@@ -5164,13 +6055,13 @@ mod tests {
                 verify(v[0] == a + c)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // Vec add verify: v[0] == a + c
         // The verify expression generates an equality constraint
         assert!(
-            gr.pl.len() >= 1,
+            !gr.pl.is_empty(),
             "pl should have at least 1 entry for the verify expression, got {}",
             gr.pl.len()
         );
@@ -5196,13 +6087,13 @@ mod tests {
                 verify(m3r0[0] == a + e)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // 2d Vec add: the verify expression is m3r0[0] == a+e
         // pl should contain the verify LHS mapped to a+e
         assert!(
-            gr.pl.len() >= 1,
+            !gr.pl.is_empty(),
             "pl should have at least 1 entry for the verify expression, got {}",
             gr.pl.len()
         );
@@ -5238,12 +6129,12 @@ mod tests {
                 verify(t3d0r0[0] == a + a)
             }"#;
         let tc = trans_clos_from_src(src);
-        let mut builder: GroebnerBuilder<ArkBls12_381, ElimTerm> = GroebnerBuilder::new();
+        let mut builder: GroebnerBuilder<ArkBls12_381, GrevLexTerm> = GroebnerBuilder::new();
         let gr = builder.build(tc);
 
         // 3d Vec add: same structure, verify(t3d0r0[0] == a + a)
         assert!(
-            gr.pl.len() >= 1,
+            !gr.pl.is_empty(),
             "pl should have at least 1 entry for the verify expression, got {}",
             gr.pl.len()
         );
@@ -5314,161 +6205,6 @@ mod tests {
             Some(expected),
             "pl[result] should map to v0+v1+v2"
         );
-    }
-
-    /// Build a generic (`Unknown`-fact) `Op::ReduceMap(+, xs, body)` over
-    /// `xs : [F; 3]` (node 0) into `result : F` (node 1). `add_op` must
-    /// complete without an `uncovered_op` panic — reaching the return proves
-    /// the op is modeled, not dropped.
-    fn build_reduce_map_case(
-        body: GOp<ArkBls12_381>,
-    ) -> (
-        GroebnerResult<ArkBls12_381, GrevLexTerm>,
-        crate::PRef,
-        crate::PRef,
-    ) {
-        use crate::{PRef, Ref};
-        use lang::ast::BinOp;
-        use lang::typ::{Distribution, Qualifier};
-        use petgraph::graph::NodeIndex;
-
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-        let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 3);
-        let pref_v = PRef::from_node(
-            NodeIndex::new(0),
-            vec_t.clone(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        gresult.register(&pref_v);
-        let result = PRef::from_node(
-            NodeIndex::new(1),
-            ATyp::scalar(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        let op: GOp<ArkBls12_381> = Op::ReduceMap(
-            BinOp::Add,
-            mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), vec_t)),
-            mk::<ArkBls12_381>(body),
-        );
-        builder.add_op(result.clone(), op, &mut gresult);
-        (gresult, pref_v, result)
-    }
-
-    /// Verify a generic reduce-map encoding by a concrete witness: derive the
-    /// full trace from `pl` to a fixpoint, confirm every ideal generator
-    /// vanishes at the witness, the derived `result` equals `expected`, and
-    /// the ideal forces `result = symbolic`.
-    fn assert_reduce_map_encoding(
-        gresult: &GroebnerResult<ArkBls12_381, GrevLexTerm>,
-        pref_v: &crate::PRef,
-        result: &crate::PRef,
-        xs: [ark_bls12_381::Fr; 3],
-        expected: ark_bls12_381::Fr,
-        symbolic: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm>,
-    ) {
-        use ark_bls12_381::Fr;
-        let lit = |f: Fr| SparsePolynomial::<Fr, GrevLexTerm>::lit(&f);
-        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
-
-        // 1. Seed inputs, then resolve `pl` to a fixpoint.
-        let mut subst: Ctx<crate::PRef, SparsePolynomial<Fr, GrevLexTerm>> = Ctx::new();
-        for (k, x) in [0usize, 1, 2]
-            .iter()
-            .map(|&i| (pref_v.clone().with_slot(i).unwrap(), xs[i]))
-        {
-            subst.insert(&k, &lit(x));
-        }
-        let keys = gresult.pl.keys();
-        loop {
-            let mut progress = false;
-            for k in keys.iter() {
-                if subst.contains(k) {
-                    continue;
-                }
-                let resolved = gresult.pl.get(k).unwrap().clone().inline_vars(&subst).0;
-                if resolved.is_constant() {
-                    subst.insert(k, &resolved);
-                    progress = true;
-                }
-            }
-            if !progress {
-                break;
-            }
-        }
-
-        // 2. Every generator vanishes at the witness (ideal is satisfiable).
-        for b in gresult.basis.iter() {
-            assert!(
-                b.clone().inline_vars(&subst).0.is_zero(),
-                "generator does not vanish at witness: {:?}",
-                b
-            );
-        }
-
-        // 3. The encoding's derived result equals the externally-computed answer.
-        assert_eq!(
-            subst.get(result).cloned(),
-            Some(lit(expected)),
-            "reduce-map result wrong under concrete witness"
-        );
-
-        // 4. The ideal *forces* result to the symbolic reduce-map sum.
-        let membership = &var(result) - &symbolic;
-        assert!(
-            gresult.basis.buchberger::<8>().reduce(membership).is_zero(),
-            "ideal does not force result to the symbolic reduce-map sum"
-        );
-    }
-
-    #[test]
-    fn test_reduce_map_groebner_identity_body() {
-        // reduce(+, [x for x in xs]) == x0 + x1 + x2
-        let body: GOp<ArkBls12_381> = Op::LoopParam(0, ATyp::scalar());
-        let (gresult, pref_v, result) = build_reduce_map_case(body);
-
-        use ark_bls12_381::Fr;
-        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
-        let xs = [Fr::from(3u64), Fr::from(5u64), Fr::from(7u64)];
-        let symbolic = &var(&pref_v.clone().with_slot(0).unwrap())
-            + &(&var(&pref_v.clone().with_slot(1).unwrap())
-                + &var(&pref_v.clone().with_slot(2).unwrap()));
-        assert_reduce_map_encoding(
-            &gresult,
-            &pref_v,
-            &result,
-            xs,
-            xs[0] + xs[1] + xs[2],
-            symbolic,
-        );
-    }
-
-    #[test]
-    fn test_reduce_map_groebner_square_body() {
-        use lang::ast::BinOp;
-        // reduce(+, [x*x for x in xs]) == x0^2 + x1^2 + x2^2
-        let scalar_t = ATyp::scalar();
-        let body: GOp<ArkBls12_381> = Op::Bin(
-            BinOp::Mul,
-            mk::<ArkBls12_381>(Op::LoopParam(0, scalar_t.clone())),
-            mk::<ArkBls12_381>(Op::LoopParam(0, scalar_t.clone())),
-            scalar_t,
-        );
-        let (gresult, pref_v, result) = build_reduce_map_case(body);
-
-        use ark_bls12_381::Fr;
-        let var = |p: &crate::PRef| SparsePolynomial::<Fr, GrevLexTerm>::var(p);
-        let sq = |p: &crate::PRef| &var(p) * &var(p);
-        let symbolic = &(&sq(&pref_v.clone().with_slot(0).unwrap())
-            + &sq(&pref_v.clone().with_slot(1).unwrap()))
-            + &sq(&pref_v.clone().with_slot(2).unwrap());
-        let xs = [Fr::from(3u64), Fr::from(5u64), Fr::from(7u64)];
-        let expected = xs[0] * xs[0] + xs[1] * xs[1] + xs[2] * xs[2];
-        assert_reduce_map_encoding(&gresult, &pref_v, &result, xs, expected, symbolic);
     }
 
     #[test]
@@ -5593,13 +6329,13 @@ mod tests {
         assert_eq!(lag[0][1], Fr::from(5u64) * (-two_inv));
         assert_eq!(lag[0][2], two_inv);
 
-        for i in 0..3 {
-            for j in 0..3 {
+        for (i, basis_poly) in lag.iter().enumerate() {
+            for (j, x) in xs.iter().copied().enumerate() {
                 let mut val = Fr::zero();
                 let mut xpow = Fr::one();
-                for k in 0..lag[i].len() {
-                    val += lag[i][k] * xpow;
-                    xpow *= xs[j];
+                for coeff in basis_poly {
+                    val += *coeff * xpow;
+                    xpow *= x;
                 }
                 if i == j {
                     assert_eq!(val, Fr::one(), "L_{}({}) should be 1", i, j + 1);
@@ -5893,10 +6629,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-interpolate-points"
-    )]
-    fn test_add_op_interpolate_variable_points_panics_explicitly() {
+    fn test_add_op_interpolate_symbolic_points() {
         use crate::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5904,27 +6637,106 @@ mod tests {
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
+        // Two symbolic points x0, x1 stored as PRef variables
+        let scalar_t = ATyp::scalar();
         let vec_t = ATyp::Vec(Box::new(ATyp::scalar()), 2);
-        let pref_points = PRef::from_node(
+        let pref_x0 = PRef::from_node(
             NodeIndex::new(0),
-            vec_t.clone(),
+            scalar_t.clone(),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
-        let pref_evals = PRef::from_node(
+        let pref_x1 = PRef::from_node(
             NodeIndex::new(1),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_x0);
+        gresult.register(&pref_x1);
+
+        // Points = [x0, x1]
+        let pref_points = PRef::from_node(
+            NodeIndex::new(2),
             vec_t.clone(),
             0,
             Qualifier::Private,
             Distribution::default(),
         );
         gresult.register(&pref_points);
-        gresult.register(&pref_evals);
+        let x0_slot = pref_points
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let x1_slot = pref_points
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        gresult
+            .pl
+            .insert(&x0_slot, &SparsePolynomial::var(&pref_x0));
+        gresult
+            .pl
+            .insert(&x1_slot, &SparsePolynomial::var(&pref_x1));
 
+        // Evals = [y0, y1]
+        let pref_y0 = PRef::from_node(
+            NodeIndex::new(3),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_y1 = PRef::from_node(
+            NodeIndex::new(4),
+            scalar_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_y0);
+        gresult.register(&pref_y1);
+
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(5),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_evals);
+        let y0_slot = pref_evals
+            .clone()
+            .with_index(0)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        let y1_slot = pref_evals
+            .clone()
+            .with_index(1)
+            .unwrap()
+            .with_slot(0)
+            .unwrap();
+        gresult
+            .pl
+            .insert(&y0_slot, &SparsePolynomial::var(&pref_y0));
+        gresult
+            .pl
+            .insert(&y1_slot, &SparsePolynomial::var(&pref_y1));
+
+        // Result = interpolate([x0, x1], [y0, y1])
+        // p(t) = y0 * (t - x1) / (x0 - x1) + y1 * (t - x0) / (x1 - x0)
+        //      = y0 * d01 * t - y0 * d01 * x1 + y1 * d10 * t - y1 * d10 * x0
+        // where d01 * (x0 - x1) = 1 and d10 * (x1 - x0) = 1
         let result_typ = ATyp::uni(2);
         let pref_result = PRef::from_node(
-            NodeIndex::new(2),
+            NodeIndex::new(6),
             result_typ.clone(),
             0,
             Qualifier::Private,
@@ -5932,12 +6744,121 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
-        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
+        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(2)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(5)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
         builder.add_op(pref_result.clone(), op, &mut gresult);
+
+        // Verify: basis should contain d-variable equations and result equations.
+        // For interpolate([x0, x1], [y0, y1]) with 2 symbolic points:
+        // L_0(t) = d01*(t - x1), L_1(t) = d10*(t - x0)
+        // p[0] = -y0*d01*x1 - y1*d10*x0  (constant term)
+        // p[1] = y0*d01 + y1*d10          (linear coefficient)
+        // p[2] = 0                         (no quadratic term)
+        let r0 = pref_result.clone().with_slot(0).unwrap();
+        let r1 = pref_result.clone().with_slot(1).unwrap();
+        let r2 = pref_result.clone().with_slot(2).unwrap();
+
+        let d_vars: Vec<_> = gresult
+            .var_order
+            .iter()
+            .filter(|v| {
+                v.name
+                    .as_ref()
+                    .map_or(false, |vid| vid.0.contains("interp_inv"))
+            })
+            .collect();
+        assert_eq!(d_vars.len(), 2, "should have 2 d-variables");
+        let d01 = d_vars[0];
+        let d10 = d_vars[1];
+
+        let r0_poly = gresult.pl.get(&r0).cloned().unwrap();
+        let r1_poly = gresult.pl.get(&r1).cloned().unwrap();
+        let r2_poly = gresult.pl.get(&r2).cloned().unwrap();
+
+        let neg_one = -<ark_bls12_381::Fr as ark_ff::One>::one();
+        // Expected: p[0] = -y0*d01*x1 - y1*d10*x0, p[1] = y0*d01 + y1*d10
+        // evals_polys uses slot PRefs (y0_slot, y1_slot) as monomial variables.
+        // xs_polys uses resolved PRefs from pl (pref_x0, pref_x1) as monomial variables.
+        let expected_r0 = SparsePolynomial::var(&y0_slot)
+            * (SparsePolynomial::var(d01)
+                * SparsePolynomial::lit(&neg_one)
+                * SparsePolynomial::var(&pref_x1))
+            + SparsePolynomial::var(&y1_slot)
+                * (SparsePolynomial::var(d10)
+                    * SparsePolynomial::lit(&neg_one)
+                    * SparsePolynomial::var(&pref_x0));
+        let expected_r1 = SparsePolynomial::var(&y0_slot) * SparsePolynomial::var(d01)
+            + SparsePolynomial::var(&y1_slot) * SparsePolynomial::var(d10);
+
+        assert_eq!(
+            r0_poly, expected_r0,
+            "p[0] should equal expected constant term"
+        );
+        assert_eq!(
+            r1_poly, expected_r1,
+            "p[1] should equal expected linear coefficient"
+        );
+        assert!(r2_poly.is_zero(), "p[2] should be zero");
+
+        // Verify: result equations in basis (p[k] - r_k = 0)
+        let r0_eq = &r0_poly - &SparsePolynomial::var(&r0);
+        let r1_eq = &r1_poly - &SparsePolynomial::var(&r1);
+        let r2_eq = &r2_poly - &SparsePolynomial::var(&r2);
+        assert!(
+            gresult.basis.iter().any(|p| *p == r0_eq),
+            "basis should contain p[0] - r0 equation"
+        );
+        assert!(
+            gresult.basis.iter().any(|p| *p == r1_eq),
+            "basis should contain p[1] - r1 equation"
+        );
+        assert!(
+            gresult.basis.iter().any(|p| *p == r2_eq),
+            "basis should contain p[2] - r2 equation"
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Groebner operation has no polynomial-ideal treatment at duplicate-interpolate-points"
+    )]
+    fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
+        use crate::PRef;
+        use backend::op::mk;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let evals_typ = ATyp::vec_scalar(3);
+        let pref_evals = PRef::from_node(
+            NodeIndex::new(1),
+            evals_typ.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_evals);
+
+        let pref_result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::uni(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_result);
+
+        let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
+        let evals = Op::Ref(crate::Ref::new(NodeIndex::new(1)), evals_typ);
+        let op: GOp<ArkBls12_381> =
+            Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
+
+        builder.add_op(pref_result, op, &mut gresult);
     }
 
     #[test]
@@ -6225,6 +7146,174 @@ mod tests {
         assert!(
             !gresult.basis.is_empty(),
             "Reduce Div on VPoly should emit identity rows via handle_div_rem"
+        );
+    }
+
+    #[test]
+    fn reduce_mul_poly_accumulator_widens() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let elem_t = ATyp::Uni(1);
+        let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(3),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&result);
+
+        builder.add_op(
+            result.clone(),
+            Op::Reduce(
+                BinOp::Mul,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+            ),
+            &mut gresult,
+        );
+
+        let high_slot = result.with_slot(3).unwrap();
+        assert!(
+            gresult.basis.iter().any(|row| row.contains(&high_slot)),
+            "reduce(*) should lower the widened Uni(3) accumulator all the way to the final high-degree slot"
+        );
+    }
+
+    #[test]
+    fn reduce_rem_poly_left_fold_semantics() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let elem_t = ATyp::Uni(3);
+        let vec_t = ATyp::Vec(Box::new(elem_t.clone()), 3);
+        let pref_v = PRef::from_node(
+            NodeIndex::new(0),
+            vec_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_v);
+
+        let result = PRef::from_node(
+            NodeIndex::new(1),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&result);
+
+        builder.add_op(
+            result.clone(),
+            Op::Reduce(
+                BinOp::Rem,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            result.typ.physical_len(),
+            3,
+            "Uni(3) % Uni(3) % Uni(3) is lowered as the left-fold remainder type Uni(2)"
+        );
+        assert!(
+            !gresult.basis.is_empty(),
+            "reduce(%) should emit constraints for every polynomial fold step"
+        );
+    }
+
+    #[test]
+    fn poly_rem_smaller_dividend_passes_through() {
+        use crate::PRef;
+        use lang::ast::BinOp;
+        use lang::typ::{Distribution, Qualifier};
+        use petgraph::graph::NodeIndex;
+
+        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
+        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
+
+        let dividend_t = ATyp::Uni(1);
+        let divisor_t = ATyp::Uni(3);
+        let pref_a = PRef::from_node(
+            NodeIndex::new(0),
+            dividend_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        let pref_b = PRef::from_node(
+            NodeIndex::new(1),
+            divisor_t.clone(),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&pref_a);
+        gresult.register(&pref_b);
+
+        let result = PRef::from_node(
+            NodeIndex::new(2),
+            ATyp::Uni(2),
+            0,
+            Qualifier::Private,
+            Distribution::default(),
+        );
+        gresult.register(&result);
+
+        builder.add_op(
+            result.clone(),
+            Op::Bin(
+                BinOp::Rem,
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), dividend_t)),
+                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), divisor_t)),
+                ATyp::Uni(2),
+            ),
+            &mut gresult,
+        );
+
+        assert_eq!(
+            builder.ns.div_wit.len(),
+            0,
+            "pass-through remainder allocates no div_wit"
+        );
+        for i in 0..2 {
+            let src = pref_a.clone().with_slot(i).unwrap();
+            let dst = result.clone().with_slot(i).unwrap();
+            assert!(
+                gresult
+                    .basis
+                    .iter()
+                    .any(|row| row.contains(&src) && row.contains(&dst)),
+                "pass-through remainder should bind source slot {i} to the result"
+            );
+        }
+        let padded = result.with_slot(2).unwrap();
+        assert!(
+            gresult.basis.iter().any(|row| row.contains(&padded)),
+            "lifted pass-through remainder should constrain the padded high slot"
         );
     }
 
@@ -6848,22 +7937,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_add_scalar_poly_broadcast() {
-        use crate::PRef;
-        use lang::ast::BinOp;
+    fn scalar_poly_binop_result(
+        op: BinOp,
+        scalar_left: bool,
+        poly_typ: ATyp,
+    ) -> (
+        crate::PRef,
+        crate::PRef,
+        crate::PRef,
+        GroebnerResult<ArkBls12_381, GrevLexTerm>,
+    ) {
+        use crate::{PRef, Ref};
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
         let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
         let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
 
-        let s = ATyp::scalar();
-        let uni2 = ATyp::Uni(2);
-
+        let scalar_typ = ATyp::scalar();
         let pref_s = PRef::from_node(
             NodeIndex::new(0),
-            s.clone(),
+            scalar_typ.clone(),
             0,
             Qualifier::Public,
             Distribution::default(),
@@ -6872,7 +7966,7 @@ mod tests {
 
         let pref_p = PRef::from_node(
             NodeIndex::new(1),
-            uni2.clone(),
+            poly_typ.clone(),
             0,
             Qualifier::Public,
             Distribution::default(),
@@ -6881,29 +7975,146 @@ mod tests {
 
         let pref_r = PRef::from_node(
             NodeIndex::new(2),
-            uni2.clone(),
+            poly_typ.clone(),
             0,
             Qualifier::Public,
             Distribution::default(),
         );
         gresult.register(&pref_r);
 
+        let scalar_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(0)), scalar_typ));
+        let poly_op = mk::<ArkBls12_381>(Op::Ref(Ref::new(NodeIndex::new(1)), poly_typ.clone()));
+        let (left, right) = if scalar_left {
+            (scalar_op, poly_op)
+        } else {
+            (poly_op, scalar_op)
+        };
+
         builder.add_op(
             pref_r.clone(),
-            Op::Bin(
-                BinOp::Add,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni2.clone())),
-                uni2.clone(),
-            ),
+            Op::Bin(op, left, right, poly_typ),
             &mut gresult,
         );
 
+        (pref_s, pref_p, pref_r, gresult)
+    }
+
+    fn assert_result_slot(
+        gresult: &GroebnerResult<ArkBls12_381, GrevLexTerm>,
+        pref_r: &crate::PRef,
+        slot: usize,
+        expected: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm>,
+    ) {
+        let r_slot = pref_r.with_slot(slot).unwrap();
+        let stored = gresult.pl.get(&r_slot).unwrap();
+        assert_eq!(*stored, expected, "result slot {slot} mismatch");
+    }
+
+    #[test]
+    fn test_add_scalar_poly_broadcast() {
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Add, true, ATyp::Uni(2));
         assert_eq!(
             gresult.basis.len(),
             3,
-            "Scalar + Uni(2) should produce 3 basis rows"
+            "Scalar + Uni(2) should produce one row per coefficient slot"
         );
+
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        for i in 0..3 {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == 0 { &s + &p } else { p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_uni_add_scalar_lifts_to_constant_slot_only() {
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Add, false, ATyp::Uni(2));
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        for i in 0..3 {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == 0 { &p + &s } else { p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_uni_sub_scalar_lifts_to_constant_slot_only() {
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Sub, false, ATyp::Uni(2));
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        for i in 0..3 {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == 0 { &p - &s } else { p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_scalar_sub_uni_negates_nonconstant_slots() {
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Sub, true, ATyp::Uni(2));
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        for i in 0..3 {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == 0 { &s - &p } else { -p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_scalar_add_vpoly_lifts_to_constant_slot_only() {
+        let poly_typ = ATyp::VPoly(2, 2);
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Add, true, poly_typ.clone());
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let zero_slot = multi_indices(2, 2)
+            .iter()
+            .position(|idx| idx.iter().all(|degree| *degree == 0))
+            .unwrap();
+        for i in 0..poly_typ.physical_len() {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == zero_slot { &s + &p } else { p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_scalar_sub_vpoly_negates_nonconstant_slots() {
+        let poly_typ = ATyp::VPoly(2, 2);
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Sub, true, poly_typ.clone());
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        let zero_slot = multi_indices(2, 2)
+            .iter()
+            .position(|idx| idx.iter().all(|degree| *degree == 0))
+            .unwrap();
+        for i in 0..poly_typ.physical_len() {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            let expected = if i == zero_slot { &s - &p } else { -p };
+            assert_result_slot(&gresult, &pref_r, i, expected);
+        }
+    }
+
+    #[test]
+    fn test_scalar_add_mle_broadcasts_to_all_evaluation_slots() {
+        let poly_typ = ATyp::Mle(2);
+        let (pref_s, pref_p, pref_r, gresult) =
+            scalar_poly_binop_result(BinOp::Add, true, poly_typ.clone());
+        let s = SparsePolynomial::<ark_bls12_381::Fr, GrevLexTerm>::var(&pref_s);
+        for i in 0..poly_typ.physical_len() {
+            let p_slot_pref = pref_p.with_slot(i).unwrap();
+            let p = SparsePolynomial::var(&p_slot_pref);
+            assert_result_slot(&gresult, &pref_r, i, &s + &p);
+        }
     }
 
     #[test]
@@ -8824,10 +10035,4 @@ mod tests {
             gresult.basis.len()
         );
     }
-
-    // -----------------------------------------------------------------
-    // Task 5 fix: dynamic/non-singleton round panics explicitly
-    // A non-singleton Fin range for 'round' must never silently default
-    // to round==0; it must panic with a clear message.
-    // -----------------------------------------------------------------
 }

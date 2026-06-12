@@ -7,7 +7,6 @@ use crate::PRef;
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
 use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
-use log::debug;
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
@@ -15,8 +14,6 @@ use log::debug;
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerResult<C, GrevLexTerm>,
     pub verifier: GroebnerResult<C, GrevLexTerm>,
-    /// Public input args from the verifier's TransClos, used to determine
-    /// verifier-visible variables.
     pub public_args: Set<PRef>,
 }
 
@@ -24,12 +21,12 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
         let mut builder = GroebnerBuilder::new();
 
-        let mut prover_result = builder.build(TransClos::prover(dag));
+        let prover_tc = TransClos::prover(dag);
+        let mut prover_result = builder.build(prover_tc);
 
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
-        let verifier_tc = TransClos::verifier(dag);
         let public_args: Set<PRef> = dag
             .input_args()
             .into_iter()
@@ -38,7 +35,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
                 if pref.is_public() { Some(pref) } else { None }
             })
             .collect();
-        let verifier_result = builder.build(verifier_tc);
+        let verifier_result = builder.build(TransClos::verifier(dag));
 
         Self {
             prover: prover_result,
@@ -51,19 +48,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     ///
     /// W is the packed monomial width. Caller must ensure W is appropriate
     /// for the problem size (W=128 supports up to 1023 variables).
-    pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
-        self.prover.run::<W>();
-        self.verifier.run::<W>();
-        debug!("Prover:\n{}", self.prover);
-        debug!("Impl:\n{}", self.verifier);
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+        self.prover.run::<128>();
 
-        // Verifier-visible variables: prover computation nodes + public input arguments.
-        // Private inputs are prover-only and not visible to the verifier.
-        let prover_vars = self.prover.vars();
-        let verifier_visible = prover_vars.union(self.public_args.clone());
-
-        // Check all verifier polynomials whose variables are verifier-visible.
-        // Polynomials with verifier-internal nodes are skipped.
+        let verifier_visible = self.prover.vars().union(self.public_args.clone());
         for p in self.verifier.basis.iter() {
             let poly_vars = p.vars();
             if poly_vars.iter().all(|v| verifier_visible.contains(v)) {
@@ -101,7 +89,7 @@ mod tests {
                 verify(a == b)
             }"#;
 
-        debug!("Parsing example: {}", ex);
+        log::debug!("Parsing example: {}", ex);
         let m = UModule::from_str(ex)
             .unwrap()
             .concretize(&Ctx::new())
@@ -112,7 +100,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run::<8>().is_ok());
+        assert!(ca.run().is_ok());
     }
 
     #[test]
@@ -135,7 +123,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(ca.run::<8>().is_ok(), "Schnorr protocol should be complete");
+        assert!(ca.run().is_ok(), "Schnorr protocol should be complete");
     }
 
     /// Regression: completeness relation basis must share the same variable
@@ -163,7 +151,7 @@ mod tests {
         // This only passes if the relation `a == b` is in the same namespace
         // as the prover/verifier polynomials.
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "eq_proof should be complete (relation namespace must match)"
         );
     }
@@ -189,7 +177,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "eq_proof with two verify statements should be complete"
         );
     }
@@ -218,7 +206,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "eq_proof with two independent verify statements should be complete"
         );
     }
@@ -248,7 +236,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_err(),
+            ca.run().is_err(),
             "verify(x == 0) is not implied by a == b, so protocol should be incomplete"
         );
     }
@@ -290,7 +278,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "Both verifies are complete: inlined verify(x==x) is trivial, verify(z==y) follows from a==b"
         );
     }
@@ -361,7 +349,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_err(),
+            ca.run().is_err(),
             "Protocol with verify(r == 0) should be incomplete when relation is a == b"
         );
     }
@@ -388,7 +376,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_err(),
+            ca.run().is_err(),
             "Protocol with unused public input c == 0 should be incomplete"
         );
     }
@@ -427,7 +415,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "Mle × Mle equality under relation a==b should be complete"
         );
     }
@@ -461,7 +449,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "named-let scalar product should be complete"
         );
     }
@@ -494,10 +482,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut ca = CompletenessAnalysis::from_input(&g);
-        assert!(
-            ca.run::<8>().is_ok(),
-            "named-let single-eval should be complete"
-        );
+        assert!(ca.run().is_ok(), "named-let single-eval should be complete");
     }
 
     /// Part B.5 regression #3: named-let binding a partial-eval (k < n)
@@ -527,8 +512,64 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "named-let partial-eval should be complete"
+        );
+    }
+
+    #[test]
+    fn materialized_partial_mle_eval_keeps_inferred_uni_shape() {
+        let ex = r#"
+            proto materialized_partial<F: Field>(public vals: [F; 4]) where vals == vals {
+                x <- challenge<F>;
+                let q = eval(mle(vals), [x]);
+                let z = q + poly([0, 0]);
+                verify(z == z)
+            }"#;
+
+        let sizes = Ctx::new();
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        assert!(
+            ca.run().is_ok(),
+            "materialized partial MLE eval consumed as Uni(1) should be complete"
+        );
+    }
+
+    #[test]
+    fn trans_clos_partial_mle_eval_boundary_is_mle() {
+        let ex = r#"
+            proto trans_clos_eval_shape<F: Field>(public vals: [F; 4]) where vals == vals {
+                x <- challenge<F>;
+                let q = eval(mle(vals), [x]);
+                let z = q + poly([0, 0]);
+                verify(z == z)
+            }"#;
+
+        let sizes = Ctx::new();
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let tc = crate::analyses::trans_clos::TransClos::verifier(&g);
+
+        assert!(
+            tc.clos
+                .iter()
+                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(..))
+                    && op.typ() == backend::ATyp::Mle(1)),
+            "transitive closure should preserve materialized partial MLE eval as Mle(1)"
+        );
+        assert!(
+            !tc.clos
+                .iter()
+                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(..))
+                    && op.typ() == backend::ATyp::Uni(1)),
+            "transitive closure should not recompute the same eval as Uni(1)"
         );
     }
 
@@ -557,7 +598,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "named-let univariate-eval should be complete"
         );
     }
@@ -601,7 +642,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "eval-based Mle product identity should be complete"
         );
     }
@@ -698,7 +739,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "fft(ifft(v)) == v should be complete via DFT basis equations"
         );
     }
@@ -734,7 +775,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "fft(a + b) == fft(a) + fft(b) should be complete"
         );
     }
@@ -765,7 +806,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "ifft(u + v) == ifft(u) + ifft(v) should be complete"
         );
     }
@@ -788,7 +829,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "reduce(+, [a,b,c]) == a+b+c should be complete"
         );
     }
@@ -811,7 +852,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "reduce(*, [a,b,c]) == a*b*c should be complete"
         );
     }
@@ -834,7 +875,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "reduce(-, [a,b,c]) == a-b-c should be complete"
         );
     }
@@ -857,7 +898,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "literal scalar binding should fold through Gröbner basis"
         );
     }
@@ -884,7 +925,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "pair(a*P, Q) == pair(P, a*Q) should be complete via bilinearity"
         );
     }
@@ -914,7 +955,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "pair(P1+P2, Q) == pair(P1,Q) + pair(P2,Q) should be complete"
         );
     }
@@ -939,7 +980,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "pair(P, Q) == pair(P, Q) (reflexive) should be complete"
         );
     }
@@ -967,7 +1008,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "pair((a*b)*P, Q) == pair(a*P, b*Q) should be complete via bilinearity"
         );
     }
@@ -1008,7 +1049,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "(p*d)/d == p should be complete via D·Q + R = P"
         );
     }
@@ -1042,8 +1083,56 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "verify(p == d*q + r) should collapse directly to the shared identity row"
+        );
+    }
+
+    #[test]
+    fn completeness_uses_verifier_closure_excludes_prover_only_behind_transcript() {
+        let ex = r#"
+            proto transcript_boundary<F: Field>(private x: F, public y: F) where y == y {
+                t <- x;
+                verify(t == t)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let ca = CompletenessAnalysis::from_input(&g);
+
+        assert!(
+            ca.verifier
+                .vars()
+                .iter()
+                .all(|p| !p.qualifier.is_private() || p.from_transcript),
+            "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
+        );
+    }
+
+    /// Regression for PR #153: a relation-side `%` and prover-side `/`
+    /// over the same source-level polynomial division should share the
+    /// quotient/remainder witnesses across closures.
+    #[test]
+    fn hadamard_div_wit_cross_closure_completeness() {
+        use lang::id::Tid;
+
+        let ex = include_str!("../../../examples/hadamard/hadamard.zippel");
+        let mut sizes = Ctx::new();
+        sizes.insert(&Tid::new("S"), &2);
+        sizes.insert(&Tid::new("N"), &1);
+        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        let completeness = ca.run();
+        assert!(
+            completeness.is_ok(),
+            "relation-side remainder zero should complete verifier equation using the shared quotient witness, got {completeness:?}"
         );
     }
 
@@ -1076,7 +1165,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "KZG opening shape q * (x - z) == p - y should be complete"
         );
     }
@@ -1129,7 +1218,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_ok(),
+            ca.run().is_ok(),
             "full KZG should be complete via phase-12 pairing + phase-13 poly-div"
         );
     }
@@ -1157,7 +1246,7 @@ mod tests {
 
         let mut ca = CompletenessAnalysis::from_input(&g);
         assert!(
-            ca.run::<8>().is_err(),
+            ca.run().is_err(),
             "verifier equation must be reduced or rejected, not silently skipped"
         );
     }

@@ -5,6 +5,16 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
     println!("=== Chaum-Pedersen (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/cp/cp.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -54,7 +64,15 @@ fn main() {
         Ok(()) => println!("ZK:             ✓"),
         Err(e) => println!("ZK:             ✗ {}", e),
     }
-    println!("Analysis time:  {analysis_elapsed:.2?}");
+
+    let soundness_start = Instant::now();
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    let soundness_elapsed = soundness_start.elapsed();
+    match &soundness_result {
+        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+        Err(e) => println!("Soundness:      ✗ {}", e),
+    }
+    println!("Analysis time:  {analysis_elapsed:.2?} + {soundness_elapsed:.2?} soundness");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

@@ -10,6 +10,16 @@ const N_PUB: usize = 1; // Public input dimension
 const M: usize = 1; // Number of constraints (rows in A, B, C)
 
 fn main() {
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
     println!(
         "=== R1CS Sigma (ArkBls12_381, N={}, n={}, m={}) ===",
         N, N_PUB, M
@@ -47,14 +57,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
+    // Static analysis (completeness, ZK, & soundness)
     println!("\n--- Static Analysis ---");
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    analysis_handler.compile(&Ctx::new());
+
+    let analysis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         analysis_handler.minimal_analysis()
-    });
-    match analysis_result {
+    }));
+    match analysis {
         Ok(analysis) => {
             match &analysis.completeness {
                 Ok(()) => println!("Completeness:   ✓"),
@@ -67,6 +79,15 @@ fn main() {
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
+
+    let soundness_start = Instant::now();
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    let soundness_elapsed = soundness_start.elapsed();
+    match &soundness_result {
+        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
+        Err(e) => println!("Soundness:      ✗ {}", e),
+    }
+    println!("Soundness time: {soundness_elapsed:.2?}");
 }
 
 /// Build a valid R1CS instance (A, B, C, x, w) such that Az ∘ Bz = Cz.

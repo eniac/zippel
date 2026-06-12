@@ -9,8 +9,13 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         public gen_g1: G1, public gen_g2: G2, public srs_g2_s: G2)
         where dot(poly_coeffs, [eval_point ^ i for i in 0..N]) == eval_result && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2_s) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) {
         
-        let poly_x = poly(poly_coeffs);
-        commitment <- dot(poly_coeffs, srs_g1);
+        // Blind by a random multiple of (X - eval_point); this preserves the
+        // claimed evaluation while masking the committed/opened coefficients.
+        let blind = random<F>;
+        let vanishing_blind_coeffs = [-blind * eval_point, blind];
+        let blinded_coeffs = poly_coeffs + vanishing_blind_coeffs;
+        let poly_x = poly(blinded_coeffs);
+        commitment <- dot(blinded_coeffs, srs_g1);
 
         let quotient_poly = (poly_x - eval_result) / poly([-eval_point, 1]);
 
@@ -18,7 +23,7 @@ proto kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         let srs_g1_truncated = srs_g1[0..N-1];
         proof <- dot(quotient_coeffs, srs_g1_truncated);
 
-        let pairing_lhs = pair(proof, (srs_g2_s) - (gen_g2 * eval_point));
+        let pairing_lhs = pair(proof, srs_g2_s - gen_g2 * eval_point);
         let pairing_rhs = pair(commitment - eval_result * gen_g1, gen_g2);
         verify(pairing_lhs == pairing_rhs)
 }

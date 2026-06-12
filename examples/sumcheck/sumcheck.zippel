@@ -13,6 +13,7 @@ fn sample_univariate<F: Field, MAX_DEGREE_CONST: Size>(
 // residual polynomial until `Poly<F,1>`.
 //
 // orig_poly was removed: the final subclaim `eval(orig_poly, full_challenges)`
+// for the original-polynomial opening
 // is delegated to the prover (matches hyperplonk's SumCheck::verify which
 // returns a subclaim and leaves the polynomial opening to the caller).
 // With orig_poly gone from the protocol surface, the verifier no longer

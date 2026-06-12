@@ -36,7 +36,8 @@
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
 use graph::PRef;
-use graph::analyses::groebner::{ElimTerm, GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
+use graph::analyses::groebner::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
+use graph::analyses::knowledge::ElimTerm;
 
 #[path = "../benches/groebner_shared.rs"]
 mod shared;

@@ -1203,6 +1203,40 @@ fn pin_map() {
     assert!(gs[0] == expected);
 }
 
+/// Map over a polynomial vector must materialize the loop binder as the
+/// input element type, even when the map body returns scalars.
+#[test]
+fn pin_map_poly_to_scalar_binder_type() {
+    let src = r#"
+        fn first_coef<F: Field>(p: Uni<F, 3>) -> F {
+            let c = coef(p);
+            c[0]
+        }
+        fn f<F: Field>(public pv: [Uni<F, 3>; 2]) -> [F; 2] {
+            [first_coef(x) for x in pv]
+        }
+    "#;
+    let gs = parse_and_build(src);
+    let dag = &gs[0];
+    let ram_node_types: Vec<_> = dag
+        .graph
+        .node_weights()
+        .filter_map(|node| match node {
+            Node::Op(op, _) if matches!(op.get(), GOp::Ram(_, _)) => Some(op.typ()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        ram_node_types
+            .iter()
+            .filter(|typ| **typ == ATyp::Uni(3))
+            .count(),
+        2,
+        "map binders over pv must be materialized as Uni<F, 3>, not as the scalar result type"
+    );
+}
+
 /// Ram expression: `a[0]` produces nested Ram op, no graph node.
 /// Tests: CExp::Ram → GOp::ram producing compound op in ret node.
 #[test]

@@ -2,9 +2,8 @@
 use crate::WritePdf;
 use crate::analyses::TransClos;
 use crate::analyses::error::AnalysisError;
-use crate::analyses::groebner::{
-    ElimTerm, GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial,
-};
+use crate::analyses::groebner::monomial::{ElimMono, ElimStrategy};
+use crate::analyses::groebner::{GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
 use crate::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
@@ -12,7 +11,23 @@ use backend::op::HasOpFactory;
 use log::debug;
 use log::warn;
 
+/// Knowledge-analysis elimination strategy: Local variables and private-uniform
+/// variables (random masks) are eliminated first.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Knowledge;
+
+impl ElimStrategy for Knowledge {
+    fn eliminate_var(v: &PRef) -> bool {
+        v.qualifier == lang::typ::Qualifier::Local
+            || (v.qualifier == lang::typ::Qualifier::Private && v.distribution.is_uniform())
+    }
+}
+
+/// Knowledge-analysis elimination term. Type alias for the common case.
+pub type ElimTerm = ElimMono<Knowledge>;
+
 /// Perform a knowledge analysis using Groebner bases.
+#[allow(unnameable_types)]
 pub struct KnowledgeAnalysis<C: ArkConfig> {
     result: GroebnerResult<C, ElimTerm>,
     /// Gröbner basis of the relation (precondition) alone, used to filter
@@ -36,21 +51,23 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         let mut gb = GroebnerBuilder::new();
         let mut result = gb.build(TransClos::prover(dag));
 
-        if dag.relation_node().is_some() {
-            let rel_result = gb.build(TransClos::relation(dag));
-            result.merge(&rel_result);
-        }
-
         let relation_basis = if dag.relation_node().is_some() {
-            // Build a relation-only basis using the *same* canonical args and
-            // packed width as the main builder, so polynomials in the two bases
-            // share variable names and `contains_poly` matches correctly.
-            let mut rel_result = gb.build(TransClos::relation(dag));
+            // Build a relation-only basis from the same canonical namespace state
+            // as the main relation build, but with a clean division-witness cache.
+            // This preserves generated witness names while ensuring identity rows
+            // are emitted into the relation-only result.
+            let mut rel_gb = gb.fork_with_clean_div_witness_cache();
+            let mut rel_result = rel_gb.build(TransClos::relation(dag));
             rel_result.run::<W>();
             Some(rel_result.basis)
         } else {
             None
         };
+
+        if dag.relation_node().is_some() {
+            let rel_result = gb.build(TransClos::relation(dag));
+            result.merge(&rel_result);
+        }
 
         Self {
             result,
@@ -77,18 +94,20 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             return false;
         }
 
+        !Self::has_private_uniform_linear_mask(p)
+    }
+
+    fn has_private_uniform_linear_mask(p: &SparsePolynomial<C::F, ElimTerm>) -> bool {
         // A polynomial with a private uniform variable appearing at degree 1
         // alone in its own term is safe — it acts as a one-time pad mask.
         // E.g., r + c*x - z where r is private uniform.
-        let has_uniform_mask = p.terms.iter().any(|(term, _coeff)| {
+        p.terms.iter().any(|(term, _coeff)| {
             let term_vars: Vec<_> = term.iter().collect();
             term_vars.len() == 1
                 && *term_vars[0].1 == 1
                 && term_vars[0].0.is_private()
                 && (term_vars[0].0.is_uniform() || term_vars[0].0.is_uniform_nz())
-        });
-
-        !has_uniform_mask
+        })
     }
 
     pub fn private(&self) -> Vec<PRef> {
@@ -118,10 +137,12 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             if all_private_uniform {
                 return false;
             }
-            // Remove polynomials containing Local variables — these are
-            // prover-internal computations that the verifier cannot observe
-            let has_local = vars.iter().any(|v| v.is_local());
-            !has_local
+            // Remove polynomials containing internal variables — these are
+            // prover/Groebner-builder computations that the verifier cannot observe.
+            // Keep private-uniform handling as-is: mixed uniform-mask polynomials
+            // are classified by `is_leak` below rather than dropped here.
+            let contains_internal_variable = vars.iter().any(|v| v.is_local());
+            !contains_internal_variable
         });
     }
 
@@ -572,5 +593,41 @@ fn knowledge_named_let_eval_product() {
     assert!(
         kz.run::<8>().is_ok(),
         "public-only eval protocol should be ZK (no private secrets to leak)"
+    );
+}
+
+#[test]
+fn knowledge_relation_basis_div_wit_cache_is_clean() {
+    let ex = r#"
+        proto clean_rel<F: Field>(
+            private p: Poly<F, 1, 2>,
+            public d: Poly<F, 1, 1>,
+            public q: Poly<F, 1, 1>
+        ) where q == p / d {
+            let z = p / d;
+            verify(z == q)
+        }"#;
+    let m = UModule::from_str(ex)
+        .unwrap()
+        .concretize(&Ctx::new())
+        .unwrap();
+    let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+    let g = QualifierPropagation::from_dag(&gs[0]);
+    let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+
+    let mut kz = KnowledgeAnalysis::from_input(&g);
+    assert!(
+        kz.relation_basis
+            .as_ref()
+            .unwrap()
+            .vars()
+            .iter()
+            .any(|v| v.is_local()),
+        "relation-only basis should contain polynomial div/rem witness variables"
+    );
+    let result = kz.run::<8>();
+    assert!(
+        result.is_ok(),
+        "relation-only basis must rebuild polynomial div_wit identities with a clean cache when filtering relation-derived polynomials, got {result:?}"
     );
 }

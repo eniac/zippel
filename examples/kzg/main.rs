@@ -7,6 +7,7 @@ use std::{path::PathBuf, thread, time::Instant};
 use zippel::*;
 
 const KZG_EXAMPLE_STACK_SIZE: usize = 256 * 1024 * 1024;
+const PUBLIC_INPUT_NAMES: &[&str] = &["eval_point", "eval_result", "gen_g1", "gen_g2", "srs_g2_s"];
 
 fn main() {
     let worker = thread::Builder::new()
@@ -31,7 +32,7 @@ fn run_kzg_example() {
     let public_inputs = inputs
         .clone()
         .into_iter()
-        .filter(|(vid, _)| vid.0 != "poly_coeffs" && vid.0 != "srs_g1")
+        .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();

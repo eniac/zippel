@@ -6,9 +6,21 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
-    println!("=== Schnorr (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
+    println!("=== Schnorr 3-Round (ArkBls12_381) ===");
+    let args = ZippelArgs::new(PathBuf::from(
+        "examples/schnorr_3round/schnorr_3round.zippel",
+    ));
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
@@ -34,34 +46,37 @@ fn main() {
     let result = check_verification(verifier_result);
     println!("Verifier time:  {verifier_elapsed:.2?}");
     if result.passed {
-        println!("Verification:   ✓ PASSED");
+        println!("Verification:   PASSED");
     } else {
-        println!("Verification:   ✗ FAILED");
+        println!("Verification:   FAILED");
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
+    // Static analysis: completeness, ZK, and (2,2,2)-special soundness
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
+    let analysis_args = ZippelArgs::new(PathBuf::from(
+        "examples/schnorr_3round/schnorr_3round.zippel",
+    ));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();
     let analysis_elapsed = analysis_start.elapsed();
     match &analysis.completeness {
-        Ok(()) => println!("Completeness:   ✓"),
-        Err(e) => println!("Completeness:   ✗ {}", e),
+        Ok(()) => println!("Completeness:   OK"),
+        Err(e) => println!("Completeness:   FAIL {}", e),
     }
     match &analysis.zk {
-        Ok(()) => println!("ZK:             ✓"),
-        Err(e) => println!("ZK:             ✗ {}", e),
+        Ok(()) => println!("ZK:             OK"),
+        Err(e) => println!("ZK:             FAIL {}", e),
     }
 
+    // (2,2,2)-special soundness: 3 rounds, each with 2 challenge transcripts
     let soundness_start = Instant::now();
-    let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
+    let soundness_result = analysis_handler.analyze_special_soundness(vec![2, 2, 2]);
     let soundness_elapsed = soundness_start.elapsed();
     match &soundness_result {
-        Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
-        Err(e) => println!("Soundness:      ✗ {}", e),
+        Ok(()) => println!("Soundness:      OK (2,2,2)-special sound"),
+        Err(e) => println!("Soundness:      FAIL {}", e),
     }
     println!("Analysis time:  {analysis_elapsed:.2?} + {soundness_elapsed:.2?} soundness");
 }

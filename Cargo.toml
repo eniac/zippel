@@ -95,6 +95,10 @@ name = "schnorr"
 path = "examples/schnorr/main.rs"
 
 [[example]]
+name = "okamoto"
+path = "examples/okamoto/main.rs"
+
+[[example]]
 name = "cp"
 path = "examples/cp/main.rs"
 
@@ -278,3 +282,6 @@ path = "examples/dekart/main.rs"
 name = "spartan"
 path = "examples/spartan/main.rs"
 
+[[example]]
+name = "schnorr_3round"
+path = "examples/schnorr_3round/main.rs"

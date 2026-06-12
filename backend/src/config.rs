@@ -82,7 +82,7 @@ pub trait ArkScalarOps<F: PrimeField> {
         *f2 *= f1
     }
 
-    /// Scalar division, saves result in f2
+    /// Scalar inversion in place.
     #[inline]
     fn inv(f: &mut F) {
         f.inverse_in_place();
@@ -368,6 +368,59 @@ impl<G: CurveGroup> ArkGroupOps<G> for ArkGroupConfig<G> {}
 
 pub struct ArkPairingConfig<P: Pairing>(PhantomData<P>);
 impl<P: Pairing> ArkPairingOps<P> for ArkPairingConfig<P> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_ff::Zero;
+
+    type BlsPairing = <ArkBls12_381 as ArkConfig>::P;
+    type BlsPairingOps = <ArkBls12_381 as ArkConfig>::POps;
+
+    #[test]
+    fn billinear_vec_dot_matches_pairing_fold_reference() {
+        let g1_base = <ArkBls12_381 as ArkConfig>::G1::generator();
+        let g2_base = <ArkBls12_381 as ArkConfig>::G2::generator();
+
+        for len in [1usize, 2, 4] {
+            let g1: Vec<_> = (0..len)
+                .map(|i| g1_base * <ArkBls12_381 as ArkConfig>::F::from((i + 2) as u64))
+                .collect();
+            let g2: Vec<_> = (0..len)
+                .map(|i| g2_base * <ArkBls12_381 as ArkConfig>::F::from((i + 3) as u64))
+                .collect();
+
+            let batched = BlsPairingOps::billinear_vec_dot(&g1, &g2);
+            let reference = g1
+                .iter()
+                .zip(g2.iter())
+                .fold(PairingOutput::<BlsPairing>::zero(), |acc, (g1, g2)| {
+                    acc + BlsPairing::pairing(*g1, *g2)
+                });
+
+            assert_eq!(batched, reference);
+        }
+    }
+
+    #[test]
+    fn billinear_vec_dot_implementation_uses_multi_pairing_source_guard() {
+        let source = include_str!("config.rs");
+        let billinear_vec_dot_impl = source
+            .split("fn billinear_vec_dot")
+            .nth(1)
+            .and_then(|tail| tail.split("/// Zippel arkworks configuration").next())
+            .expect("billinear_vec_dot implementation should be present");
+
+        assert!(
+            billinear_vec_dot_impl.contains("P::multi_pairing"),
+            "billinear_vec_dot must use P::multi_pairing to batch final exponentiation"
+        );
+        assert!(
+            !billinear_vec_dot_impl.contains("P::pairing("),
+            "billinear_vec_dot must not regress to per-element P::pairing calls"
+        );
+    }
+}
 
 /// Concrete Zippel arkworks configurations
 #[derive(Clone, Debug, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]

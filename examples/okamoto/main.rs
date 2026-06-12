@@ -1,14 +1,24 @@
 use ark_std::UniformRand;
-use backend::{ArkBls12_381, ArkConfig, ArkGroupOps, Value};
+use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
-    println!("=== Schnorr (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
-    let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
+    println!("=== Okamoto (ArkBls12_381) ===");
+    let args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
+    let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
@@ -40,20 +50,27 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis (completeness & ZK)
+    // Static analysis (completeness, ZK, & soundness)
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/schnorr/schnorr.zippel"));
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let analysis_start = Instant::now();
-    let analysis = analysis_handler.minimal_analysis();
-    let analysis_elapsed = analysis_start.elapsed();
-    match &analysis.completeness {
-        Ok(()) => println!("Completeness:   ✓"),
-        Err(e) => println!("Completeness:   ✗ {}", e),
-    }
-    match &analysis.zk {
-        Ok(()) => println!("ZK:             ✓"),
-        Err(e) => println!("ZK:             ✗ {}", e),
+    analysis_handler.compile(&Ctx::new());
+
+    let analysis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        analysis_handler.minimal_analysis()
+    }));
+    match analysis {
+        Ok(analysis) => {
+            match &analysis.completeness {
+                Ok(()) => println!("Completeness:   ✓"),
+                Err(e) => println!("Completeness:   ✗ {}", e),
+            }
+            match &analysis.zk {
+                Ok(()) => println!("ZK:             ✓"),
+                Err(e) => println!("ZK:             ✗ {}", e),
+            }
+        }
+        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
 
     let soundness_start = Instant::now();
@@ -63,18 +80,26 @@ fn main() {
         Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
         Err(e) => println!("Soundness:      ✗ {}", e),
     }
-    println!("Analysis time:  {analysis_elapsed:.2?} + {soundness_elapsed:.2?} soundness");
+    println!("Soundness time: {soundness_elapsed:.2?}");
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let mut rng = rand::rngs::OsRng;
-    let x = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let g = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let h_affines = <ArkBls12_381 as ArkConfig>::G1Ops::vec_mul(&g, &[x]);
-    let h = h_affines.into_iter().next().unwrap();
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    type G1 = <ArkBls12_381 as ArkConfig>::G1;
+
+    let x = F::rand(&mut rng);
+    let r = F::rand(&mut rng);
+    let g = G1::rand(&mut rng);
+    let h = G1::rand(&mut rng);
+
+    let comm = g * x + h * r;
+
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
+        (Vid("r".to_string()), Value::Scalar(r)),
         (Vid("g".to_string()), Value::G1(g)),
-        (Vid("h".to_string()), Value::G1Affine(h)),
+        (Vid("h".to_string()), Value::G1(h)),
+        (Vid("comm".to_string()), Value::G1(comm)),
     ])
 }
