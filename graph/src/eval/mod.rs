@@ -64,6 +64,112 @@ fn coerce_boolean_eval_point<C: ArkConfig>(point: Value<C>, point_typ: &ATyp) ->
     }
 }
 
+fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
+    match op {
+        Op::LoopParam(level, _) => *level == target_level,
+        Op::Bin(_, a, b, _) => {
+            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
+        }
+        Op::Ram(a, b) => {
+            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
+        }
+        Op::Vec(vs) => vs.iter().any(|v| op_has_loop_param(v.get(), target_level)),
+        Op::Record(fs) => fs
+            .iter()
+            .any(|(_, v)| op_has_loop_param(v.get(), target_level)),
+        Op::Pair(a, b, _) => {
+            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
+        }
+        Op::Ifft(a) => op_has_loop_param(a.get(), target_level),
+        Op::Interpolate(a, b) => {
+            op_has_loop_param(a.get(), target_level) || op_has_loop_param(b.get(), target_level)
+        }
+        Op::Fft(a) => op_has_loop_param(a.get(), target_level),
+        Op::Poly(a) => op_has_loop_param(a.get(), target_level),
+        Op::Mle(a) => op_has_loop_param(a.get(), target_level),
+        Op::Proj(a, _, _) => op_has_loop_param(a.get(), target_level),
+        Op::Coef(a) => op_has_loop_param(a.get(), target_level),
+        Op::Evaluate(a, _, b) => {
+            op_has_loop_param(a.get(), target_level)
+                || b.as_ref()
+                    .map(|x| op_has_loop_param(x.get(), target_level))
+                    .unwrap_or(false)
+        }
+        Op::Map(domain, body) => {
+            op_has_loop_param(domain.get(), target_level)
+                || op_has_loop_param(body.get(), target_level)
+        }
+        Op::ReduceMap(_, domain, body) => {
+            op_has_loop_param(domain.get(), target_level)
+                || op_has_loop_param(body.get(), target_level)
+        }
+        Op::Check(a) => op_has_loop_param(a.get(), target_level),
+        Op::Reduce(_, a) => op_has_loop_param(a.get(), target_level),
+        Op::Value(_) | Op::Ref(_, _) | Op::Random(_, _) | Op::Challenge(_, _) => false,
+    }
+}
+
+/// Sumcheck fast path: detect `reduce(+, [eval<0>(poly, loop_param) for _ in hypercube])`
+/// and route to the fused hypercube reduction kernel.
+///
+/// Pattern requirements (all checked structurally on the Op tree, not on values):
+///   1. op == BinOp::Add
+///   2. body == Op::Evaluate(poly, Some(range), Some(fixed))
+///   3. fixed must reference this ReduceMap's own loop parameter
+///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
+///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
+///
+/// If matched, evaluates only the polynomial operand and calls
+/// value_hypercube_reduce_selected. Falls through to None otherwise.
+fn try_eval_reduce_map_fused_hypercube<C, R>(
+    op: BinOp,
+    domain: &HOp<C>,
+    body: &HOp<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
+    rng: &mut R,
+    loop_params: &[Arc<Value<C>>],
+) -> Result<Option<Arc<Value<C>>>, EvalError>
+where
+    C: ArkConfig,
+    R: RngCore,
+{
+    // (1) Must be additive reduction
+    if op != BinOp::Add {
+        return Ok(None);
+    }
+
+    // (2) Body must be a selected evaluation: eval<range>(poly, fixed)
+    let Op::Evaluate(poly, Some(range), Some(fixed)) = body.get() else {
+        return Ok(None);
+    };
+
+    // (3) fixed must reference this ReduceMap's own loop parameter
+    if !op_has_loop_param(fixed.get(), loop_params.len()) {
+        return Ok(None);
+    }
+
+    // (4) Canonical eval<0>: single free variable at position 0
+    if range.len() != 1 || range.start != 0 {
+        return Ok(None);
+    }
+
+    // (5) Domain type is Vec(_, n) where n is a power of 2
+    let (_, n) = domain.typ().into_vec();
+    if n == 0 || !n.is_power_of_two() {
+        return Ok(None);
+    }
+    let tail_num_vars = n.trailing_zeros() as usize;
+
+    // All checks passed — evaluate the polynomial and fuse
+    let shape = selected_eval_shape(poly, range);
+    let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
+    Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
+        *range,
+        tail_num_vars,
+        shape,
+    ))))
+}
+
 pub fn eval_op<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
@@ -216,6 +322,11 @@ where
             Ok(Arc::new(Value::value_vec(results)))
         }
         Op::ReduceMap(op, domain, body) => {
+            if let Some(v) =
+                try_eval_reduce_map_fused_hypercube(*op, domain, body, env, rng, loop_params)?
+            {
+                return Ok(v);
+            }
             let dom =
                 Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
