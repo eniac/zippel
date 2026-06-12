@@ -515,7 +515,12 @@ where
 
     // Evaluate domain
     let dom_val = Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
-
+    if !is_vector_value(&dom_val) {
+        return Err(EvalError::TypeMismatch {
+            expected: "vector".to_string(),
+            got: format!("{}", dom_val),
+        });
+    }
     // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates
     let is_hypercube = match fixed.get() {
         Op::LoopParam(level, _) if *level == loop_params.len() => {
