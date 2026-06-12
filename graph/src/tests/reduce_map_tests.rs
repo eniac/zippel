@@ -828,3 +828,73 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_arity_mismatch() {
+    use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+
+    // Poly has 3 variables (so 2 tail variables needed).
+    // The domain has length 8 (implying 3 tail variables).
+    // The fixed mapping only produces 2 bits (j in 0..2).
+    // The fast path should detect the arity mismatch and safely fallback to the generic path instead of panicking.
+    let src = r#"
+        fn test_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, tail)
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..8
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization must be skipped
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify mathematical correctness of the fallback result
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::zero();
+        for i in 0..8 {
+            let b0 = if (i % 2) == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            let b1 = if ((i / 2) % 2) == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}

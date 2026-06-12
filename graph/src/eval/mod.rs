@@ -458,14 +458,21 @@ where
     };
 
     if is_hypercube {
-        // Fast path — evaluate the polynomial and fuse
         let shape = selected_eval_shape(poly, range);
-        let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
-        Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
-            *range,
-            tail_num_vars,
-            shape,
-        ))))
+        if tail_num_vars == shape.input_num_vars.saturating_sub(range.len()) {
+            // Fast path — evaluate the polynomial and fuse
+            let p_val =
+                Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
+            Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
+                *range,
+                tail_num_vars,
+                shape,
+            ))))
+        } else {
+            // Fallback using already evaluated dom_val
+            let results = eval_loop_body_each(body, env, dom_val.into_elements(), loop_params)?;
+            Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
+        }
     } else {
         // Fallback using already evaluated dom_val
         let results = eval_loop_body_each(body, env, dom_val.into_elements(), loop_params)?;
