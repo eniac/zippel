@@ -1,3 +1,0 @@
-fn pairing_test<G1: Group, G2: Group, GT: Pairing<G1, G2>>(public a: G1, public b: G2) -> GT {
-        pair(a, b)
-}

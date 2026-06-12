@@ -8,6 +8,16 @@ use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 fn main() {
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(run_example)
+        .expect("failed to spawn worker thread");
+    if let Err(payload) = worker.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_example() {
     println!("=== Coin Proof (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);

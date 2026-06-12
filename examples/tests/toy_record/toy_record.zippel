@@ -1,6 +1,0 @@
-proto toy_record<F: Field>(public n: F, public b: F) where true {
-    let a = {| name: n, balance: b |};
-    x <- a.name;
-    y <- a.balance;
-    verify(x == n && y == b)
-}

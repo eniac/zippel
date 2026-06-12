@@ -1,9 +1,8 @@
 use ark_bls12_381::{Bls12_381, Fr, G1Projective, G2Projective};
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{FftField, One, UniformRand, Zero};
+use ark_ff::{UniformRand, Zero};
 use ark_groth16::Groth16;
 use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
-use ark_poly::EvaluationDomain;
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, LinearCombination,

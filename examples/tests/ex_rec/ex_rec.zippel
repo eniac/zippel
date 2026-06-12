@@ -1,9 +1,0 @@
-fn commit<G: Group, F: Scalar<G>, N: 1..6>(private v: [G; 2^N]) -> G {
-    a <- challenge<F>;
-    b <- challenge<F>;
-    commit(a * v[0..2^(N-1)] + b * v[2^(N-1)..2^N])
-}
-
-fn commit<G: Group, F: Scalar<G>>(private v: [G; 1]) -> G {
-    v[0]
-}

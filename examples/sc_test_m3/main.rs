@@ -2,7 +2,6 @@
 // inputs built from a random satisfying R1CS (matching Spartan
 // sum-check #1 verbatim).
 
-use ark_ff::Field;
 use ark_std::UniformRand;
 use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
