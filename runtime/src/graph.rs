@@ -216,6 +216,22 @@ fn update_successors<C: ArkConfig>(
     }
 }
 
+/// Global counter of detected double-execute attempts. Incremented by
+/// `log_double_execute` whenever `handle_node` is reached for an Op/Transcr
+/// whose `return_value` is already populated (or whose `set` lost the race).
+/// `run_graph` snapshots and prints this after the main loop so the user
+/// can see whether the run was clean.
+pub static DOUBLE_EXECUTE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn log_double_execute(kind: &str, node: NodeIndex, op_disc: usize) {
+    DOUBLE_EXECUTE_COUNT.fetch_add(1, Ordering::SeqCst);
+    let bt = std::backtrace::Backtrace::capture();
+    eprintln!(
+        "[RUNTIME-RACE] {} node {:?} double-execute attempt; op discriminant = {}\n{}",
+        kind, node, op_disc, bt,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // MutexGraph implementation
 // ---------------------------------------------------------------------------
@@ -301,20 +317,24 @@ impl<C: ArkConfig> MutexGraph<C> {
 
         match node {
             Node::Op(operation, annotation) => {
+                if annotation.return_value.get().is_some() {
+                    log_double_execute("Op", node_curr, operation.discriminant_order());
+                    return Ok(());
+                }
                 let return_val = self.handle_op(&**operation, inputs)?;
-                annotation
-                    .return_value
-                    .set(return_val)
-                    .map_err(|_| ())
-                    .expect("runtime invariant violation: node executed twice");
+                if annotation.return_value.set(return_val).is_err() {
+                    log_double_execute("Op (set-race)", node_curr, operation.discriminant_order());
+                }
             }
             Node::Transcr(operation, annotation) => {
+                if annotation.return_value.get().is_some() {
+                    log_double_execute("Transcr", node_curr, operation.discriminant_order());
+                    return Ok(());
+                }
                 let return_val = self.handle_op(&**operation, inputs)?;
-                annotation
-                    .return_value
-                    .set(return_val)
-                    .map_err(|_| ())
-                    .expect("runtime invariant violation: Transcr node executed twice");
+                if annotation.return_value.set(return_val).is_err() {
+                    log_double_execute("Transcr (set-race)", node_curr, operation.discriminant_order());
+                }
             }
             Node::Inp(_) => {}
             Node::Rel(_) => {}
@@ -358,6 +378,7 @@ impl<C: ArkConfig> MutexGraph<C> {
         prover_state: &mut ProverState<H>,
         result_kind: ResultKind,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
+        let race_count_at_start = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst);
         // Build an Arc-wrapped inputs map once. Subsequent per-handle_op
         // accesses clone the Arc (cheap) instead of the inner `Value`
         // (which may be a 500 MB matrix vector). This is a one-time clone
@@ -380,6 +401,13 @@ impl<C: ArkConfig> MutexGraph<C> {
         // meaning that at any time, only one sync node can be processed.
         let (tx, rx) = sync_channel(1);
 
+        // Root Op/Transcr nodes — those whose `unique_preds.is_empty()` at
+        // initialization. We pin these down in Loop 1 from graph topology so
+        // Loop 2 can spawn exactly the true roots. We must NOT decide root-ness
+        // by reading `remaining_deps` later: by the time Loop 2 runs, a worker
+        // spawned earlier may have already decremented some non-root counter to
+        // 0, and a counter-driven spawn there would double-execute that node.
+        let mut initial_roots: Vec<NodeIndex> = Vec::new();
         for node_idx in g.mutex_graph.node_indices() {
             match &g.mutex_graph[node_idx] {
                 Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
@@ -387,9 +415,11 @@ impl<C: ArkConfig> MutexGraph<C> {
                         .mutex_graph
                         .neighbors_directed(node_idx, Direction::Incoming)
                         .collect();
-                    annotation
-                        .remaining_deps
-                        .store(unique_preds.len(), Ordering::SeqCst);
+                    let n_preds = unique_preds.len();
+                    annotation.remaining_deps.store(n_preds, Ordering::SeqCst);
+                    if n_preds == 0 {
+                        initial_roots.push(node_idx);
+                    }
 
                     // Verifier results are terminal Check nodes. Prover results
                     // are collected below via Dag::transcript_nodes(), which is
@@ -428,53 +458,48 @@ impl<C: ArkConfig> MutexGraph<C> {
         //     }
         // }
 
-        // Push the initial sync node (the input node) onto the sync queue
-        // and spawn any root Op nodes (remaining_deps == 0) that have no
-        // predecessors — e.g. random values.
+        // Push the Inp markers first (any iteration order is fine; Args don't
+        // appear here as roots — they're notified via the Arg-passthrough in
+        // update_successors when their Inp parent is processed).
         for ni in g.mutex_graph.node_indices() {
-            match &g.mutex_graph[ni] {
-                Node::Op(_, annotation) | Node::Transcr(_, annotation) => {
-                    let rd = annotation.remaining_deps.load(Ordering::SeqCst);
-                    if rd == 0 {
-                        if is_sync_node(&g, ni) {
-                            debug!(
-                                "[run_graph] init: pushing sync node {:?} with remaining_deps=0",
-                                ni
-                            );
-                            tx.push(ni);
-                        } else {
-                            let g_clone = Arc::clone(&g);
-                            let inputs_clone = Arc::clone(&inputs);
-                            let tx = tx.clone();
-                            let error_slot = Arc::clone(&error_slot);
-                            debug!(
-                                "[run_graph] init: spawning non-sync node {:?} with remaining_deps=0",
-                                ni
-                            );
-                            rayon::spawn(move || {
-                                if error_slot.lock().unwrap().is_some() {
-                                    return;
-                                }
-                                match g_clone.handle_node(ni, &inputs_clone) {
-                                    Ok(()) => update_successors(
-                                        &g_clone,
-                                        &inputs_clone,
-                                        tx,
-                                        ni,
-                                        &error_slot,
-                                    ),
-                                    Err(e) => record_error(&error_slot, e),
-                                }
-                            });
-                        }
+            if matches!(&g.mutex_graph[ni], Node::Inp(_)) {
+                debug!("[run_graph] pushing initial sync node {:?}", ni);
+                tx.push(ni);
+            }
+        }
+        // Spawn/push only the topological roots gathered in Loop 1. Reading
+        // `remaining_deps` here would race with workers spawned earlier in
+        // this same loop: a non-root node whose counter just hit 0 via
+        // `update_successors` would be visible as `rd == 0` and would be
+        // spawned a SECOND time, causing the runtime invariant violation.
+        for ni in initial_roots {
+            if is_sync_node(&g, ni) {
+                debug!(
+                    "[run_graph] init: pushing sync root node {:?}",
+                    ni
+                );
+                tx.push(ni);
+            } else {
+                let g_clone = Arc::clone(&g);
+                let inputs_clone = Arc::clone(&inputs);
+                let tx = tx.clone();
+                let error_slot = Arc::clone(&error_slot);
+                debug!("[run_graph] init: spawning non-sync root node {:?}", ni);
+                rayon::spawn(move || {
+                    if error_slot.lock().unwrap().is_some() {
+                        return;
                     }
-                }
-                Node::Inp(_) => {
-                    debug!("[run_graph] pushing initial sync node {:?}", ni);
-                    tx.push(ni);
-                }
-                Node::Rel(_) => {}
-                Node::Arg(_, _, _, _, _) => {}
+                    match g_clone.handle_node(ni, &inputs_clone) {
+                        Ok(()) => update_successors(
+                            &g_clone,
+                            &inputs_clone,
+                            tx,
+                            ni,
+                            &error_slot,
+                        ),
+                        Err(e) => record_error(&error_slot, e),
+                    }
+                });
             }
         }
 
@@ -573,6 +598,14 @@ impl<C: ArkConfig> MutexGraph<C> {
             "[run_graph] main loop completed after {} iterations",
             loop_count
         );
+
+        let race_count = DOUBLE_EXECUTE_COUNT.load(Ordering::SeqCst) - race_count_at_start;
+        if race_count > 0 {
+            eprintln!(
+                "[RUNTIME-RACE] run_graph completed with {} double-execute attempt(s) (see [RUNTIME-RACE] lines above)",
+                race_count,
+            );
+        }
 
         // A worker may have recorded an error; surface it before collecting.
         if let Some(err) = error_slot.lock().unwrap().take() {

@@ -30,36 +30,62 @@ pub const DEFAULT_N: usize = 10;
 // ---------------------------------------------------------------------------
 
 pub mod shared {
-    use ark_bls12_381::{Fr, G1Projective, G2Projective};
-    use ark_ec::CurveGroup;
-    use ark_ff::{One, Zero};
+    use ark_bls12_381::{Fr, G1Affine, G1Projective, G2Projective};
+    use ark_ec::AffineRepr;
+    use ark_ec::scalar_mul::{BatchMulPreprocessing, ScalarMul};
+    use ark_ff::One;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
     use ark_std::rand::SeedableRng;
+    use rayon::prelude::*;
 
+    /// Shared per-size SRS + statement data, consumed by both the zippel
+    /// and native PST13 sides. Cached to disk via
+    /// `crate::cache::load_or_build_canonical` so the ~262K G1 scalar muls
+    /// at n=18 only happen once per binary across the full thread sweep.
+    ///
+    /// Previously had a `ck: Vec<G1Projective>` field — unused (only the
+    /// affine view ever flows into the bench), dropped to halve the
+    /// in-memory footprint and cache file size.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
     pub struct Shared {
         pub n: usize,
         pub g_gen: G1Projective,
         pub h_gen: G2Projective,
         pub alpha: Vec<Fr>,
-        /// ck[i] = eq_N(α, i) · g_gen for i ∈ {0, 1}^N, MSB-first indexing
-        /// (bit `n-1-j` of `i` is the value of variable j).
-        pub ck: Vec<G1Projective>,
-        /// Affine view of `ck` — avoids per-prove `normalize_batch` like in
-        /// the Groth16 bench fix.
-        pub ck_affine: Vec<ark_bls12_381::G1Affine>,
+        /// ck_affine[i] = eq_N(α, i) · g_gen for i ∈ {0, 1}^N, MSB-first
+        /// indexing (bit `n-1-j` of `i` is the value of variable j).
+        /// Already-affine so `MultilinearPC::commit` / zippel's
+        /// `dot(VecG1Affine, VecScalar)` skip per-call `normalize_batch`.
+        pub ck_affine: Vec<G1Affine>,
         pub alpha_h: Vec<G2Projective>,
         pub p: Vec<Fr>,
         pub z: Vec<Fr>,
         pub y: Fr,
     }
 
-    /// Seeded build so multiple calls at the same `n` produce identical data,
-    /// matching how Groth16/KZG benches reseed inside `Setup::new`.
+    /// Seeded build so multiple calls at the same `n` produce identical
+    /// data. First call at a given `n` builds + writes to
+    /// `artifacts/pst13_shared_log<n>.bin`; subsequent calls (across
+    /// thread-sweep iterations or even across separate `bench_all`
+    /// invocations) instant-load.
+    ///
+    /// Build-side fixes vs the previous version:
+    ///   * `ck` computation uses `BatchMulPreprocessing` instead of N×1
+    ///     scalar muls — at n=18 this is ~10× faster than `iter().map(...)`
+    ///     because the window precompute amortizes across the 262K muls.
+    ///   * `ck_scalars` and `y` use `par_iter` — the previous serial fold
+    ///     pinned the build to one core even though we run it inside
+    ///     `setup_pool().install(...)`.
     pub fn build(n: usize) -> Shared {
         assert!((1..=20).contains(&n), "n must be in 1..=20");
+
+        crate::cache::load_or_build_canonical("pst13_shared", n, || build_uncached(n))
+    }
+
+    fn build_uncached(n: usize) -> Shared {
         let size = 1usize << n;
 
-        // Distinct seed per n so successive sweep rows don't share state.
         let mut seed_bytes = [0u8; 32];
         seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
         let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
@@ -71,8 +97,10 @@ pub mod shared {
         let alpha: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
         let one_m_alpha: Vec<Fr> = alpha.iter().map(|a| one - *a).collect();
 
-        // ck[i] = Π_j L_j(b_j) · g_gen, b = MSB-first bits of i.
+        // ck_scalars[i] = Π_j L_j(b_j), b = MSB-first bits of i. Parallel
+        // over i — each entry's fold is independent.
         let ck_scalars: Vec<Fr> = (0..size)
+            .into_par_iter()
             .map(|i| {
                 (0..n).fold(one, |acc, j| {
                     let bit = (i >> (n - 1 - j)) & 1;
@@ -84,16 +112,25 @@ pub mod shared {
                 })
             })
             .collect();
-        let ck: Vec<G1Projective> = ck_scalars.iter().map(|s| g_gen * s).collect();
-        let ck_affine = G1Projective::normalize_batch(&ck);
 
-        let alpha_h: Vec<G2Projective> = alpha.iter().map(|a| h_gen * a).collect();
+        // `BatchMulPreprocessing::batch_mul` window-precomputes a table for
+        // g_gen once, then does each ck_scalars[i] mul in ~10µs — vs ~200µs
+        // for `g_gen * s` per entry. Returns affines directly, so no
+        // separate `normalize_batch` pass.
+        let g_table = BatchMulPreprocessing::new(g_gen, n);
+        let ck_affine: Vec<G1Affine> = g_table.batch_mul(&ck_scalars);
+
+        let alpha_h: Vec<G2Projective> = h_gen.batch_mul(&alpha)
+            .iter()
+            .map(|aff| aff.into_group())
+            .collect();
 
         let p: Vec<Fr> = (0..size).map(|_| Fr::rand(&mut rng)).collect();
         let z: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
 
-        // y = p̃(z) = Σ_i p_i · eq_N(z, i), same bit order as ck.
+        // y = p̃(z) = Σ_i p_i · eq_N(z, i), parallel reduction.
         let y: Fr = (0..size)
+            .into_par_iter()
             .map(|i| {
                 let eq_z_i = (0..n).fold(one, |prod, j| {
                     let bit = (i >> (n - 1 - j)) & 1;
@@ -105,14 +142,13 @@ pub mod shared {
                 });
                 p[i] * eq_z_i
             })
-            .fold(Fr::zero(), |acc, v| acc + v);
+            .sum();
 
         Shared {
             n,
             g_gen,
             h_gen,
             alpha,
-            ck,
             ck_affine,
             alpha_h,
             p,
@@ -138,44 +174,60 @@ pub mod shared {
 // Performance comparison only — no cross-side byte equality.
 // ---------------------------------------------------------------------------
 
+/// Native PST13 baseline: VENDORED + PATCHED `MultilinearPC` from
+/// ark-poly-commit-0.6 (see `crate::pst13_upstream`). Two algorithmic
+/// fixes vs upstream:
+///   1. `open()` collapses each round's MSM from 2^k → 2^(k-1) by
+///      pre-summing adjacent base pairs (upstream silently does an
+///      MSM with duplicated scalars).
+///   2. `open()` fans out the `nv` round MSMs into a single
+///      `rayon::scope` so they run concurrently — upstream emits them
+///      serially even though they're data-independent.
+///
+/// Setup / trim / commit / check are byte-identical to upstream, so the
+/// proofs produced here pass the upstream verifier and vice versa.
+/// The patches make this an honest "PST13 done well" baseline rather
+/// than the crates.io version which has two performance bugs that
+/// inflate native cost by ~4×.
 pub mod native_side {
     use super::Timing;
     use super::shared::Shared;
-    use hp_ark_bls12_381::{Bls12_381, Fr};
-    use hp_ark_ff::UniformRand;
-    use hp_ark_poly::{DenseMultilinearExtension, MultilinearExtension};
-    use hp_ark_std::rand::SeedableRng;
-    use std::sync::Arc;
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_ff::UniformRand;
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
+    use ark_std::rand::SeedableRng;
     use std::time::Instant;
-    use subroutines::{
-        MultilinearKzgPCS, MultilinearProverParam, MultilinearVerifierParam,
-        PolynomialCommitmentScheme,
-    };
 
-    type Pcs = MultilinearKzgPCS<Bls12_381>;
+    use crate::pst13_upstream::data_structures::{CommitterKey, VerifierKey};
+    use crate::pst13_upstream::MultilinearPC;
+
+    type Pcs = MultilinearPC<Bls12_381>;
 
     pub struct Setup {
         n: usize,
-        ck: MultilinearProverParam<Bls12_381>,
-        vk: MultilinearVerifierParam<Bls12_381>,
+        ck: CommitterKey<Bls12_381>,
+        vk: VerifierKey<Bls12_381>,
     }
 
     impl Setup {
-        /// Takes `&Shared` only to read `n` — the hyperplonk side generates
-        /// its own SRS + polynomial + point internally so we don't have to
-        /// translate between hp-ark v0.4 and ark git-main types at every call.
-        /// Both sides run the same protocol on a random size-2^n MLE; only
-        /// the wall-clock matters for the comparison.
+        /// Takes `&Shared` only to read `n` — the native side generates its
+        /// own SRS + polynomial + point internally. Both sides run the
+        /// same protocol on a random size-2^n MLE; only the wall-clock
+        /// matters for the comparison.
         pub fn new(shared: &Shared) -> Self {
             let n = shared.n;
-            // Seeded to match `shared::build`'s seed family so successive
-            // sweep rows don't share state with prior runs.
-            let mut seed_bytes = [0u8; 32];
-            seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
-            let mut rng = hp_ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-
-            let srs = Pcs::gen_srs_for_testing(&mut rng, n).expect("hp gen_srs_for_testing");
-            let (ck, vk) = Pcs::trim(&srs, None, Some(n)).expect("hp trim");
+            // Cache UniversalParams — the heavy setup at n=20. Re-trim
+            // per call (cheap slice over cached params). Seed is fixed
+            // per `n` so the cache key is well-defined.
+            let pp = crate::cache::load_or_build_canonical::<
+                crate::pst13_upstream::data_structures::UniversalParams<Bls12_381>,
+            >("pst13_universal_params", n, || {
+                let mut seed_bytes = [0u8; 32];
+                seed_bytes[..8].copy_from_slice(&(0xC0FFEE_u64 ^ n as u64).to_le_bytes());
+                let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+                Pcs::setup(n, &mut rng)
+            });
+            let (ck, vk) = Pcs::trim(&pp, n);
 
             Setup { n, ck, vk }
         }
@@ -184,22 +236,57 @@ pub mod native_side {
             // Re-seed for the per-call poly/point so timing is reproducible.
             let mut seed_bytes = [0u8; 32];
             seed_bytes[..8].copy_from_slice(&(0xDEC0DE_u64 ^ self.n as u64).to_le_bytes());
-            let mut rng = hp_ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
 
-            let poly = Arc::new(DenseMultilinearExtension::<Fr>::rand(self.n, &mut rng));
+            let poly = DenseMultilinearExtension::<Fr>::rand(self.n, &mut rng);
             let point: Vec<Fr> = (0..self.n).map(|_| Fr::rand(&mut rng)).collect();
 
-            // Prove timer covers commit + open — same scope the zippel side
-            // measures (`c_p <- pst13_commit(...)` plus the open recursion).
-            let t = Instant::now();
-            let comm = Pcs::commit(&self.ck, &poly).expect("hp commit");
-            let (proof, value) = Pcs::open(&self.ck, &poly, &point).expect("hp open");
-            let prove = t.elapsed();
+            // The claimed evaluation `y = p̃(z)` is the prover's
+            // statement-of-fact — the zippel side takes it as a public
+            // input rather than recomputing it, so timing `poly.evaluate`
+            // here would penalize native for work the zippel proto
+            // simply skips. Compute it ONCE outside the timed region;
+            // the prover loop below times only commit + open, matching
+            // exactly what the zippel proto times.
+            let value = poly.evaluate(&point);
 
-            let t = Instant::now();
-            let ok = Pcs::verify(&self.vk, &comm, &point, &value, &proof).expect("hp verify");
-            let verify = t.elapsed();
-            assert!(ok, "hyperplonk MultilinearKzgPCS verification FAILED");
+            // Prove timer covers commit + open. `commit` (one MSM of
+            // size 2^n over G1) and `open` (the nv quotient MSMs over
+            // G2) have no data dependency on each other — both read
+            // only `p` and `ck` — so running them concurrently via
+            // `rayon::join` looks like a clean win on paper. In
+            // practice at threads≥8 it OVERCOMMITS rayon's worker pool:
+            // commit's internal par_iter, open's folding par_iter, and
+            // open's 18 spawned MSM tasks (each with its own nested
+            // par_iter) all fight for the same workers. Rayon's
+            // work-stealing scheduler thrashes, and t=8 native ended
+            // up SLOWER than t=4 (broken scaling) when commit and open
+            // ran concurrently. Sequential dispatch lets each phase
+            // own the worker pool exclusively; open's internal
+            // pipelining (in `pst13_upstream::open`) is preserved and
+            // still gives the t=1,2,4 wins.
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let comm = Pcs::commit(&self.ck, &poly);
+                let proof = Pcs::open(&self.ck, &poly, &point);
+                prove_sum += t.elapsed();
+                last_outputs = Some((comm, proof));
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let (comm, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
+
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Pcs::check(&self.vk, &comm, &point, value, &proof);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "ark-poly-commit MultilinearPC verification FAILED");
 
             Timing { prove, verify }
         }
@@ -371,6 +458,7 @@ pub mod zippel_side {
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         #[allow(dead_code)]
         shared: &'a Shared,
+        compile_time: std::time::Duration,
     }
 
     impl<'a> Setup<'a> {
@@ -399,37 +487,62 @@ pub mod zippel_side {
                 ),
             ]);
 
-            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"));
+            let compile_start = Instant::now();
+            let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"))
+                .with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &shared.n);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs_base,
                 shared,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
 
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, self.inputs_base.clone())
-                .expect("zippel pst13 prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = self.inputs_base.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel pst13 prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel pst13 verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel pst13 verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel PST13 verification FAILED");
 
             Timing { prove, verify }

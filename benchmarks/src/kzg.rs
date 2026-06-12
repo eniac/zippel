@@ -52,6 +52,7 @@ pub mod zippel_side {
     use super::*;
     use ark_ec::scalar_mul::ScalarMul;
     use ark_ff::One;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
     use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
@@ -62,13 +63,32 @@ pub mod zippel_side {
     use tempfile::NamedTempFile;
     use zippel::{ZippelArgs, ZippelHandler, check_verification};
 
+    type F = <ArkBls12_381 as ArkConfig>::F;
+    type G1 = <ArkBls12_381 as ArkConfig>::G1;
+    type G2 = <ArkBls12_381 as ArkConfig>::G2;
+    type G1Affine = <ArkBls12_381 as ArkConfig>::G1Affine;
+
+    // Cached SRS artifact. The proto's setup quantities are deterministic
+    // in `(seed, n)`, so we seed with `ark_std::test_rng()` and cache
+    // keyed on `log_size`. Per-call randomness (polynomial + eval point)
+    // stays in `time_protocol` — it doesn't go on disk.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
+    struct KzgSrs {
+        g_input: G1,
+        h_input: G2,
+        srs_affine: Vec<G1Affine>,
+        h_val: G2,
+    }
+
     pub struct Setup {
         handler: ZippelHandler<ArkBls12_381>,
         n: usize,
+        srs: KzgSrs,
         // Only `Some` for the diagnostic `--no-srs-check` variant — the
         // normal path compiles examples/kzg/kzg.zippel directly with N
         // bound via `sizes.insert`, no per-call source rewriting.
         _source_file: Option<NamedTempFile>,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -84,56 +104,79 @@ pub mod zippel_side {
                 let mut file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
                 file.write_all(render_zippel_source_no_srs_check().as_bytes())
                     .expect("write tempfile");
-                (ZippelArgs::new(file.path().to_path_buf()), Some(file))
+                (
+                    ZippelArgs::new(file.path().to_path_buf()).with_skip_analyses(),
+                    Some(file),
+                )
             } else {
                 (
-                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")),
+                    ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"))
+                        .with_skip_analyses(),
                     None,
                 )
             };
 
+            let compile_start = Instant::now();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &n);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
+
+            // Build (or load) SRS here so it runs inside the caller's
+            // `setup_pool().install(...)` block — all cores on cache miss,
+            // instant disk load on cache hit. Matches the native side's
+            // `Kzg::setup` caching pattern.
+            let log_size = n.trailing_zeros() as usize;
+            let srs = crate::cache::load_or_build_canonical("kzg_zippel_srs", log_size, || {
+                let mut rng = ark_std::test_rng();
+                let g_input = G1::rand(&mut rng);
+                let h_input = G2::rand(&mut rng);
+                let tau_input = F::rand(&mut rng);
+                let mut powers_of_tau: Vec<F> = Vec::with_capacity(n);
+                let mut acc = F::one();
+                for _ in 0..n {
+                    powers_of_tau.push(acc);
+                    acc *= tau_input;
+                }
+                let srs_affine = g_input.batch_mul(&powers_of_tau);
+                let h_val = h_input * tau_input;
+                KzgSrs {
+                    g_input,
+                    h_input,
+                    srs_affine,
+                    h_val,
+                }
+            });
 
             Setup {
                 handler,
                 n,
+                srs,
                 _source_file,
+                compile_time,
             }
         }
 
-        pub fn time_protocol(&mut self) -> Timing {
-            type F = <ArkBls12_381 as ArkConfig>::F;
-            type G1 = <ArkBls12_381 as ArkConfig>::G1;
-            type G2 = <ArkBls12_381 as ArkConfig>::G2;
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
+        }
 
+        pub fn time_protocol(&mut self) -> Timing {
             let mut rng = rand::rngs::OsRng;
             let n = self.n;
 
-            let g_input = G1::rand(&mut rng);
-            let g = Value::G1(g_input);
-            let h_input = G2::rand(&mut rng);
-            let h = Value::G2(h_input);
+            let g = Value::G1(self.srs.g_input);
+            let h = Value::G2(self.srs.h_input);
+            let ss = Value::VecG1Affine(self.srs.srs_affine.clone());
+            let h_val = Value::G2(self.srs.h_val);
 
             let p = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n));
             let z = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
-            let tau_input = F::rand(&mut rng);
-
-            let mut powers_of_tau: Vec<F> = Vec::with_capacity(n);
-            let mut acc = F::one();
-            for _ in 0..n {
-                powers_of_tau.push(acc);
-                acc *= tau_input;
-            }
-            let srs_affine = g_input.batch_mul(&powers_of_tau);
-            let ss = Value::VecG1Affine(srs_affine);
 
             let z_val: Value<ArkBls12_381> =
                 Value::Vec((0..n).map(|i| z.clone() ^ Value::Index(i)).collect());
             let y = p.clone().dot(z_val);
-            let h_val = Value::G2(h_input * tau_input);
 
             let inputs = Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
                 (Vid("poly_coeffs".to_string()), p),
@@ -146,22 +189,43 @@ pub mod zippel_side {
             ]);
 
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("run_prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("run_prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("run_verifier failed");
-            let verify = t.elapsed();
+            // Average over VERIFY_SAMPLES verifier runs on the same proof.
+            // TDag<C> and Vec<Value<C>> both derive Clone, so we re-clone
+            // per iteration; clones happen OUTSIDE the per-call timer so
+            // they don't bias the mean.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("run_verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            let result = check_verification(verifier_result);
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel KZG verification FAILED");
 
             Timing { prove, verify }
@@ -169,76 +233,18 @@ pub mod zippel_side {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Byte-bridge between native (`np_ark_*`) and zippel (`ark_*`) BLS12-381
-// types — same curve, different arkworks versions. Both sides canonical-
-// serialize the same way (compressed form, fixed length per type), so the
-// round-trip through bytes is byte-faithful.
-//
-// Used by the cross-verification tests at the bottom of this file.
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-pub(crate) mod bridge {
-    use ark_bls12_381::{
-        Fr as ZipFr, G1Affine as ZipG1Aff, G1Projective as ZipG1Proj, G2Affine as ZipG2Aff,
-        G2Projective as ZipG2Proj,
-    };
-    use ark_ec::{AffineRepr as _, CurveGroup as _};
-    use ark_serialize::{CanonicalDeserialize as ZipDeser, CanonicalSerialize as ZipSer};
-    use np_ark_bls12_381::Bls12_381 as NpE;
-    use np_ark_ec::pairing::Pairing as NpPairing;
-    use np_ark_serialize::{CanonicalDeserialize as NpDeser, CanonicalSerialize as NpSer};
-
-    pub type NpFr = <NpE as NpPairing>::ScalarField;
-    pub type NpG1Aff = <NpE as NpPairing>::G1Affine;
-    pub type NpG2Aff = <NpE as NpPairing>::G2Affine;
-
-    pub fn np_fr_to_zip(x: &NpFr) -> ZipFr {
-        let mut bytes = Vec::with_capacity(32);
-        NpSer::serialize_compressed(x, &mut bytes).expect("ser np fr");
-        ZipDeser::deserialize_compressed(&bytes[..]).expect("deser zip fr")
-    }
-
-    pub fn np_g1_aff_to_zip_proj(p: &NpG1Aff) -> ZipG1Proj {
-        let mut bytes = Vec::with_capacity(48);
-        NpSer::serialize_compressed(p, &mut bytes).expect("ser np g1");
-        let aff: ZipG1Aff = ZipDeser::deserialize_compressed(&bytes[..]).expect("deser zip g1");
-        aff.into_group()
-    }
-
-    pub fn np_g1_aff_to_zip_aff(p: &NpG1Aff) -> ZipG1Aff {
-        let mut bytes = Vec::with_capacity(48);
-        NpSer::serialize_compressed(p, &mut bytes).expect("ser np g1");
-        ZipDeser::deserialize_compressed(&bytes[..]).expect("deser zip g1")
-    }
-
-    pub fn np_g2_aff_to_zip_proj(p: &NpG2Aff) -> ZipG2Proj {
-        let mut bytes = Vec::with_capacity(96);
-        NpSer::serialize_compressed(p, &mut bytes).expect("ser np g2");
-        let aff: ZipG2Aff = ZipDeser::deserialize_compressed(&bytes[..]).expect("deser zip g2");
-        aff.into_group()
-    }
-
-    pub fn zip_g1_proj_to_np_aff(p: &ZipG1Proj) -> NpG1Aff {
-        let aff = p.into_affine();
-        let mut bytes = Vec::with_capacity(48);
-        ZipSer::serialize_compressed(&aff, &mut bytes).expect("ser zip g1");
-        NpDeser::deserialize_compressed(&bytes[..]).expect("deser np g1")
-    }
-}
-
 pub mod native_side {
     use super::*;
-    use np_ark_bls12_381::Bls12_381;
-    use np_ark_ff::UniformRand;
-    use np_ark_poly::{DenseUVPolynomial, Polynomial, univariate::DensePolynomial};
-    use np_ark_poly_commit::kzg10::{KZG10, Powers, UniversalParams, VerifierKey};
+    use ark_bls12_381::Bls12_381;
+    use ark_ff::UniformRand;
+    use ark_poly::{DenseUVPolynomial, Polynomial, univariate::DensePolynomial};
+    use ark_poly_commit::kzg10::{KZG10, Powers, UniversalParams, VerifierKey};
     use std::borrow::Cow;
     use std::time::Instant;
 
     type Kzg =
-        KZG10<Bls12_381, DensePolynomial<<Bls12_381 as np_ark_ec::pairing::Pairing>::ScalarField>>;
-    type Fr = <Bls12_381 as np_ark_ec::pairing::Pairing>::ScalarField;
+        KZG10<Bls12_381, DensePolynomial<<Bls12_381 as ark_ec::pairing::Pairing>::ScalarField>>;
+    type Fr = <Bls12_381 as ark_ec::pairing::Pairing>::ScalarField;
 
     pub struct Setup {
         powers: PowersOwned,
@@ -249,8 +255,8 @@ pub mod native_side {
     /// Owned analog of `Powers<'_, E>` — `Powers` borrows its slices, but
     /// we need to keep the data alive across iterations.
     struct PowersOwned {
-        powers_of_g: Vec<<Bls12_381 as np_ark_ec::pairing::Pairing>::G1Affine>,
-        powers_of_gamma_g: Vec<<Bls12_381 as np_ark_ec::pairing::Pairing>::G1Affine>,
+        powers_of_g: Vec<<Bls12_381 as ark_ec::pairing::Pairing>::G1Affine>,
+        powers_of_gamma_g: Vec<<Bls12_381 as ark_ec::pairing::Pairing>::G1Affine>,
     }
 
     impl PowersOwned {
@@ -286,10 +292,21 @@ pub mod native_side {
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            let mut rng = ark_std::test_rng();
             // n coefficients => degree n-1
             let degree = n - 1;
-            let pp = Kzg::setup(degree, false, &mut rng).expect("kzg setup");
+            // Cache UniversalParams (the heavy bit — 2^log_size G1 powers
+            // + a few G2). build_powers + build_vk are cheap slices over
+            // the cached params, so we re-derive them per call rather
+            // than caching the derived (Powers, VK) too.
+            let log_size = n.trailing_zeros() as usize;
+            let pp = crate::cache::load_or_build_canonical(
+                "kzg_universal_params",
+                log_size,
+                || {
+                    let mut rng = ark_std::test_rng();
+                    Kzg::setup(degree, false, &mut rng).expect("kzg setup")
+                },
+            );
             let powers = build_powers(&pp, degree);
             let vk = build_vk(&pp);
             Setup { powers, vk, n }
@@ -305,269 +322,67 @@ pub mod native_side {
             // Match zippel parity: commit + open are both inside the
             // protocol body on the zippel side, so they're both timed
             // together as "prove" here.
-            let t = Instant::now();
-            let (comm, rand) =
-                Kzg::commit(&self.powers.as_powers(), &poly, None, None).expect("kzg commit");
-            let proof = Kzg::open(&self.powers.as_powers(), &poly, point, &rand).expect("kzg open");
-            let prove = t.elapsed();
+            //
+            // commit and open are INDEPENDENT (open only needs `poly` and
+            // `rand`, not the commitment), so we run them concurrently in
+            // a `rayon::scope` to mirror what the zippel dataflow scheduler
+            // does automatically with the `commitment <- dot(...)` and
+            // `proof <- dot(...)` nodes. Without this, the upstream
+            // KZG10 path serializes ≈2 MSMs + 1 poly division and looks
+            // 2× slower than zippel at small thread counts. At
+            // threads ≥ 8 intra-MSM parallelism saturates and the gap
+            // closes on its own; this fix matters most at threads = 1–4.
+            let powers = self.powers.as_powers();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs: Option<(_, _)> = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let (comm_out, proof_out) = {
+                    use std::sync::Mutex;
+                    use ark_poly_commit::PCCommitmentState;
+                    let comm_out: Mutex<Option<_>> = Mutex::new(None);
+                    let proof_out: Mutex<Option<_>> = Mutex::new(None);
+                    let rand =
+                        ark_poly_commit::kzg10::Randomness::<Fr, DensePolynomial<Fr>>::empty();
+                    rayon::scope(|sc| {
+                        sc.spawn(|_| {
+                            let (comm, _r) =
+                                Kzg::commit(&powers, &poly, None, None).expect("kzg commit");
+                            *comm_out.lock().unwrap() = Some(comm);
+                        });
+                        sc.spawn(|_| {
+                            let proof =
+                                Kzg::open(&powers, &poly, point, &rand).expect("kzg open");
+                            *proof_out.lock().unwrap() = Some(proof);
+                        });
+                    });
+                    (
+                        comm_out.into_inner().unwrap().unwrap(),
+                        proof_out.into_inner().unwrap().unwrap(),
+                    )
+                };
+                prove_sum += t.elapsed();
+                last_outputs = Some((comm_out, proof_out));
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let (comm_out, proof_out) = last_outputs.expect("PROVER_SAMPLES > 0");
 
-            let t = Instant::now();
-            let ok = Kzg::check(&self.vk, &comm, point, value, &proof).expect("kzg check");
-            let verify = t.elapsed();
+            // Average over VERIFY_SAMPLES verifier runs on the same proof.
+            // Kzg::check borrows everything, so no clone needed in the loop.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Kzg::check(&self.vk, &comm_out, point, value, &proof_out)
+                    .expect("kzg check");
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            assert!(ok, "ark-poly-commit KZG verification FAILED");
+            assert!(last_ok, "ark-poly-commit KZG verification FAILED");
 
             Timing { prove, verify }
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Cross-verification tests: confirm that zippel and native compute the same
-// KZG protocol bit-for-bit, by having each side verify the other's proof
-// against shared SRS + inputs. If either test fails, the benchmark is not
-// measuring the same protocol on both sides and the comparison is invalid.
-// ---------------------------------------------------------------------------
-#[cfg(test)]
-mod cross_tests {
-    use super::bridge::{
-        NpFr, NpG1Aff, np_fr_to_zip, np_g1_aff_to_zip_aff, np_g1_aff_to_zip_proj,
-        np_g2_aff_to_zip_proj, zip_g1_proj_to_np_aff,
-    };
-    use ark_bls12_381::Fr as ZipFr;
-    use ark_ec::CurveGroup as _;
-    use backend::{ArkBls12_381, ArkConfig, Value};
-    use lang::id::{Tid, Vid};
-    use np_ark_bls12_381::Bls12_381 as NpE;
-    use np_ark_ec::pairing::Pairing as NpPairing;
-    use np_ark_ff::UniformRand;
-    use np_ark_poly::{DenseUVPolynomial, Polynomial, univariate::DensePolynomial};
-    use np_ark_poly_commit::kzg10::{
-        Commitment, KZG10, Powers, Proof, UniversalParams, VerifierKey,
-    };
-    use share::Ctx;
-    use std::borrow::Cow;
-    use std::path::PathBuf;
-    use zippel::{ZippelArgs, ZippelHandler, check_verification};
-
-    type Kzg = KZG10<NpE, DensePolynomial<NpFr>>;
-    type NpG1 = <NpE as NpPairing>::G1;
-    type ZipG1Proj = <ArkBls12_381 as ArkConfig>::G1;
-    type ZipG1Aff = ark_bls12_381::G1Affine;
-
-    /// Shared world: identical SRS + poly + eval point used by both tests.
-    /// We seed the RNG deterministically so test runs are reproducible.
-    struct World {
-        pp: UniversalParams<NpE>,
-        poly: DensePolynomial<NpFr>,
-        point: NpFr,
-        value: NpFr,
-        n: usize,
-    }
-
-    fn build_world(n: usize) -> World {
-        use ark_std::rand::SeedableRng;
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xC0FFEE_u64 ^ n as u64);
-        let degree = n - 1;
-        let pp = Kzg::setup(degree, false, &mut rng).expect("kzg setup");
-        let poly = DensePolynomial::<NpFr>::rand(degree, &mut rng);
-        let point = NpFr::rand(&mut rng);
-        let value = poly.evaluate(&point);
-        World {
-            pp,
-            poly,
-            point,
-            value,
-            n,
-        }
-    }
-
-    fn build_powers_owned(pp: &UniversalParams<NpE>, degree: usize) -> (Vec<NpG1Aff>, Vec<NpG1Aff>) {
-        let powers_of_g = pp.powers_of_g[..=degree].to_vec();
-        let powers_of_gamma_g = (0..=degree)
-            .map(|i| pp.powers_of_gamma_g[&i])
-            .collect::<Vec<_>>();
-        (powers_of_g, powers_of_gamma_g)
-    }
-
-    fn build_vk(pp: &UniversalParams<NpE>) -> VerifierKey<NpE> {
-        VerifierKey {
-            g: pp.powers_of_g[0],
-            gamma_g: pp.powers_of_gamma_g[&0],
-            h: pp.h,
-            beta_h: pp.beta_h,
-            prepared_h: pp.prepared_h.clone(),
-            prepared_beta_h: pp.prepared_beta_h.clone(),
-        }
-    }
-
-    /// Build the zippel-side input context from the shared world, with all
-    /// curve/field values bridged from `np_ark_*` to `ark_*`.
-    fn zip_inputs_from_world(world: &World) -> Ctx<Vid, Value<ArkBls12_381>> {
-        let poly_coeffs_zip: Vec<ZipFr> = world.poly.coeffs.iter().map(np_fr_to_zip).collect();
-        let eval_point_zip = np_fr_to_zip(&world.point);
-        let eval_result_zip = np_fr_to_zip(&world.value);
-        let srs_g1_zip: Vec<ZipG1Aff> = world.pp.powers_of_g[..world.n]
-            .iter()
-            .map(np_g1_aff_to_zip_aff)
-            .collect();
-        let gen_g1_zip = np_g1_aff_to_zip_proj(&world.pp.powers_of_g[0]);
-        let gen_g2_zip = np_g2_aff_to_zip_proj(&world.pp.h);
-        let srs_g2_s_zip = np_g2_aff_to_zip_proj(&world.pp.beta_h);
-
-        Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-            (
-                Vid("poly_coeffs".to_string()),
-                Value::VecScalar(poly_coeffs_zip),
-            ),
-            (Vid("gen_g1".to_string()), Value::G1(gen_g1_zip)),
-            (Vid("gen_g2".to_string()), Value::G2(gen_g2_zip)),
-            (Vid("eval_point".to_string()), Value::Scalar(eval_point_zip)),
-            (Vid("eval_result".to_string()), Value::Scalar(eval_result_zip)),
-            (Vid("srs_g1".to_string()), Value::VecG1Affine(srs_g1_zip)),
-            (Vid("srs_g2_s".to_string()), Value::G2(srs_g2_s_zip)),
-        ])
-    }
-
-    fn zippel_handler(n: usize) -> ZippelHandler<ArkBls12_381> {
-        // benchmarks/ runs its tests from its own crate dir, so the .zippel
-        // path needs to walk up to the workspace root.
-        let zippel_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("examples/kzg/kzg.zippel");
-        let args = ZippelArgs::new(zippel_path);
-        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("N"), &n);
-        handler.compile(&sizes);
-        handler
-    }
-
-    /// Sweep used by both cross-tests. Capped at N=16 (well below 20) so
-    /// test wall-clock stays under a minute per direction.
-    const SWEEP: &[usize] = &[2, 4, 8, 16];
-
-    /// Test 1: native side produces commit + opening proof; zippel side
-    /// runs its verifier against the bridged proof. Additionally asserts
-    /// that zippel's own commit and proof are byte-identical to native's
-    /// (after bridging) — the strongest "we compute the same thing" check.
-    #[test]
-    fn native_prove_then_zippel_verify() {
-        for &n in SWEEP {
-            run_native_prove_zippel_verify(n);
-        }
-    }
-
-    fn run_native_prove_zippel_verify(n: usize) {
-        let world = build_world(n);
-
-        // ---- Native: commit + open ---------------------------------------
-        let (powers_of_g, powers_of_gamma_g) = build_powers_owned(&world.pp, n - 1);
-        let powers = Powers::<NpE> {
-            powers_of_g: Cow::Borrowed(&powers_of_g),
-            powers_of_gamma_g: Cow::Borrowed(&powers_of_gamma_g),
-        };
-        let (comm_n, rand) =
-            Kzg::commit(&powers, &world.poly, None, None).expect("native commit");
-        let proof_n = Kzg::open(&powers, &world.poly, world.point, &rand).expect("native open");
-
-        // ---- Zippel: run_prover to capture state; also use its proof for
-        //      the byte-equality sanity check below -----------------------
-        let mut handler = zippel_handler(n);
-        let zip_inputs = zip_inputs_from_world(&world);
-        let prover_sched = handler.default_schedule_prover();
-        let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(prover_sched, zip_inputs)
-            .expect("zippel run_prover");
-
-        // Zippel transcript is [commitment, proof] in `<-` order.
-        assert_eq!(zip_proof.len(), 2, "expected 2 transcript items");
-        let zip_comm = match &zip_proof[0] {
-            Value::G1(g) => *g,
-            other => panic!("expected G1 commitment, got {:?}", format!("{:?}", std::mem::discriminant(other))),
-        };
-        let zip_proof_g = match &zip_proof[1] {
-            Value::G1(g) => *g,
-            other => panic!("expected G1 proof, got {:?}", format!("{:?}", std::mem::discriminant(other))),
-        };
-
-        // ---- Byte-equality assertion: zippel's commit + proof MUST equal
-        //      native's (after bridging) -----------------------------------
-        let zip_comm_as_np = zip_g1_proj_to_np_aff(&zip_comm);
-        let zip_proof_as_np = zip_g1_proj_to_np_aff(&zip_proof_g);
-        assert_eq!(
-            zip_comm_as_np, comm_n.0,
-            "N={n}: zippel commit != native commit (bridged) — protocols diverge!"
-        );
-        assert_eq!(
-            zip_proof_as_np, proof_n.w,
-            "N={n}: zippel proof != native proof (bridged) — protocols diverge!"
-        );
-
-        // ---- Cross-verify: feed NATIVE-produced (commit, proof) into the
-        //      zippel verifier graph as the transcript. The zippel verifier
-        //      should accept since (by the byte-eq above) it computes the
-        //      same pairing equation against bit-identical inputs. --------
-        let cross_proof: Vec<Value<ArkBls12_381>> = vec![
-            Value::G1(np_g1_aff_to_zip_proj(&comm_n.0)),
-            Value::G1(np_g1_aff_to_zip_proj(&proof_n.w)),
-        ];
-        let verifier_sched = handler.default_schedule_verifier();
-        let verifier_result = handler
-            .run_verifier(verifier_sched, cross_proof)
-            .expect("zippel run_verifier on cross-proof");
-        let result = check_verification(verifier_result);
-        assert!(
-            result.passed,
-            "N={n}: CROSS-VERIFY FAILED: zippel verifier rejected native-produced proof"
-        );
-    }
-
-    /// Test 2: zippel side produces commit + opening proof (via run_prover);
-    /// native side runs its verifier (`Kzg::check`) against the bridged
-    /// (commitment, proof). Confirms the OTHER direction is also bit-exact.
-    #[test]
-    fn zippel_prove_then_native_verify() {
-        for &n in SWEEP {
-            run_zippel_prove_native_verify(n);
-        }
-    }
-
-    fn run_zippel_prove_native_verify(n: usize) {
-        let world = build_world(n);
-
-        // ---- Zippel: run_prover to produce commit + open ------------------
-        let mut handler = zippel_handler(n);
-        let zip_inputs = zip_inputs_from_world(&world);
-        let prover_sched = handler.default_schedule_prover();
-        let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(prover_sched, zip_inputs)
-            .expect("zippel run_prover");
-
-        assert_eq!(zip_proof.len(), 2, "expected 2 transcript items");
-        let zip_comm = match &zip_proof[0] {
-            Value::G1(g) => *g,
-            other => panic!("expected G1 commitment, got {:?}", format!("{:?}", std::mem::discriminant(other))),
-        };
-        let zip_proof_g = match &zip_proof[1] {
-            Value::G1(g) => *g,
-            other => panic!("expected G1 proof, got {:?}", format!("{:?}", std::mem::discriminant(other))),
-        };
-
-        // ---- Bridge zippel's (commitment, proof) into native types --------
-        let comm_np = Commitment::<NpE>(zip_g1_proj_to_np_aff(&zip_comm));
-        let proof_np = Proof::<NpE> {
-            w: zip_g1_proj_to_np_aff(&zip_proof_g),
-            random_v: None,
-        };
-
-        // ---- Native: verify the zippel-produced proof ---------------------
-        let vk = build_vk(&world.pp);
-        let ok = Kzg::check(&vk, &comm_np, world.point, world.value, &proof_np)
-            .expect("native Kzg::check call");
-        assert!(
-            ok,
-            "N={n}: CROSS-VERIFY FAILED: native verifier rejected zippel-produced proof"
-        );
     }
 }

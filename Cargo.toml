@@ -70,6 +70,10 @@ harness = false
 name = "groth16"
 harness = false
 
+[[bench]]
+name = "compilation"
+harness = false
+
 [[example]]
 name = "mle"
 path = "examples/tests/mle_example/main.rs"

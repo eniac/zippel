@@ -13,16 +13,24 @@
 //! matrices and the same witness.
 //!
 //! Parity decisions:
-//!   - Zippel side feeds `z_a_evals`, `z_b_evals`, `x_a_evals`,
-//!     `x_b_evals` as inputs (no sparse MVM inside the protocol — same
-//!     simplification the user requested when implementing PARI in
-//!     `examples/pari`). The native side reaches the same vectors
-//!     internally; both pay the same sparse-MVM cost outside the
-//!     "prove" timer.
+//!   - Native side runs the SR1CS-direct entry points (`Pari::
+//!     keygen_from_sr1cs` / `Pari::prove_from_sr1cs`) so both sides see
+//!     the EXACT same matrices, witness, and instance_len. No
+//!     `ConstraintSynthesizer`, no R1CS→SR1CS adapter (which would
+//!     expand the constraint count and add aux variables), no extra
+//!     instance vars beyond the n_pub the zippel side declares.
+//!   - Zippel side feeds `z_a_evals`, `z_b_evals`, `w_a_evals`,
+//!     `w_b_evals` precomputed (no sparse MVM inside the protocol);
+//!     native side runs those 4 sparse MVMs INSIDE its prove timer. This
+//!     is the one asymmetry left — at K = 2^20 with row_density = 3 the
+//!     MVM cost is O(K) = ~1M field multiplies per matrix, small next
+//!     to the 4 IFFTs + quotient division + 5 MSMs that dominate.
 //!   - Native verifier uses the upstream O(n) Lagrange shortcut; the
 //!     zippel verifier interpolates `x_a_evals` over K (O(K log K)).
 //!     This is the real zippel-side limitation, not a measurement
-//!     artifact.
+//!     artifact. With instance_len = n_pub (= 1 by default) the native
+//!     shortcut is O(1) and dominated by the 4-element MSM + 3-pair
+//!     final check.
 
 use crate::Timing;
 
@@ -188,6 +196,7 @@ pub mod zippel_side {
         DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial,
         univariate::DensePolynomial,
     };
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use backend::{ArkBls12_381, ArkConfig, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
@@ -200,44 +209,33 @@ pub mod zippel_side {
     type G1 = <C as ArkConfig>::G1;
     type G2 = <C as ArkConfig>::G2;
 
-    pub struct Setup {
-        handler: ZippelHandler<C>,
-        m_log: usize,
-        k: usize,
-        n_pub: usize,
-        kmn: usize, // = num_vars - n_pub
-        num_vars: usize,
+    // Cached SRS artifact. Deterministic given `(test_rng seed, inst,
+    // m_log, n_pub, num_vars)`. The bench reuses the same Instance
+    // across the full thread sweep, so caching by `m_log` alone is safe
+    // as long as inst_gen stays seeded with `ark_std::test_rng()` and
+    // (n_pub, k_vars) stay fixed.
+    #[derive(CanonicalSerialize, CanonicalDeserialize)]
+    struct PariSrs {
+        sigma_w: Vec<G1>,
+        sigma_q: Vec<G1>,
+        sigma_a: Vec<G1>,
+        sigma_b: Vec<G1>,
+        sigma_q_prime: Vec<G1>,
+        alpha_g: G1,
+        beta_g: G1,
+        g_g1: G1,
+        delta2_h: G2,
+        tau_h: G2,
+        h_g2: G2,
+        omegas: Vec<F>,
+        k_inv: F,
+        v_k_coeffs: Vec<F>,
     }
 
-    impl Setup {
-        pub fn new(m_log: usize, n_pub: usize, num_vars: usize) -> Self {
+    impl PariSrs {
+        fn build(m_log: usize, n_pub: usize, num_vars: usize, inst: &super::Instance<F>) -> Self {
             let k = 1usize << m_log;
-            let kmn = num_vars - n_pub;
-            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"));
-            let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
-            let mut sizes = Ctx::new();
-            sizes.insert(&Tid::new("M"), &m_log);
-            sizes.insert(&Tid::new("N"), &n_pub);
-            sizes.insert(&Tid::new("KMN"), &kmn);
-            handler.compile(&sizes);
-            Setup {
-                handler,
-                m_log,
-                k,
-                n_pub,
-                kmn,
-                num_vars,
-            }
-        }
-
-        pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
-            assert_eq!(inst.k, self.k);
-            assert_eq!(inst.instance_len, self.n_pub);
-            assert_eq!(inst.num_vars, self.num_vars);
-
             let mut rng = ark_std::test_rng();
-
-            // --- PARI Generator: SRS construction (matches examples/pari/main.rs) ---
             let alpha = F::rand(&mut rng);
             let beta = F::rand(&mut rng);
             let delta2 = F::rand(&mut rng);
@@ -245,15 +243,14 @@ pub mod zippel_side {
             let g_g1: G1 = G1::rand(&mut rng);
             let h_g2: G2 = G2::rand(&mut rng);
 
-            let domain = GeneralEvaluationDomain::<F>::new(self.k).expect("K-domain");
+            let domain = GeneralEvaluationDomain::<F>::new(k).expect("K-domain");
 
-            // Interpolate columns of A and B over K to get a_i(X), b_i(X).
-            let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_vars);
-            let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(self.num_vars);
-            for j in 0..self.num_vars {
-                let mut a_col = vec![F::zero(); self.k];
-                let mut b_col = vec![F::zero(); self.k];
-                for i in 0..self.k {
+            let mut a_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
+            let mut b_polys: Vec<DensePolynomial<F>> = Vec::with_capacity(num_vars);
+            for j in 0..num_vars {
+                let mut a_col = vec![F::zero(); k];
+                let mut b_col = vec![F::zero(); k];
+                for i in 0..k {
                     for &(c, idx) in &inst.a_mat[i] {
                         if idx == j {
                             a_col[i] += c;
@@ -270,7 +267,7 @@ pub mod zippel_side {
             }
 
             let delta2_inv = delta2.inverse().expect("delta2 != 0");
-            let sigma_w_vec: Vec<G1> = (self.n_pub..self.num_vars)
+            let sigma_w: Vec<G1> = (n_pub..num_vars)
                 .map(|i| {
                     let scalar = (alpha * a_polys[i].evaluate(&tau)
                         + beta * b_polys[i].evaluate(&tau))
@@ -281,7 +278,7 @@ pub mod zippel_side {
 
             let tau_powers: Vec<F> = {
                 let mut acc = F::one();
-                (0..self.k)
+                (0..k)
                     .map(|_| {
                         let v = acc;
                         acc *= tau;
@@ -289,33 +286,105 @@ pub mod zippel_side {
                     })
                     .collect()
             };
-            let sigma_q_vec: Vec<G1> = tau_powers
+            let sigma_q: Vec<G1> = tau_powers
                 .iter()
                 .map(|t| g_g1 * (*t * delta2_inv))
                 .collect();
-            let sigma_a_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (alpha * *t)).collect();
-            let sigma_b_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (beta * *t)).collect();
-            let sigma_q_prime_vec: Vec<G1> = tau_powers.iter().map(|t| g_g1 * *t).collect();
+            let sigma_a: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (alpha * *t)).collect();
+            let sigma_b: Vec<G1> = tau_powers.iter().map(|t| g_g1 * (beta * *t)).collect();
+            let sigma_q_prime: Vec<G1> = tau_powers.iter().map(|t| g_g1 * *t).collect();
 
-            let alpha_g_val: G1 = g_g1 * alpha;
-            let beta_g_val: G1 = g_g1 * beta;
-            let delta2_h_val: G2 = h_g2 * delta2;
-            let tau_h_val: G2 = h_g2 * tau;
+            let alpha_g: G1 = g_g1 * alpha;
+            let beta_g: G1 = g_g1 * beta;
+            let delta2_h: G2 = h_g2 * delta2;
+            let tau_h: G2 = h_g2 * tau;
 
-            let mut v_k_coeffs_vec = vec![F::zero(); self.k + 1];
-            v_k_coeffs_vec[0] = -F::one();
-            v_k_coeffs_vec[self.k] = F::one();
+            let mut v_k_coeffs = vec![F::zero(); k + 1];
+            v_k_coeffs[0] = -F::one();
+            v_k_coeffs[k] = F::one();
 
-            // Lagrange-shortcut inputs: only N scalars for public input,
-            // plus N precomputed omegas[i] = ω^{K-N+i}, plus k_inv.
             let omega = domain.group_gen();
-            let x_vec: Vec<F> = inst.z[..self.n_pub].to_vec();
-            let omegas_vec: Vec<F> = (0..self.n_pub)
-                .map(|i| omega.pow([(self.k - self.n_pub + i) as u64]))
+            let omegas: Vec<F> = (0..n_pub)
+                .map(|i| omega.pow([(k - n_pub + i) as u64]))
                 .collect();
-            let k_inv = F::from(self.k as u64).inverse().unwrap();
+            let k_inv = F::from(k as u64).inverse().unwrap();
 
-            // Prover-side precomputed w_*_evals = z_*_evals − x_*_evals on K.
+            PariSrs {
+                sigma_w,
+                sigma_q,
+                sigma_a,
+                sigma_b,
+                sigma_q_prime,
+                alpha_g,
+                beta_g,
+                g_g1,
+                delta2_h,
+                tau_h,
+                h_g2,
+                omegas,
+                k_inv,
+                v_k_coeffs,
+            }
+        }
+    }
+
+    pub struct Setup {
+        handler: ZippelHandler<C>,
+        m_log: usize,
+        k: usize,
+        n_pub: usize,
+        kmn: usize, // = num_vars - n_pub
+        num_vars: usize,
+        srs: PariSrs,
+        compile_time: std::time::Duration,
+    }
+
+    impl Setup {
+        pub fn new(m_log: usize, n_pub: usize, inst: &super::Instance<F>) -> Self {
+            let k = 1usize << m_log;
+            let num_vars = inst.num_vars;
+            let kmn = num_vars - n_pub;
+            let compile_start = Instant::now();
+            let args = ZippelArgs::new(PathBuf::from("examples/pari/pari.zippel"))
+                .with_skip_analyses();
+            let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
+            let mut sizes = Ctx::new();
+            sizes.insert(&Tid::new("M"), &m_log);
+            sizes.insert(&Tid::new("N"), &n_pub);
+            sizes.insert(&Tid::new("KMN"), &kmn);
+            handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
+
+            let srs = crate::cache::load_or_build_canonical("pari_zippel_srs", m_log, || {
+                PariSrs::build(m_log, n_pub, num_vars, inst)
+            });
+
+            Setup {
+                handler,
+                m_log,
+                k,
+                n_pub,
+                kmn,
+                num_vars,
+                srs,
+                compile_time,
+            }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
+        }
+
+        pub fn time_protocol(&mut self, inst: &super::Instance<F>) -> Timing {
+            assert_eq!(inst.k, self.k);
+            assert_eq!(inst.instance_len, self.n_pub);
+            assert_eq!(inst.num_vars, self.num_vars);
+
+            // Cheap per-call data derived from inst (element-wise
+            // subtractions + slice clones). The expensive SRS bits live
+            // in `self.srs`, built once in `Setup::new`.
+            let x_vec: Vec<F> = inst.z[..self.n_pub].to_vec();
+            let w_vec: Vec<F> = inst.z[self.n_pub..].to_vec();
             let w_a_evals: Vec<F> = (0..self.k)
                 .map(|i| inst.z_a_evals[i] - inst.x_a_evals[i])
                 .collect();
@@ -323,9 +392,6 @@ pub mod zippel_side {
                 .map(|i| inst.z_b_evals[i] - inst.x_b_evals[i])
                 .collect();
 
-            let w_vec: Vec<F> = inst.z[self.n_pub..].to_vec();
-
-            // --- Pack into the zippel inputs Ctx ---
             let inputs = Ctx::<Vid, Value<C>>::from_iter([
                 (
                     Vid("z_a_evals".to_string()),
@@ -341,66 +407,94 @@ pub mod zippel_side {
                 (Vid("x".to_string()), Value::VecScalar(x_vec.clone())),
                 (
                     Vid("omegas".to_string()),
-                    Value::VecScalar(omegas_vec.clone()),
+                    Value::VecScalar(self.srs.omegas.clone()),
                 ),
-                (Vid("sigma_w".to_string()), Value::VecG1(sigma_w_vec)),
-                (Vid("sigma_q".to_string()), Value::VecG1(sigma_q_vec)),
-                (Vid("sigma_a".to_string()), Value::VecG1(sigma_a_vec)),
-                (Vid("sigma_b".to_string()), Value::VecG1(sigma_b_vec)),
+                (
+                    Vid("sigma_w".to_string()),
+                    Value::VecG1(self.srs.sigma_w.clone()),
+                ),
+                (
+                    Vid("sigma_q".to_string()),
+                    Value::VecG1(self.srs.sigma_q.clone()),
+                ),
+                (
+                    Vid("sigma_a".to_string()),
+                    Value::VecG1(self.srs.sigma_a.clone()),
+                ),
+                (
+                    Vid("sigma_b".to_string()),
+                    Value::VecG1(self.srs.sigma_b.clone()),
+                ),
                 (
                     Vid("sigma_q_prime".to_string()),
-                    Value::VecG1(sigma_q_prime_vec),
+                    Value::VecG1(self.srs.sigma_q_prime.clone()),
                 ),
-                (Vid("alpha_g".to_string()), Value::G1(alpha_g_val)),
-                (Vid("beta_g".to_string()), Value::G1(beta_g_val)),
-                (Vid("g_g1".to_string()), Value::G1(g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(delta2_h_val)),
-                (Vid("tau_h".to_string()), Value::G2(tau_h_val)),
-                (Vid("h_g2".to_string()), Value::G2(h_g2)),
+                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
+                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
+                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
+                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
+                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
+                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (
                     Vid("v_k_coeffs".to_string()),
-                    Value::VecScalar(v_k_coeffs_vec),
+                    Value::VecScalar(self.srs.v_k_coeffs.clone()),
                 ),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
-                (Vid("k_inv".to_string()), Value::Scalar(k_inv)),
+                (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            // Public inputs (verifier side). With sigma_*, v_k_coeffs
-            // marked `private` in the .zippel, the verifier only sees
-            // the O(N)-sized Lagrange-shortcut data + the constant-size
-            // verifier keys.
             let public_inputs = Ctx::<Vid, Value<C>>::from_iter([
                 (Vid("x".to_string()), Value::VecScalar(x_vec)),
-                (Vid("omegas".to_string()), Value::VecScalar(omegas_vec)),
-                (Vid("alpha_g".to_string()), Value::G1(alpha_g_val)),
-                (Vid("beta_g".to_string()), Value::G1(beta_g_val)),
-                (Vid("g_g1".to_string()), Value::G1(g_g1)),
-                (Vid("delta2_h".to_string()), Value::G2(delta2_h_val)),
-                (Vid("tau_h".to_string()), Value::G2(tau_h_val)),
-                (Vid("h_g2".to_string()), Value::G2(h_g2)),
+                (
+                    Vid("omegas".to_string()),
+                    Value::VecScalar(self.srs.omegas.clone()),
+                ),
+                (Vid("alpha_g".to_string()), Value::G1(self.srs.alpha_g)),
+                (Vid("beta_g".to_string()), Value::G1(self.srs.beta_g)),
+                (Vid("g_g1".to_string()), Value::G1(self.srs.g_g1)),
+                (Vid("delta2_h".to_string()), Value::G2(self.srs.delta2_h)),
+                (Vid("tau_h".to_string()), Value::G2(self.srs.tau_h)),
+                (Vid("h_g2".to_string()), Value::G2(self.srs.h_g2)),
                 (Vid("f_one".to_string()), Value::Scalar(F::one())),
-                (Vid("k_inv".to_string()), Value::Scalar(k_inv)),
+                (Vid("k_inv".to_string()), Value::Scalar(self.srs.k_inv)),
             ]);
 
-            // --- Time prove ---
+            // --- Time prove (mean of PROVER_SAMPLES samples) ---
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("zippel pari prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel pari prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
-            // --- Time verify ---
+            // --- Time verify (mean of VERIFY_SAMPLES samples) ---
             self.handler.set_public_inputs(public_inputs);
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel pari verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel pari verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel PARI verification FAILED");
 
             Timing { prove, verify }
@@ -420,125 +514,119 @@ pub mod zippel_side {
 // ---------------------------------------------------------------------------
 
 pub mod native_side {
-    use super::*;
-    use crate::pari_native::{Proof, ProvingKey, VerifyingKey, keygen, prove, verify};
+    //! Native PARI baseline: the upstream `pari` crate, vendored in-tree
+    //! at `benchmarks/src/pari_upstream/`. Driven via the SR1CS-direct
+    //! entry points (`Pari::keygen_from_sr1cs` / `Pari::prove_from_sr1cs`)
+    //! so both sides prove the EXACT same SR1CS statement built by
+    //! `super::inst_gen::build_random` — same K, same matrices, same z,
+    //! same instance_len. No `ConstraintSynthesizer`, no `Sr1csAdapter`
+    //! R1CS→SR1CS expansion, and (since instance_len = n_pub instead of
+    //! K+1) the verifier's O(n) Lagrange shortcut runs over the small
+    //! instance dimension just like the zippel verifier does.
+    use super::{Instance, Timing};
+    use crate::pari_upstream::{
+        Pari,
+        data_structures::{ProvingKey, VerifyingKey},
+    };
     use ark_bls12_381::Bls12_381;
     use ark_ec::pairing::Pairing;
-    use ark_ff::Zero;
     use ark_serialize::CanonicalSerialize;
-    use std::time::{Duration, Instant};
-
-    /// Sparse matrix row · dense vector — same shape as pari_native's
-    /// internal `eval_constraint`, inlined here so we can time it from
-    /// outside the prove function without exposing pari_native internals.
-    fn eval_sparse_row<F: ark_ff::Field>(row: &[(F, usize)], v: &[F]) -> F {
-        let mut acc = F::zero();
-        for (c, j) in row {
-            acc += *c * v[*j];
-        }
-        acc
-    }
+    use ark_std::rand::{SeedableRng, rngs::StdRng};
+    use std::time::Instant;
 
     type E = Bls12_381;
     type F = <E as Pairing>::ScalarField;
 
     pub struct Setup {
+        instance_assignment: Vec<F>,
+        witness_assignment: Vec<F>,
+        public_inputs: Vec<F>,
+        a_mat: Vec<Vec<(F, usize)>>,
+        b_mat: Vec<Vec<(F, usize)>>,
         pk: ProvingKey<E>,
         vk: VerifyingKey<E>,
     }
 
     impl Setup {
-        pub fn new(inst: &super::Instance<F>) -> Self {
-            let mut rng = ark_std::test_rng();
-            let (pk, vk) = keygen::<E, _>(
-                &inst.a_mat,
-                &inst.b_mat,
-                inst.num_vars,
-                inst.instance_len,
-                &mut rng,
+        pub fn new(inst: &Instance<F>) -> Self {
+            let instance_assignment = inst.z[..inst.instance_len].to_vec();
+            let witness_assignment = inst.z[inst.instance_len..].to_vec();
+            // Verifier's public input is `instance_assignment[1..]` (the
+            // constant-1 at position 0 is implicit) — matches upstream.
+            let public_inputs = instance_assignment[1..].to_vec();
+            // Cache (pk, vk) — these depend only on the matrices and the
+            // seeded rng. log_size = log_2(k).
+            let log_size = inst.k.trailing_zeros() as usize;
+            let (pk, vk) = crate::cache::load_or_build_canonical::<(
+                crate::pari_upstream::data_structures::ProvingKey<E>,
+                crate::pari_upstream::data_structures::VerifyingKey<E>,
+            )>(
+                "pari_keys",
+                log_size,
+                || {
+                    let mut rng = StdRng::seed_from_u64(0xBEEF_u64);
+                    Pari::<E>::keygen_from_sr1cs(
+                        &inst.a_mat,
+                        &inst.b_mat,
+                        inst.instance_len,
+                        inst.num_vars,
+                        &mut rng,
+                    )
+                },
             );
-            Setup { pk, vk }
-        }
-
-        /// Time the sparse matrix–vector products the native prover would
-        /// have to do anyway (z_a = A·z, z_b = B·z, w_a = A·w_punctured,
-        /// w_b = B·w_punctured on the K-domain). The zippel side gets these
-        /// vectors as precomputed inputs (`inst.z_a_evals` etc.) and so its
-        /// prove timer excludes this cost; we subtract it from the native
-        /// prove timer to put the two sides on the same footing.
-        fn time_mvm(&self, inst: &super::Instance<F>) -> Duration {
-            let k = inst.k;
-            let instance_assignment = &inst.z[..inst.instance_len];
-            let witness_assignment = &inst.z[inst.instance_len..];
-
-            let mut assignment = instance_assignment.to_vec();
-            assignment.extend_from_slice(witness_assignment);
-            let mut punctured = vec![F::zero(); inst.instance_len];
-            punctured.extend_from_slice(witness_assignment);
-
-            // Mirror pari_native::prove's MVM loop verbatim.
-            let mut z_a = vec![F::zero(); k];
-            let mut z_b = vec![F::zero(); k];
-            let mut w_a = vec![F::zero(); k];
-            let mut w_b = vec![F::zero(); k];
-            let t = Instant::now();
-            for i in 0..k {
-                z_a[i] = eval_sparse_row(&inst.a_mat[i], &assignment);
-                z_b[i] = eval_sparse_row(&inst.b_mat[i], &assignment);
-                w_a[i] = eval_sparse_row(&inst.a_mat[i], &punctured);
-                w_b[i] = eval_sparse_row(&inst.b_mat[i], &punctured);
-            }
-            let elapsed = t.elapsed();
-            // Defeat dead-code elimination — keep the output alive past
-            // the timer so the loop isn't optimized away.
-            std::hint::black_box((z_a, z_b, w_a, w_b));
-            elapsed
-        }
-
-        pub fn time_protocol(&self, inst: &super::Instance<F>) -> Timing {
-            let instance_assignment = &inst.z[..inst.instance_len];
-            let witness_assignment = &inst.z[inst.instance_len..];
-
-            let t = Instant::now();
-            let proof: Proof<E> = prove(
-                &self.pk,
-                &inst.a_mat,
-                &inst.b_mat,
+            Setup {
                 instance_assignment,
                 witness_assignment,
-            );
-            let prove_t = t.elapsed();
-
-            // Subtract the MVM cost from the prove timer so the
-            // comparison reports SNARK-specific work only (the zippel
-            // side doesn't compute these MVMs inside its timer — see
-            // `time_mvm`'s docstring).
-            let mvm_t = self.time_mvm(inst);
-            let prove_adjusted = prove_t.saturating_sub(mvm_t);
-
-            // Verifier receives public_input as everything except the
-            // constant 1 at z[0] — matching upstream's stripping convention.
-            let public_input: Vec<F> = instance_assignment[1..].to_vec();
-
-            let t = Instant::now();
-            let ok = verify(&proof, &self.vk, &public_input);
-            let verify_t = t.elapsed();
-            assert!(ok, "native PARI verification FAILED");
-
-            Timing {
-                prove: prove_adjusted,
-                verify: verify_t,
+                public_inputs,
+                a_mat: inst.a_mat.clone(),
+                b_mat: inst.b_mat.clone(),
+                pk,
+                vk,
             }
         }
 
-        pub fn proof_size(&self, inst: &super::Instance<F>) -> usize {
-            let proof: Proof<E> = prove(
+        pub fn time_protocol(&self, _inst: &Instance<F>) -> Timing {
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let proof = Pari::<E>::prove_from_sr1cs(
+                    &self.a_mat,
+                    &self.b_mat,
+                    &self.instance_assignment,
+                    &self.witness_assignment,
+                    &self.pk,
+                )
+                .expect("Pari::prove_from_sr1cs failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
+
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = Pari::<E>::verify(&proof, &self.vk, &self.public_inputs);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "upstream PARI verification FAILED");
+
+            Timing { prove, verify }
+        }
+
+        pub fn proof_size(&self, _inst: &Instance<F>) -> usize {
+            let proof = Pari::<E>::prove_from_sr1cs(
+                &self.a_mat,
+                &self.b_mat,
+                &self.instance_assignment,
+                &self.witness_assignment,
                 &self.pk,
-                &inst.a_mat,
-                &inst.b_mat,
-                &inst.z[..inst.instance_len],
-                &inst.z[inst.instance_len..],
-            );
+            )
+            .expect("Pari::prove_from_sr1cs failed");
             proof.compressed_size()
         }
     }

@@ -21,6 +21,7 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         inputs: Ctx<Vid, Value<ArkBls12_381>>,
         _source_file: NamedTempFile,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
@@ -73,34 +74,63 @@ pub mod zippel_side {
                 (Vid("h_base".to_string()), Value::G1(h_base)),
             ]);
 
-            let args = ZippelArgs::new(source_file.path().to_path_buf());
+            // Time the zippel compiler: source → executable graph.
+            // Includes parsing, type-checking, and graph construction.
+            // Excludes runtime scheduling (which is per-call cheap
+            // graph→TDag work the runtime does) and excludes the actual
+            // prove/verify execution.
+            let compile_start = Instant::now();
+            let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs,
                 _source_file: source_file,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, self.inputs.clone())
-                .expect("zippel hyrax prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = self.inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("zippel hyrax prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel hyrax verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel hyrax verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel hyrax verification FAILED");
             Timing { prove, verify }
         }
@@ -130,7 +160,7 @@ pub mod zippel_side {
         out
     }
 
-    fn render_proto(l: usize, m: usize) -> String {
+    pub fn render_proto(l: usize, m: usize) -> String {
         let nrows = 1usize << l;
         let ncols = 1usize << m;
         let ntot = nrows * ncols;
@@ -195,218 +225,127 @@ proto hyrax<G: Group, F: Scalar<G>>(
     }
 }
 
+/// Native Hyrax baseline. Vendored from `ark-poly-commit-0.6.0::hyrax`
+/// (see `crate::hyrax_upstream`) with the matrix-vector multiplication
+/// in `open` rewritten to use flat row-major storage and a SAXPY
+/// accumulation — upstream's `Matrix<F>` stores rows as separately
+/// allocated `Vec<F>`s and `Matrix::row_mul` allocates a fresh 16KB
+/// column-gather Vec per output element (8MB churn at log_size=18) plus
+/// nested `par_iter` overhead. Crypto primitives and Fiat-Shamir
+/// transcript bytes are unchanged. Timed regions still match the zippel
+/// side: prove = commit + open (row Pedersens + σ-protocol),
+/// verify = check.
 pub mod native_side {
     use super::Timing;
-    use ark_bls12_381::{Fr, G1Affine, G1Projective};
-    use ark_ec::{CurveGroup, VariableBaseMSM};
-    use ark_ff::{Field, One, PrimeField, Zero};
-    use ark_std::UniformRand;
-    use ark_std::rand::SeedableRng;
-    use blake2::{Blake2b512, Digest};
+    use ark_bls12_381::{Fr, G1Affine};
+    use ark_crypto_primitives::sponge::{
+        poseidon::{PoseidonConfig, PoseidonSponge},
+        CryptographicSponge,
+    };
+    use ark_ff::{PrimeField, UniformRand};
+    use ark_poly::{DenseMultilinearExtension, MultilinearExtension, Polynomial};
     use std::time::Instant;
 
+    use crate::hyrax_upstream::{
+        self, CommitterKey, VerifierKey,
+    };
+
     pub struct Setup {
-        n: usize,
-        l: usize,
-        m: usize,
-        nrows: usize,
-        ncols: usize,
-        g_vec_aff: Vec<G1Affine>,
-        g_base: G1Projective,
-        h_base: G1Projective,
+        num_vars: usize,
+        ck: CommitterKey,
+        vk: VerifierKey,
+        poly: DenseMultilinearExtension<Fr>,
+        point: Vec<Fr>,
+        value: Fr,
     }
 
     impl Setup {
         pub fn new(n: usize) -> Self {
-            assert!(n >= 2 && n % 2 == 0, "n must be even and >= 2");
-            let l = n / 2;
-            let m = n - l;
-            let nrows = 1usize << l;
-            let ncols = 1usize << m;
+            // Cache UniversalParams. Byte format matches upstream's
+            // derived CanonicalSerialize (same field order: com_key, h),
+            // so caches written by either implementation interoperate.
+            let pp = crate::cache::load_or_build_canonical::<
+                ark_poly_commit::hyrax::HyraxUniversalParams<G1Affine>,
+            >("hyrax_universal_params", n, || {
+                let mut rng = ark_std::test_rng();
+                hyrax_upstream::setup(n, &mut rng)
+            });
+            let (ck, vk) = hyrax_upstream::trim(&pp);
 
-            let mut seed_bytes = [0u8; 32];
-            seed_bytes[..8].copy_from_slice(&(0xCAFEBABE_u64 ^ n as u64).to_le_bytes());
-            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-
-            let g_vec_proj: Vec<G1Projective> =
-                (0..ncols).map(|_| G1Projective::rand(&mut rng)).collect();
-            let g_vec_aff = G1Projective::normalize_batch(&g_vec_proj);
-            let g_base = G1Projective::rand(&mut rng);
-            let h_base = G1Projective::rand(&mut rng);
+            // Poly/point/value generation runs in `setup_pool` (called
+            // here, not in time_protocol). At log_size=20 the rand poly
+            // is 2^20 field elements and `evaluate` is O(2^n) — keeping
+            // this in the bench pool single-threaded at threads=1 was
+            // wasting ~60ms per sweep iteration.
+            let mut rng = ark_std::test_rng();
+            let poly = DenseMultilinearExtension::<Fr>::rand(n, &mut rng);
+            let point: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
+            let value = poly.evaluate(&point);
 
             Setup {
-                n,
-                l,
-                m,
-                nrows,
-                ncols,
-                g_vec_aff,
-                g_base,
-                h_base,
+                num_vars: n,
+                ck,
+                vk,
+                poly,
+                point,
+                value,
             }
         }
 
         pub fn time_protocol(&self) -> Timing {
-            let mut seed_bytes = [0u8; 32];
-            seed_bytes[..8].copy_from_slice(&(0xC0DEC0DE_u64 ^ self.n as u64).to_le_bytes());
-            let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
+            let point = &self.point;
+            let _ = self.value;
 
-            let ntot = self.nrows * self.ncols;
-            let p: Vec<Fr> = (0..ntot).map(|_| Fr::rand(&mut rng)).collect();
-            let z_row: Vec<Fr> = (0..self.l).map(|_| Fr::rand(&mut rng)).collect();
-            let z_col: Vec<Fr> = (0..self.m).map(|_| Fr::rand(&mut rng)).collect();
-
-            let l_vec = eq_evals_lsb(&z_row);
-            let r_vec = eq_evals_lsb(&z_col);
-            let y: Fr = (0..self.nrows)
-                .flat_map(|i| (0..self.ncols).map(move |j| (i, j)))
-                .map(|(i, j)| l_vec[i] * r_vec[j] * p[i * self.ncols + j])
-                .sum();
-
-            let r_rows: Vec<Fr> = (0..self.nrows).map(|_| Fr::rand(&mut rng)).collect();
-            let r_tau = Fr::rand(&mut rng);
-            let d_vec: Vec<Fr> = (0..self.ncols).map(|_| Fr::rand(&mut rng)).collect();
-            let r_delta = Fr::rand(&mut rng);
-            let r_beta = Fr::rand(&mut rng);
-
-            let t = Instant::now();
-
-            let mut c_rows_proj: Vec<G1Projective> = Vec::with_capacity(self.nrows);
-            for i in 0..self.nrows {
-                let row_bi: Vec<<Fr as PrimeField>::BigInt> = (0..self.ncols)
-                    .map(|j| p[i * self.ncols + j].into_bigint())
-                    .collect();
-                let g_row = G1Projective::msm_bigint(&self.g_vec_aff, &row_bi);
-                c_rows_proj.push(self.h_base * r_rows[i] + g_row);
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_outputs = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let (com, state) = hyrax_upstream::commit(&self.ck, &self.poly);
+                let mut sponge = test_sponge::<Fr>();
+                let proof = hyrax_upstream::open(&self.ck, &com, point, &mut sponge, &state);
+                prove_sum += t.elapsed();
+                last_outputs = Some((com, proof));
             }
-            let c_rows_aff = G1Projective::normalize_batch(&c_rows_proj);
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let (com, proof) = last_outputs.expect("PROVER_SAMPLES > 0");
 
-            let mut u: Vec<Fr> = vec![Fr::zero(); self.ncols];
-            for i in 0..self.nrows {
-                let li = l_vec[i];
-                for j in 0..self.ncols {
-                    u[j] += li * p[i * self.ncols + j];
-                }
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let mut sponge_v = test_sponge::<Fr>();
+                let t = Instant::now();
+                let ok = hyrax_upstream::check(&self.vk, &com, point, &proof, &mut sponge_v);
+                verify_sum += t.elapsed();
+                last_ok = ok;
             }
-            let r_big_t: Fr = (0..self.nrows).map(|i| l_vec[i] * r_rows[i]).sum();
-
-            let tau = self.g_base * y + self.h_base * r_tau;
-            let d_bi: Vec<<Fr as PrimeField>::BigInt> =
-                d_vec.iter().map(|x| x.into_bigint()).collect();
-            let g_d = G1Projective::msm_bigint(&self.g_vec_aff, &d_bi);
-            let delta = self.h_base * r_delta + g_d;
-            let dot_d_r: Fr = (0..self.ncols).map(|j| d_vec[j] * r_vec[j]).sum();
-            let beta = self.g_base * dot_d_r + self.h_base * r_beta;
-
-            let c = fs_challenge(
-                &self.g_base,
-                &self.h_base,
-                &self.g_vec_aff,
-                &z_row,
-                &z_col,
-                &y,
-                &c_rows_aff,
-                &tau,
-                &delta,
-                &beta,
-            );
-
-            let z_vec: Vec<Fr> = (0..self.ncols).map(|j| c * u[j] + d_vec[j]).collect();
-            let z_delta = c * r_big_t + r_delta;
-            let z_beta = c * r_tau + r_beta;
-
-            let prove = t.elapsed();
-
-            let t = Instant::now();
-
-            let c_v = fs_challenge(
-                &self.g_base,
-                &self.h_base,
-                &self.g_vec_aff,
-                &z_row,
-                &z_col,
-                &y,
-                &c_rows_aff,
-                &tau,
-                &delta,
-                &beta,
-            );
-            assert_eq!(c, c_v);
-
-            let l_bi: Vec<<Fr as PrimeField>::BigInt> =
-                l_vec.iter().map(|x| x.into_bigint()).collect();
-            let big_t = G1Projective::msm_bigint(&c_rows_aff, &l_bi);
-
-            let z_bi: Vec<<Fr as PrimeField>::BigInt> =
-                z_vec.iter().map(|x| x.into_bigint()).collect();
-            let g_z = G1Projective::msm_bigint(&self.g_vec_aff, &z_bi);
-            let lhs1 = big_t * c + delta;
-            let rhs1 = self.h_base * z_delta + g_z;
-            let check1 = lhs1 == rhs1;
-
-            let dot_z_r: Fr = (0..self.ncols).map(|j| z_vec[j] * r_vec[j]).sum();
-            let lhs2 = tau * c + beta;
-            let rhs2 = self.g_base * dot_z_r + self.h_base * z_beta;
-            let check2 = lhs2 == rhs2;
-
-            let ok = check1 && check2;
-            let verify = t.elapsed();
-            assert!(ok, "native Hyrax verification FAILED");
-
-            let _ = (c_rows_aff.len(), big_t);
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "vendored Hyrax verification FAILED");
 
             Timing { prove, verify }
         }
     }
 
-    fn eq_evals_lsb(x: &[Fr]) -> Vec<Fr> {
-        let n = x.len();
-        let one = Fr::one();
-        let mut out = vec![one; 1 << n];
-        let mut size = 1;
-        for &xi in x {
-            let one_m_xi = one - xi;
-            for i in (0..size).rev() {
-                let v = out[i];
-                out[size + i] = v * xi;
-                out[i] = v * one_m_xi;
+    // Verbatim from ark-poly-commit-0.5.0 bench-templates/src/lib.rs::test_sponge.
+    fn test_sponge<F: PrimeField>() -> PoseidonSponge<F> {
+        let full_rounds = 8;
+        let partial_rounds = 31;
+        let alpha = 17;
+        let mds = vec![
+            vec![F::one(), F::zero(), F::one()],
+            vec![F::one(), F::one(), F::zero()],
+            vec![F::zero(), F::one(), F::one()],
+        ];
+        let mut v = Vec::new();
+        let mut ark_rng = ark_std::test_rng();
+        for _ in 0..(full_rounds + partial_rounds) {
+            let mut res = Vec::new();
+            for _ in 0..3 {
+                res.push(F::rand(&mut ark_rng));
             }
-            size *= 2;
+            v.push(res);
         }
-        out
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn fs_challenge(
-        g_base: &G1Projective,
-        h_base: &G1Projective,
-        g_vec: &[G1Affine],
-        z_row: &[Fr],
-        z_col: &[Fr],
-        y: &Fr,
-        c_rows: &[G1Affine],
-        tau: &G1Projective,
-        delta: &G1Projective,
-        beta: &G1Projective,
-    ) -> Fr {
-        use ark_serialize::CanonicalSerialize;
-        fn absorb<T: CanonicalSerialize>(t: &T, h: &mut Blake2b512, buf: &mut Vec<u8>) {
-            buf.clear();
-            t.serialize_compressed(&mut *buf).unwrap();
-            h.update(&buf);
-        }
-        let mut h = Blake2b512::new();
-        let mut buf = Vec::with_capacity(96);
-        absorb(g_base, &mut h, &mut buf);
-        absorb(h_base, &mut h, &mut buf);
-        absorb(&g_vec.to_vec(), &mut h, &mut buf);
-        absorb(&z_row.to_vec(), &mut h, &mut buf);
-        absorb(&z_col.to_vec(), &mut h, &mut buf);
-        absorb(y, &mut h, &mut buf);
-        absorb(&c_rows.to_vec(), &mut h, &mut buf);
-        absorb(tau, &mut h, &mut buf);
-        absorb(delta, &mut h, &mut buf);
-        absorb(beta, &mut h, &mut buf);
-        Fr::from_le_bytes_mod_order(&h.finalize())
+        let config =
+            PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, v, 2, 1);
+        PoseidonSponge::new(&config)
     }
 }

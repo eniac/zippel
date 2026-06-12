@@ -1,306 +1,30 @@
-use crate::Timing;
-use ark_curve25519::{EdwardsProjective as G1Projective, Fr};
-use ark_ec::CurveGroup;
-use ark_ff::{Field, Zero};
-use ark_std::UniformRand;
-use ark_std::rand::SeedableRng;
-use backend::{ArkCurve25519, ArkConfig, PolyVariant, Value, VirtualPolynomial};
-use lang::id::{Tid, Vid};
-use rand::Rng;
+use backend::{ArkBls12_381, ArkCurve25519, ArkSecp256k1};
+use lang::id::Tid;
 use share::Ctx;
-use std::io::Write;
+use std::path::PathBuf;
 use std::time::Instant;
-use tempfile::NamedTempFile;
-use zippel::{ZippelArgs, ZippelHandler, check_verification, proof_size_bytes};
+use zippel::*;
 
-pub const DEFAULT_M: usize = 8;
+fn compile_protocol<C: backend::ArkConfig + backend::HasOpFactory>(
+    name: &str,
+    zippel_path: PathBuf,
+    sizes: Ctx<Tid, usize>,
+) -> f64 {
+    let start_total = Instant::now();
+    let args = ZippelArgs::new(zippel_path);
+    let mut handler: ZippelHandler<C> = ZippelHandler::new(args);
+    handler.compile(&sizes);
+    
+    let elapsed = start_total.elapsed().as_secs_f64();
+    println!("Compiled {:<25} in {:.4} seconds", name, elapsed);
+    elapsed
+}
 
-pub fn hyrax_split(m: usize) -> (usize, usize) {
+fn hyrax_split(m: usize) -> (usize, usize) {
     let nw = m - 1;
     let l = nw / 2;
     let m_h = nw - l;
     (l, m_h)
-}
-
-pub struct ZippelTiming {
-    pub prove: std::time::Duration,
-    pub verify: std::time::Duration,
-    pub proof_bytes: usize,
-    pub passed: bool,
-}
-
-pub struct Setup {
-    m: usize,
-    handler: ZippelHandler<ArkCurve25519>,
-    inputs: Ctx<Vid, Value<ArkCurve25519>>,
-    _source_file: NamedTempFile,
-    compile_time: std::time::Duration,
-}
-
-impl Setup {
-    pub fn new(m: usize) -> Self {
-        assert!(m >= 3, "M must be >= 3 (Hyrax needs NW >= 2)");
-
-        let mut source_file = NamedTempFile::with_suffix(".zippel").expect("tempfile");
-        source_file
-            .write_all(generate_proto(m).as_bytes())
-            .expect("write tempfile");
-
-        let inputs = prover_create_inputs(m);
-
-        let compile_start = Instant::now();
-        let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
-        let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
-        let (_l_h, m_h) = hyrax_split(m);
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("SC"), &m);
-        sizes.insert(&Tid::new("S"), &m_h);
-        handler.compile(&sizes);
-        let compile_time = compile_start.elapsed();
-
-        Setup {
-            m,
-            handler,
-            inputs,
-            _source_file: source_file,
-            compile_time,
-        }
-    }
-
-    pub fn compile_time(&self) -> std::time::Duration {
-        self.compile_time
-    }
-
-    pub fn time_protocol(&mut self) -> ZippelTiming {
-        let prover_scheduled = self.handler.default_schedule_prover();
-        let mut prove_sum = std::time::Duration::ZERO;
-        let mut last_proof = None;
-        for _ in 0..*crate::PROVER_SAMPLES {
-            let sched = prover_scheduled.clone();
-            let inputs_c = self.inputs.clone();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(sched, inputs_c)
-                .expect("zippel spartan prover failed");
-            prove_sum += t.elapsed();
-            last_proof = Some(proof);
-        }
-        let prove = prove_sum / *crate::PROVER_SAMPLES;
-        let proof = last_proof.expect("PROVER_SAMPLES > 0");
-        let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-
-        let verifier_scheduled = self.handler.default_schedule_verifier();
-        let mut verify_sum = std::time::Duration::ZERO;
-        let mut last_result = None;
-        for _ in 0..crate::VERIFY_SAMPLES {
-            let sched = verifier_scheduled.clone();
-            let proof_c = proof.clone();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(sched, proof_c)
-                .expect("zippel spartan verifier failed");
-            verify_sum += t.elapsed();
-            last_result = Some(verifier_result);
-        }
-        let verify = verify_sum / crate::VERIFY_SAMPLES;
-        let passed = check_verification(last_result.expect("VERIFY_SAMPLES > 0")).passed;
-
-        ZippelTiming {
-            prove,
-            verify,
-            proof_bytes,
-            passed,
-        }
-    }
-
-    pub fn timing(&mut self) -> Timing {
-        let t = self.time_protocol();
-        Timing {
-            prove: t.prove,
-            verify: t.verify,
-        }
-    }
-
-    pub fn m(&self) -> usize {
-        self.m
-    }
-}
-
-struct R1csInstance<F> {
-    mat_a: Vec<(usize, usize, F)>,
-    mat_b: Vec<(usize, usize, F)>,
-    mat_c: Vec<(usize, usize, F)>,
-    io: Vec<F>,
-    w: Vec<F>,
-}
-
-fn random_r1cs<F, R>(rng: &mut R, m: usize, w: &[F], io: &[F]) -> R1csInstance<F>
-where
-    F: Field,
-    R: Rng + ?Sized,
-{
-    let num_vars = w.len() + io.len() + 1;
-    assert_eq!(num_vars, m);
-
-    let mut z = Vec::with_capacity(m);
-    z.extend_from_slice(w);
-    z.extend_from_slice(io);
-    z.push(F::from(1u64));
-
-    let const_col = m - 1;
-    const K_NNZ_PER_ROW: usize = 1;
-    let pick_k_cols = |rng: &mut R, force_include: Option<usize>| -> Vec<usize> {
-        let mut cols: Vec<usize> = Vec::with_capacity(K_NNZ_PER_ROW);
-        if let Some(c) = force_include {
-            cols.push(c);
-        }
-        while cols.len() < K_NNZ_PER_ROW && cols.len() < m {
-            let c = rng.gen_range(0..m);
-            if !cols.contains(&c) {
-                cols.push(c);
-            }
-        }
-        cols
-    };
-    let mut mat_a: Vec<(usize, usize, F)> = Vec::with_capacity(K_NNZ_PER_ROW * m);
-    let mut mat_b: Vec<(usize, usize, F)> = Vec::with_capacity(K_NNZ_PER_ROW * m);
-    let mut mat_c: Vec<(usize, usize, F)> = Vec::with_capacity(K_NNZ_PER_ROW * m);
-
-    for i in 0..m {
-        let a_cols = pick_k_cols(rng, None);
-        let b_cols = pick_k_cols(rng, None);
-        let c_cols = pick_k_cols(rng, Some(const_col));
-
-        let a_vals: Vec<F> = (0..a_cols.len()).map(|_| F::rand(rng)).collect();
-        let b_vals: Vec<F> = (0..b_cols.len()).map(|_| F::rand(rng)).collect();
-        let mut c_vals: Vec<F> = (0..c_cols.len()).map(|_| F::rand(rng)).collect();
-
-        let az_i: F = a_cols.iter().zip(a_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
-        let bz_i: F = b_cols.iter().zip(b_vals.iter()).map(|(c, v)| z[*c] * *v).sum();
-        let target = az_i * bz_i;
-
-        let const_col_pos_in_c = c_cols
-            .iter()
-            .position(|&c| c == const_col)
-            .expect("c_cols must include const_col");
-        let other: F = c_cols
-            .iter()
-            .zip(c_vals.iter())
-            .enumerate()
-            .filter(|(idx, _)| *idx != const_col_pos_in_c)
-            .map(|(_, (c, v))| z[*c] * *v)
-            .sum();
-        c_vals[const_col_pos_in_c] = target - other;
-
-        for (c, v) in a_cols.iter().zip(a_vals.iter()) {
-            mat_a.push((i, *c, *v));
-        }
-        for (c, v) in b_cols.iter().zip(b_vals.iter()) {
-            mat_b.push((i, *c, *v));
-        }
-        for (c, v) in c_cols.iter().zip(c_vals.iter()) {
-            mat_c.push((i, *c, *v));
-        }
-    }
-
-    R1csInstance {
-        mat_a,
-        mat_b,
-        mat_c,
-        io: io.to_vec(),
-        w: w.to_vec(),
-    }
-}
-
-fn prover_create_inputs(m: usize) -> Ctx<Vid, Value<ArkCurve25519>> {
-    let num_cons = 1usize << m;
-    let witness_len = 1usize << (m - 1);
-    let io_len = witness_len - 1;
-    let (_l, m_h) = hyrax_split(m);
-    let ncols = 1usize << m_h;
-
-    let mut seed_bytes = [0u8; 32];
-    seed_bytes[..8].copy_from_slice(&(0xFEEDFACE_u64 ^ m as u64).to_le_bytes());
-    let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed_bytes);
-    let one = Fr::from(1u64);
-
-    let witness: Vec<Fr> = (0..witness_len).map(|_| Fr::rand(&mut rng)).collect();
-    let instance: Vec<Fr> = (0..io_len).map(|_| Fr::rand(&mut rng)).collect();
-
-    let r1cs = random_r1cs::<Fr, _>(&mut rng, num_cons, &witness, &instance);
-
-    let mut z: Vec<Fr> = Vec::with_capacity(num_cons);
-    z.extend_from_slice(&witness);
-    z.extend_from_slice(&instance);
-    z.push(one);
-
-    let mut az: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    let mut bz: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    let mut cz: Vec<Fr> = vec![Fr::from(0u64); num_cons];
-    for &(i, c, v) in &r1cs.mat_a {
-        az[i] += v * z[c];
-    }
-    for &(i, c, v) in &r1cs.mat_b {
-        bz[i] += v * z[c];
-    }
-    for &(i, c, v) in &r1cs.mat_c {
-        cz[i] += v * z[c];
-    }
-    for i in 0..num_cons {
-        assert_eq!(az[i] * bz[i], cz[i], "row {i} of synthetic R1CS is unsatisfied");
-    }
-
-    let triples_to_mle_evals = |triples: &[(usize, usize, Fr)]| -> Vec<(usize, Fr)> {
-        triples
-            .iter()
-            .filter(|(_, _, v)| !v.is_zero())
-            .map(|(i, c, v)| (c * num_cons + i, *v))
-            .collect()
-    };
-    let two_m_vars = 2 * m;
-    let mk_sparse_mle = |evals: Vec<(usize, Fr)>| {
-        Value::Poly(VirtualPolynomial::from_poly(PolyVariant::SparseMle {
-            num_vars: two_m_vars,
-            evals,
-        }))
-    };
-    let mat_a_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_a));
-    let mat_b_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_b));
-    let mat_c_t = mk_sparse_mle(triples_to_mle_evals(&r1cs.mat_c));
-
-    let g_vec_proj: Vec<G1Projective> = (0..ncols).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_vec_aff = G1Projective::normalize_batch(&g_vec_proj);
-    let g_base_w = G1Projective::rand(&mut rng);
-    let h_base_w = G1Projective::rand(&mut rng);
-
-    let g_evs_d3_proj: Vec<G1Projective> = (0..4).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d3_aff = G1Projective::normalize_batch(&g_evs_d3_proj);
-    let g_evs_d2_proj: Vec<G1Projective> = (0..3).map(|_| G1Projective::rand(&mut rng)).collect();
-    let g_evs_d2_aff = G1Projective::normalize_batch(&g_evs_d2_proj);
-    let h_evs = G1Projective::rand(&mut rng);
-
-    let placeholder_tau: Vec<Fr> = vec![Fr::from(0u64); m];
-
-    Ctx::<Vid, Value<ArkCurve25519>>::from_iter([
-        (Vid("mat_a_t".to_string()), mat_a_t),
-        (Vid("mat_b_t".to_string()), mat_b_t),
-        (Vid("mat_c_t".to_string()), mat_c_t),
-        (Vid("io".to_string()), Value::VecScalar(r1cs.io)),
-        (Vid("w".to_string()), Value::VecScalar(r1cs.w)),
-        (Vid("az".to_string()), Value::VecScalar(az)),
-        (Vid("bz".to_string()), Value::VecScalar(bz)),
-        (Vid("cz".to_string()), Value::VecScalar(cz)),
-        (Vid("g_vec_w".to_string()), Value::VecG1Affine(g_vec_aff)),
-        (Vid("g_base_w".to_string()), Value::G1(g_base_w)),
-        (Vid("h_base_w".to_string()), Value::G1(h_base_w)),
-        (Vid("g_evs_d3".to_string()), Value::VecG1Affine(g_evs_d3_aff)),
-        (Vid("g_evs_d2".to_string()), Value::VecG1Affine(g_evs_d2_aff)),
-        (Vid("h_evs".to_string()), Value::G1(h_evs)),
-        (Vid("placeholder_tau".to_string()), Value::VecScalar(placeholder_tau)),
-        (Vid("f_one".to_string()), Value::Scalar(one)),
-    ])
 }
 
 fn generate_proto(m: usize) -> String {
@@ -313,7 +37,7 @@ fn generate_proto(m: usize) -> String {
     let (l, m_h) = hyrax_split(m);
     let nrows = 1usize << l;
     let ncols = 1usize << m_h;
-    let _ = l;
+    assert_eq!(nrows * ncols, two_nw);
 
     format!(r#"fn eq_weights<G: Group, F: Scalar<G>>(public x: [F; 1]) -> [F; 2] {{
     [(1 - x[0]), x[0]]
@@ -502,6 +226,7 @@ fn compute_s_vec<G: Group, F: Scalar<G>, K: 2..21>(public c: [F; K], public c_in
     let prev = compute_s_vec(c_rest, c_inv_rest);
     (prev * curr_c_inv) ++ (prev * curr_c)
 }}
+
 fn bullet_collect<G: Group, F: Scalar<G>>(
     public g_base: G,
     public h_base: G,
@@ -530,9 +255,17 @@ fn bullet_collect<G: Group, F: Scalar<G>>(
     let next_x = x_1 * c + x_2 * c_inv;
     let next_y = dot_x1_a2 * c_sq + y_folded + dot_x2_a1 * c_inv_sq;
     let next_r = r_L * c_sq + r_Upsilon_folded + r_R * c_inv_sq;
-    {{| challenges: [c], challenges_inv: [c_inv], Ls: [upsilon_neg1], Rs: [upsilon_1],
-        final_x: next_x[0], final_y: next_y, final_r: next_r |}}
+    {{|
+        challenges: [c],
+        challenges_inv: [c_inv],
+        Ls: [upsilon_neg1],
+        Rs: [upsilon_1],
+        final_x: next_x[0],
+        final_y: next_y,
+        final_r: next_r
+    |}}
 }}
+
 fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
     public g_base: G,
     public h_base: G,
@@ -552,7 +285,7 @@ fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
     let r_R = random<F>;
     let dot_x1_a2 = dot(x_1, a_2);
     let dot_x2_a1 = dot(x_2, a_1);
-    upsilon_neg1 <- h_base * r_L + g_base * dot_x1_a2 + dot(g_2, x_1);
+    upsilon_neg1 <- h_base * r_L + g_base * dot_x2_a1 + dot(g_2, x_1);
     upsilon_1 <- h_base * r_R + g_base * dot_x2_a1 + dot(g_1, x_2);
     c <- challenge<F>;
     let c_inv = 1 / c;
@@ -564,9 +297,15 @@ fn bullet_collect<G: Group, F: Scalar<G>, S: Size, N: 2..S+1>(
     let next_y = dot_x1_a2 * c_sq + y_folded + dot_x2_a1 * c_inv_sq;
     let next_r = r_L * c_sq + r_Upsilon_folded + r_R * c_inv_sq;
     let inner = bullet_collect(g_base, h_base, next_g, next_a, next_x, next_y, next_r);
-    {{| challenges: [c] ++ inner.challenges, challenges_inv: [c_inv] ++ inner.challenges_inv,
-        Ls: [upsilon_neg1] ++ inner.Ls, Rs: [upsilon_1] ++ inner.Rs,
-        final_x: inner.final_x, final_y: inner.final_y, final_r: inner.final_r |}}
+    {{|
+        challenges: [c] ++ inner.challenges,
+        challenges_inv: [c_inv] ++ inner.challenges_inv,
+        Ls: [upsilon_neg1] ++ inner.Ls,
+        Rs: [upsilon_1] ++ inner.Rs,
+        final_x: inner.final_x,
+        final_y: inner.final_y,
+        final_r: inner.final_r
+    |}}
 }}
 
 proto spartan<G: Group, F: Scalar<G>>(
@@ -604,9 +343,9 @@ proto spartan<G: Group, F: Scalar<G>>(
     let f_b = mle(bz);
     let f_c = mle(cz);
 
-    let tau_vec        = draw_taus(placeholder_tau);
-    let eq_tau_evs     = eq_weights(tau_vec);
-    let eq_tau         = mle(eq_tau_evs);
+    let tau_vec = draw_taus(placeholder_tau);
+    let eq_tau_evs = eq_weights(tau_vec);
+    let eq_tau     = mle(eq_tau_evs);
 
     let neg_one = zero - one;
     let g_sub   = f_a * f_b + f_c * neg_one;
@@ -697,9 +436,9 @@ proto spartan<G: Group, F: Scalar<G>>(
     let eq_check_p1 = h_evs * z_eq_p1 == (comm_postsc_p1 - comm_derived_p1) * c_eq_p1 + alpha_eq_p1;
     verify(eq_check_p1);
 
-    ra <- challenge<F>;
-    rb <- challenge<F>;
-    rc <- challenge<F>;
+    let ra = challenge<F>;
+    let rb = challenge<F>;
+    let rc = challenge<F>;
     let t2 = ra * v_a + rb * v_b + rc * v_c;
 
     let partial_a = eval(mat_a_t, rx);
@@ -741,12 +480,12 @@ proto spartan<G: Group, F: Scalar<G>>(
     let ry  = sc2.challenges;
     let e_y = sc2.final_eval;
 
-    let pcs_z = ry[0..{nw}];
-    let ly_lo = eq_weights(pcs_z);
-    let z_col = pcs_z[0..{m_h}];
-    let z_row = pcs_z[{m_h}..{nw}];
-    let l_vec = eq_weights(z_row);
-    let r_vec = eq_weights(z_col);
+    let pcs_z   = ry[0..{nw}];
+    let ly_lo   = eq_weights(pcs_z);
+    let z_col   = pcs_z[0..{m_h}];
+    let z_row   = pcs_z[{m_h}..{nw}];
+    let l_vec   = eq_weights(z_row);
+    let r_vec   = eq_weights(z_col);
 
     let big_t   = dot(l_vec, c_rows);
     let r_big_t = dot(l_vec, r_rows);
@@ -805,8 +544,8 @@ proto spartan<G: Group, F: Scalar<G>>(
     comm_ey_p2 <- g_evs_d2[0] * e_y + h_evs * r_ey;
     alpha_p2   <- g_evs_d2[0] * d_p2 + h_evs * r_d_p2;
     c_p2       <- challenge<F>;
-    z1_p2 <- c_p2 * e_y + d_p2;
-    z2_p2 <- c_p2 * r_ey + r_d_p2;
+    z1_p2      <- c_p2 * e_y + d_p2;
+    z2_p2      <- c_p2 * r_ey + r_d_p2;
     let eq_check_p2 = g_evs_d2[0] * z1_p2 + h_evs * z2_p2 == comm_ey_p2 * c_p2 + alpha_p2;
     verify(eq_check_p2);
 
@@ -824,4 +563,115 @@ proto spartan<G: Group, F: Scalar<G>>(
         nrows = nrows,
         ncols = ncols,
     )
+}
+
+fn main() {
+    println!("=========================================");
+    println!("ZIPPEL 2^18 COMPILATION TIMING SUITE");
+    println!("=========================================");
+
+    let mut timings = Vec::new();
+    let target_m = 18;
+
+    // 1. Sumcheck (NUM_VARS_CONST = 18, MAX_DEGREE_CONST = 2)
+    let mut sizes_sumcheck = Ctx::new();
+    sizes_sumcheck.insert(&Tid::new("NUM_VARS_CONST"), &target_m);
+    sizes_sumcheck.insert(&Tid::new("MAX_DEGREE_CONST"), &2);
+    let t_sumcheck = compile_protocol::<ArkBls12_381>(
+        "Sumcheck (2^18 vars)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sumcheck/sumcheck.zippel"),
+        sizes_sumcheck,
+    );
+    timings.push(("Sumcheck", t_sumcheck));
+
+    // 2. Bulletproofs (IPA) (S = 18)
+    let mut sizes_ipa = Ctx::new();
+    sizes_ipa.insert(&Tid::new("S"), &target_m);
+    let t_ipa = compile_protocol::<ArkSecp256k1>(
+        "Bulletproofs (IPA) (2^18 elements)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/ipa/ipa.zippel"),
+        sizes_ipa,
+    );
+    timings.push(("Bulletproofs (IPA)", t_ipa));
+
+    // 3. KZG (N = 2^18)
+    let mut sizes_kzg = Ctx::new();
+    sizes_kzg.insert(&Tid::new("N"), &262144);
+    let t_kzg = compile_protocol::<ArkBls12_381>(
+        "KZG (2^18 coefficients)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/kzg/kzg.zippel"),
+        sizes_kzg,
+    );
+    timings.push(("KZG", t_kzg));
+
+    // 4. Pari (M = 18, N = 1, KMN = 2^18 - 2)
+    let mut sizes_pari = Ctx::new();
+    sizes_pari.insert(&Tid::new("M"), &target_m);
+    sizes_pari.insert(&Tid::new("N"), &1);
+    sizes_pari.insert(&Tid::new("KMN"), &262142);
+    let t_pari = compile_protocol::<ArkBls12_381>(
+        "Pari (2^18 constraints)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/pari/pari.zippel"),
+        sizes_pari,
+    );
+    timings.push(("Pari", t_pari));
+
+    // 5. Groth16 (M = 33, L = 2^18, H = 2^18)
+    let mut sizes_groth16 = Ctx::new();
+    sizes_groth16.insert(&Tid::new("M"), &33);
+    sizes_groth16.insert(&Tid::new("L"), &262144);
+    sizes_groth16.insert(&Tid::new("H"), &262144);
+    let t_groth16 = compile_protocol::<ArkBls12_381>(
+        "Groth16 (2^18 constraints)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/groth16/groth16.zippel"),
+        sizes_groth16,
+    );
+    timings.push(("Groth16", t_groth16));
+
+    // 6. PST13 (N = 18)
+    let mut sizes_pst13 = Ctx::new();
+    sizes_pst13.insert(&Tid::new("N"), &target_m);
+    let t_pst13 = compile_protocol::<ArkBls12_381>(
+        "PST13 (2^18 coefficients)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/pst13/pst13.zippel"),
+        sizes_pst13,
+    );
+    timings.push(("PST13", t_pst13));
+
+    // 7. Hyrax (using hyrax_ipa component, S = 18)
+    let mut sizes_hyrax = Ctx::new();
+    sizes_hyrax.insert(&Tid::new("S"), &target_m);
+    let t_hyrax = compile_protocol::<ArkBls12_381>(
+        "Hyrax (2^18 elements)",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/hyrax_ipa/hyrax_ipa.zippel"),
+        sizes_hyrax,
+    );
+    timings.push(("Hyrax (IPA)", t_hyrax));
+
+    // 8. Spartan (m = 18, generating proto on the fly)
+    let proto = generate_proto(target_m);
+    let tmp_dir = std::env::temp_dir().join("zippel_spartan_bench");
+    std::fs::create_dir_all(&tmp_dir).expect("create tmp dir");
+    let spartan_path = tmp_dir.join("spartan_bench_18.zippel");
+    std::fs::write(&spartan_path, proto).expect("write generated proto");
+
+    let (_, m_h) = hyrax_split(target_m);
+    let mut sizes_spartan = Ctx::new();
+    sizes_spartan.insert(&Tid::new("SC"), &target_m);
+    sizes_spartan.insert(&Tid::new("S"), &m_h);
+    let t_spartan = compile_protocol::<ArkCurve25519>(
+        "Spartan (2^18 constraints)",
+        spartan_path,
+        sizes_spartan,
+    );
+    timings.push(("Spartan", t_spartan));
+
+    println!("=========================================");
+    if let Some(min_t) = timings.iter().min_by(|a, b| a.1.partial_cmp(&b.1).unwrap()) {
+        println!("Min time: {} ({:.4}s)", min_t.0, min_t.1);
+    }
+    if let Some(max_t) = timings.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()) {
+        println!("Max time: {} ({:.4}s)", max_t.0, max_t.1);
+    }
+    println!("=========================================");
 }

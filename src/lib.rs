@@ -47,6 +47,17 @@ pub struct ZippelArgs {
 
     /// An optional subgraph name to analyze
     pub subgraph: Option<String>,
+
+    /// When true, `ZippelHandler::compile` skips the
+    /// `QualifierPropagation` + `UniformityPropagation` static-analysis
+    /// passes and the prover/verifier `combine_dag` step. Their results
+    /// feed only `analyze_completeness` / `analyze_knowledge` (which the
+    /// caller must not invoke when this flag is set) and the
+    /// `combined_graph` PDF (which is silently dropped when no PDF path
+    /// is configured). Set this in benchmarks so the `compile` timer
+    /// reflects only the work needed to produce a runnable prover/
+    /// verifier graph.
+    pub skip_analyses: bool,
 }
 
 impl ZippelArgs {
@@ -56,6 +67,7 @@ impl ZippelArgs {
             domain_separator_session: None,
             pdf_path_opt: None,
             subgraph: None,
+            skip_analyses: false,
         }
     }
 
@@ -84,6 +96,11 @@ impl ZippelArgs {
 
     pub fn with_subgraph(mut self, subgraph: String) -> Self {
         self.subgraph = Some(subgraph);
+        self
+    }
+
+    pub fn with_skip_analyses(mut self) -> Self {
+        self.skip_analyses = true;
         self
     }
 }
@@ -207,10 +224,16 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         ));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
-
-        let g_analyze = UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze);
-        self.analyze_graph = Some(g_analyze);
+        // Static-analysis passes: qualifier + uniformity propagation.
+        // Their result is stored in `self.analyze_graph` and is consumed
+        // ONLY by `analyze_completeness` / `analyze_knowledge`. Callers
+        // that won't invoke either (e.g. benchmarks) can set
+        // `args.skip_analyses = true` to skip this work entirely.
+        if !self.args.skip_analyses {
+            let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
+            let g_analyze = UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze);
+            self.analyze_graph = Some(g_analyze);
+        }
 
         // Extract protocol subgraph and rename inner nodes
         let g = self.get_protocol_subgraph(&gs).clone().rename_inner_nodes();
@@ -226,9 +249,15 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.verifier_graph = Some(verifier.clone());
         self.output_pdf(&verifier, "verifier_graph");
 
-        debug!("Combining prover and verifier");
-        let combined = verifier.combine_dag(&prover);
-        self.output_pdf(&combined, "combined_graph");
+        // `combined` feeds only `output_pdf("combined_graph")` — silently
+        // dropped when no PDF path is configured. Skip it under the same
+        // flag so the bench compile timer doesn't pay for a debug
+        // artifact it won't materialize.
+        if !self.args.skip_analyses {
+            debug!("Combining prover and verifier");
+            let combined = verifier.combine_dag(&prover);
+            self.output_pdf(&combined, "combined_graph");
+        }
     }
 
     pub fn set_public_inputs(&mut self, public_inputs: Ctx<Vid, Value<C>>) {

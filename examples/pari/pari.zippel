@@ -201,7 +201,13 @@ proto pari<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>,
     // against identity uses `result == result - result`: `result - result` is
     // GT additive identity (cheap field subtraction, no extra pairings), so
     // the verifier pays exactly one final exponentiation — same as native.
-    let inner = alpha_g * va_proof + beta_g * vb_proof + g_g1 * v_q - u_proof * r;
+    // Fold the 4-term linear combination α·v_a + β·v_b + G·v_q − r·U into
+    // a single Pippenger MSM (matches the native verifier's
+    // `msm_bigint_wnaf(&[α, β, G, −U], &[v_a, v_b, v_q, r])` call). Without
+    // this, each of the 4 group-scalar muls dispatches as a separate graph
+    // node, losing Pippenger bucketing AND paying per-node scheduling cost.
+    let neg_r = f_zero - r;
+    let inner = dot([va_proof, vb_proof, v_q, neg_r], [alpha_g, beta_g, g_g1, u_proof]);
 
     let result = dot([t_proof, u_proof, inner], [delta2_h, tau_h, h_g2]);
     verify(result == result - result)
