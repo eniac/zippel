@@ -143,8 +143,17 @@ where
         return Ok(None);
     };
 
-    // (3) fixed must reference this ReduceMap's own loop parameter
-    if !op_has_loop_param(fixed.get(), loop_params.len()) {
+    // (3) fixed must be either the loop parameter itself, or a Map/Comprehension
+    // whose body references it but whose domain does not.
+    let is_valid_fixed = match fixed.get() {
+        Op::LoopParam(level, _) => *level == loop_params.len(),
+        Op::Map(inner_domain, inner_body) => {
+            !op_has_loop_param(inner_domain.get(), loop_params.len())
+                && op_has_loop_param(inner_body.get(), loop_params.len())
+        }
+        _ => false,
+    };
+    if !is_valid_fixed {
         return Ok(None);
     }
 

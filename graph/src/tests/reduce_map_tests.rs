@@ -4,6 +4,7 @@
 use crate::eval::eval_op;
 use crate::tests::test_helpers::scalar;
 use crate::{GOp, Op, Ref, UDags, mk};
+use ark_ff::{One, Zero};
 use backend::{ATyp, ArkBls12_381, Value};
 use lang::ast::{BinOp, UModule};
 use rand::SeedableRng;
@@ -11,6 +12,7 @@ use rand::rngs::StdRng;
 use share::Ctx;
 use std::collections::HashMap;
 use std::sync::Arc;
+use serial_test::serial;
 
 type B = ArkBls12_381;
 
@@ -252,3 +254,315 @@ fn map_eval_doubles_each_element() {
     let want = eval_op(&want_vec, &env, &mut rng).unwrap();
     assert_eq!(*got, *want, "map must apply the body element-wise");
 }
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_fires() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    // A helper function returning the computed round polynomial
+    let src = r#"
+        fn test_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, tail)
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..4
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization must fire
+    assert_eq!(after.canonical_sumcheck_rows_seen, 1);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 1);
+
+    // Verify mathematical correctness of the optimized result:
+    // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::zero();
+        for tail_index in 0..4 {
+            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_non_pow_two() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    // Domain size 3 is not a power of 2, so the optimization must be skipped,
+    // but the fallback path should execute correctly and return the correct polynomial.
+    let src = r#"
+        fn test_no_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, tail)
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..3
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does not fire
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify mathematical correctness of the fallback result:
+    // R(t) = Sum_{i ∈ 0..3} P(t, tail_i)
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::zero();
+        for tail_index in 0..3 {
+            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_multiplicative() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    // Multiplicative reduction should not match, so optimization must be skipped,
+    // but the fallback path should execute correctly and return the correct polynomial.
+    let src = r#"
+        fn test_mul_no_opt<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 4> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(*, [
+                eval<0>(poly, tail)
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..4
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does not fire
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify mathematical correctness of the fallback result:
+    // R(t) = Product_{b ∈ {0,1}^2} P(t, b)
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::one();
+        for tail_index in 0..4 {
+            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            expected *= orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+    use backend::{PolyVariant, VirtualPolynomial};
+    use ark_poly::multivariate::{SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term};
+
+    // Poly<F, 3, 2> is a polynomial of 3 variables and max degree 2 (non-MLE).
+    // The optimization should still match at graph level (additive, canonical range, domain size 4),
+    // and route to value_hypercube_reduce_selected, which should detect it's not MLE and
+    // fallback to generic evaluation, computing the correct polynomial and not triggering errors.
+    let src = r#"
+        fn test_non_mle<F: Field>(private poly: Poly<F, 3, 2>) -> Poly<F, 1, 2> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, tail)
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..4
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    
+    // We construct a non-MLE polynomial (e.g. X_0^2 + X_1 + X_2) manually
+    let terms = vec![
+        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(0, 2)])),
+        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(1, 1)])),
+        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(2, 1)])),
+    ];
+    let p = SparseMultivariatePolynomial {
+        num_vars: 3,
+        terms,
+    };
+    let poly_variant = PolyVariant::SparseMultivariate(p);
+    let poly_val = Value::Poly(VirtualPolynomial::from_poly(poly_variant));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val);
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization kernel is entered (seen is incremented),
+    // and completes with fused counter incremented as well.
+    assert_eq!(after.canonical_sumcheck_rows_seen, 1);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 1);
+
+    // Verify mathematical correctness of the result:
+    // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
+    // For P(t, b0, b1) = t^2 + b0 + b1, the sum over b0, b1 in {0,1} is 4*t^2 + 4.
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let expected = t * t * <B as backend::ArkConfig>::F::from(4) + <B as backend::ArkConfig>::F::from(4);
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    // The loop parameter is modified inside the eval call: eval<0>(poly, [t + one for t in tail]).
+    // The optimization must skip because the evaluation points are not the exact loop parameter tail coordinates.
+    let src = r#"
+        fn test_modified<F: Field>(private poly: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(poly, [t + one for t in tail])
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..4
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does not fire because fixed is modified (not exactly the loop parameter)
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+
+    // Verify mathematical correctness of the non-optimized result:
+    // R(t) = Sum_{b ∈ {0,1}^2} P(t, b0+1, b1+1)
+    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    for t_idx in 0..4 {
+        let t = <B as backend::ArkConfig>::F::from(t_idx);
+        let mut expected = <B as backend::ArkConfig>::F::zero();
+        for tail_index in 0..4 {
+            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            expected += orig_poly.evaluate_mv(&vec![
+                t,
+                b0 + <B as backend::ArkConfig>::F::one(),
+                b1 + <B as backend::ArkConfig>::F::one(),
+            ]).unwrap();
+        }
+        assert_eq!(got_poly.evaluate_uv(&t), expected);
+    }
+}
+
+
+
