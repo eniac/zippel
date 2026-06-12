@@ -437,7 +437,7 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
     use backend::{PolyVariant, VirtualPolynomial};
-    use ark_poly::multivariate::{SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term};
+    use ark_poly::multivariate::{SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term as _};
 
     // Poly<F, 3, 2> is a polynomial of 3 variables and max degree 2 (non-MLE).
     // The optimization should still match at graph level (additive, canonical range, domain size 4),
@@ -618,7 +618,7 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // In this case, the domain of the ReduceMap is NOT a vector (e.g. it is a polynomial type, Uni(3)).
-    // The optimization must skip (because domain typ is not Vec), and fall back to normal execution.
+    // The optimization must skip (because domain typ is not Vec), falling back to evaluation which returns a type mismatch error.
     let scalar_t = ATyp::scalar();
     let domain = Op::Value(Value::Poly(backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1)));
     
@@ -731,12 +731,12 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
     let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
     inputs.insert(&lang::id::Vid::from("poly"), &poly_val.clone());
 
-    // Construct a non-canonical index domain: [10, 20, 30, 40]
-    let ten = 10usize;
-    let twenty = 20usize;
-    let thirty = 30usize;
-    let forty = 40usize;
-    let domain_val = Value::VecIndex(vec![ten, twenty, thirty, forty]);
+    // Construct a non-canonical in-bounds index domain: [3, 2, 1, 0] (permutation of 0..3)
+    let three = 3usize;
+    let two = 2usize;
+    let one = 1usize;
+    let zero = 0usize;
+    let domain_val = Value::VecIndex(vec![three, two, one, zero]);
     inputs.insert(&lang::id::Vid::from("domain"), &domain_val);
 
     reset_optimization_stats();
@@ -755,12 +755,12 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
     assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify correctness of unoptimized result:
-    // For each i in [10, 20, 30, 40], bit j is (i / 2^j) % 2.
+    // For each i in [3, 2, 1, 0], bit j is (i / 2^j) % 2.
     let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::zero();
-        for &idx in &[10usize, 20usize, 30usize, 40usize] {
+        for &idx in &[3usize, 2usize, 1usize, 0usize] {
             let b0 = <B as backend::ArkConfig>::F::from((idx % 2) as u64);
             let b1 = <B as backend::ArkConfig>::F::from(((idx / 2) % 2) as u64);
             expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
