@@ -325,7 +325,7 @@ where
         return Ok(None);
     }
 
-    // Guard (Feedback 1): poly must be loop-invariant (cannot reference this loop's binder)
+    // Guard: poly must be loop-invariant (cannot reference this loop's binder)
     if op_has_loop_param(poly.get(), loop_params.len()) {
         return Ok(None);
     }
@@ -347,7 +347,7 @@ where
     // Evaluate domain
     let dom_val = Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
 
-    // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates (Feedback 3)
+    // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates
     let is_hypercube = try_match_canonical_hypercube_ast(fixed, env, rng, loop_params)?
         || verify_hypercube_coordinates(fixed, env, rng, loop_params, n, tail_num_vars)?;
 
