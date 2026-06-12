@@ -17,10 +17,7 @@ fn main() {
 }
 
 fn run_example() {
-    println!(
-        "=== R1CS Sigma (ArkBls12_381, N={}, n={}, m={}) ===",
-        N, N_PUB, M
-    );
+    println!("=== R1CS Sigma (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/r1cs_sigma/r1cs_sigma.zippel"));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
