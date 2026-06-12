@@ -454,7 +454,15 @@ where
         _ => {
             verify_domain_is_canonical_indices(&dom_val, n)
                 && (try_match_canonical_hypercube_ast(fixed, env, rng, loop_params)?
-                    || verify_hypercube_coordinates(fixed, env, rng, loop_params, &dom_val, n, tail_num_vars)?)
+                    || verify_hypercube_coordinates(
+                        fixed,
+                        env,
+                        rng,
+                        loop_params,
+                        &dom_val,
+                        n,
+                        tail_num_vars,
+                    )?)
         }
     };
 
