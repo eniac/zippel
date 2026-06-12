@@ -378,6 +378,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             let (new_p, _) = p.clone().inline_vars(&self.pl);
             *p = new_p;
         }
+        self.basis.basis.retain(|p| !p.is_zero());
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
