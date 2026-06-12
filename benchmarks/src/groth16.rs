@@ -37,19 +37,21 @@ use crate::Timing;
 pub const DEFAULT_LOG_CONSTRAINTS: usize = 10;
 
 // ---------------------------------------------------------------------------
-// Shared setup: v0.5 BenchCircuit + keys + witness/matrices/h_coeffs.
-// The fields are kept in v0.5 types so the keygen call stays untouched;
-// `bridge::translate_shared` then projects everything into git-main types
-// for both sides to consume.
+// Shared setup: BenchCircuit + keys + witness/matrices/h_coeffs, all in
+// 0.6 arkworks types (same set the zippel side uses). The `bridge`
+// module below still exists as a thin re-shaper of `Shared` into the
+// flat `Translated` view both sides consume — its byte round-trip is now
+// identity since shared and bridge share the same arkworks version.
 // ---------------------------------------------------------------------------
 
 pub mod shared {
-    use np_ark_bls12_381::{Bls12_381, Fr};
-    use np_ark_ff::UniformRand;
-    use np_ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-    use np_ark_relations::r1cs::{
-        ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef,
-        LinearCombination, SynthesisError, SynthesisMode,
+    use ark_bls12_381::{Bls12_381, Fr};
+    use ark_ff::UniformRand;
+    use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
+    use ark_relations::gr1cs::{
+        predicate::polynomial_constraint::R1CS_PREDICATE_LABEL, ConstraintSynthesizer,
+        ConstraintSystem, ConstraintSystemRef, LinearCombination, Matrix, SynthesisError,
+        SynthesisMode,
     };
 
     pub type E = Bls12_381;
@@ -104,16 +106,17 @@ pub mod shared {
             }
 
             // N squaring constraints, the last one binding to `y`.
+            // gr1cs takes closures returning a LinearCombination —
+            // captures avoid building the LCs unless the predicate needs
+            // them (cf. enforce_constraint in 0.5 r1cs which took LCs
+            // directly).
             for i in 0..n {
-                let next = if i + 1 < n {
-                    LinearCombination::from(wit_vars[i + 1])
-                } else {
-                    LinearCombination::from(y)
-                };
-                cs.enforce_constraint(
-                    LinearCombination::from(wit_vars[i]),
-                    LinearCombination::from(wit_vars[i]),
-                    next,
+                let wi = wit_vars[i];
+                let next_var = if i + 1 < n { wit_vars[i + 1] } else { y };
+                cs.enforce_r1cs_constraint(
+                    || LinearCombination::from(wi),
+                    || LinearCombination::from(wi),
+                    || LinearCombination::from(next_var),
                 )?;
             }
             Ok(())
@@ -130,12 +133,16 @@ pub mod shared {
         ark_std::rand::rngs::StdRng::from_seed(seed_bytes)
     }
 
-    /// Captures the v0.5 keygen output + matrices + assignment for one
-    /// circuit size. Both sides translate from here.
+    /// Captures the 0.6 keygen output + R1CS matrices + assignment for
+    /// one circuit size. Both sides translate from here.
+    ///
+    /// `matrices` is the gr1cs R1CS-predicate matrix triple, indexed as
+    /// `[0]=A, [1]=B, [2]=C` (in 0.5 r1cs the equivalent was a struct
+    /// with `.a/.b/.c` fields).
     pub struct Shared {
         pub pk: ProvingKey<E>,
         pub vk: VerifyingKey<E>,
-        pub matrices: ConstraintMatrices<F>,
+        pub matrices: Vec<Matrix<F>>,
         pub num_inputs: usize,
         pub num_constraints: usize,
         pub instance_assignment: Vec<F>,
@@ -154,21 +161,33 @@ pub mod shared {
 
         // Capture the matrices + assignment by replaying the synthesizer in
         // Prove mode. Same seed inside the circuit → same witness values.
+        // gr1cs uses generalized predicates; we pull the standard R1CS
+        // matrix triple via R1CS_PREDICATE_LABEL.
         let cs = ConstraintSystem::<F>::new_ref();
         cs.set_mode(SynthesisMode::Prove {
             construct_matrices: true,
+            generate_lc_assignments: true,
         });
         circuit
             .clone()
             .generate_constraints(cs.clone())
             .expect("synthesizer");
         cs.finalize();
-        let matrices = cs.to_matrices().expect("matrices");
+        let mut predicate_matrices = cs.to_matrices().expect("matrices");
+        let matrices = predicate_matrices
+            .remove(R1CS_PREDICATE_LABEL)
+            .expect("R1CS predicate matrices");
         let cs_borrowed = cs.borrow().expect("borrow cs");
-        let num_inputs = cs_borrowed.num_instance_variables;
-        let num_constraints_real = cs_borrowed.num_constraints;
-        let instance_assignment = cs_borrowed.instance_assignment.clone();
-        let witness_assignment = cs_borrowed.witness_assignment.clone();
+        let num_inputs = cs_borrowed.num_instance_variables();
+        let num_constraints_real = cs_borrowed.num_constraints();
+        let instance_assignment = cs_borrowed
+            .instance_assignment()
+            .expect("instance assignment")
+            .to_vec();
+        let witness_assignment = cs_borrowed
+            .witness_assignment()
+            .expect("witness assignment")
+            .to_vec();
         drop(cs_borrowed);
 
         Shared {
@@ -184,50 +203,31 @@ pub mod shared {
 }
 
 // ---------------------------------------------------------------------------
-// Byte-bridge: translate v0.5 scalars / group elements → git-main types.
-// Both versions share BLS12-381's canonical serialization, so we round-trip
-// through the canonical compressed byte form.
+// Bridge: re-shape `Shared` into the flat `Translated` view that both the
+// zippel and native sides consume. After the 0.6 migration this is a
+// pure field projection — `Shared` and `Translated` are over the same
+// arkworks 0.6 types — but we keep the layer so downstream call sites
+// (zippel_side / native_side, witness_map, build_translated) stay
+// stable. The byte-roundtrip helpers are now identity / Affine→Projective.
 // ---------------------------------------------------------------------------
 
 pub mod bridge {
     use super::shared::Shared;
-    use ark_bls12_381::{Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj};
-    use ark_ec::AffineRepr as GitAffineRepr;
+    use ark_bls12_381::{Bls12_381, Fr as GitFr, G1Projective as GitG1Proj, G2Projective as GitG2Proj};
+    use ark_ec::{pairing::Pairing, AffineRepr as GitAffineRepr};
     use ark_ff::{FftField, Field, Zero};
     use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-    use ark_serialize::CanonicalDeserialize;
-    use np_ark_bls12_381::{Bls12_381 as NpBls12_381, Fr as NpFr};
-    use np_ark_ec::pairing::Pairing as NpPairing;
-    use np_ark_serialize::CanonicalSerialize as NpCanonicalSerialize;
 
-    type NpG1Affine = <NpBls12_381 as NpPairing>::G1Affine;
-    type NpG2Affine = <NpBls12_381 as NpPairing>::G2Affine;
+    type NpG1Affine = <Bls12_381 as Pairing>::G1Affine;
+    type NpG2Affine = <Bls12_381 as Pairing>::G2Affine;
 
-    pub fn fr_to_git(x: &NpFr) -> GitFr {
-        let mut bytes = Vec::with_capacity(32);
-        x.serialize_compressed(&mut bytes).expect("ser np fr");
-        GitFr::deserialize_compressed(&bytes[..]).expect("deser git fr")
-    }
+    pub fn fr_to_git(x: &GitFr) -> GitFr { *x }
 
-    pub fn fr_vec_to_git(xs: &[NpFr]) -> Vec<GitFr> {
-        xs.iter().map(fr_to_git).collect()
-    }
+    pub fn fr_vec_to_git(xs: &[GitFr]) -> Vec<GitFr> { xs.to_vec() }
 
-    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj {
-        let mut bytes = Vec::with_capacity(48);
-        p.serialize_compressed(&mut bytes).expect("ser np g1");
-        let aff =
-            ark_bls12_381::G1Affine::deserialize_compressed(&bytes[..]).expect("deser git g1");
-        GitAffineRepr::into_group(aff)
-    }
+    pub fn g1_to_git_proj(p: &NpG1Affine) -> GitG1Proj { p.into_group() }
 
-    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj {
-        let mut bytes = Vec::with_capacity(96);
-        p.serialize_compressed(&mut bytes).expect("ser np g2");
-        let aff =
-            ark_bls12_381::G2Affine::deserialize_compressed(&bytes[..]).expect("deser git g2");
-        GitAffineRepr::into_group(aff)
-    }
+    pub fn g2_to_git_proj(p: &NpG2Affine) -> GitG2Proj { p.into_group() }
 
     pub fn g1_vec_to_git(ps: &[NpG1Affine]) -> Vec<GitG1Proj> {
         ps.iter().map(g1_to_git_proj).collect()
@@ -238,6 +238,7 @@ pub mod bridge {
     }
 
     /// Proving + verifying key fields, projected into git-main BLS12-381.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitKeys {
         pub alpha_g1: GitG1Proj,
         pub beta_g1: GitG1Proj,
@@ -254,6 +255,7 @@ pub mod bridge {
     }
 
     /// Constraint matrices, projected into git-main field.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct GitMatrices {
         pub a: Vec<Vec<(GitFr, usize)>>,
         pub b: Vec<Vec<(GitFr, usize)>>,
@@ -261,6 +263,7 @@ pub mod bridge {
     }
 
     /// All inputs both sides need, expressed entirely in git-main types.
+    #[derive(ark_serialize::CanonicalSerialize, ark_serialize::CanonicalDeserialize)]
     pub struct Translated {
         pub keys: GitKeys,
         pub mat: GitMatrices,
@@ -292,15 +295,14 @@ pub mod bridge {
             l_query: g1_vec_to_git(&s.pk.l_query),
             gamma_abc_g1: g1_vec_to_git(&s.vk.gamma_abc_g1),
         };
-        let translate_row = |row: &Vec<(NpFr, usize)>| {
-            row.iter()
-                .map(|(c, j)| (fr_to_git(c), *j))
-                .collect::<Vec<_>>()
-        };
+        // gr1cs ConstraintMatrices is Vec<Matrix<F>> — [0]=A, [1]=B, [2]=C
+        // for the R1CS predicate. (In 0.5 r1cs the same struct exposed
+        // .a/.b/.c fields; the 0.6 gr1cs view goes by index.)
+        let translate_row = |row: &Vec<(GitFr, usize)>| row.clone();
         let mat = GitMatrices {
-            a: s.matrices.a.iter().map(translate_row).collect(),
-            b: s.matrices.b.iter().map(translate_row).collect(),
-            c: s.matrices.c.iter().map(translate_row).collect(),
+            a: s.matrices[0].iter().map(translate_row).collect(),
+            b: s.matrices[1].iter().map(translate_row).collect(),
+            c: s.matrices[2].iter().map(translate_row).collect(),
         };
         let instance_assignment = fr_vec_to_git(&s.instance_assignment);
         let witness_assignment = fr_vec_to_git(&s.witness_assignment);
@@ -393,9 +395,9 @@ pub mod bridge {
         use super::*;
         #[test]
         fn fr_roundtrips() {
-            use np_ark_ff::UniformRand;
+            use ark_ff::UniformRand;
             let mut rng = ark_std::test_rng();
-            let x = NpFr::rand(&mut rng);
+            let x = GitFr::rand(&mut rng);
             let _y = fr_to_git(&x);
         }
     }
@@ -425,6 +427,7 @@ pub mod zippel_side {
         inputs_base: Ctx<Vid, Value<ArkBls12_381>>,
         public_inputs: Ctx<Vid, Value<ArkBls12_381>>,
         translated: &'a Translated,
+        compile_time: std::time::Duration,
     }
 
     impl<'a> Setup<'a> {
@@ -508,50 +511,74 @@ pub mod zippel_side {
                 .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                 .collect();
 
-            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"));
+            let compile_start = Instant::now();
+            let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"))
+                .with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &translated.m);
             sizes.insert(&Tid::new("L"), &translated.l);
             sizes.insert(&Tid::new("H"), &translated.h_size);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 inputs_base,
                 public_inputs,
                 translated,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {
             let prover_scheduled = self.handler.default_schedule_prover();
 
-            let t = Instant::now();
-            let mut h_coeffs = witness_map(
-                &self.translated.mat,
-                self.translated.num_inputs,
-                self.translated.num_constraints,
-                &self.translated.full_assignment,
-            );
-            h_coeffs.resize(self.translated.h_size, GitFr::zero());
-            let mut inputs = self.inputs_base.clone();
-            inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("zippel groth16 prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let t = Instant::now();
+                let mut h_coeffs = witness_map(
+                    &self.translated.mat,
+                    self.translated.num_inputs,
+                    self.translated.num_constraints,
+                    &self.translated.full_assignment,
+                );
+                h_coeffs.resize(self.translated.h_size, GitFr::zero());
+                let mut inputs = self.inputs_base.clone();
+                inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs)
+                    .expect("zippel groth16 prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             self.handler.set_public_inputs(self.public_inputs.clone());
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("zippel groth16 verifier failed");
-            let verify = t.elapsed();
-            let result = check_verification(verifier_result);
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("zippel groth16 verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel Groth16 verification FAILED");
 
             Timing { prove, verify }
@@ -573,7 +600,7 @@ pub mod native_side {
     use ark_ec::pairing::Pairing;
     use ark_ec::{AffineRepr, VariableBaseMSM};
     use ark_ff::{PrimeField, UniformRand};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     type E = GitBls12_381;
     type G1Affine = <E as Pairing>::G1Affine;
@@ -630,88 +657,53 @@ pub mod native_side {
             }
         }
 
-        /// Time the sparse matrix–vector products the native prover does
-        /// inside `bridge::witness_map` (A·z, B·z, C·z over the
-        /// constraint domain — the FFTs that follow are part of the QAP
-        /// step proper and stay counted). The .zippel circuit does NOT
-        /// compute these matvecs (h_coeffs is provided as input), so for
-        /// a parity comparison of the SNARK-specific work, this MVM cost
-        /// is subtracted from the native prove time. Caveat: zippel-side
-        /// `time_protocol` still calls `bridge::witness_map` in Rust
-        /// before handing off to the runtime, so its prove timer still
-        /// includes this MVM. Don't read the prove ratio as "zippel
-        /// circuit vs. native SNARK"; read it as "the comparison the
-        /// user asked for".
-        fn time_mvm(&self) -> Duration {
-            use ark_ff::Zero;
-            use ark_poly::EvaluationDomain;
-            let mat = &self.translated.mat;
-            let full = &self.translated.full_assignment;
-            let num_inputs = self.translated.num_inputs;
-            let num_constraints = self.translated.num_constraints;
-            let zero = GitFr::zero();
-            let domain_size = num_constraints + num_inputs;
-            let domain_size = ark_poly::GeneralEvaluationDomain::<GitFr>::new(domain_size)
-                .expect("domain")
-                .size();
-            let mut a = vec![zero; domain_size];
-            let mut b = vec![zero; domain_size];
-            let mut c = vec![zero; domain_size];
-            let t = Instant::now();
-            for (i, row) in mat.a.iter().enumerate() {
-                for (cc, j) in row {
-                    a[i] += *cc * full[*j];
-                }
-            }
-            for (i, row) in mat.b.iter().enumerate() {
-                for (cc, j) in row {
-                    b[i] += *cc * full[*j];
-                }
-            }
-            for (i, row) in mat.c.iter().enumerate() {
-                for (cc, j) in row {
-                    c[i] += *cc * full[*j];
-                }
-            }
-            for i in 0..num_inputs {
-                a[num_constraints + i] = full[i];
-            }
-            let elapsed = t.elapsed();
-            std::hint::black_box((a, b, c));
-            elapsed
-        }
-
         pub fn time_protocol(&self) -> Timing {
             let mut rng = ark_std::test_rng();
             let r = GitFr::rand(&mut rng);
             let s = GitFr::rand(&mut rng);
 
-            let t = Instant::now();
-            let proof = prove(
-                &self.keys,
-                &self.translated.mat,
-                self.translated.num_inputs,
-                self.translated.num_constraints,
-                &self.translated.full_assignment,
-                &self.translated.witness_assignment,
-                self.translated.h_size,
-                r,
-                s,
-            );
-            let prove_t = t.elapsed();
-            let mvm_t = self.time_mvm();
-            let prove_adjusted = prove_t.saturating_sub(mvm_t);
+            // No MVM subtraction: both sides call `bridge::witness_map`
+            // inside their prove timer (zippel-side time_protocol does it
+            // explicitly to produce h_coeffs; native prove does it as the
+            // first step of `prove(...)`). Subtracting on one side biased
+            // the comparison.
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let t = Instant::now();
+                let proof = prove(
+                    &self.keys,
+                    &self.translated.mat,
+                    self.translated.num_inputs,
+                    self.translated.num_constraints,
+                    &self.translated.full_assignment,
+                    &self.translated.witness_assignment,
+                    self.translated.h_size,
+                    r,
+                    s,
+                );
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove_t = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             // Verifier convention: drop the leading constant-1 from the
             // public-input vector (matches ark-groth16's verify_proof).
             let public_inputs = &self.translated.instance_assignment[1..];
-            let t = Instant::now();
-            let ok = verify(&self.keys, &proof, public_inputs);
-            let verify_t = t.elapsed();
-            assert!(ok, "native (vendored) Groth16 verification FAILED");
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_ok = false;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let t = Instant::now();
+                let ok = verify(&self.keys, &proof, public_inputs);
+                verify_sum += t.elapsed();
+                last_ok = ok;
+            }
+            let verify_t = verify_sum / crate::VERIFY_SAMPLES;
+            assert!(last_ok, "native (vendored) Groth16 verification FAILED");
 
             Timing {
-                prove: prove_adjusted,
+                prove: prove_t,
                 verify: verify_t,
             }
         }
@@ -725,7 +717,15 @@ pub mod native_side {
 
     /// Vendored Groth16 prover (Sect. 3.2 of the paper, libsnark
     /// reduction). Single MSM per key vector; uses
-    /// `VariableBaseMSM::msm_bigint` from git-main `ark_ec`.
+    /// `VariableBaseMSM::msm_bigint` from git-main `ark_ec`. The 5 MSMs
+    /// are independent and run concurrently via `rayon::scope` — mirrors
+    /// the zippel runtime's dataflow scheduler, which dispatches each
+    /// independent `dot(...)` node to the rayon pool so they overlap on
+    /// the same workers. At threads ≥ 2 this maps onto N cores; at
+    /// threads = 1 it still gives the rayon worker pipelining headroom
+    /// (e.g. `into_bigint` of one MSM overlapping with bucket-fill of
+    /// the next). Without this, the prover serializes 5 large MSMs and
+    /// looks artificially slow next to zippel's identical work.
     #[allow(clippy::too_many_arguments)]
     pub fn prove(
         keys: &AffineKeys,
@@ -738,32 +738,67 @@ pub mod native_side {
         r: GitFr,
         s: GitFr,
     ) -> Proof {
+        use rayon::prelude::*;
         // h_coeffs (also folded into the timer on the zippel side).
         let mut h_coeffs = witness_map(mat, num_inputs, num_constraints, full_assignment);
         h_coeffs.resize(h_size, GitFr::zero_scalar());
 
+        // Parallel into_bigint matches what `VariableBaseMSM::msm` does
+        // internally via `cfg_into_iter!`; we pre-convert because the
+        // same `full_bi` feeds three of the five MSMs (a, b_g1, b_g2).
         let full_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            full_assignment.iter().map(|x| x.into_bigint()).collect();
+            full_assignment.par_iter().map(|x| x.into_bigint()).collect();
         let wit_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            witness_assignment.iter().map(|x| x.into_bigint()).collect();
+            witness_assignment.par_iter().map(|x| x.into_bigint()).collect();
         let h_bi: Vec<<GitFr as PrimeField>::BigInt> =
-            h_coeffs.iter().map(|x| x.into_bigint()).collect();
+            h_coeffs.par_iter().map(|x| x.into_bigint()).collect();
+
+        // 5 independent MSMs, concurrent via rayon::scope. Each spawn
+        // returns its result through a Mutex<Option<_>>; the scope barrier
+        // guarantees all five are populated before we read them out.
+        use std::sync::Mutex;
+        let a_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let b_g2_msm_out: Mutex<Option<G2Projective>> = Mutex::new(None);
+        let b_g1_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let l_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+        let h_msm_out: Mutex<Option<G1Projective>> = Mutex::new(None);
+
+        rayon::scope(|sc| {
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.a_query, &full_bi);
+                *a_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G2Projective::msm_bigint(&keys.b_g2_query, &full_bi);
+                *b_g2_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.b_g1_query, &full_bi);
+                *b_g1_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.l_query, &wit_bi);
+                *l_msm_out.lock().unwrap() = Some(v);
+            });
+            sc.spawn(|_| {
+                let v = G1Projective::msm_bigint(&keys.h_query, &h_bi);
+                *h_msm_out.lock().unwrap() = Some(v);
+            });
+        });
+
+        let a_msm = a_msm_out.into_inner().unwrap().unwrap();
+        let b_g2_msm = b_g2_msm_out.into_inner().unwrap().unwrap();
+        let b_g1_msm = b_g1_msm_out.into_inner().unwrap().unwrap();
+        let l_msm = l_msm_out.into_inner().unwrap().unwrap();
+        let h_msm = h_msm_out.into_inner().unwrap().unwrap();
 
         // A = alpha + MSM(a_query, full_assignment) + delta * r
-        let a_msm = G1Projective::msm_bigint(&keys.a_query, &full_bi);
         let a = keys.alpha_g1.into_group() + a_msm + keys.delta_g1.into_group() * r;
-
         // B (G2) = beta + MSM(b_g2_query, full_assignment) + delta_g2 * s
-        let b_g2_msm = G2Projective::msm_bigint(&keys.b_g2_query, &full_bi);
         let b_g2 = keys.beta_g2_aff.into_group() + b_g2_msm + keys.delta_g2_aff.into_group() * s;
-
         // B (G1) = beta_g1 + MSM(b_g1_query, full_assignment) + delta_g1 * s
-        let b_g1_msm = G1Projective::msm_bigint(&keys.b_g1_query, &full_bi);
         let b_g1 = keys.beta_g1.into_group() + b_g1_msm + keys.delta_g1.into_group() * s;
-
         // C = MSM(l_query, witness) + MSM(h_query, h) + A·s + B₁·r − δ·r·s
-        let l_msm = G1Projective::msm_bigint(&keys.l_query, &wit_bi);
-        let h_msm = G1Projective::msm_bigint(&keys.h_query, &h_bi);
         let rs = r * s;
         let c = l_msm + h_msm + a * s + b_g1 * r - keys.delta_g1.into_group() * rs;
 

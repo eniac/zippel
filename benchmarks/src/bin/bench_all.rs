@@ -54,6 +54,18 @@ struct Args {
     /// Don't write the CSV header row (for concatenating across runs).
     #[arg(long)]
     no_header: bool,
+    /// Append to the output CSV instead of truncating it. Pair with
+    /// `--no-header` when continuing a file written by an earlier run
+    /// (e.g. `run_all.sh` sweeping multiple thread counts into a single
+    /// CSV — each thread iteration appends so Ctrl-C never loses rows).
+    #[arg(long)]
+    append: bool,
+    /// Override every system's log_size grid with this comma-separated
+    /// list. For kzg the entries are converted to n_coeffs = 1 << log_size.
+    /// Useful for re-running a single failing point, e.g.
+    /// `--systems spartan --sizes 7`.
+    #[arg(long, value_delimiter = ',')]
+    sizes: Option<Vec<usize>>,
 }
 
 struct Row {
@@ -62,6 +74,12 @@ struct Row {
     log_size: usize,
     zippel: Timing,
     native: Timing,
+    /// Wall-clock time for the zippel compiler: source → executable
+    /// graph (parse + type-check + graph construction inside
+    /// `ZippelHandler::compile`). Excludes the Rust compiler (which
+    /// builds this binary once), excludes runtime scheduling
+    /// (graph→TDag), and excludes prove/verify execution.
+    compile: std::time::Duration,
 }
 
 fn ms(t: std::time::Duration) -> f64 {
@@ -75,23 +93,54 @@ const ZIPPEL_KZG: &str = include_str!("../../../examples/kzg/kzg.zippel");
 const ZIPPEL_PARI: &str = include_str!("../../../examples/pari/pari.zippel");
 const ZIPPEL_GROTH16: &str = include_str!("../../../examples/groth16/groth16.zippel");
 const ZIPPEL_PST13: &str = include_str!("../../../examples/pst13/pst13.zippel");
-const ZIPPEL_HYRAX: &str = include_str!("../../../examples/hyrax/hyrax.zippel");
+// `examples/hyrax/hyrax.zippel` is intentionally NOT pulled in here —
+// the bench renders a sized proto at run time via
+// `hyrax::zippel_side::render_proto(l, m)`, and `zippel_ncloc("hyrax")`
+// counts THAT rendered text so the printed LOC matches exactly what
+// the benchmark actually executes (not the hardcoded n=8 example file).
 const SPARTAN_WRAPPER_RS: &str = include_str!("../../src/spartan.rs");
 
 const NATIVE_IPA_RS: &str = include_str!("../../src/ipa.rs");
-const NATIVE_PARI_RS: &str = include_str!("../../src/pari_native.rs");
-const NATIVE_HYRAX_RS: &str = include_str!("../../src/hyrax.rs");
+// Upstream PARI baseline: vendored from alireza-shirzad/garuda-pari (commit
+// 3db79ad). NCLOC sums prover + verifier + generator + data_structures +
+// utils + the bit of `shared-utils` Pari actually uses (the transcript and
+// two inlined helpers in pari_upstream/mod.rs).
+const NATIVE_PARI_MOD_RS: &str = include_str!("../../src/pari_upstream/mod.rs");
+const NATIVE_PARI_GEN_RS: &str = include_str!("../../src/pari_upstream/generator.rs");
+const NATIVE_PARI_PROVER_RS: &str = include_str!("../../src/pari_upstream/prover.rs");
+const NATIVE_PARI_VERIFIER_RS: &str = include_str!("../../src/pari_upstream/verifier.rs");
+const NATIVE_PARI_DS_RS: &str = include_str!("../../src/pari_upstream/data_structures.rs");
+const NATIVE_PARI_UTILS_RS: &str = include_str!("../../src/pari_upstream/utils.rs");
+const NATIVE_PARI_TRANSCRIPT_RS: &str =
+    include_str!("../../src/pari_upstream/transcript/mod.rs");
+const NATIVE_PARI_TRANSCRIPT_ERR_RS: &str =
+    include_str!("../../src/pari_upstream/transcript/errors.rs");
+
+// PST13 native baseline is vendored + patched (see src/pst13_upstream/).
+// NCLOC counts mod.rs + data_structures.rs of our vendored version,
+// reflecting what code actually runs in the bench.
+const NATIVE_PST13_MOD_RS: &str = include_str!("../../src/pst13_upstream/mod.rs");
+const NATIVE_PST13_DS_RS: &str = include_str!("../../src/pst13_upstream/data_structures.rs");
+
+// Hyrax native baseline is vendored + patched (see src/hyrax_upstream/).
+// Replaces upstream `Matrix<F>` (Vec<Vec<F>>) with flat row-major
+// storage and rewrites `row_mul` as a SAXPY accumulation — eliminates
+// the per-column 16KB temp Vec and the cache-hostile column gathers.
+const NATIVE_HYRAX_MOD_RS: &str = include_str!("../../src/hyrax_upstream/mod.rs");
 
 // For systems delegating to external crates, native = prover + verifier code
 // in the underlying crate (counted once locally with `cloc`-style NCLOC, pinned
 // to the version in benchmarks/Cargo.lock at the time these were measured).
 // Update when bumping crate versions.
-const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.5.0 src/signature/schnorr/mod.rs
-const SUMCHECK_EXT_NCLOC: usize = 703;  // hyperplonk subroutines src/poly_iop/sum_check/{mod,prover,verifier}.rs
-const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.5.0 src/kzg10/mod.rs
-const GROTH16_EXT_NCLOC: usize = 440;   // ark-groth16-0.5.0 src/{prover,verifier,r1cs_to_qap}.rs
-const PST13_EXT_NCLOC: usize = 494;     // hyperplonk subroutines src/pcs/multilinear_kzg/{mod,srs,util}.rs
+const SCHNORR_EXT_NCLOC: usize = 186;   // ark-crypto-primitives-0.6.0 src/signature/schnorr/mod.rs
+const SUMCHECK_EXT_NCLOC: usize = 1544; // vendored from hyperplonk: src/sumcheck_upstream/{arithmetic,poly_iop,transcript}/*.rs (ported to ark 0.6)
+const KZG_EXT_NCLOC: usize = 527;       // ark-poly-commit-0.6.0 src/kzg10/mod.rs
+const GROTH16_EXT_NCLOC: usize = 458;   // ark-groth16-0.6.0 src/{prover,verifier,r1cs_to_qap}.rs
+// PST13 native NCLOC is computed dynamically from the vendored module
+// (see NATIVE_PST13_*_RS above); no static constant needed.
 const SPARTAN_EXT_NCLOC: usize = 1867;  // spartan-0.9.0 src/{r1csproof,sumcheck}.rs + src/nizk/{mod,bullet}.rs
+// Hyrax native NCLOC is computed dynamically from the vendored module
+// (see NATIVE_HYRAX_MOD_RS above); no static constant needed.
 
 fn count_ncloc_line_comments(src: &str) -> usize {
     src.lines()
@@ -185,7 +234,12 @@ fn zippel_ncloc(sys: &str) -> usize {
         "pari" => count_ncloc_line_comments(ZIPPEL_PARI),
         "groth16" => count_ncloc_line_comments(ZIPPEL_GROTH16),
         "pst13" => count_ncloc_line_comments(ZIPPEL_PST13),
-        "hyrax" => count_ncloc_line_comments(ZIPPEL_HYRAX),
+        // The hyrax bench RENDERS a sized proto from a template at
+        // run time rather than running examples/hyrax/hyrax.zippel
+        // verbatim, so count the rendered text (defaulting to the
+        // l=m=4 → n=8 instance — any size is structurally identical).
+        // This guarantees the LOC matches exactly what's executed.
+        "hyrax" => count_ncloc_line_comments(&hyrax::zippel_side::render_proto(4, 4)),
         "spartan" => spartan_zippel_ncloc(),
         _ => 0,
     }
@@ -197,19 +251,34 @@ fn native_ncloc(sys: &str) -> usize {
         "sumcheck" => SUMCHECK_EXT_NCLOC,
         "kzg" => KZG_EXT_NCLOC,
         "groth16" => GROTH16_EXT_NCLOC,
-        "pst13" => PST13_EXT_NCLOC,
+        "pst13" => {
+            count_ncloc_rust(NATIVE_PST13_MOD_RS) + count_ncloc_rust(NATIVE_PST13_DS_RS)
+        }
         "spartan" => SPARTAN_EXT_NCLOC,
         "ipa" => count_ncloc_rust(extract_braced_block(NATIVE_IPA_RS, "pub mod native_side")),
-        "hyrax" => count_ncloc_rust(extract_braced_block(NATIVE_HYRAX_RS, "pub mod native_side")),
-        "pari" => count_ncloc_rust(NATIVE_PARI_RS),
+        "hyrax" => count_ncloc_rust(NATIVE_HYRAX_MOD_RS),
+        "pari" => {
+            count_ncloc_rust(NATIVE_PARI_MOD_RS)
+                + count_ncloc_rust(NATIVE_PARI_GEN_RS)
+                + count_ncloc_rust(NATIVE_PARI_PROVER_RS)
+                + count_ncloc_rust(NATIVE_PARI_VERIFIER_RS)
+                + count_ncloc_rust(NATIVE_PARI_DS_RS)
+                + count_ncloc_rust(NATIVE_PARI_UTILS_RS)
+                + count_ncloc_rust(NATIVE_PARI_TRANSCRIPT_RS)
+                + count_ncloc_rust(NATIVE_PARI_TRANSCRIPT_ERR_RS)
+        }
         _ => 0,
     }
 }
 
 static CSV_WRITER: OnceLock<Mutex<BufWriter<std::fs::File>>> = OnceLock::new();
 
-fn init_csv(path: &PathBuf, header: bool) -> std::io::Result<()> {
-    if header {
+fn init_csv(path: &PathBuf, header: bool, append: bool) -> std::io::Result<()> {
+    // Truncate UNLESS the caller asked to append. `header` is independent:
+    // run_all.sh writes the header on the first thread iteration (header=true,
+    // append=false → truncate + write header) and then appends headerless rows
+    // for subsequent threads (header=false, append=true → keep existing rows).
+    if !append {
         std::fs::write(path, "")?;
     }
     let f = OpenOptions::new().create(true).append(true).open(path)?;
@@ -217,7 +286,7 @@ fn init_csv(path: &PathBuf, header: bool) -> std::io::Result<()> {
     if header {
         writeln!(
             w,
-            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc"
+            "system,threads,log_size,prover_time_ms,verifier_time_ms,native_prover_time_ms,native_verifier_time_ms,zippel_ncloc,native_ncloc,compiler"
         )?;
         w.flush()?;
     }
@@ -231,7 +300,7 @@ fn write_row(r: &Row) {
     let mut w = m.lock().unwrap();
     writeln!(
         w,
-        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{}",
+        "{},{},{},{:.3},{:.3},{:.3},{:.3},{},{},{:.3}",
         r.system,
         r.threads,
         r.log_size,
@@ -241,6 +310,7 @@ fn write_row(r: &Row) {
         ms(r.native.verify),
         zippel_ncloc(r.system),
         native_ncloc(r.system),
+        ms(r.compile),
     )
     .expect("write csv row");
     w.flush().expect("flush csv row");
@@ -248,7 +318,7 @@ fn write_row(r: &Row) {
 
 fn print_row(r: &Row) {
     eprintln!(
-        "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / native {:>8.2}ms   verify={:>7.2}ms / native {:>7.2}ms",
+        "  {:<8} threads={} log_size={:>2}  prove={:>8.2}ms / native {:>8.2}ms   verify={:>7.2}ms / native {:>7.2}ms   compile={:>8.2}ms",
         r.system,
         r.threads,
         r.log_size,
@@ -256,13 +326,19 @@ fn print_row(r: &Row) {
         ms(r.native.prove),
         ms(r.zippel.verify),
         ms(r.native.verify),
+        ms(r.compile),
     );
     write_row(r);
 }
 
 fn run_schnorr(threads: usize) -> Vec<Row> {
-    let mut z = schnorr::zippel_side::Setup::new();
-    let n = schnorr::native_side::Setup::new();
+    let (mut z, n) = setup_pool().install(|| {
+        (
+            schnorr::zippel_side::Setup::new(),
+            schnorr::native_side::Setup::new(),
+        )
+    });
+    let compile = z.compile_time();
     let zippel = z.time_protocol();
     let native = n.time_protocol();
     // Schnorr has no size knob — log_size = 0 marks "single fixed point".
@@ -272,6 +348,7 @@ fn run_schnorr(threads: usize) -> Vec<Row> {
         log_size: 0,
         zippel,
         native,
+        compile,
     }]
 }
 
@@ -279,8 +356,13 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
     sizes
         .iter()
         .map(|&nv| {
-            let mut z = sumcheck::zippel_side::Setup::new(nv, max_degree);
-            let n = sumcheck::native_side::Setup::new(nv, max_degree);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    sumcheck::zippel_side::Setup::new(nv, max_degree),
+                    sumcheck::native_side::Setup::new(nv, max_degree),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // Sumcheck size knob is `num_vars` itself — the hypercube has 2^nv
@@ -291,6 +373,7 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
                 log_size: nv,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -301,8 +384,13 @@ fn run_sumcheck(threads: usize, sizes: &[usize], max_degree: usize) -> Vec<Row> 
 fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
     ss.iter()
         .map(|&s| {
-            let mut z = ipa::zippel_side::Setup::new(s);
-            let n = ipa::native_side::Setup::new(s);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    ipa::zippel_side::Setup::new(s),
+                    ipa::native_side::Setup::new(s),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -311,6 +399,7 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
                 log_size: s,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -321,8 +410,13 @@ fn run_ipa(threads: usize, ss: &[usize]) -> Vec<Row> {
 fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n_coeffs| {
-            let mut z = kzg::zippel_side::Setup::new(n_coeffs);
-            let n = kzg::native_side::Setup::new(n_coeffs);
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    kzg::zippel_side::Setup::new(n_coeffs),
+                    kzg::native_side::Setup::new(n_coeffs),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             // KZG's grid is restricted to powers of two so log_2 is exact;
@@ -333,6 +427,7 @@ fn run_kzg(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n_coeffs.trailing_zeros() as usize,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -344,10 +439,14 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
     ms.iter()
         .map(|&m_log| {
             let m_witness = k_vars.saturating_sub(2 * n_pub);
-            let mut rng = ark_std::test_rng();
-            let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
-            let mut z = pari::zippel_side::Setup::new(m_log, n_pub, inst.num_vars);
-            let n = pari::native_side::Setup::new(&inst);
+            let (inst, mut z, n) = setup_pool().install(|| {
+                let mut rng = ark_std::test_rng();
+                let inst = pari::inst_gen::build_random(m_log, n_pub, m_witness, &mut rng);
+                let z = pari::zippel_side::Setup::new(m_log, n_pub, &inst);
+                let n = pari::native_side::Setup::new(&inst);
+                (inst, z, n)
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol(&inst);
             let native = n.time_protocol(&inst);
             let r = Row {
@@ -356,6 +455,7 @@ fn run_pari(threads: usize, ms: &[usize], n_pub: usize, k_vars: usize) -> Vec<Ro
                 log_size: m_log,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -368,9 +468,24 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
         .iter()
         .map(|&log_size| {
             let num_constraints = 1usize << log_size;
-            let translated = groth16::build_translated(num_constraints);
-            let mut z = groth16::zippel_side::Setup::new(&translated);
-            let n = groth16::native_side::Setup::new(&translated);
+            // `translated` borrowed by both setups, so build all three
+            // inside the same install closure and pass them out as a
+            // tuple. `translated` outlives both setups for the duration
+            // of `time_protocol`, which is what the borrow requires.
+            let translated = setup_pool().install(|| {
+                benchmarks::cache::load_or_build_canonical(
+                    "groth16_translated",
+                    log_size,
+                    || groth16::build_translated(num_constraints),
+                )
+            });
+            let (mut z, n) = setup_pool().install(|| {
+                (
+                    groth16::zippel_side::Setup::new(&translated),
+                    groth16::native_side::Setup::new(&translated),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = n.time_protocol();
             let r = Row {
@@ -379,6 +494,7 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
                 log_size,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -389,9 +505,14 @@ fn run_groth16(threads: usize, log_sizes: &[usize]) -> Vec<Row> {
 fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n| {
-            let shared = pst13::shared::build(n);
-            let mut z = pst13::zippel_side::Setup::new(&shared);
-            let np = pst13::native_side::Setup::new(&shared);
+            let shared = setup_pool().install(|| pst13::shared::build(n));
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    pst13::zippel_side::Setup::new(&shared),
+                    pst13::native_side::Setup::new(&shared),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -400,6 +521,7 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -410,8 +532,13 @@ fn run_pst13(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
     ns.iter()
         .map(|&n| {
-            let mut z = hyrax::zippel_side::Setup::new(n);
-            let np = hyrax::native_side::Setup::new(n);
+            let (mut z, np) = setup_pool().install(|| {
+                (
+                    hyrax::zippel_side::Setup::new(n),
+                    hyrax::native_side::Setup::new(n),
+                )
+            });
+            let compile = z.compile_time();
             let zippel = z.time_protocol();
             let native = np.time_protocol();
             let r = Row {
@@ -420,6 +547,7 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
                 log_size: n,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -430,52 +558,81 @@ fn run_hyrax(threads: usize, ns: &[usize]) -> Vec<Row> {
 fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
     ms.iter()
         .map(|&m| {
-            let mut z = spartan::Setup::new(m);
+            let mut z = setup_pool().install(|| spartan::Setup::new(m));
+            let compile = z.compile_time();
+            // `z.timing()` IS the timed region for the zippel side —
+            // it runs run_prover + run_verifier internally, so we hand
+            // it to the global (bench) pool, not the setup pool.
             let zippel = z.timing();
 
             let num_cons = 1usize << m;
             let num_vars = 1usize << (m - 1);
             let num_inputs = num_vars - 1;
-            let (inst, vars, inputs) =
-                Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+            // Synthesize the R1CS instance + gens off the bench pool.
+            // `produce_synthetic_r1cs` + `NIZKGens::new` are pure setup
+            // (libspartan with the multicore feature uses rayon, so the
+            // install routes them onto every core).
+            let (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec) =
+                setup_pool().install(|| {
+                    let (inst, vars, inputs) =
+                        Instance::produce_synthetic_r1cs(num_cons, num_vars, num_inputs);
+                    let n_matvec = {
+                        let mut best = Duration::MAX;
+                        for _ in 0..3 {
+                            let t0 = Instant::now();
+                            let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
+                            let dt = t0.elapsed();
+                            assert!(sat);
+                            if dt < best {
+                                best = dt;
+                            }
+                        }
+                        best
+                    };
+                    let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
+                    let inst_bytes = vec![0u8; 3 * num_cons * 40];
+                    let inputs_bytes =
+                        bincode::serialize(&inputs).expect("serialize inputs");
+                    (inst, vars, inputs, gens, inst_bytes, inputs_bytes, n_matvec)
+                });
 
-            let n_matvec = {
-                let mut best = Duration::MAX;
-                for _ in 0..3 {
-                    let t0 = Instant::now();
-                    let sat = inst.is_sat(&vars, &inputs).expect("is_sat");
-                    let dt = t0.elapsed();
-                    assert!(sat);
-                    if dt < best {
-                        best = dt;
-                    }
+            // Prover sampled PROVER_SAMPLES times. Each iteration
+            // re-inits the transcript (NIZK::prove takes &mut and consumes it).
+            let mut prove_sum = Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*benchmarks::PROVER_SAMPLES {
+                let mut pt = Transcript::new(b"bench_all_spartan");
+                let t = Instant::now();
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
                 }
-                best
-            };
-
-            let gens = NIZKGens::new(num_cons, num_vars, num_inputs);
-            let inst_bytes = vec![0u8; 3 * num_cons * 40];
-            let inputs_bytes = bincode::serialize(&inputs).expect("serialize inputs");
-
-            let mut pt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
+                let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
+                prove_sum += t.elapsed().saturating_sub(n_matvec);
+                last_proof = Some(proof);
             }
-            let proof = NIZK::prove(&inst, vars.clone(), &inputs, &gens, &mut pt);
-            let native_prove = t.elapsed().saturating_sub(n_matvec);
+            let native_prove = prove_sum / *benchmarks::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
-            let mut vt = Transcript::new(b"bench_all_spartan");
-            let t = Instant::now();
-            {
-                let mut bind = Transcript::new(b"matrix_bind");
-                bind.append_message(b"inst", &inst_bytes);
-                bind.append_message(b"io", &inputs_bytes);
+            // Verifier sampled VERIFY_SAMPLES times. Transcript
+            // construction is the same trivial work the original timer
+            // included (mirrors the prover-side measurement), so we keep
+            // it inside the per-call timer. libspartan's verify takes
+            // &mut transcript, so it must be re-init per iteration.
+            let mut verify_sum = Duration::ZERO;
+            for _ in 0..benchmarks::VERIFY_SAMPLES {
+                let mut vt = Transcript::new(b"bench_all_spartan");
+                let t = Instant::now();
+                {
+                    let mut bind = Transcript::new(b"matrix_bind");
+                    bind.append_message(b"inst", &inst_bytes);
+                    bind.append_message(b"io", &inputs_bytes);
+                }
+                proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
+                verify_sum += t.elapsed();
             }
-            proof.verify(&inst, &inputs, &mut vt, &gens).expect("verify");
-            let native_verify = t.elapsed();
+            let native_verify = verify_sum / benchmarks::VERIFY_SAMPLES;
 
             let native = Timing {
                 prove: native_prove,
@@ -487,6 +644,7 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
                 log_size: m,
                 zippel,
                 native,
+                compile,
             };
             print_row(&r);
             r
@@ -494,7 +652,55 @@ fn run_spartan(threads: usize, ms: &[usize]) -> Vec<Row> {
         .collect()
 }
 
+// Separate rayon pool used for the setup/SRS-generation work that runs
+// OUTSIDE the timed prove/verify. The global pool is constrained to the
+// benchmark thread count (1, 2, 4, 8, 16...) so we can measure scaling,
+// but setup is bench-harness overhead — we want it to use every core.
+// `setup_pool().install(|| { ... })` routes nested `par_iter`/`join`/`spawn`
+// to this all-core pool; control returns to the global pool the moment
+// `install` returns, so it can't bleed into a timed region.
+static SETUP_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn setup_pool() -> &'static rayon::ThreadPool {
+    SETUP_POOL.get().expect("SETUP_POOL not initialized")
+}
+
 fn main() {
+    // Init the rayon global pool with a 64 MB worker stack before any
+    // rayon call — the default per-worker stack is the OS default
+    // (~2 MB on macOS/Linux), and HyraxPC's open/check at n=20 pushes
+    // multi-MB frames through `par_iter` chains and overflows. Must
+    // happen before `Args::parse()` (clap) or any other touch of rayon,
+    // because `build_global` errors if the pool is already initialized.
+    // Honors RAYON_NUM_THREADS the way the implicit pool does.
+    let num_threads = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(0); // 0 → rayon picks (= num CPUs)
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .stack_size(64 * 1024 * 1024)
+        .build_global()
+        .expect("init rayon global pool");
+
+    // Build the all-core SETUP_POOL after the global pool so it can't
+    // accidentally be picked up by `build_global`. Uses the same 64 MB
+    // worker stack because some setup paths (groth16 keygen, kzg SRS,
+    // pari `compute_ai_bi_at_tau`) push the same large frames the
+    // timed paths do.
+    let setup_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(num_threads.max(1));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(setup_threads)
+        .stack_size(64 * 1024 * 1024)
+        .build()
+        .expect("init rayon setup pool");
+    SETUP_POOL
+        .set(pool)
+        .map_err(|_| ())
+        .expect("SETUP_POOL already initialized");
+
     let args = Args::parse();
     let selected: Vec<&'static str> = match &args.systems {
         Some(names) => ALL_SYSTEMS
@@ -509,14 +715,15 @@ fn main() {
         .threads_label
         .unwrap_or_else(rayon::current_num_threads);
 
-    // Default grid: log_size = 1..=20 for systems whose cost scales gracefully
-    // (sumcheck/pari/kzg are FFT-dominated, ~K log K). IPA is capped at 14
-    // because its prover + verifier are O(N) MSMs — at S=20 (N=2^20 ≈ 1M)
-    // single-threaded runs push into many minutes per call.
-    // Default grid: log_size = 1..=20 for systems whose cost scales gracefully
-    // (sumcheck/pari/kzg are FFT-dominated, ~K log K). IPA is capped at 14
-    // because its prover + verifier are O(N) MSMs — at S=20 (N=2^20 ≈ 1M)
-    // single-threaded runs push into many minutes per call.
+    // Default grid: every system at log_size=20 (domain size 2^20 ≈ 1M).
+    // sumcheck/pari/kzg/pst13/hyrax/spartan are FFT-dominated (~K log K)
+    // and finish in seconds-to-minutes per single-threaded prove. IPA's
+    // prover/verifier are O(N) MSMs with no FFT shortcut (log_2(N) folding
+    // rounds, each halving the vector), so S=20 single-threaded runs in
+    // tens of seconds. Groth16 at log_constraints=20 is the heaviest:
+    // a_query/b_query/h_query/l_query are each Vec<G1Projective> of length
+    // ≥ num_constraints (~150 MB per vector on BLS12-381 → ~1 GB peak RSS
+    // for the keys alone), and single-thread prove runs into many minutes.
     //
     // Sumcheck starts at nv=3 because sumcheck.zippel's `V: 2..NUM_VARS_CONST`
     // range must be non-empty (V is the per-round residual var count).
@@ -524,13 +731,20 @@ fn main() {
     // PARI starts at M=2 because the protocol divides q(X) by (X−r); at
     // K=2 the quotient q has degree 0 and the type checker rejects the
     // div. K=4 (M=2) is the smallest size where q has degree ≥ 1.
-    // Groth16 sweep is capped at log_constraints=14 (16K constraints).
-    // Beyond that, the zippel-side keys + circuit balloon (a_query,
-    // b_query, h_query are each Vec<G1Projective> of length ≥
-    // num_constraints), and single-thread prove already runs in
-    // tens of seconds at log_size=14.
     let (pari_ms, sumcheck_nvs, ipa_ss, kzg_ns, groth16_log_ns, pst13_ns, hyrax_ns, spartan_ms) =
-        if args.quick {
+        if let Some(ls) = &args.sizes {
+            let kzg = ls.iter().map(|&s| 1usize << s).collect::<Vec<_>>();
+            (
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+                kzg,
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+                ls.clone(),
+            )
+        } else if args.quick {
             (
                 vec![4usize, 8],
                 vec![4usize, 8],
@@ -542,15 +756,18 @@ fn main() {
                 vec![4usize, 8],
             )
         } else {
+            // Single-point grid: each system runs only at its largest
+            // historical default size. Use `--sizes a,b,c` for an explicit
+            // sweep, or `--quick` for the small grid.
             (
-                (2..=20).collect::<Vec<_>>(),
-                (3..=20).collect::<Vec<_>>(),
-                (1..=14).collect::<Vec<_>>(),
-                (1..=20).map(|s| 1usize << s).collect::<Vec<_>>(),
-                (1..=14).collect::<Vec<_>>(),
-                (1..=20).collect::<Vec<_>>(),
-                (2..=20).step_by(2).collect::<Vec<_>>(),
-                (3..=20).collect::<Vec<_>>(),
+                vec![18usize],            // pari        (M=18  → K=2^18 constraints)
+                vec![18usize],            // sumcheck    (num_vars=18)
+                vec![18usize],            // ipa         (S=18  → N=2^18)
+                vec![1usize << 18],       // kzg         (n_coeffs=2^18, log_size=18)
+                vec![18usize],            // groth16     (log_constraints=18)
+                vec![18usize],            // pst13       (n=18)
+                vec![18usize],            // hyrax       (n=18, must be even per `n % 2 == 0` assert)
+                vec![18usize],            // spartan     (m=18)
             )
         };
     // Sumcheck max_degree=3 matches the default the existing sumcheck bench uses;
@@ -570,7 +787,7 @@ fn main() {
     }
     eprintln!();
 
-    init_csv(&args.out, !args.no_header).expect("open csv for streaming writes");
+    init_csv(&args.out, !args.no_header, args.append).expect("open csv for streaming writes");
 
     let mut all_rows: Vec<Row> = Vec::new();
     let started = Instant::now();

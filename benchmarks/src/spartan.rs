@@ -34,6 +34,7 @@ pub struct Setup {
     handler: ZippelHandler<ArkCurve25519>,
     inputs: Ctx<Vid, Value<ArkCurve25519>>,
     _source_file: NamedTempFile,
+    compile_time: std::time::Duration,
 }
 
 impl Setup {
@@ -47,40 +48,64 @@ impl Setup {
 
         let inputs = prover_create_inputs(m);
 
-        let args = ZippelArgs::new(source_file.path().to_path_buf());
+        let compile_start = Instant::now();
+        let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
         let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
         let (_l_h, m_h) = hyrax_split(m);
         let mut sizes = Ctx::new();
         sizes.insert(&Tid::new("SC"), &m);
         sizes.insert(&Tid::new("S"), &m_h);
         handler.compile(&sizes);
+        let compile_time = compile_start.elapsed();
 
         Setup {
             m,
             handler,
             inputs,
             _source_file: source_file,
+            compile_time,
         }
+    }
+
+    pub fn compile_time(&self) -> std::time::Duration {
+        self.compile_time
     }
 
     pub fn time_protocol(&mut self) -> ZippelTiming {
         let prover_scheduled = self.handler.default_schedule_prover();
-        let t = Instant::now();
-        let proof = self
-            .handler
-            .run_prover(prover_scheduled, self.inputs.clone())
-            .expect("zippel spartan prover failed");
-        let prove = t.elapsed();
+        let mut prove_sum = std::time::Duration::ZERO;
+        let mut last_proof = None;
+        for _ in 0..*crate::PROVER_SAMPLES {
+            let sched = prover_scheduled.clone();
+            let inputs_c = self.inputs.clone();
+            let t = Instant::now();
+            let proof = self
+                .handler
+                .run_prover(sched, inputs_c)
+                .expect("zippel spartan prover failed");
+            prove_sum += t.elapsed();
+            last_proof = Some(proof);
+        }
+        let prove = prove_sum / *crate::PROVER_SAMPLES;
+        let proof = last_proof.expect("PROVER_SAMPLES > 0");
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
 
         let verifier_scheduled = self.handler.default_schedule_verifier();
-        let t = Instant::now();
-        let verifier_result = self
-            .handler
-            .run_verifier(verifier_scheduled, proof)
-            .expect("zippel spartan verifier failed");
-        let verify = t.elapsed();
-        let passed = check_verification(verifier_result).passed;
+        let mut verify_sum = std::time::Duration::ZERO;
+        let mut last_result = None;
+        for _ in 0..crate::VERIFY_SAMPLES {
+            let sched = verifier_scheduled.clone();
+            let proof_c = proof.clone();
+            let t = Instant::now();
+            let verifier_result = self
+                .handler
+                .run_verifier(sched, proof_c)
+                .expect("zippel spartan verifier failed");
+            verify_sum += t.elapsed();
+            last_result = Some(verifier_result);
+        }
+        let verify = verify_sum / crate::VERIFY_SAMPLES;
+        let passed = check_verification(last_result.expect("VERIFY_SAMPLES > 0")).passed;
 
         ZippelTiming {
             prove,

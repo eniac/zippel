@@ -32,22 +32,31 @@ pub mod zippel_side {
         handler: ZippelHandler<ArkBls12_381>,
         num_vars: usize,
         max_degree: usize,
+        compile_time: std::time::Duration,
     }
 
     impl Setup {
         pub fn new(num_vars: usize, max_degree: usize) -> Self {
-            let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"));
+            let compile_start = Instant::now();
+            let args = ZippelArgs::new(PathBuf::from("examples/sumcheck/sumcheck.zippel"))
+                .with_skip_analyses();
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("NUM_VARS_CONST"), &num_vars);
             sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &max_degree);
             handler.compile(&sizes);
+            let compile_time = compile_start.elapsed();
 
             Setup {
                 handler,
                 num_vars,
                 max_degree,
+                compile_time,
             }
+        }
+
+        pub fn compile_time(&self) -> std::time::Duration {
+            self.compile_time
         }
 
         pub fn time_protocol(&mut self) -> Timing {
@@ -74,22 +83,39 @@ pub mod zippel_side {
             ]);
 
             let prover_scheduled = self.handler.default_schedule_prover();
-            let t = Instant::now();
-            let proof = self
-                .handler
-                .run_prover(prover_scheduled, inputs)
-                .expect("run_prover failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let sched = prover_scheduled.clone();
+                let inputs_c = inputs.clone();
+                let t = Instant::now();
+                let proof = self
+                    .handler
+                    .run_prover(sched, inputs_c)
+                    .expect("run_prover failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let verifier_scheduled = self.handler.default_schedule_verifier();
-            let t = Instant::now();
-            let verifier_result = self
-                .handler
-                .run_verifier(verifier_scheduled, proof)
-                .expect("run_verifier failed");
-            let verify = t.elapsed();
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_result = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let sched = verifier_scheduled.clone();
+                let proof_c = proof.clone();
+                let t = Instant::now();
+                let verifier_result = self
+                    .handler
+                    .run_verifier(sched, proof_c)
+                    .expect("run_verifier failed");
+                verify_sum += t.elapsed();
+                last_result = Some(verifier_result);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
 
-            let result = check_verification(verifier_result);
+            let result = check_verification(last_result.expect("VERIFY_SAMPLES > 0"));
             assert!(result.passed, "zippel sumcheck verification FAILED");
 
             Timing { prove, verify }
@@ -97,15 +123,20 @@ pub mod zippel_side {
     }
 }
 
+/// Native sumcheck baseline: hyperplonk's `poly_iop::sum_check`,
+/// vendored in-tree under `crate::sumcheck_upstream` and ported to
+/// arkworks 0.6 so it shares the zippel-side curve set. Protocol code
+/// verbatim from EspressoSystems/hyperplonk `main`; only `use` paths
+/// changed.
 pub mod native_side {
     use super::*;
-    use arithmetic::VirtualPolynomial;
-    use hp_ark_bls12_381::Fr;
-    use hp_ark_ff::{One, UniformRand, Zero};
-    use hp_ark_poly::DenseMultilinearExtension;
+    use crate::sumcheck_upstream::arithmetic::VirtualPolynomial;
+    use crate::sumcheck_upstream::poly_iop::{PolyIOP, SumCheck};
+    use ark_bls12_381::Fr;
+    use ark_ff::{One, UniformRand, Zero};
+    use ark_poly::DenseMultilinearExtension;
     use std::sync::Arc;
     use std::time::Instant;
-    use subroutines::{PolyIOP, SumCheck};
 
     pub struct Setup {
         num_vars: usize,
@@ -123,7 +154,7 @@ pub mod native_side {
         pub fn time_protocol(&self) -> Timing {
             let nv = self.num_vars;
             let md = self.max_degree;
-            let mut rng = hp_ark_std::test_rng();
+            let mut rng = ark_std::test_rng();
             let eval_count = 1usize << nv;
             let evals: Vec<Fr> = (0..eval_count).map(|_| Fr::rand(&mut rng)).collect();
             let claimed_sum: Fr = evals
@@ -136,19 +167,40 @@ pub mod native_side {
             poly.add_mle_list(vec![mle.clone(); md], Fr::one())
                 .expect("add_mle_list");
 
-            let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
-            let t = Instant::now();
-            let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
-                .expect("hyperplonk prove failed");
-            let prove = t.elapsed();
+            let mut prove_sum = std::time::Duration::ZERO;
+            let mut last_proof = None;
+            for _ in 0..*crate::PROVER_SAMPLES {
+                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
+                let t = Instant::now();
+                let proof = <PolyIOP<Fr> as SumCheck<Fr>>::prove(&poly, &mut transcript)
+                    .expect("hyperplonk prove failed");
+                prove_sum += t.elapsed();
+                last_proof = Some(proof);
+            }
+            let prove = prove_sum / *crate::PROVER_SAMPLES;
+            let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             let aux = poly.aux_info.clone();
-            let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
-            let t = Instant::now();
-            let subclaim =
-                <PolyIOP<Fr> as SumCheck<Fr>>::verify(claimed_sum, &proof, &aux, &mut transcript)
-                    .expect("hyperplonk verify failed");
-            let verify = t.elapsed();
+            // Verify takes &mut transcript; we re-init transcript per
+            // iteration so each run starts from the same state. The
+            // re-init happens OUTSIDE the per-call timer.
+            let mut verify_sum = std::time::Duration::ZERO;
+            let mut last_subclaim = None;
+            for _ in 0..crate::VERIFY_SAMPLES {
+                let mut transcript = <PolyIOP<Fr> as SumCheck<Fr>>::init_transcript();
+                let t = Instant::now();
+                let subclaim = <PolyIOP<Fr> as SumCheck<Fr>>::verify(
+                    claimed_sum,
+                    &proof,
+                    &aux,
+                    &mut transcript,
+                )
+                .expect("hyperplonk verify failed");
+                verify_sum += t.elapsed();
+                last_subclaim = Some(subclaim);
+            }
+            let verify = verify_sum / crate::VERIFY_SAMPLES;
+            let subclaim = last_subclaim.expect("VERIFY_SAMPLES > 0");
 
             // Subclaim opening (the final O(2^NV) poly eval) is
             // deliberately outside the timer — in a real SNARK it would

@@ -7,15 +7,16 @@
 # arkworks' parallel path for our protocols.
 #
 # Usage:
-#   benchmarks/run_all.sh                    # default: threads=1,4 → bench_results.csv
-#   THREADS="1,2,4,8" benchmarks/run_all.sh  # sweep more thread counts
+#   benchmarks/run_all.sh                       # default: all systems × threads=1,2,4,8,16
+#                                               # × max-size grid → bench_results.csv
+#   THREADS="1,4" benchmarks/run_all.sh         # narrower thread sweep
 #   OUT=results.csv benchmarks/run_all.sh
-#   QUICK=1 benchmarks/run_all.sh            # small grid for iteration
-#   SYSTEMS=kzg,pari benchmarks/run_all.sh   # filter systems
+#   QUICK=1 benchmarks/run_all.sh               # small grid for iteration
+#   SYSTEMS=kzg,pari benchmarks/run_all.sh      # filter systems
 
 set -euo pipefail
 
-THREADS="${THREADS:-1,4}"
+THREADS="${THREADS:-1,2,4,8,16}"
 OUT="${OUT:-bench_results.csv}"
 QUICK="${QUICK:-0}"
 SYSTEMS="${SYSTEMS:-}"
@@ -31,8 +32,6 @@ echo ">>> building bench_all (release)" >&2
 cargo build --release --manifest-path "${SCRIPT_DIR}/Cargo.toml" --bin bench_all >&2
 
 BIN="${SCRIPT_DIR}/target/release/bench_all"
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "${TMPDIR}"' EXIT
 
 CHILD_ARGS=()
 [[ "${QUICK}" == "1" ]] && CHILD_ARGS+=(--quick)
@@ -40,22 +39,24 @@ CHILD_ARGS=()
 
 IFS=',' read -r -a THREAD_LIST <<< "${THREADS}"
 
-# First run writes the header; subsequent runs append with --no-header.
+# Each thread iteration writes DIRECTLY to OUT (append mode). bench_all
+# flushes per row, so Ctrl-C anywhere — between threads, mid-iteration
+# within a system, or between systems — preserves every row that finished
+# before the interrupt. The first call writes the header and truncates;
+# subsequent calls append with --no-header --append.
 HEADER_DONE=0
 : > "${OUT}"
 for T in "${THREAD_LIST[@]}"; do
-    PART="${TMPDIR}/part_${T}.csv"
     EXTRA=()
     if [[ "${HEADER_DONE}" == "1" ]]; then
-        EXTRA+=(--no-header)
+        EXTRA+=(--no-header --append)
     fi
     echo ">>> threads=${T}" >&2
     RAYON_NUM_THREADS="${T}" "${BIN}" \
-        --out "${PART}" \
+        --out "${OUT}" \
         --threads-label "${T}" \
         ${CHILD_ARGS[@]+"${CHILD_ARGS[@]}"} \
         ${EXTRA[@]+"${EXTRA[@]}"}
-    cat "${PART}" >> "${OUT}"
     HEADER_DONE=1
 done
 
