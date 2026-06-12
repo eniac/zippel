@@ -2,6 +2,16 @@
 SYMBOLICA_HIDE_BANNER = "1"
 RUST_MIN_STACK = "33554432"
 
+# Windows main thread defaults to a 1 MiB stack (baked into the PE header at
+# link time). RUST_MIN_STACK above only resizes *spawned* threads, not main, so
+# analysis/graph passes and large `im::OrdMap<_, Value>` inserts (each B-tree
+# node inlines 64 entries of a ~600-byte `Value`) overflow it. Reserve 256 MiB
+# for the main thread so examples run without per-binary worker-thread wrappers.
+# Address space only (committed lazily); MSVC-target scoped so Linux CI is
+# unaffected.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:268435456"]
+
 [alias]
 # Make 'cargo test' default to testing the entire workspace
 # This ensures all member crate tests run without needing --workspace flag
