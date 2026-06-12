@@ -104,38 +104,81 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         for p in self.verifier_comp.basis.iter() {
             self.prover.basis.push(p.clone());
         }
+        // The prover, relation, and verifier sub-projections are built
+        // independently and can annotate the same DAG node-slot with divergent
+        // type/qualifier/distribution metadata, which `PRef` identity — and thus
+        // monomial-variable identity — distinguishes. Unify them so honest
+        // verifier equations reduce against the prover ideal.
+        self.canonicalize_node_slot_vars();
 
         self.prover.run::<128>();
-
-        let dbg = std::env::var_os("ZIPPEL_DEBUG_COMPLETENESS").is_some();
-        if dbg {
-            let n: usize = self.prover.basis.iter().count();
-            eprintln!("=== PROVER BASIS ({n} rows); filtered ===");
-            for p in self.prover.basis.iter() {
-                let s = format!("{p}");
-                if ["evs", "round_poly", "claimed", "n17", "n18", "n19", "g_", "interp"]
-                    .iter()
-                    .any(|k| s.contains(k))
-                {
-                    eprintln!("  P: {s}");
-                }
-            }
-            eprintln!("=== VERIFIER ASSERTIONS ===");
-        }
 
         for p in self.verifier.basis.iter() {
             if p.is_zero() {
                 continue;
             }
             let remainder = self.prover.basis.reduce(p.clone());
-            if dbg {
-                eprintln!("  V: {p}\n     rem: {remainder}");
-            }
             if !remainder.is_zero() {
                 return Err(AnalysisError::Incomplete(remainder));
             }
         }
         Ok(())
+    }
+
+    /// Unify Gröbner variables that denote the same `(node, slot)`.
+    ///
+    /// The prover, relation, and verifier sub-projections are built
+    /// independently and can annotate the same DAG node with divergent
+    /// `typ`/`qualifier`/`distribution` metadata — e.g. a transcript scalar
+    /// vector seen as `Scalar` in the prover binding but as an index `Fin` in
+    /// the verifier's element access. `PRef` identity includes that metadata,
+    /// so the same `(reference, index)` otherwise splits into distinct monomial
+    /// variables that never cancel, leaving honest verifier equations
+    /// irreducible. Rewrite every basis polynomial so each `(reference, index)`
+    /// uses one canonical `PRef` (the `Ord`-minimal occurrence).
+    fn canonicalize_node_slot_vars(&mut self) {
+        use std::collections::HashMap;
+        type SP<C> = crate::analyses::groebner::SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
+
+        let mut canon: HashMap<(Ref, usize), PRef> = HashMap::new();
+        for basis in [&self.prover.basis, &self.verifier.basis] {
+            for p in basis.iter() {
+                for v in p.vars().iter() {
+                    let key = (v.reference, v.index);
+                    match canon.get(&key) {
+                        Some(c) if c <= v => {}
+                        _ => {
+                            canon.insert(key, v.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut subs: share::Ctx<PRef, SP<C>> = share::Ctx::new();
+        let mut any = false;
+        for basis in [&self.prover.basis, &self.verifier.basis] {
+            for p in basis.iter() {
+                for v in p.vars().iter() {
+                    let c = &canon[&(v.reference, v.index)];
+                    if v != c && subs.get(v).is_none() {
+                        subs.insert(v, &SP::<C>::var(c));
+                        any = true;
+                    }
+                }
+            }
+        }
+        if !any {
+            return;
+        }
+        for p in self.prover.basis.iter_mut() {
+            let (np, _) = p.clone().inline_vars(&subs);
+            *p = np;
+        }
+        for p in self.verifier.basis.iter_mut() {
+            let (np, _) = p.clone().inline_vars(&subs);
+            *p = np;
+        }
     }
 }
 

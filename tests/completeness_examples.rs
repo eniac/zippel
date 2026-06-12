@@ -32,13 +32,7 @@ fn analyze_complete(rel_path: &'static str, sizes: Vec<(&'static str, usize)>) -
                 ctx.insert(&Tid::new(name), &value);
             }
             handler.compile(&ctx);
-            match handler.analyze_completeness() {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("COMPLETENESS ERROR [{rel_path}]: {e}");
-                    false
-                }
-            }
+            handler.analyze_completeness().is_ok()
         })
         .expect("failed to spawn completeness worker thread")
         .join()
@@ -46,14 +40,12 @@ fn analyze_complete(rel_path: &'static str, sizes: Vec<(&'static str, usize)>) -
 }
 
 #[test]
-#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; out of scope for the div_q fix"]
 fn sumcheck_completeness() {
-    // MAX_DEGREE_CONST = 1 keeps the completeness Gröbner basis tractable for
-    // CI. The analysis now *models* the materialized hypercube reduce and
-    // selected eval at any degree (no more `uncovered_op`), but a degree-2
-    // multivariate basis with the recursive challenge products is
-    // computationally heavy to fully reduce. Degree-2 hypercube *extraction*
-    // is covered by the focused `canonical_hypercube_reduce_*` graph tests.
+    // Recursive sumcheck: the verifier recomputes round polynomials via
+    // materialized hypercube reduce-maps and selected evaluations. These
+    // verifier-local intermediates reduce once the same DAG node-slot maps to a
+    // single Gröbner variable across the prover/relation/verifier
+    // sub-projections (see `canonicalize_node_slot_vars`). MAX_DEGREE_CONST=1.
     assert!(analyze_complete(
         "examples/sumcheck/sumcheck.zippel",
         vec![("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)],
@@ -61,7 +53,6 @@ fn sumcheck_completeness() {
 }
 
 #[test]
-#[ignore = "reduce-all completeness needs extractors for verifier-local ReduceMap/selected-eval intermediates; out of scope for the div_q fix"]
 fn mle_sumcheck_completeness() {
     assert!(analyze_complete(
         "examples/mle_sumcheck/mle_sumcheck.zippel",
@@ -75,14 +66,13 @@ fn kzg_completeness() {
 }
 
 #[test]
-#[ignore = "reduce(*) widening panic is fixed and the analysis now runs to completion; membership completeness still fails on the div_r remainder of its /X and KZG divisions — a division-exactness gap (cf. the div_q note above), not the reduce(*) widening this guards"]
 fn membership_completeness() {
-    // Guards the `Op::ReduceMap` Mul degree-widening fix end to end:
-    // `reduce(*, [poly_f - r for r in s])` (membership.zippel:15) folds M copies
-    // of `Uni(N-1)` into a degree `(N-1)*M` product. Pre-fix this panicked with
-    // "multi-index missing in result"; post-fix the Gröbner analysis runs to
-    // completion (then reports the div_r incompleteness noted in #[ignore]).
-    // N=2, M=2 (=> L=2, S=2) already widen Uni(1)·Uni(1) -> Uni(2).
+    // div_r incompleteness resolved: the membership statement `f(0) in S`, i.e.
+    // `reduce(*, [f_coeffs[0] - r for r in s]) == 0` (= g(0)==0), is now part of
+    // the `where` relation, so the verifier's `prod_eval == h_eval*alpha` check
+    // reduces against it instead of leaving the `g_poly / poly_x` remainder
+    // free. Also exercises the `Op::ReduceMap` Mul degree-widening fix: N=2,
+    // M=2 fold Uni(1)*Uni(1) -> Uni(2) (L=2, S=2).
     assert!(analyze_complete(
         "examples/membership/membership.zippel",
         vec![("N", 2), ("M", 2), ("S", 2)],
