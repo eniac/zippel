@@ -11,6 +11,7 @@ publish = false
 # turn it off would be a single-threaded sanity run.
 default = ["parallel"]
 parallel = ["ark-std/parallel", "ark-ff/parallel", "ark-ec/parallel", "ark-poly/parallel"]
+sol = []
 
 [dependencies]
 # Zippel side (uses arkworks from git main, via backend's transitive deps).

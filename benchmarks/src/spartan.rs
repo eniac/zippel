@@ -4,7 +4,7 @@ use ark_ec::CurveGroup;
 use ark_ff::{Field, Zero};
 use ark_std::UniformRand;
 use ark_std::rand::SeedableRng;
-use backend::{ArkCurve25519, ArkConfig, PolyVariant, Value, VirtualPolynomial};
+use backend::{ArkCurve25519, PolyVariant, Value, VirtualPolynomial};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;

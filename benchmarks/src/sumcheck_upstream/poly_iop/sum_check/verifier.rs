@@ -318,7 +318,7 @@ fn u64_factorial(a: usize) -> u64 {
 #[cfg(test)]
 mod test {
     use super::interpolate_uni_poly;
-    use crate::poly_iop::errors::PolyIOPErrors;
+    use crate::sumcheck_upstream::poly_iop::errors::PolyIOPErrors;
     use ark_bls12_381::Fr;
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
     use ark_std::{vec::Vec, UniformRand};

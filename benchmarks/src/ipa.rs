@@ -24,7 +24,7 @@ pub mod zippel_side {
     use ark_secp256k1::{Affine as SecpAffine, Fr as SecpFr, Projective as SecpProjective};
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
     use ark_std::UniformRand;
-    use backend::{ATyp, ArkSecp256k1, Value};
+    use backend::{ArkSecp256k1, Value};
     use lang::id::{Tid, Vid};
     use share::Ctx;
     use std::path::PathBuf;
@@ -88,7 +88,7 @@ pub mod zippel_side {
 
     pub struct Setup {
         handler: ZippelHandler<ArkSecp256k1>,
-        n: usize,
+        _n: usize,
         inputs: IpaInputs,
         compile_time: std::time::Duration,
     }
@@ -115,7 +115,7 @@ pub mod zippel_side {
 
             Setup {
                 handler,
-                n,
+                _n: n,
                 inputs,
                 compile_time,
             }
@@ -314,7 +314,7 @@ pub mod native_side {
                 }
                 let final_a = a[0];
                 let final_b = b[0];
-                std::hint::black_box(p_cur);
+                let _ = std::hint::black_box(p_cur);
                 prove_sum += t.elapsed();
                 last_state = Some((final_a, final_b, proofs));
             }

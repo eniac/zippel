@@ -300,6 +300,7 @@ pub mod native_side {
 // the bench bin — the bench compares zippel against `native_side` (hyperplonk).
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 mod textbook_native_side {
     use super::Timing;
     use super::shared::Shared;
@@ -345,7 +346,7 @@ mod textbook_native_side {
     /// G1 scalar mults across all MSMs.
     pub fn prove(shared: &Shared) -> Proof {
         let n = shared.n;
-        let size = 1usize << n;
+        let _size = 1usize << n;
 
         // C = MSM(p, ck).
         let p_bi: Vec<<Fr as PrimeField>::BigInt> =

@@ -60,7 +60,7 @@ pub struct Instance<F> {
 
 pub mod inst_gen {
     use super::Instance;
-    use ark_ff::{Field, UniformRand, Zero};
+    use ark_ff::Field;
     use rand::Rng;
 
     /// Build a satisfying SR1CS instance in the upstream "instance
@@ -190,7 +190,6 @@ pub mod inst_gen {
 
 pub mod zippel_side {
     use super::*;
-    use ark_ec::CurveGroup;
     use ark_ff::{Field, One, UniformRand, Zero};
     use ark_poly::{
         DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain, Polynomial,
@@ -333,7 +332,7 @@ pub mod zippel_side {
         m_log: usize,
         k: usize,
         n_pub: usize,
-        kmn: usize, // = num_vars - n_pub
+        _kmn: usize, // = num_vars - n_pub
         num_vars: usize,
         srs: PariSrs,
         compile_time: std::time::Duration,
@@ -364,7 +363,7 @@ pub mod zippel_side {
                 m_log,
                 k,
                 n_pub,
-                kmn,
+                _kmn: kmn,
                 num_vars,
                 srs,
                 compile_time,

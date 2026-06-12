@@ -66,7 +66,7 @@ use ark_ec::{
     scalar_mul::{BatchMulPreprocessing, ScalarMul},
     AffineRepr, CurveGroup, VariableBaseMSM,
 };
-use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
+use ark_ff::{Field, One, PrimeField, UniformRand};
 use ark_poly::{DenseMultilinearExtension, MultilinearExtension};
 use ark_std::{
     collections::LinkedList, iter::FromIterator, marker::PhantomData, ops::Mul, rand::RngCore,

@@ -251,7 +251,7 @@ pub mod native_side {
     };
 
     pub struct Setup {
-        num_vars: usize,
+        _num_vars: usize,
         ck: CommitterKey,
         vk: VerifierKey,
         poly: DenseMultilinearExtension<Fr>,
@@ -283,7 +283,7 @@ pub mod native_side {
             let value = poly.evaluate(&point);
 
             Setup {
-                num_vars: n,
+                _num_vars: n,
                 ck,
                 vk,
                 poly,

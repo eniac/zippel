@@ -186,7 +186,7 @@ fn barycentric_weights<F: PrimeField>(points: &[F]) -> Vec<F> {
             points
                 .iter()
                 .enumerate()
-                .filter(|&(i, _point_i)| (i != j))
+                .filter(|&(i, _point_i)| i != j)
                 .map(|(_i, point_i)| *point_j - point_i)
                 .reduce(|acc, value| acc * value)
                 .unwrap_or_else(F::one)

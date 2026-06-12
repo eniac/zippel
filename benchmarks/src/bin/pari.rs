@@ -53,7 +53,7 @@ fn main() {
         let m_witness = k_vars - 2 * n;
         let inst: Instance<_> = inst_gen::build_random(m, n, m_witness, &mut rng);
 
-        let mut zs = zippel_side::Setup::new(m, n, inst.num_vars);
+        let mut zs = zippel_side::Setup::new(m, n, &inst);
         let np = native_side::Setup::new(&inst);
         let zt = zs.time_protocol(&inst);
         let nt = np.time_protocol(&inst);

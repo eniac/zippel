@@ -881,7 +881,7 @@ pub fn build_translated(num_constraints: usize) -> bridge::Translated {
 mod cross_tests {
     use super::bridge::{Translated, witness_map};
     use super::native_side::{AffineKeys, Proof, prove, verify};
-    use super::{build_translated, zippel_side};
+    use super::build_translated;
     use ark_bls12_381::Fr as GitFr;
     use ark_ff::{UniformRand, Zero};
     use backend::{ArkBls12_381, Value};
