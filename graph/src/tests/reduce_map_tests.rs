@@ -564,5 +564,86 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
     }
 }
 
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+    use crate::tests::test_helpers::execute_graph;
+
+    // Here, the polynomial being evaluated (which is `poly` in the eval expression)
+    // actually depends on `tail` (the loop parameter).
+    // Specifically: eval<0>(eval(poly_factory, [tail[0]]), [tail[1]])
+    // The optimization must decline to fire because `poly` is not loop-invariant.
+    let src = r#"
+        fn test_dependent<F: Field>(private poly_factory: Poly<F, 3, 1>) -> Poly<F, 1, 1> {
+            let zero: F = 0;
+            let one = zero + 1;
+            reduce(+, [
+                eval<0>(eval(poly_factory, [tail[0]]), [tail[1]])
+                for tail in [
+                    [(((i / (2^j)) % 2) * one) for j in 0..2]
+                    for i in 0..4
+                ]
+            ])
+        }
+    "#;
+    let graphs = parse_and_build(src);
+    let dag = &graphs.0[0];
+
+    let mut inputs = Ctx::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    // poly_factory has 3 variables, evaluating it at tail[0] returns a polynomial of 2 variables.
+    let poly_val = Value::<B>::random(&mut rng, &ATyp::Mle(3));
+    inputs.insert(&lang::id::Vid::from("poly_factory"), &poly_val.clone());
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let result = execute_graph(dag, inputs).unwrap();
+    let Value::Poly(_got_poly) = result else {
+        panic!("Expected a polynomial result, found {:?}", result);
+    };
+
+    let after = optimization_stats_snapshot();
+    // Optimization does not fire because the evaluated polynomial is not loop-invariant
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+}
+
+#[test]
+#[serial]
+fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
+
+    // In this case, the domain of the ReduceMap is NOT a vector (e.g. it is a polynomial type, Uni(3)).
+    // The optimization must skip (because domain typ is not Vec), and fall back to normal execution.
+    let scalar_t = ATyp::scalar();
+    let domain = Op::Value(Value::Poly(backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1)));
+    
+    // fixed has LoopParam
+    let fixed = mk::<B>(Op::LoopParam(0, scalar_t.clone()));
+    let poly = mk::<B>(Op::Value(Value::Poly(backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2))));
+    let body = Op::Evaluate(poly, Some(lang::typ::CRange::new(0, 1)), Some(fixed));
+    
+    let rm = GOp::reduce_map(BinOp::Add, domain, body);
+
+    reset_optimization_stats();
+    let before = optimization_stats_snapshot();
+    assert_eq!(before.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(before.canonical_sumcheck_rows_fused, 0);
+
+    let env: HashMap<Ref, Arc<Value<B>>> = HashMap::new();
+    let mut rng = StdRng::seed_from_u64(0);
+    let _res = eval_op(&rm, &env, &mut rng);
+
+    let after = optimization_stats_snapshot();
+    // Optimization does not fire because the domain type is ATyp::Uni, not ATyp::Vec
+    assert_eq!(after.canonical_sumcheck_rows_seen, 0);
+    assert_eq!(after.canonical_sumcheck_rows_fused, 0);
+}
+
+
 
 

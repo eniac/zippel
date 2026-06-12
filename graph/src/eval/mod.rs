@@ -2,6 +2,7 @@ pub mod error;
 
 use crate::{GOp, HOp, Op, Ref};
 use backend::{ABase, ATyp, ArkConfig, SelectedEvalShape, Value};
+use ark_ff::{One, Zero};
 use error::EvalError;
 use lang::ast::BinOp;
 use rand::RngCore;
@@ -121,6 +122,173 @@ fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
 ///
 /// If matched, evaluates only the polynomial operand and calls
 /// value_hypercube_reduce_selected. Falls through to None otherwise.
+fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
+    match op {
+        Op::Value(val) => match val {
+            Value::Index(2) => true,
+            Value::Scalar(f) => *f == <C::F as From<u64>>::from(2u64),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn match_bit_extraction_ast<C: ArkConfig>(
+    op: &GOp<C>,
+    outer_level: usize,
+    inner_level: usize,
+) -> bool {
+    let Op::Bin(BinOp::Rem, lhs, rhs, _) = op else {
+        return false;
+    };
+    if !is_const_two(rhs.get()) {
+        return false;
+    }
+    let Op::Bin(BinOp::Div, lhs_div, rhs_div, _) = lhs.get() else {
+        return false;
+    };
+    let Op::LoopParam(l_outer, _) = lhs_div.get() else {
+        return false;
+    };
+    if *l_outer != outer_level {
+        return false;
+    }
+    let Op::Bin(BinOp::Pow, lhs_pow, rhs_pow, _) = rhs_div.get() else {
+        return false;
+    };
+    if !is_const_two(lhs_pow.get()) {
+        return false;
+    }
+    let Op::LoopParam(l_inner, _) = rhs_pow.get() else {
+        return false;
+    };
+    *l_inner == inner_level
+}
+
+fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
+    match v {
+        Value::Scalar(f) => *f == C::F::one(),
+        Value::Index(1) => true,
+        Value::Bool(true) => true,
+        _ => false,
+    }
+}
+
+fn try_match_canonical_hypercube_ast<C: ArkConfig>(
+    fixed: &HOp<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
+    rng: &mut impl rand::RngCore,
+    loop_params: &[Arc<Value<C>>],
+) -> Result<bool, EvalError> {
+    match fixed.get() {
+        Op::LoopParam(level, _) => {
+            Ok(*level == loop_params.len())
+        }
+        Op::Map(_inner_domain, inner_body) => {
+            let outer_level = loop_params.len();
+            let inner_level = loop_params.len() + 1;
+            
+            // Check if inner_body is a multiplication by a scale term X
+            if let Op::Bin(BinOp::Mul, lhs, rhs, _) = inner_body.get() {
+                if match_bit_extraction_ast(lhs.get(), outer_level, inner_level) {
+                    let x_val = eval_op_with_loop_params(rhs, env, rng, loop_params)?;
+                    return Ok(is_value_one(&x_val));
+                }
+                if match_bit_extraction_ast(rhs.get(), outer_level, inner_level) {
+                    let x_val = eval_op_with_loop_params(lhs, env, rng, loop_params)?;
+                    return Ok(is_value_one(&x_val));
+                }
+                Ok(false)
+            } else {
+                // Check if it's just the bit extraction itself
+                Ok(match_bit_extraction_ast(inner_body.get(), outer_level, inner_level))
+            }
+        }
+        _ => Ok(false),
+    }
+}
+
+fn verify_hypercube_coordinates<C: ArkConfig, R: RngCore>(
+    fixed: &HOp<C>,
+    env: &HashMap<Ref, Arc<Value<C>>>,
+    rng: &mut R,
+    loop_params: &[Arc<Value<C>>],
+    n: usize,
+    k: usize,
+) -> Result<bool, EvalError> {
+    for i in 0..n {
+        let mut params = loop_params.to_vec();
+        params.push(Arc::new(Value::Index(i)));
+        let coord_val = eval_op_with_loop_params(fixed, env, rng, &params)?;
+        match coord_val.as_ref() {
+            Value::VecScalar(v) => {
+                if v.len() != k {
+                    return Ok(false);
+                }
+                for j in 0..k {
+                    let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                    if v[j] != expected_bit {
+                        return Ok(false);
+                    }
+                }
+            }
+            Value::VecIndex(v) => {
+                if v.len() != k {
+                    return Ok(false);
+                }
+                for j in 0..k {
+                    let expected_bit = ((i >> j) & 1) as usize;
+                    if v[j] != expected_bit {
+                        return Ok(false);
+                    }
+                }
+            }
+            Value::Vec(v) => {
+                if v.len() != k {
+                    return Ok(false);
+                }
+                for j in 0..k {
+                    match &v[j] {
+                        Value::Scalar(f) => {
+                            let expected_bit = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                            if *f != expected_bit {
+                                return Ok(false);
+                            }
+                        }
+                        Value::Index(idx) => {
+                            let expected_bit = ((i >> j) & 1) as usize;
+                            if *idx != expected_bit {
+                                return Ok(false);
+                            }
+                        }
+                        Value::Bool(b) => {
+                            let expected_bit = ((i >> j) & 1) == 1;
+                            if *b != expected_bit {
+                                return Ok(false);
+                            }
+                        }
+                        _ => return Ok(false),
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+/// Sumcheck fast path: detect `reduce(+, [eval<0>(poly, loop_param) for _ in hypercube])`
+/// and route to the fused hypercube reduction kernel.
+///
+/// Pattern requirements (all checked structurally on the Op tree, not on values):
+///   1. op == BinOp::Add
+///   2. body == Op::Evaluate(poly, Some(range), Some(fixed))
+///   3. fixed must reference this ReduceMap's own loop parameter
+///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
+///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
+///
+/// If matched, evaluates only the polynomial operand and calls
+/// value_hypercube_reduce_selected. Falls through to None otherwise.
 fn try_eval_reduce_map_fused_hypercube<C, R>(
     op: BinOp,
     domain: &HOp<C>,
@@ -157,26 +325,61 @@ where
         return Ok(None);
     }
 
+    // Guard (Feedback 1): poly must be loop-invariant (cannot reference this loop's binder)
+    if op_has_loop_param(poly.get(), loop_params.len()) {
+        return Ok(None);
+    }
+
     // (4) Canonical eval<0>: single free variable at position 0
     if range.len() != 1 || range.start != 0 {
         return Ok(None);
     }
 
     // (5) Domain type is Vec(_, n) where n is a power of 2
-    let (_, n) = domain.typ().into_vec();
+    let ATyp::Vec(_, n) = domain.typ() else {
+        return Ok(None);
+    };
     if n == 0 || !n.is_power_of_two() {
         return Ok(None);
     }
     let tail_num_vars = n.trailing_zeros() as usize;
 
-    // All checks passed — evaluate the polynomial and fuse
-    let shape = selected_eval_shape(poly, range);
-    let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
-    Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
-        *range,
-        tail_num_vars,
-        shape,
-    ))))
+    // Evaluate domain
+    let dom_val = Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
+
+    // Verify that evaluating fixed at each index of the domain produces canonical hypercube coordinates (Feedback 3)
+    let is_hypercube = try_match_canonical_hypercube_ast(fixed, env, rng, loop_params)?
+        || verify_hypercube_coordinates(fixed, env, rng, loop_params, n, tail_num_vars)?;
+
+    if is_hypercube {
+        // Fast path — evaluate the polynomial and fuse
+        let shape = selected_eval_shape(poly, range);
+        let p_val = Arc::unwrap_or_clone(eval_op_with_loop_params(poly, env, rng, loop_params)?);
+        Ok(Some(Arc::new(p_val.value_hypercube_reduce_selected(
+            *range,
+            tail_num_vars,
+            shape,
+        ))))
+    } else {
+        // Fallback using already evaluated dom_val
+        let results = eval_loop_body_each(body, env, dom_val.into_elements(), loop_params)?;
+        Ok(Some(Arc::new(Value::value_vec(results).value_reduce(op))))
+    }
+}
+
+fn is_vector_value<C: ArkConfig>(v: &Value<C>) -> bool {
+    matches!(
+        v,
+        Value::VecBool(_)
+            | Value::VecIndex(_)
+            | Value::VecScalar(_)
+            | Value::VecG1(_)
+            | Value::VecG2(_)
+            | Value::VecGT(_)
+            | Value::VecG1Affine(_)
+            | Value::VecG2Affine(_)
+            | Value::Vec(_)
+    )
 }
 
 pub fn eval_op<C, R>(
@@ -327,6 +530,12 @@ where
         Op::Map(domain, body) => {
             let dom =
                 Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
+            if !is_vector_value(&dom) {
+                return Err(EvalError::TypeMismatch {
+                    expected: "vector".to_string(),
+                    got: format!("{}", dom),
+                });
+            }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Arc::new(Value::value_vec(results)))
         }
@@ -338,6 +547,12 @@ where
             }
             let dom =
                 Arc::unwrap_or_clone(eval_op_with_loop_params(domain, env, rng, loop_params)?);
+            if !is_vector_value(&dom) {
+                return Err(EvalError::TypeMismatch {
+                    expected: "vector".to_string(),
+                    got: format!("{}", dom),
+                });
+            }
             let results = eval_loop_body_each(body, env, dom.into_elements(), loop_params)?;
             Ok(Arc::new(Value::value_vec(results).value_reduce(*op)))
         }
