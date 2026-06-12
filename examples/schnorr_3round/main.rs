@@ -58,17 +58,17 @@ fn run_example() {
         "examples/schnorr_3round/schnorr_3round.zippel",
     ));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-    let analysis_start = Instant::now();
     let analysis = analysis_handler.minimal_analysis();
-    let analysis_elapsed = analysis_start.elapsed();
     match &analysis.completeness {
         Ok(()) => println!("Completeness:   OK"),
         Err(e) => println!("Completeness:   FAIL {}", e),
     }
+    println!("Completeness time:  {:.2?}", analysis.completeness_time);
     match &analysis.zk {
         Ok(()) => println!("ZK:             OK"),
         Err(e) => println!("ZK:             FAIL {}", e),
     }
+    println!("ZK time:            {:.2?}", analysis.zk_time);
 
     // (2,2,2)-special soundness: 3 rounds, each with 2 challenge transcripts
     let soundness_start = Instant::now();
@@ -78,7 +78,7 @@ fn run_example() {
         Ok(()) => println!("Soundness:      OK (2,2,2)-special sound"),
         Err(e) => println!("Soundness:      FAIL {}", e),
     }
-    println!("Analysis time:  {analysis_elapsed:.2?} + {soundness_elapsed:.2?} soundness");
+    println!("Soundness time:     {:.2?}", soundness_elapsed);
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

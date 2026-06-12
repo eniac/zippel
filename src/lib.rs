@@ -21,6 +21,7 @@ use share::{Ctx, unwrap};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
+use std::time::{Duration, Instant};
 
 use graph::PRef;
 use graph::scheduler::local_scheduler::LocalScheduler;
@@ -443,9 +444,17 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let sizes = find_minimal_sizes(module);
         info!("Minimal analysis sizes: {:?}", sizes);
         self.compile(&sizes);
+        let completeness_start = Instant::now();
+        let completeness = self.analyze_completeness();
+        let completeness_time = completeness_start.elapsed();
+        let zk_start = Instant::now();
+        let zk = self.analyze_knowledge();
+        let zk_time = zk_start.elapsed();
         AnalysisResult {
-            completeness: self.analyze_completeness(),
-            zk: self.analyze_knowledge(),
+            completeness,
+            zk,
+            completeness_time,
+            zk_time,
         }
     }
 }
@@ -454,6 +463,10 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
 pub struct AnalysisResult<C: ArkConfig> {
     pub completeness: Result<(), AnalysisError<C>>,
     pub zk: Result<(), AnalysisError<C>>,
+    /// Wall-clock time spent in the completeness analysis (excludes compilation).
+    pub completeness_time: Duration,
+    /// Wall-clock time spent in the knowledge (ZK) analysis (excludes compilation).
+    pub zk_time: Duration,
 }
 
 /// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module

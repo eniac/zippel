@@ -59,7 +59,6 @@ fn main() {
     }
 
     println!("\n--- Static Analysis ---");
-    let analysis_start = Instant::now();
     let analysis_result = std::panic::catch_unwind(|| {
         let analysis_args =
             ZippelArgs::new(PathBuf::from("examples/zeromorph_kzg/zeromorph_kzg.zippel"));
@@ -67,26 +66,34 @@ fn main() {
         let mut analysis_sizes = Ctx::new();
         analysis_sizes.insert(&Tid::new("N"), &n_size);
         analysis_handler.compile(&analysis_sizes);
+        let completeness_start = Instant::now();
+        let completeness = analysis_handler.analyze_completeness();
+        let completeness_time = completeness_start.elapsed();
+        let zk_start = Instant::now();
+        let zk = analysis_handler.analyze_knowledge();
+        let zk_time = zk_start.elapsed();
         AnalysisResult {
-            completeness: analysis_handler.analyze_completeness(),
-            zk: analysis_handler.analyze_knowledge(),
+            completeness,
+            zk,
+            completeness_time,
+            zk_time,
         }
     });
-    let analysis_elapsed = analysis_start.elapsed();
     match analysis_result {
         Ok(analysis) => {
             match &analysis.completeness {
                 Ok(()) => println!("Completeness:   ✓"),
                 Err(e) => println!("Completeness:   ✗ {}", e),
             }
+            println!("Completeness time:  {:.2?}", analysis.completeness_time);
             match &analysis.zk {
                 Ok(()) => println!("ZK:             ✓"),
                 Err(e) => println!("ZK:             ✗ {}", e),
             }
+            println!("ZK time:            {:.2?}", analysis.zk_time);
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
-    println!("Analysis time:  {analysis_elapsed:.2?}");
 }
 
 fn prover_create_inputs(n_size: usize) -> Ctx<Vid, Value<ArkBls12_381>> {

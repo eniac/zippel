@@ -69,10 +69,12 @@ fn run_example() {
                 Ok(()) => println!("Completeness:   ✓"),
                 Err(e) => println!("Completeness:   ✗ {}", e),
             }
+            println!("Completeness time:  {:.2?}", analysis.completeness_time);
             match &analysis.zk {
                 Ok(()) => println!("ZK:             ✓"),
                 Err(e) => println!("ZK:             ✗ {}", e),
             }
+            println!("ZK time:            {:.2?}", analysis.zk_time);
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }

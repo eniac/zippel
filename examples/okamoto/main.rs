@@ -65,10 +65,12 @@ fn run_example() {
                 Ok(()) => println!("Completeness:   ✓"),
                 Err(e) => println!("Completeness:   ✗ {}", e),
             }
+            println!("Completeness time:  {:.2?}", analysis.completeness_time);
             match &analysis.zk {
                 Ok(()) => println!("ZK:             ✓"),
                 Err(e) => println!("ZK:             ✗ {}", e),
             }
+            println!("ZK time:            {:.2?}", analysis.zk_time);
         }
         Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
     }
@@ -80,7 +82,7 @@ fn run_example() {
         Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
         Err(e) => println!("Soundness:      ✗ {}", e),
     }
-    println!("Soundness time: {soundness_elapsed:.2?}");
+    println!("Soundness time:     {:.2?}", soundness_elapsed);
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
