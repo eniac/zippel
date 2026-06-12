@@ -1,8 +1,8 @@
 pub mod error;
 
 use crate::{GOp, HOp, Op, Ref};
-use backend::{ABase, ATyp, ArkConfig, SelectedEvalShape, Value};
 use ark_ff::{One, Zero};
+use backend::{ABase, ATyp, ArkConfig, SelectedEvalShape, Value};
 use error::EvalError;
 use lang::ast::BinOp;
 use rand::RngCore;
@@ -180,12 +180,8 @@ fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
         Value::VecScalar(elements) => {
             elements.len() >= 2 && elements[0].is_zero() && elements[1] == C::F::one()
         }
-        Value::VecIndex(elements) => {
-            elements.len() >= 2 && elements[0] == 0 && elements[1] == 1
-        }
-        Value::VecBool(elements) => {
-            elements.len() >= 2 && !elements[0] && elements[1]
-        }
+        Value::VecIndex(elements) => elements.len() >= 2 && elements[0] == 0 && elements[1] == 1,
+        Value::VecBool(elements) => elements.len() >= 2 && !elements[0] && elements[1],
         _ => false,
     }
 }
@@ -202,9 +198,9 @@ fn verify_domain_is_canonical_indices<C: ArkConfig>(dom_val: &Value<C>, n: usize
             if v.len() != n {
                 return false;
             }
-            v.iter().enumerate().all(|(i, &val)| {
-                val == <C::F as From<u64>>::from(i as u64)
-            })
+            v.iter()
+                .enumerate()
+                .all(|(i, &val)| val == <C::F as From<u64>>::from(i as u64))
         }
         Value::Vec(v) => {
             if v.len() != n {
@@ -233,23 +229,27 @@ fn is_canonical_hypercube_vector<C: ArkConfig>(val: &Value<C>, i: usize, k: usiz
         Value::VecScalar(v) => {
             v.len() == k
                 && (0..k).all(|j| {
-                    let expected = if ((i >> j) & 1) == 1 { C::F::one() } else { C::F::zero() };
+                    let expected = if ((i >> j) & 1) == 1 {
+                        C::F::one()
+                    } else {
+                        C::F::zero()
+                    };
                     v[j] == expected
                 })
         }
-        Value::VecIndex(v) => {
-            v.len() == k && (0..k).all(|j| v[j] == ((i >> j) & 1))
-        }
-        Value::VecBool(v) => {
-            v.len() == k && (0..k).all(|j| v[j] == (((i >> j) & 1) == 1))
-        }
+        Value::VecIndex(v) => v.len() == k && (0..k).all(|j| v[j] == ((i >> j) & 1)),
+        Value::VecBool(v) => v.len() == k && (0..k).all(|j| v[j] == (((i >> j) & 1) == 1)),
         Value::Vec(v) => {
             v.len() == k
                 && (0..k).all(|j| {
                     let expected_bit = ((i >> j) & 1) == 1;
                     match &v[j] {
                         Value::Scalar(f) => {
-                            *f == if expected_bit { C::F::one() } else { C::F::zero() }
+                            *f == if expected_bit {
+                                C::F::one()
+                            } else {
+                                C::F::zero()
+                            }
                         }
                         Value::Index(idx) => *idx == (expected_bit as usize),
                         Value::Bool(b) => *b == expected_bit,
@@ -288,32 +288,31 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
         Op::Map(_inner_domain, inner_body) => {
             let outer_level = loop_params.len();
             let inner_level = loop_params.len() + 1;
-            
+
             match inner_body.get() {
                 // Case 1: Simple bit extraction
-                body if match_bit_extraction_ast(body, outer_level, inner_level) => {
-                    Ok(true)
-                }
+                body if match_bit_extraction_ast(body, outer_level, inner_level) => Ok(true),
                 // Case 2: Multiplied bit extraction (scaling)
                 Op::Bin(BinOp::Mul, lhs, rhs, _) => {
-                    if match_bit_extraction_ast(lhs.get(), outer_level, inner_level) {
-                        if let Ok(x_val) = eval_op_with_loop_params(rhs, env, rng, loop_params) {
-                            return Ok(is_value_one(&x_val));
-                        }
+                    if match_bit_extraction_ast(lhs.get(), outer_level, inner_level)
+                        && let Ok(x_val) = eval_op_with_loop_params(rhs, env, rng, loop_params)
+                    {
+                        return Ok(is_value_one(&x_val));
                     }
-                    if match_bit_extraction_ast(rhs.get(), outer_level, inner_level) {
-                        if let Ok(x_val) = eval_op_with_loop_params(lhs, env, rng, loop_params) {
-                            return Ok(is_value_one(&x_val));
-                        }
+                    if match_bit_extraction_ast(rhs.get(), outer_level, inner_level)
+                        && let Ok(x_val) = eval_op_with_loop_params(lhs, env, rng, loop_params)
+                    {
+                        return Ok(is_value_one(&x_val));
                     }
                     Ok(false)
                 }
                 // Case 3: Array index of bit extraction (e.g. pts3[(i / 2^j) % 2])
                 Op::Ram(array, index) => {
-                    if match_bit_extraction_ast(index.get(), outer_level, inner_level) {
-                        if let Ok(array_val) = eval_op_with_loop_params(array, env, rng, loop_params) {
-                            return Ok(has_zero_one_at_start(&array_val));
-                        }
+                    if match_bit_extraction_ast(index.get(), outer_level, inner_level)
+                        && let Ok(array_val) =
+                            eval_op_with_loop_params(array, env, rng, loop_params)
+                    {
+                        return Ok(has_zero_one_at_start(&array_val));
                     }
                     Ok(false)
                 }

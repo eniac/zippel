@@ -9,10 +9,10 @@ use backend::{ATyp, ArkBls12_381, Value};
 use lang::ast::{BinOp, UModule};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
+use serial_test::serial;
 use share::Ctx;
 use std::collections::HashMap;
 use std::sync::Arc;
-use serial_test::serial;
 
 type B = ArkBls12_381;
 
@@ -258,8 +258,8 @@ fn map_eval_doubles_each_element() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_fires() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // A helper function returning the computed round polynomial
     let src = r#"
@@ -300,13 +300,23 @@ fn test_reduce_map_fused_optimization_fires() {
 
     // Verify mathematical correctness of the optimized result:
     // R(t) = Sum_{b ∈ {0,1}^2} P(t, b)
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::zero();
         for tail_index in 0..4 {
-            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
-            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b0 = if tail_index & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            let b1 = if (tail_index >> 1) & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
             expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
@@ -316,8 +326,8 @@ fn test_reduce_map_fused_optimization_fires() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_pow_two() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Domain size 3 is not a power of 2, so the optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
@@ -359,13 +369,23 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
 
     // Verify mathematical correctness of the fallback result:
     // R(t) = Sum_{i ∈ 0..3} P(t, tail_i)
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::zero();
         for tail_index in 0..3 {
-            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
-            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b0 = if tail_index & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            let b1 = if (tail_index >> 1) & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
             expected += orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
@@ -375,8 +395,8 @@ fn test_reduce_map_fused_optimization_skips_non_pow_two() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_multiplicative() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Multiplicative reduction should not match, so optimization must be skipped,
     // but the fallback path should execute correctly and return the correct polynomial.
@@ -418,13 +438,23 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 
     // Verify mathematical correctness of the fallback result:
     // R(t) = Product_{b ∈ {0,1}^2} P(t, b)
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::one();
         for tail_index in 0..4 {
-            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
-            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
+            let b0 = if tail_index & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            let b1 = if (tail_index >> 1) & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
             expected *= orig_poly.evaluate_mv(&vec![t, b0, b1]).unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
@@ -434,10 +464,12 @@ fn test_reduce_map_fused_optimization_skips_multiplicative() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use ark_poly::multivariate::{
+        SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term as _,
+    };
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use backend::{PolyVariant, VirtualPolynomial};
-    use ark_poly::multivariate::{SparsePolynomial as SparseMultivariatePolynomial, SparseTerm as MultiSparseTerm, Term as _};
 
     // Poly<F, 3, 2> is a polynomial of 3 variables and max degree 2 (non-MLE).
     // The optimization should still match at graph level (additive, canonical range, domain size 4),
@@ -460,17 +492,23 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     let dag = &graphs.0[0];
 
     let mut inputs = Ctx::new();
-    
+
     // We construct a non-MLE polynomial (e.g. X_0^2 + X_1 + X_2) manually
     let terms = vec![
-        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(0, 2)])),
-        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(1, 1)])),
-        (<B as backend::ArkConfig>::F::one(), MultiSparseTerm::new(vec![(2, 1)])),
+        (
+            <B as backend::ArkConfig>::F::one(),
+            MultiSparseTerm::new(vec![(0, 2)]),
+        ),
+        (
+            <B as backend::ArkConfig>::F::one(),
+            MultiSparseTerm::new(vec![(1, 1)]),
+        ),
+        (
+            <B as backend::ArkConfig>::F::one(),
+            MultiSparseTerm::new(vec![(2, 1)]),
+        ),
     ];
-    let p = SparseMultivariatePolynomial {
-        num_vars: 3,
-        terms,
-    };
+    let p = SparseMultivariatePolynomial { num_vars: 3, terms };
     let poly_variant = PolyVariant::SparseMultivariate(p);
     let poly_val = Value::Poly(VirtualPolynomial::from_poly(poly_variant));
     inputs.insert(&lang::id::Vid::from("poly"), &poly_val);
@@ -496,7 +534,8 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
     // For P(t, b0, b1) = t^2 + b0 + b1, the sum over b0, b1 in {0,1} is 4*t^2 + 4.
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let expected = t * t * <B as backend::ArkConfig>::F::from(4) + <B as backend::ArkConfig>::F::from(4);
+        let expected =
+            t * t * <B as backend::ArkConfig>::F::from(4) + <B as backend::ArkConfig>::F::from(4);
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
@@ -504,8 +543,8 @@ fn test_reduce_map_fused_optimization_fallback_on_non_mle() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // The loop parameter is modified inside the eval call: eval<0>(poly, [t + one for t in tail]).
     // The optimization must skip because the evaluation points are not the exact loop parameter tail coordinates.
@@ -547,18 +586,30 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
 
     // Verify mathematical correctness of the non-optimized result:
     // R(t) = Sum_{b ∈ {0,1}^2} P(t, b0+1, b1+1)
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::zero();
         for tail_index in 0..4 {
-            let b0 = if tail_index & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
-            let b1 = if (tail_index >> 1) & 1 == 1 { <B as backend::ArkConfig>::F::one() } else { <B as backend::ArkConfig>::F::zero() };
-            expected += orig_poly.evaluate_mv(&vec![
-                t,
-                b0 + <B as backend::ArkConfig>::F::one(),
-                b1 + <B as backend::ArkConfig>::F::one(),
-            ]).unwrap();
+            let b0 = if tail_index & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            let b1 = if (tail_index >> 1) & 1 == 1 {
+                <B as backend::ArkConfig>::F::one()
+            } else {
+                <B as backend::ArkConfig>::F::zero()
+            };
+            expected += orig_poly
+                .evaluate_mv(&vec![
+                    t,
+                    b0 + <B as backend::ArkConfig>::F::one(),
+                    b1 + <B as backend::ArkConfig>::F::one(),
+                ])
+                .unwrap();
         }
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
@@ -567,8 +618,8 @@ fn test_reduce_map_fused_optimization_skips_modified_loop_param() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_poly_depending_on_loop_param() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     // Here, the polynomial being evaluated (which is `poly` in the eval expression)
     // actually depends on `tail` (the loop parameter).
@@ -620,13 +671,17 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
     // In this case, the domain of the ReduceMap is NOT a vector (e.g. it is a polynomial type, Uni(3)).
     // The optimization must skip (because domain typ is not Vec), falling back to evaluation which returns a type mismatch error.
     let scalar_t = ATyp::scalar();
-    let domain = Op::Value(Value::Poly(backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1)));
-    
+    let domain = Op::Value(Value::Poly(
+        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 1),
+    ));
+
     // fixed has LoopParam
     let fixed = mk::<B>(Op::LoopParam(0, scalar_t.clone()));
-    let poly = mk::<B>(Op::Value(Value::Poly(backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2))));
+    let poly = mk::<B>(Op::Value(Value::Poly(
+        backend::VirtualPolynomial::constant_with_num_vars(<B as backend::ArkConfig>::F::one(), 2),
+    )));
     let body = Op::Evaluate(poly, Some(lang::typ::CRange::new(0, 1)), Some(fixed));
-    
+
     let rm = GOp::reduce_map(BinOp::Add, domain, body);
 
     reset_optimization_stats();
@@ -647,8 +702,8 @@ fn test_reduce_map_fused_optimization_skips_non_vec_domain() {
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_loop_param() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
         fn test_non_canonical<F: Field>(
@@ -696,10 +751,13 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
     assert_eq!(after.canonical_sumcheck_rows_fused, 0);
 
     // Verify correct unoptimized math result: R(t) = 4 * P(t, 1, 1)
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
-        let expected = orig_poly.evaluate_mv(&vec![t, one, one]).unwrap() * <B as backend::ArkConfig>::F::from(4u64);
+        let expected = orig_poly.evaluate_mv(&vec![t, one, one]).unwrap()
+            * <B as backend::ArkConfig>::F::from(4u64);
         assert_eq!(got_poly.evaluate_uv(&t), expected);
     }
 }
@@ -707,8 +765,8 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_hypercube_domain_with_
 #[test]
 #[serial]
 fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_map() {
-    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
     use crate::tests::test_helpers::execute_graph;
+    use backend::optimization::{optimization_stats_snapshot, reset_optimization_stats};
 
     let src = r#"
         fn test_non_canonical_indices<F: Field>(
@@ -756,7 +814,9 @@ fn test_reduce_map_fused_optimization_skips_non_canonical_indices_domain_with_ma
 
     // Verify correctness of unoptimized result:
     // For each i in [3, 2, 1, 0], bit j is (i / 2^j) % 2.
-    let Value::Poly(ref orig_poly) = poly_val else { unreachable!() };
+    let Value::Poly(ref orig_poly) = poly_val else {
+        unreachable!()
+    };
     for t_idx in 0..4 {
         let t = <B as backend::ArkConfig>::F::from(t_idx);
         let mut expected = <B as backend::ArkConfig>::F::zero();
