@@ -44,39 +44,35 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Static analysis
+    // Static analysis — completeness & ZK only
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/coin_proof/coin_proof.zippel"));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     analysis_handler.compile(&Ctx::new());
 
-    let analysis = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        analysis_handler.minimal_analysis()
-    }));
-    match analysis {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
-        }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
+    // Completeness
+    let completeness_start = Instant::now();
+    match analysis_handler.analyze_completeness() {
+        Ok(()) => println!("Completeness:    ✓"),
+        Err(e) => println!("Completeness:    ✗ {}", e),
     }
+    println!("Completeness time: {:.2?}", completeness_start.elapsed());
 
-    // Soundness: commented out — coin_proof has many Pedersen-commitment
-    // witnesses and pairing terms; GB computation is too slow for interactive use.
-    // let soundness_start = Instant::now();
-    // let soundness_result = analysis_handler.analyze_special_soundness(vec![2]);
-    // let soundness_elapsed = soundness_start.elapsed();
-    // match &soundness_result {
-    //     Ok(()) => println!("Soundness:      ✓ (2)-special sound"),
-    //     Err(e) => println!("Soundness:      ✗ {}", e),
-    // }
-    // println!("Soundness time: {soundness_elapsed:.2?}");
+    // ZK
+    let zk_start = Instant::now();
+    match analysis_handler.analyze_knowledge() {
+        Ok(()) => println!("ZK:              ✓"),
+        Err(e) => println!("ZK:              ✗ {}", e),
+    }
+    println!("ZK time:         {:.2?}", zk_start.elapsed());
+
+    // Soundness
+    let soundness_start = Instant::now();
+    match analysis_handler.analyze_special_soundness(vec![2]) {
+        Ok(()) => println!("Soundness:       ✓ (2)-special sound"),
+        Err(e) => println!("Soundness:       ✗ {}", e),
+    }
+    println!("Soundness time:  {:.2?}", soundness_start.elapsed());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

@@ -1,16 +1,16 @@
 // Zeromorph KZG protocol by Tohru Kohrita and Patrick Towa
-// This makes makes KZG ZK in a different way than zk_kzg. 
+// This makes makes KZG ZK in a different way than zk_kzg.
 // Protocol is from: https://eprint.iacr.org/2023/917.pdf.
 proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, N: Size>
         (private p_coeffs: [F; N], public u: F, public v: F, public srs_g1: [G1; N+1],
         public gen_g1: G1, public gen_g2: G2, public srs_g2: [G2; 2])
-        where dot(p_coeffs, [u ^ i for i in 0..N]) == v && srs_g1[0] == gen_g1 {
+        where dot(p_coeffs, [u ^ i for i in 0..N]) == v && srs_g1[0] == gen_g1 && reduce(&&, [pair(srs_g1[i], srs_g2[0]) == pair(srs_g1[i+1], gen_g2) for i in 0..N-1]) && pair(srs_g1[N], gen_g2) == pair(gen_g1, srs_g2[1]) {
 
         let p_poly = poly(p_coeffs);
-        
+
         // Sample random blinding factor r
         let r = random<F>;
-        
+
         // C = [p(tau)]_1 + r[xi]_1
         // srs_g1 contains [1]_1, [tau]_1, ..., [tau^{N-1}]_1, [xi]_1
         let blinded_coeffs = p_coeffs ++ [r];
@@ -18,7 +18,7 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
 
         // q(X) = (p(X) - v) / (X - u)
         let q_poly = (p_poly - v) / poly([-u, 1]);
-        
+
         // Sample random blinding factor s
         let s = random<F>;
 
@@ -26,7 +26,7 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
         // q has N-1 coefficients.
         let q_coeffs = coef(q_poly);
         let pi_coeffs = q_coeffs ++ [s];
-        
+
         let srs_for_pi = srs_g1[0..N-1] ++ [srs_g1[N]];
         pi <- dot(pi_coeffs, srs_for_pi);
 
@@ -37,10 +37,10 @@ proto zeromorph_kzg<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>
         // Verify equation:
         // e(C - v[1]_1, [1]_2) == e(pi, [tau]_2 - u[1]_2) + e(delta, [xi]_2)
         // srs_g2[0] = [tau]_2, srs_g2[1] = [xi]_2
-        
+
         let lhs = pair(c - v * gen_g1, gen_g2);
         let rhs_part1 = pair(pi, srs_g2[0] - u * gen_g2);
         let rhs_part2 = pair(delta, srs_g2[1]);
-        
+
         verify(lhs == rhs_part1 + rhs_part2)
 }

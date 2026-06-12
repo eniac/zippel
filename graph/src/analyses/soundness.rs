@@ -330,7 +330,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             }
         }
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
-        grev_rel_result.inline();
+        grev_rel_result.inline(&Set::new());
 
         grev_search.merge(&grev_rel_result);
 
@@ -364,7 +364,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut lex_validity =
             GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&grev_validity);
 
-        lex_search.inline();
+        lex_search.inline(&Set::new());
 
         // Phase 4: Run the search GB under lex ordering.
         lex_search.run::<128>();
@@ -454,7 +454,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             lex_validity.basis.push(converted);
         }
 
-        lex_validity.inline();
+        lex_validity.inline(&Set::new());
         lex_validity.run::<128>();
 
         let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result

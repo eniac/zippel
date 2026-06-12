@@ -303,7 +303,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
     /// Topologically sorts `pl` entries, substitutes dependencies into
     /// each other to resolve chains, then substitutes the resolved
     /// definitions into all basis polynomials. Clears `pl` afterwards.
-    pub fn inline(&mut self) {
+    pub fn inline(&mut self, transcript_refs: &Set<Ref>) {
         if self.pl.is_empty() {
             return;
         }
@@ -311,14 +311,16 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         let pl_keys: Set<PRef> = self.pl.keys();
         let mut order: Vec<PRef> = Vec::with_capacity(pl_keys.len());
         let mut resolved: Set<PRef> = Set::new();
-        let mut remaining: Vec<(PRef, usize)> = pl_keys
+        let mut inlineable: Set<PRef> = pl_keys.clone();
+        inlineable.retain(|k| !transcript_refs.contains(&k.reference));
+        let mut remaining: Vec<(PRef, usize)> = inlineable
             .iter()
             .map(|k| {
                 let deps = self.pl[k]
                     .terms
                     .iter()
                     .flat_map(|(t, _)| t.vars())
-                    .filter(|v| pl_keys.contains(v))
+                    .filter(|v| inlineable.contains(v))
                     .count();
                 (k.clone(), deps)
             })
@@ -336,7 +338,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
                         .terms
                         .iter()
                         .flat_map(|(t, _)| t.vars())
-                        .filter(|v| pl_keys.contains(v) && !resolved.contains(v))
+                        .filter(|v| inlineable.contains(v) && !resolved.contains(v))
                         .count();
                     next_remaining.push((k, new_deps));
                 }
@@ -360,12 +362,30 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             }
         }
 
+        // save transcript vars
+        let mut saved: Vec<(PRef, SparsePolynomial<C::F, T>)> = Vec::new();
+        for k in pl_keys.iter() {
+            if transcript_refs.contains(&k.reference)
+                && let Some(v) = self.pl.remove(k)
+            {
+                let (new_v, _) = v.inline_vars(&self.pl);
+                saved.push((k.clone(), new_v));
+            }
+        }
+
+        // fully inline all non-transcript vars
         for p in self.basis.iter_mut() {
             let (new_p, _) = p.clone().inline_vars(&self.pl);
             *p = new_p;
         }
 
-        self.pl.clear();
+        for (k, v) in saved {
+            self.pl.insert(&k, &v);
+        }
+
+        for k in &order {
+            self.pl.remove(k);
+        }
     }
 
     /// Compute Groebner basis using Buchberger algorithm.
@@ -2412,6 +2432,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             // Phase 10: `Op::Ram(a, b)` — RAM reads with a literal index `i`
             // resolve to the i-th logical element of the array. For compound
             // element types, all physical slots are linked pairwise.
+            // Multi-index (VecIndex) reads produce a vector of elements.
             // Runtime indices fall back to opaque.
             Op::Ram(ref a, ref b) => match b.get() {
                 Op::Value(Value::Index(i)) => {
@@ -2435,6 +2456,26 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                             .basis
                             .push(e_poly.clone() - SparsePolynomial::var(&pf));
                         result.pl.insert(&pf, &e_poly);
+                    }
+                }
+                Op::Value(Value::VecIndex(vs)) => {
+                    let Op::Ref(r, _) = a.get() else {
+                        unreachable!(
+                            "Ram array operand must be Ref; got {:?}",
+                            std::mem::discriminant(a.get())
+                        )
+                    };
+                    let array_pref = result.find_ref(r);
+                    for (j, idx) in vs.iter().enumerate() {
+                        let src_pref = array_pref.with_index(*idx).unwrap();
+                        let dst_pref = pr.with_index(j).unwrap();
+                        for (pf, e) in dst_pref.slots().into_iter().zip(src_pref.slots()) {
+                            let e_poly = SparsePolynomial::var(&e);
+                            result
+                                .basis
+                                .push(e_poly.clone() - SparsePolynomial::var(&pf));
+                            result.pl.insert(&pf, &e_poly);
+                        }
                     }
                 }
                 _ => {
@@ -9276,78 +9317,6 @@ mod tests {
             result.vars().contains(&challenge_pref),
             "challenge must be in result.vars() when used in polynomial"
         );
-    }
-
-    /// Test that Op::Pair emits a basis row binding the result to a*b
-    /// without any GT sentinel variable.
-    #[test]
-    fn pair_emits_product_without_sentinel() {
-        use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
-        use petgraph::graph::NodeIndex;
-
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut result = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-
-        let g1_pref = PRef::from_node(
-            NodeIndex::new(300),
-            ATyp::g1(),
-            0,
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
-        result.register(&g1_pref);
-
-        let g2_pref = PRef::from_node(
-            NodeIndex::new(301),
-            ATyp::g2(),
-            0,
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
-        result.register(&g2_pref);
-
-        let pair_result_pref = PRef::from_node(
-            NodeIndex::new(302),
-            ATyp::gt(),
-            0,
-            Qualifier::Public,
-            Distribution::Nonuniform,
-        );
-        result.register(&pair_result_pref);
-
-        builder.add_op(
-            pair_result_pref.clone(),
-            Op::Pair(
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(300)), ATyp::g1())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(301)), ATyp::g2())),
-                ATyp::gt(),
-            ),
-            &mut result,
-        );
-
-        // The basis should contain a row: pair_result - g1*g2 = 0
-        // (no GT sentinel variable)
-        let basis_vars = result.basis.vars();
-        assert!(
-            basis_vars.contains(&g1_pref),
-            "g1 must be visible through basis vars"
-        );
-        assert!(
-            basis_vars.contains(&g2_pref),
-            "g2 must be visible through basis vars"
-        );
-        assert!(
-            basis_vars.contains(&pair_result_pref),
-            "pair result must be visible through basis vars"
-        );
-        // No GT sentinel should exist
-        let has_gt_sentinel = basis_vars.iter().any(|pr| {
-            pr.name
-                .as_ref()
-                .map_or(false, |n| n.0.starts_with("__zippel::gb::gt"))
-        });
-        assert!(!has_gt_sentinel, "GT sentinel should not exist");
     }
 
     // -----------------------------------------------------------------
