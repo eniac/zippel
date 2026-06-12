@@ -110,18 +110,7 @@ fn op_has_loop_param<C: ArkConfig>(op: &GOp<C>, target_level: usize) -> bool {
     }
 }
 
-/// Sumcheck fast path: detect `reduce(+, [eval<0>(poly, loop_param) for _ in hypercube])`
-/// and route to the fused hypercube reduction kernel.
-///
-/// Pattern requirements (all checked structurally on the Op tree, not on values):
-///   1. op == BinOp::Add
-///   2. body == Op::Evaluate(poly, Some(range), Some(fixed))
-///   3. fixed must reference this ReduceMap's own loop parameter
-///   4. range.len() == 1 && range.start == 0  (canonical eval<0>)
-///   5. domain type is Vec(_, n) where n == 2^k for some k  (complete hypercube)
-///
-/// If matched, evaluates only the polynomial operand and calls
-/// value_hypercube_reduce_selected. Falls through to None otherwise.
+/// Check whether an `Op` represents a constant literal value of 2 (either as an index or a scalar field element).
 fn is_const_two<C: ArkConfig>(op: &GOp<C>) -> bool {
     match op {
         Op::Value(val) => match val {

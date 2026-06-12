@@ -3033,15 +3033,47 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     let degree_cap = shape.max_degree.max(poly.degree_bound()) + 1;
     let mut total = vec![C::F::zero(); degree_cap.max(1)];
 
+    let sparse_mle_maps: Vec<Option<std::collections::HashMap<usize, C::F>>> = poly
+        .flattened_polys
+        .iter()
+        .map(|poly_ref| match poly_ref.as_ref() {
+            PolyVariant::SparseMle { evals, .. } => {
+                let mut map = std::collections::HashMap::with_capacity(evals.len());
+                for &(i, val) in evals {
+                    *map.entry(i).or_insert_with(C::F::zero) += val;
+                }
+                Some(map)
+            }
+            _ => None,
+        })
+        .collect();
+
     for (coefficient, indices) in &poly.products {
         for tail_index in 0..tail_count {
             let mut term = vec![*coefficient];
             for &idx in indices {
-                let factor = factor_as_univariate::<C>(
-                    poly.flattened_polys[idx].as_ref(),
-                    shape.input_num_vars,
-                    tail_index,
-                )?;
+                let factor = match poly.flattened_polys[idx].as_ref() {
+                    PolyVariant::DenseMle(mle) => {
+                        if mle.num_vars() != shape.input_num_vars {
+                            return None;
+                        }
+                        let base_idx = tail_index.checked_shl(1)?;
+                        let v0 = *mle.evaluations.get(base_idx)?;
+                        let v1 = *mle.evaluations.get(base_idx | 1)?;
+                        [v0, v1 - v0]
+                    }
+                    PolyVariant::SparseMle { num_vars, .. } => {
+                        if *num_vars != shape.input_num_vars {
+                            return None;
+                        }
+                        let map = sparse_mle_maps[idx].as_ref()?;
+                        let base_idx = tail_index.checked_shl(1)?;
+                        let v0 = map.get(&base_idx).copied().unwrap_or_else(C::F::zero);
+                        let v1 = map.get(&(base_idx | 1)).copied().unwrap_or_else(C::F::zero);
+                        [v0, v1 - v0]
+                    }
+                    _ => return None,
+                };
                 term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
             }
             add_coeffs_assign(&mut total, &term);
@@ -3056,23 +3088,7 @@ fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
     Some(round)
 }
 
-fn dense_mle_factor_as_univariate<C: ArkConfig>(
-    poly: &PolyVariant<C::F>,
-    input_num_vars: usize,
-    tail_index: usize,
-) -> Option<[C::F; 2]> {
-    let PolyVariant::DenseMle(mle) = poly else {
-        return None;
-    };
-    if mle.num_vars() != input_num_vars {
-        return None;
-    }
-    let base_idx = tail_index.checked_shl(1)?;
-    let v0 = *mle.evaluations.get(base_idx)?;
-    let v1 = *mle.evaluations.get(base_idx | 1)?;
-    Some([v0, v1 - v0])
-}
-
+#[cfg(test)]
 fn sparse_mle_factor_as_univariate<C: ArkConfig>(
     poly: &PolyVariant<C::F>,
     input_num_vars: usize,
@@ -3095,15 +3111,6 @@ fn sparse_mle_factor_as_univariate<C: ArkConfig>(
         }
     }
     Some([v0, v1 - v0])
-}
-
-fn factor_as_univariate<C: ArkConfig>(
-    poly: &PolyVariant<C::F>,
-    input_num_vars: usize,
-    tail_index: usize,
-) -> Option<[C::F; 2]> {
-    dense_mle_factor_as_univariate::<C>(poly, input_num_vars, tail_index)
-        .or_else(|| sparse_mle_factor_as_univariate::<C>(poly, input_num_vars, tail_index))
 }
 
 fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
