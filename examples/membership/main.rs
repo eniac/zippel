@@ -8,8 +8,8 @@ use zippel::*;
 
 fn main() {
     println!("=== Membership ===");
-    let n_size = 3;
-    let m_size = 4;
+    let n_size = 2;
+    let m_size = 2;
     assert!(n_size >= 1, "n_size must be at least 1");
     assert!(m_size >= 1, "m_size must be at least 1");
     let l_size = (n_size - 1) * m_size;
