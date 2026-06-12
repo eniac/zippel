@@ -174,6 +174,33 @@ fn is_value_one<C: ArkConfig>(v: &Value<C>) -> bool {
     }
 }
 
+fn is_value_zero<C: ArkConfig>(v: &Value<C>) -> bool {
+    match v {
+        Value::Scalar(f) => f.is_zero(),
+        Value::Index(0) => true,
+        Value::Bool(false) => true,
+        _ => false,
+    }
+}
+
+fn has_zero_one_at_start<C: ArkConfig>(v: &Value<C>) -> bool {
+    match v {
+        Value::Vec(elements) => {
+            elements.len() >= 2 && is_value_zero(&elements[0]) && is_value_one(&elements[1])
+        }
+        Value::VecScalar(elements) => {
+            elements.len() >= 2 && elements[0].is_zero() && elements[1] == C::F::one()
+        }
+        Value::VecIndex(elements) => {
+            elements.len() >= 2 && elements[0] == 0 && elements[1] == 1
+        }
+        Value::VecBool(elements) => {
+            elements.len() >= 2 && !elements[0] && elements[1]
+        }
+        _ => false,
+    }
+}
+
 fn try_match_canonical_hypercube_ast<C: ArkConfig>(
     fixed: &HOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
@@ -188,20 +215,32 @@ fn try_match_canonical_hypercube_ast<C: ArkConfig>(
             let outer_level = loop_params.len();
             let inner_level = loop_params.len() + 1;
             
-            // Check if inner_body is a multiplication by a scale term X
-            if let Op::Bin(BinOp::Mul, lhs, rhs, _) = inner_body.get() {
-                if match_bit_extraction_ast(lhs.get(), outer_level, inner_level) {
-                    let x_val = eval_op_with_loop_params(rhs, env, rng, loop_params)?;
-                    return Ok(is_value_one(&x_val));
+            match inner_body.get() {
+                // Case 1: Simple bit extraction
+                body if match_bit_extraction_ast(body, outer_level, inner_level) => {
+                    Ok(true)
                 }
-                if match_bit_extraction_ast(rhs.get(), outer_level, inner_level) {
-                    let x_val = eval_op_with_loop_params(lhs, env, rng, loop_params)?;
-                    return Ok(is_value_one(&x_val));
+                // Case 2: Multiplied bit extraction (scaling)
+                Op::Bin(BinOp::Mul, lhs, rhs, _) => {
+                    if match_bit_extraction_ast(lhs.get(), outer_level, inner_level) {
+                        let x_val = eval_op_with_loop_params(rhs, env, rng, loop_params)?;
+                        return Ok(is_value_one(&x_val));
+                    }
+                    if match_bit_extraction_ast(rhs.get(), outer_level, inner_level) {
+                        let x_val = eval_op_with_loop_params(lhs, env, rng, loop_params)?;
+                        return Ok(is_value_one(&x_val));
+                    }
+                    Ok(false)
                 }
-                Ok(false)
-            } else {
-                // Check if it's just the bit extraction itself
-                Ok(match_bit_extraction_ast(inner_body.get(), outer_level, inner_level))
+                // Case 3: Array index of bit extraction (e.g. pts3[(i / 2^j) % 2])
+                Op::Ram(array, index) => {
+                    if match_bit_extraction_ast(index.get(), outer_level, inner_level) {
+                        let array_val = eval_op_with_loop_params(array, env, rng, loop_params)?;
+                        return Ok(has_zero_one_at_start(&array_val));
+                    }
+                    Ok(false)
+                }
+                _ => Ok(false),
             }
         }
         _ => Ok(false),
