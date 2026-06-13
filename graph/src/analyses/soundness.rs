@@ -339,20 +339,24 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // next, and all other variables (locals, d-vars, etc.) get highest ranks
         // (highest elimination priority).
         let rank_map: std::collections::HashMap<usize, usize> = {
-            let mut locals: Vec<PRef> = Vec::new();
+            let mut rel_locals: Vec<PRef> = Vec::new();
+            for pr in grev_rel_result.var_order.iter() {
+                rel_locals.push(pr.clone());
+            }
+            let mut other_locals: Vec<PRef> = Vec::new();
             for pr in grev_search
                 .var_order
                 .iter()
                 .chain(grev_validity.var_order.iter())
-                .chain(grev_rel_result.var_order.iter())
             {
-                locals.push(pr.clone());
+                other_locals.push(pr.clone());
             }
 
             pub_prefs
                 .iter()
+                .chain(other_locals.iter())
                 .chain(priv_prefs.iter())
-                .chain(locals.iter())
+                .chain(rel_locals.iter())
                 .enumerate()
                 .map(|(i, pr)| (pr.reference.node().index(), i))
                 .collect()

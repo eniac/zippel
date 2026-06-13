@@ -317,3 +317,9 @@ name = "schnorr_3round"
 path = "examples/schnorr_3round/main.rs"
 test = true
 harness = false
+
+[[example]]
+name = "okamoto_elgamal"
+path = "examples/okamoto_elgamal/main.rs"
+test = true
+harness = false
