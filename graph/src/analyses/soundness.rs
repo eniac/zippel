@@ -329,6 +329,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 pub_prefs.push(pr.clone());
             }
         }
+        let rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
         grev_rel_result.inline(&Set::new());
 
@@ -452,9 +453,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             lex_validity.basis.push(ext_poly.clone());
         }
 
-        let local_extractors = extract_locals(&rel_tc);
-        for (_, lex_poly) in &local_extractors {
-            let converted = convert_to_lex::<C>(lex_poly);
+        for p in rel_locals.basis.iter() {
+            if p.is_zero() {
+                continue;
+            }
+            let converted = convert_to_lex::<C>(p);
             lex_validity.basis.push(converted);
         }
 
