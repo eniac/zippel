@@ -133,6 +133,17 @@ impl Typeable for CExp {
                             Err(TypeError::coef(kctx, vctx, self))
                         }
                     }
+                    CTyp::Poly(tid, n, 1) if n > 1 => {
+                        let k = kctx.get(&tid).ok_or(TypeError::lub(
+                            TypeError::exp(kctx, vctx, self),
+                            LubError::kind_not_found(&tid),
+                        ))?;
+                        if k.is_scalar() {
+                            Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
+                        } else {
+                            Err(TypeError::coef(kctx, vctx, self))
+                        }
+                    }
                     _ => Err(TypeError::coef(kctx, vctx, self)),
                 }
             }
@@ -205,20 +216,14 @@ impl Typeable for CExp {
                                 // table index; any scalar-castable point evaluates generically.
                                 // Both yield the polynomial's field element.
                                 let elem_is_bool = matches!(*b, CTyp::Bool);
-                                let scalar_tid = b.to_scalar(kctx);
-                                if !elem_is_bool && scalar_tid.is_none() {
+                                if !elem_is_bool && b.to_scalar(kctx).as_ref() != Some(&i_poly) {
                                     return Err(TypeError::evaluate(kctx, vctx, p, x));
                                 }
                                 if len_vec == n {
-                                    return Ok(if elem_is_bool { CTyp::Base(i_poly) } else { *b });
+                                    return Ok(CTyp::Base(i_poly.clone()));
                                 }
                                 if len_vec < n {
-                                    let resid_tid = if elem_is_bool {
-                                        i_poly
-                                    } else {
-                                        scalar_tid.unwrap()
-                                    };
-                                    return Ok(CTyp::Poly(resid_tid, n - len_vec, d));
+                                    return Ok(CTyp::Poly(i_poly.clone(), n - len_vec, d));
                                 }
                                 Err(TypeError::evaluate_mle_too_many_arguments(kctx, vctx, p, x))
                             }
@@ -574,38 +579,6 @@ impl Typeable for CExp {
                     (CTyp::Vec(box typ, n), CTyp::Vec(box CTyp::Fin(r), m)) => {
                         if r.end <= n {
                             Ok(CTyp::vec(&typ, m))
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
-                        }
-                    }
-                    (CTyp::Poly(tbase, 1, n), CTyp::Fin(r)) => {
-                        // Phase 14 m+1 convention: Poly<F, 1, n> has max degree n
-                        // and therefore n+1 coefficients indexed 0..n+1.
-                        if r.end <= n + 1 {
-                            Ok(CTyp::base(&tbase))
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
-                        }
-                    }
-                    (CTyp::Poly(tbase, n, 1), CTyp::Fin(r)) => {
-                        if r.end <= 1 << n {
-                            Ok(CTyp::base(&tbase))
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
-                        }
-                    }
-                    (CTyp::Poly(tbase, 1, n), CTyp::Vec(box CTyp::Fin(r), _m)) => {
-                        // Phase 14 m+1 convention: Poly<F, 1, n> has max degree n
-                        // and therefore n+1 coefficients indexed 0..n+1.
-                        if r.end <= n + 1 {
-                            Ok(CTyp::Poly(tbase, 1, r.len()))
-                        } else {
-                            Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
-                        }
-                    }
-                    (CTyp::Poly(tbase, n, 1), CTyp::Vec(box CTyp::Fin(r), _m)) => {
-                        if r.end <= 1 << n {
-                            Ok(CTyp::Poly(tbase, r.len().ilog2() as usize, 1))
                         } else {
                             Err(TypeError::ram(kctx, vctx, a, ta, b, tb))
                         }

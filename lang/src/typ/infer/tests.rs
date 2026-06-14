@@ -797,7 +797,7 @@ fn test_phase14_interpolate_binary_shape_sweep() {
     }
 }
 
-/// Random-access into a univariate polynomial. Under the m+1 convention,
+/// Random-access into the coefficient vector of a univariate polynomial. Under the m+1 convention,
 /// `Poly<F, 1, m>` has m+1 coefficients indexed 0..m+1. The previous
 /// code rejected the legal upper-boundary index `m` because it tested
 /// `r.end <= m` instead of `r.end <= m + 1`. This is the off-by-one
@@ -811,36 +811,36 @@ fn test_phase14_ram_uni_scalar_index_boundary() {
 
     // Indexing at 0, 1, 2 was already accepted under the old bound.
     for i in 0usize..=2 {
-        let e = CExp::ram(CExp::varstr("p3"), CExp::lit(i));
+        let e = CExp::ram(CExp::coef(CExp::varstr("p3")), CExp::lit(i));
         assert_eq!(
             e.infer(&KIND_CTX, &fctx, &vctx),
             Ok(CTyp::Base(Tid::from("F"))),
-            "p3[{i}] must typecheck",
+            "coef(p3)[{i}] must typecheck",
         );
     }
 
     // The boundary case `p3[3]` is the regression: it was rejected by
     // the old `r.end <= n` check (r.end = 4 > n = 3), but must be
     // accepted under the m+1 convention (r.end = 4 <= n + 1 = 4).
-    let e_boundary = CExp::ram(CExp::varstr("p3"), CExp::lit(3));
+    let e_boundary = CExp::ram(CExp::coef(CExp::varstr("p3")), CExp::lit(3));
     assert_eq!(
         e_boundary.infer(&KIND_CTX, &fctx, &vctx),
         Ok(CTyp::Base(Tid::from("F"))),
-        "p3[3] is the highest legal coefficient index and must typecheck",
+        "coef(p3)[3] is the highest legal coefficient index and must typecheck",
     );
 
     // True overflow: index 4 is out of bounds (only 4 coefficients exist).
-    let e_overflow = CExp::ram(CExp::varstr("p3"), CExp::lit(4));
+    let e_overflow = CExp::ram(CExp::coef(CExp::varstr("p3")), CExp::lit(4));
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
             Err(TypeError::Ram(_, _, _, _, _, _))
         ),
-        "p3[4] is out of bounds (only 4 coefficients) and must be rejected",
+        "coef(p3)[4] is out of bounds (only 4 coefficients) and must be rejected",
     );
 }
 
-/// Vector-index variant of `CExp::Ram` on a univariate polynomial. Must
+/// Vector-index variant of `CExp::Ram` on the coefficient vector of a univariate polynomial. Must
 /// behave the same as the scalar-index variant: the legal upper bound
 /// on the index range is `n + 1` (the coefficient count), not `n`.
 #[test]
@@ -851,22 +851,28 @@ fn test_phase14_ram_uni_vector_index_boundary() {
 
     // Slicing all 4 coefficient indices (range 0..4) must typecheck under
     // the m+1 convention (r.end = 4 <= n + 1 = 4). Was rejected before.
-    let e_boundary = CExp::ram(CExp::varstr("p3"), CExp::range(Range::new(0, 4)));
+    let e_boundary = CExp::ram(
+        CExp::coef(CExp::varstr("p3")),
+        CExp::range(Range::new(0, 4)),
+    );
     let boundary_result = e_boundary.infer(&KIND_CTX, &fctx, &vctx);
     assert!(
         boundary_result.is_ok(),
-        "p3[0..4] is the maximal legal slice and must typecheck. Got: {boundary_result:?}",
+        "coef(p3)[0..4] is the maximal legal slice and must typecheck. Got: {boundary_result:?}",
     );
 
     // True overflow: range 0..5 reaches index 4, which is past the last
     // coefficient (index 3); must be rejected.
-    let e_overflow = CExp::ram(CExp::varstr("p3"), CExp::range(Range::new(0, 5)));
+    let e_overflow = CExp::ram(
+        CExp::coef(CExp::varstr("p3")),
+        CExp::range(Range::new(0, 5)),
+    );
     assert!(
         matches!(
             e_overflow.infer(&KIND_CTX, &fctx, &vctx),
             Err(TypeError::Ram(_, _, _, _, _, _))
         ),
-        "p3[0..5] reaches an out-of-bounds index and must be rejected",
+        "coef(p3)[0..5] reaches an out-of-bounds index and must be rejected",
     );
 }
 
@@ -1467,10 +1473,17 @@ fn test_coef_rejection() {
     // coef on non-polynomial should fail
     let coef_bad1 = CExp::coef(CExp::varstr("f1"));
     assert!(coef_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
+}
 
-    // coef on multivariate polynomial (MLE) should fail (unary coef is univariate only)
-    let coef_bad2 = CExp::coef(CExp::varstr("m"));
-    assert!(coef_bad2.infer(&KIND_CTX, &fctx, &vctx).is_err());
+#[test]
+fn test_coef_mle() {
+    let fctx = Set::new();
+    let vctx = VAR_CTX.clone();
+
+    // coef on multivariate polynomial (MLE) should succeed (returns 2^n elements)
+    let coef_mle = CExp::coef(CExp::varstr("m"));
+    let inferred = coef_mle.infer(&KIND_CTX, &fctx, &vctx).unwrap();
+    assert_eq!(inferred, CTyp::vec(&CTyp::Base(Tid::from("F")), 256));
 }
 
 #[test]

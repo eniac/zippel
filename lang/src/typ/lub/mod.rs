@@ -10,7 +10,7 @@ use crate::typ::range::Range;
 use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing};
 use share::Ctx;
 
-/// Instances of this trait can be added, muliplied, divided, exp'd and dot product'd together, generating constraints and type errors
+/// Instances of this trait can be added, multiplied, divided, exp'd and dot product'd together, generating constraints and type errors
 pub trait Lub
 where
     Self: Sized,
@@ -347,7 +347,10 @@ impl Lub for Tid {
 
         let kb = ctx.get(b).ok_or(LubError::kind_not_found(b))?;
 
-        Err(LubError::sub(&CTypeVar::new(a, ka), &CTypeVar::new(b, kb)))
+        Err(LubError::concat(
+            &CTypeVar::new(a, ka),
+            &CTypeVar::new(b, kb),
+        ))
     }
 
     fn lub_and(a: &Self, b: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Tid, LubError> {

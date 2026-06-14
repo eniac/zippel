@@ -2205,11 +2205,15 @@ impl<C: HasOpFactory> UDag<C> {
                             assert_eq!(param_types.len(), 1);
 
                             // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
-                            let mle_l =
-                                CExp::ram(CExp::var(&fid), CExp::range(CRange::new(0, n - 1)));
+                            let mle_l = CExp::ram(
+                                CExp::coef(CExp::var(&fid)),
+                                CExp::range(CRange::new(0, n - 1)),
+                            );
 
-                            let mle_r =
-                                CExp::ram(CExp::var(&fid), CExp::range(CRange::new(n - 1, *n)));
+                            let mle_r = CExp::ram(
+                                CExp::coef(CExp::var(&fid)),
+                                CExp::range(CRange::new(n - 1, *n)),
+                            );
 
                             // mle_l + (mle_r - mle_l) * params[0]
                             let fold = CExp::add(

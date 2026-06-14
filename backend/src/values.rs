@@ -2767,9 +2767,9 @@ impl<C: ArkConfig> Value<C> {
     pub fn value_coef(&self) -> Self {
         match self {
             Value::Poly(p) => {
-                let coeffs = p
-                    .to_coeffs()
-                    .expect("Can only get coefficients from univariate polynomials");
+                let coeffs = p.to_vec().or_else(|| p.to_coeffs()).expect(
+                    "Can only get coefficients/evaluations from univariate or MLE polynomials",
+                );
                 Value::VecScalar(coeffs)
             }
             // `Uni` values are often represented directly as coefficient vectors already.

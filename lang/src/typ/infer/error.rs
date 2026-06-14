@@ -49,7 +49,7 @@ pub enum TypeError {
     #[error("PolyError: Argument to [poly] must be a vector of fields:\n\t{0}, {1} |- poly {2}")]
     Poly(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp),
 
-    #[error("EvaluateError: Arguments to [eval] must be a polynomial and a vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
+    #[error("EvaluateError: Arguments to [eval] must be a polynomial and a scalar point or vector of scalars:\n\t{0}, {1} |- eval {2} {3}")]
     Evaluate(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, CExp, CExp),
 
     #[error("EvaluateUnivariateVectorError: A univariate polynomial Poly<F,1,_> cannot be evaluated at a vector of points. Evaluate at a single scalar with `p(x)`, or write `[p(x) for x in points]` to evaluate at many points:\n\t{0}, {1} |- eval {2} {3}")]
@@ -84,7 +84,7 @@ pub enum TypeError {
     #[error("ReduceAccError: reduce({2}, {3}) has element type {4}, but {2}({4}, {4}) = {5}, which differs from {4}; reduce requires the operator to have a fixed point at the element type:\n\t{0}, {1} |- reduce ({2}, {3} : Vec<{4}>)")]
     ReduceAcc(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, BinOp, CExp, CTyp, CTyp),
 
-    #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar, or vector of scalars:\n\t{0}, {1} |- {2}( {3} : {4} )")]
+    #[error("UniError: Univariate polynomials over a field must be evaluated over a single scalar:\n\t{0}, {1} |- {2}( {3} : {4} )")]
     Uni(Ctx<Tid, CKind>, Ctx<Vid, CTyp>, Vid, CExps, CTyps),
 
     #[error("ChallengeError: Only challenges returning field elements are allowed:\n\t {0}, {1} |- challenge< {2} : {3} >")]

@@ -562,8 +562,6 @@ mod vec_ops {
 // Current known gaps:
 //   - FFT padding: `Op::Fft::typ()` declares `Vec(F, m+1)` but the runtime
 //     pads to `next_pow2(m+1)` evaluations when `m+1` is not a power of two.
-//   - `Op::Coef::typ()` accepts `Mle(n)` inputs (returns `Vec(F, 2^n)`) but
-//     `value_coef` panics on multilinear polynomials.
 //   - `Op::Evaluate::typ()` semantic gaps: partial-MLE / partial-VPoly evals
 //     return flat `VecScalar` in the runtime instead of a `Value::Poly(Mle)`,
 //     and single-point full-MLE eval returns `VecScalar([s])` instead of
@@ -762,10 +760,7 @@ mod cross_layer {
     }
 
     /// `value_coef` on `Mle(n)` for `n ∈ 1..=4`.
-    /// `Op::Coef::typ()` accepts MLE inputs (returns `Vec(F, 2^n)`) but the
-    /// runtime panics. This gap is pinned with `#[should_panic]`.
     #[test]
-    #[should_panic(expected = "Op::Coef::typ() accepted Mle(")]
     fn pbt_coef_mle() {
         arbtest::arbtest(|u| {
             let t: AnyMleATyp = u.arbitrary()?;
