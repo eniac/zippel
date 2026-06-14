@@ -74,7 +74,7 @@ where
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
-    #[error("Overlaping declarations: {0}")]
+    #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
     #[error("Declaration error: {0}")]
     DeclarationError(#[from] DeclError),
@@ -414,6 +414,6 @@ fn test_module_overlap_error_message() {
     let res = umod.concretize(&Ctx::new());
     assert!(res.is_err());
     let err_msg = res.unwrap_err().to_string();
-    assert!(err_msg.contains("Overlaping declarations"));
+    assert!(err_msg.contains("Overlapping declarations"));
     assert!(err_msg.contains("sum"));
 }
