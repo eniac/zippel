@@ -329,8 +329,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                 pub_prefs.push(pr.clone());
             }
         }
-        let rel_locals = extract_locals(&grev_builder, &rel_tc);
+        let mut rel_locals = extract_locals(&grev_builder, &rel_tc);
         let mut grev_rel_result = grev_builder.build(rel_tc.clone());
+        rel_locals.inline(&Set::new());
         grev_rel_result.inline(&Set::new());
 
         grev_search.merge(&grev_rel_result);
@@ -339,6 +340,12 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // Public args get lowest ranks (lowest elimination priority), private args
         // next, and all other variables (locals, d-vars, etc.) get highest ranks
         // (highest elimination priority).
+        //
+        // TODO: grev_search also contains rel_locals because we merged
+        // rel_locals to it. This creates redundancy (though will not
+        // affect the correctness) in the construction of rank_map.
+        // We can think about how to design a better way to retrieve
+        // variable ordering and build the rank map.
         let rank_map: std::collections::HashMap<usize, usize> = {
             let mut rel_locals: Vec<PRef> = Vec::new();
             for pr in grev_rel_result.var_order.iter() {
@@ -453,13 +460,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             lex_validity.basis.push(ext_poly.clone());
         }
 
-        for p in rel_locals.basis.iter() {
-            if p.is_zero() {
-                continue;
-            }
-            let converted = convert_to_lex::<C>(p);
-            lex_validity.basis.push(converted);
-        }
+        let lex_rel_locals = GroebnerResult::<C, SoundnessElimTerm>::reconstruct_from(&rel_locals);
+        lex_validity.merge(&lex_rel_locals);
 
         lex_validity.inline(&Set::new());
         lex_validity.run::<128>();
@@ -548,12 +550,6 @@ fn build_round_map<C: ArkConfig>(
     }
 
     round_map
-}
-
-fn convert_to_lex<C: ArkConfig>(
-    p: &SparsePolynomial<C::F, GrevLexTerm>,
-) -> SparsePolynomial<C::F, SoundnessElimTerm> {
-    SparsePolynomial::reconstruct_from(p)
 }
 
 fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTerm>) {

@@ -30,13 +30,17 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
+        // inline the prover computation and spec
         let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
         prover_result.inline(&transcript_refs);
 
+        // inline the verifier's computation
         let verifier_tc = TransClos::verifier(dag);
-        let verifier_locals = extract_locals(&builder, &verifier_tc);
+        let mut verifier_locals = extract_locals(&builder, &verifier_tc);
+        verifier_locals.inline(&Set::new());
 
-        let verifier_result = builder.build(verifier_tc.clone());
+        let mut verifier_result = builder.build(verifier_tc.clone());
+        verifier_result.inline(&Set::new());
 
         Self {
             prover: prover_result,
