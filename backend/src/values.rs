@@ -2109,39 +2109,61 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
+    #[inline]
+    fn promote_to_vec(&mut self) {
+        match self {
+            Value::Scalar(s) => *self = Value::VecScalar(vec![*s]),
+            Value::Index(i) => *self = Value::VecIndex(vec![*i]),
+            Value::Bool(b) => *self = Value::VecBool(vec![*b]),
+            Value::G1(g) => *self = Value::VecG1(vec![*g]),
+            Value::G2(g) => *self = Value::VecG2(vec![*g]),
+            Value::GT(g) => *self = Value::VecGT(vec![*g]),
+            Value::G1Affine(g) => *self = Value::VecG1Affine(vec![*g]),
+            Value::G2Affine(g) => *self = Value::VecG2Affine(vec![*g]),
+            _ => {}
+        }
+    }
+
     pub fn concat(self, r: &mut Self) {
         match &self {
             Value::VecScalar(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_scalar_mut());
                 *r = Value::VecScalar(a);
             }
             Value::VecG1(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_g1_mut());
                 *r = Value::VecG1(a);
             }
             Value::VecG2(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_g2_mut());
                 *r = Value::VecG2(a);
             }
             Value::VecGT(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_gt_mut());
                 *r = Value::VecGT(a);
             }
             Value::VecG1Affine(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_g1_affine_mut());
                 *r = Value::VecG1Affine(a);
             }
             Value::VecG2Affine(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::VecG2Affine(a);
             }
             Value::VecBool(a) => {
+                r.promote_to_vec();
                 let mut a = a.clone();
                 a.append(r.into_vec_bool_mut());
                 *r = Value::VecBool(a);
@@ -2179,41 +2201,49 @@ impl<C: ArkConfig> Value<C> {
                 _ => panic!("Expected vec index, found {}", r),
             },
             Value::Scalar(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_scalar_mut());
                 *r = Value::VecScalar(a);
             }
             Value::G1(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_g1_mut());
                 *r = Value::VecG1(a);
             }
             Value::G2(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_g2_mut());
                 *r = Value::VecG2(a);
             }
             Value::GT(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_gt_mut());
                 *r = Value::VecGT(a);
             }
             Value::G1Affine(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_g1_affine_mut());
                 *r = Value::VecG1Affine(a);
             }
             Value::G2Affine(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_g2_affine_mut());
                 *r = Value::VecG2Affine(a);
             }
             Value::Bool(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_bool_mut());
                 *r = Value::VecBool(a);
             }
             Value::Index(a) => {
+                r.promote_to_vec();
                 let mut a = vec![*a];
                 a.append(r.into_vec_index_mut());
                 *r = Value::VecIndex(a);
