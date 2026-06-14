@@ -281,7 +281,7 @@ mod mle_differential_tests {
         inputs.insert(&Vid::from("p"), &p_val);
         inputs.insert(&Vid::from("x"), &x_val);
 
-        let actual_result = execute_graph(&dag, inputs).unwrap();
+        let actual_result = execute_graph(dag, inputs).unwrap();
 
         assert!(
             values_equal(&actual_result, &expected_result),
