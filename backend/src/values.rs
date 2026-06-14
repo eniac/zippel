@@ -2109,7 +2109,8 @@ impl<C: ArkConfig> Value<C> {
         }
     }
 
-    pub fn promote_to_vec(&mut self) {
+    #[inline]
+    fn promote_to_vec(&mut self) {
         match self {
             Value::Scalar(s) => *self = Value::VecScalar(vec![*s]),
             Value::Index(i) => *self = Value::VecIndex(vec![*i]),
