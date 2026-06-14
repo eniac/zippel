@@ -454,6 +454,12 @@ fn test_interpolate() {
     let interp_bad =
         CExp::interpolate_grid(CExp::vec(vec![CExp::varstr("f1"), CExp::varstr("g1")]));
     assert!(interp_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // Lagrange interpolation with empty range (length 0) must be rejected, not panic.
+    let interp_empty =
+        CExp::interpolate_at(CExp::Range(Range::new(0, 0)), CExp::Range(Range::new(0, 0)));
+    let res = interp_empty.infer(&KIND_CTX, &fctx, &vctx);
+    assert!(res.is_err());
 }
 
 // Test poly — mixed-element-type rejection (shape sweeps cover all accept cases).
@@ -1665,4 +1671,81 @@ fn test_no_panic_compiler_fuzzer() {
         let _ = e.infer(&KIND_CTX, &fctx, &vctx);
         Ok(())
     });
+}
+
+#[test]
+fn test_proto_body_blames_body_not_relation() {
+    let name = Vid::from("my_proto");
+    let sig = crate::ast::CSig {
+        name: name.clone(),
+        typevars: TypeVars(vec![]),
+        args: crate::ast::Args(vec![]),
+        ret: CTyp::Bool,
+    };
+    let fctx = Set::new();
+    let body = crate::ast::CBody::Proto {
+        relation: CExp::Bool(true), // relation has type Bool (valid)
+        body: CExp::lit(5),         // body has type Fin (invalid)
+    };
+    let res = body.typecheck(sig, &fctx);
+    let err = res.unwrap_err();
+    // Under correct behavior, this should wrap the offending body expression CExp::Lit(5)
+    assert!(matches!(
+        err,
+        TypeError::Decl(_, box TypeError::Bool(_, _, CExp::Lit(5)))
+    ));
+}
+
+#[test]
+fn test_unify_err_identifies_missing_variable() {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::from("a"), &Kind::<usize>::Field);
+    let mut subs = crate::typ::AliasSubsts::new();
+    let res = crate::typ::unify::Unify::unify(&Tid::from("a"), &Tid::from("b"), &ctx, &mut subs);
+    // Under correct behavior, this should fail with KindNotFound(b) since b is missing.
+    assert_eq!(
+        res,
+        Err(crate::typ::unify::UnifyError::KindNotFound(Tid::from("b")))
+    );
+}
+
+#[test]
+fn test_fin_coercion_avoids_fragile_alphabetical_fallback() {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::from("F"), &Kind::<usize>::Field);
+    ctx.insert(&Tid::from("E"), &Kind::<usize>::Field);
+    let typ = CTyp::Fin(Range::singleton(0));
+    // Under correct behavior, we shouldn't arbitrarily fallback to "E".
+    // We expect it to either return None (ambiguity) or a specific resolved field type if annotated,
+    // but definitely not just "E" alphabetically.
+    assert_eq!(typ.to_scalar(&ctx), None);
+}
+
+#[test]
+fn test_lub_concat_appends_vector_element() {
+    let mut ctx = Ctx::new();
+    ctx.insert(&Tid::from("F"), &Kind::<usize>::Field);
+    let inner_t = CTyp::Base(Tid::from("F"));
+    let tb = CTyp::Vec(Box::new(inner_t.clone()), 3); // Vec<F, 3>
+    let ta = CTyp::Vec(Box::new(tb.clone()), 2); // Vec<Vec<F, 3>, 2>
+
+    let res = CTyp::lub_concat(&ta, &tb, &ctx);
+    // Under correct behavior, appending a vector elements (tb) to a vector of vectors (ta)
+    // should succeed and return Vec<Vec<F, 3>, 3>.
+    assert_eq!(res, Ok(CTyp::Vec(Box::new(tb), 3)));
+}
+
+#[test]
+fn test_type_alias_cycle_returns_error_instead_of_overflow() {
+    let ex = concat!(
+        "type A = B;\n",
+        "type B = A;\n",
+        "fn f<F: Field>(public a: A) -> F {\n",
+        "    a\n",
+        "}\n"
+    );
+    // Under correct behavior, this should return an Err containing a cycle/malformed conversion error,
+    // rather than stack-overflowing and crashing.
+    let res = crate::ast::UModule::from_str(ex);
+    assert!(res.is_err());
 }

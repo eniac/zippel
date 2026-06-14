@@ -72,6 +72,9 @@ impl Typeable for CExp {
 
                         match (points_typ, evals_typ) {
                             (CTyp::Vec(box bp, np), CTyp::Vec(box be, ne)) if np == ne => {
+                                if ne == 0 {
+                                    return Err(TypeError::interpolate(kctx, vctx, self));
+                                }
                                 let ip = bp
                                     .to_scalar(kctx)
                                     .ok_or(TypeError::interpolate(kctx, vctx, self))?;

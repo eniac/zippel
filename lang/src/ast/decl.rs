@@ -280,15 +280,20 @@ impl CBody {
 
                 // Type infer relation and body
                 let tr = relation.infer(&kctx, fctx, &vctx)?;
-                let br = body.infer(&kctx, fctx, &vctx)?;
-                if tr == CTyp::Bool && br == CTyp::Bool {
-                    Ok(())
-                } else {
-                    Err(TypeError::decl(
+                if tr != CTyp::Bool {
+                    return Err(TypeError::decl(
                         &sig.name,
                         TypeError::bool(&kctx, &vctx, relation),
-                    ))
+                    ));
                 }
+                let br = body.infer(&kctx, fctx, &vctx)?;
+                if br != CTyp::Bool {
+                    return Err(TypeError::decl(
+                        &sig.name,
+                        TypeError::bool(&kctx, &vctx, body),
+                    ));
+                }
+                Ok(())
             }
             Body::Func { body } => {
                 let br = body.infer(&kctx, fctx, &vctx)?;

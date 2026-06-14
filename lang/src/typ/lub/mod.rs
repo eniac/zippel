@@ -398,6 +398,15 @@ impl Lub for CTyp {
                 }
                 Ok(CTyp::Record(result_fields))
             }
+            // Target-driven equality for Base and Fin
+            (CTyp::Base(a), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(a)) => {
+                let ka = ctx.get(a).ok_or(LubError::equ(&x, &y))?;
+                if ka.is_scalar() {
+                    Ok(CTyp::Base(a.clone()))
+                } else {
+                    Err(LubError::equ(&x, &y))
+                }
+            }
             // Indices can act like finite fields
             (a, b) => {
                 let ta = a.to_scalar(ctx).ok_or(LubError::equ(&x, &y))?;
@@ -575,7 +584,7 @@ impl Lub for CTyp {
             // (N is the max total degree per Typ::Poly docs; degrees add under multiplication)
             (CTyp::Poly(a, na, ma), CTyp::Poly(b, nb, mb)) => {
                 let num_vars = *na.max(nb);
-                let degree = *ma + *mb;
+                let degree = ma.saturating_add(*mb);
                 Ok(CTyp::Poly(
                     Tid::lub_mul(a, b, ctx)
                         .map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
@@ -639,7 +648,7 @@ impl Lub for CTyp {
     fn lub_pair(x: &Self, y: &Self, ctx: &Ctx<Tid, CKind>) -> Result<Self, LubError> {
         match (x, y) {
             (CTyp::Base(a), CTyp::Base(b)) => Ok(CTyp::Base(
-                Tid::lub_pair(a, b, ctx).map_err(|e| LubError::next(LubError::mul(&x, &y), e))?,
+                Tid::lub_pair(a, b, ctx).map_err(|e| LubError::next(LubError::pair(&x, &y), e))?,
             )),
             // Vec<A> * Vec<B> = Vec<C> where C = A = B
             (CTyp::Vec(box a, n), CTyp::Vec(box b, m)) => {
@@ -796,7 +805,9 @@ impl Lub for CTyp {
             )),
 
             // Uni<B> ^ Fin<i..j> = Uni<B*j>
-            (CTyp::Poly(a, 1, n), CTyp::Fin(r)) => Ok(CTyp::uni(a, n * (r.end.saturating_sub(1)))),
+            (CTyp::Poly(a, 1, n), CTyp::Fin(r)) => {
+                Ok(CTyp::uni(a, n.saturating_mul(r.end.saturating_sub(1))))
+            }
 
             (_, _) => Err(LubError::pow(&x, &y)),
         }
@@ -828,12 +839,18 @@ impl Lub for CTyp {
         match (ta, tb) {
             // Vec<A> ++ Vec<B> = Vec<C> if A = B = C
             (CTyp::Vec(box a, x), CTyp::Vec(box b, y)) => {
-                // Type [a] and [b] should be the same ([t])
-                let t = CTyp::lub_equ(a, b, kctx)
-                    .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
-
-                // Add the sizes of the vectors
-                Ok(CTyp::vec(&t, x + y))
+                // Try to concatenate them first
+                if let Ok(t) = CTyp::lub_equ(a, b, kctx) {
+                    Ok(CTyp::vec(&t, x.saturating_add(*y)))
+                } else if let Ok(t) = CTyp::lub_equ(a, tb, kctx) {
+                    // Treating tb as an element of ta (appending)
+                    Ok(CTyp::vec(&t, x.saturating_add(1)))
+                } else if let Ok(t) = CTyp::lub_equ(b, ta, kctx) {
+                    // Treating ta as an element of tb (prepending)
+                    Ok(CTyp::vec(&t, y.saturating_add(1)))
+                } else {
+                    Err(LubError::concat(ta, tb))
+                }
             }
             // Phase B: polynomial ++ Vec is now a type error. Use
             // `coef(poly)` to extract a coefficient vector first, then
@@ -844,7 +861,7 @@ impl Lub for CTyp {
                 let t = CTyp::lub_equ(a, b, kctx)
                     .map_err(|e| LubError::next(LubError::concat(ta, tb), e))?;
                 // Add an element to the vector
-                Ok(CTyp::vec(&t, n + 1))
+                Ok(CTyp::vec(&t, n.saturating_add(1)))
             }
 
             (ta, tb) => Err(LubError::concat(&ta, &tb)),

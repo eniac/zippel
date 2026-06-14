@@ -61,7 +61,7 @@ impl Unify for Tid {
     ) -> Result<Tid, UnifyError> {
         let ka = ctx.get(a).ok_or(UnifyError::kind_not_found(a))?;
 
-        let kb = ctx.get(b).ok_or(UnifyError::kind_not_found(a))?;
+        let kb = ctx.get(b).ok_or(UnifyError::kind_not_found(b))?;
 
         match (ka, kb) {
             // Both kinds are defined
@@ -153,7 +153,17 @@ impl Unify for CTyp {
             }
             // Finite fields can act like 0 degree polynomals
             (CTyp::Poly(a, 1, n), b) | (b, CTyp::Poly(a, 1, n)) => {
-                let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?;
+                let t = match b {
+                    CTyp::Fin(_) => {
+                        let ka = ctx.get(a).ok_or(UnifyError::typ_mismatch(x, y))?;
+                        if ka.is_scalar() {
+                            a.clone()
+                        } else {
+                            return Err(UnifyError::typ_mismatch(x, y));
+                        }
+                    }
+                    _ => b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?,
+                };
                 Ok(CTyp::Poly(
                     Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
                     1,
@@ -162,12 +172,31 @@ impl Unify for CTyp {
             }
             // Finite fields can act like 0 variable MLEs
             (CTyp::Poly(a, n, 1), b) | (b, CTyp::Poly(a, n, 1)) => {
-                let t = b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?;
+                let t = match b {
+                    CTyp::Fin(_) => {
+                        let ka = ctx.get(a).ok_or(UnifyError::typ_mismatch(x, y))?;
+                        if ka.is_scalar() {
+                            a.clone()
+                        } else {
+                            return Err(UnifyError::typ_mismatch(x, y));
+                        }
+                    }
+                    _ => b.to_scalar(ctx).ok_or(UnifyError::typ_mismatch(x, y))?,
+                };
                 Ok(CTyp::Poly(
                     Tid::unify(a, &t, ctx, subs).map_err(|e| UnifyError::typ(x, y, e))?,
                     *n,
                     1,
                 ))
+            }
+            // Target-driven unification for Base and Fin
+            (CTyp::Base(b), CTyp::Fin(_)) | (CTyp::Fin(_), CTyp::Base(b)) => {
+                let kb = ctx.get(b).ok_or(UnifyError::typ_mismatch(x, y))?;
+                if kb.is_scalar() {
+                    Ok(CTyp::Base(b.clone()))
+                } else {
+                    Err(UnifyError::typ_mismatch(x, y))
+                }
             }
             // Indices can act like finite fields
             (a, b) => {

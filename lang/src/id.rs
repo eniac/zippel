@@ -198,17 +198,18 @@ impl<'pest> FromPest<'pest> for Tid {
 }
 
 fn split_alphanumeric(input: &str) -> (String, i32) {
-    // Find the last non-digit character
-    let chars: Vec<char> = input.chars().collect();
-    let last_non_digit_pos = chars.iter().rposition(|c| !c.is_numeric());
+    let last_non_digit_pos = input
+        .char_indices()
+        .rfind(|(_, c)| !c.is_numeric())
+        .map(|(i, c)| (i, c.len_utf8()));
 
     match last_non_digit_pos {
-        Some(pos) => {
+        Some((pos, len)) => {
             // There is at least one non-digit, check if there are digits after it
-            if pos < input.len() - 1 {
+            if pos + len < input.len() {
                 // There are trailing digits after the last non-digit
-                let alpha_part = &input[..=pos];
-                let numeric_part = input[pos + 1..].parse::<i32>().unwrap_or(0);
+                let alpha_part = &input[..pos + len];
+                let numeric_part = input[pos + len..].parse::<i32>().unwrap_or(0);
                 (alpha_part.to_string(), numeric_part)
             } else {
                 // The string ends with a non-digit
@@ -267,6 +268,11 @@ fn test_empty_string() {
 #[test]
 fn test_special_characters_with_trailing_number() {
     assert_eq!(split_alphanumeric("a-_!@#123"), ("a-_!@#".to_string(), 123));
+}
+
+#[test]
+fn test_utf8_split_alphanumeric() {
+    assert_eq!(split_alphanumeric("α32"), ("α".to_string(), 32));
 }
 
 #[test]

@@ -6,45 +6,17 @@ This document outlines key design critiques, recommendations, and code quality i
 
 ## 1. High Criticality (Bugs, Type Soundness, and Compiler Safety)
 
-These items address actual compiler bugs, incorrect diagnostic reporting, type soundness issues, or potential crashes (stack overflows).
+These items address type system soundness, verification correctness, or correctness of compiler checks.
 
-### Protocol Body Typecheck Diagnostic Bug
-* **Location**: `CBody::typecheck` in [decl.rs](src/ast/decl.rs)
-* **Critique**: If either the `relation` or the `body` of a protocol does not typecheck to `Bool`, the compiler reports `TypeError::bool(&kctx, &vctx, relation)`. If the relation is valid but the body is not, the reported error misleadingly blames the relation.
-* **Proposed Solution**: Distinguish between the two failures:
-  ```rust
-  let tr = relation.infer(&kctx, fctx, &vctx)?;
-  if tr != CTyp::Bool {
-      return Err(TypeError::decl(&sig.name, TypeError::bool(&kctx, &vctx, relation)));
-  }
-  let br = body.infer(&kctx, fctx, &vctx)?;
-  if br != CTyp::Bool {
-      return Err(TypeError::decl(&sig.name, TypeError::bool(&kctx, &vctx, body)));
-  }
-  ```
+### Let-Binding Type Annotation Checks
+* **Location**: `FromPest for UExp` in [exp.rs](src/ast/exp.rs) / `CExp::infer` in [infer/mod.rs](src/typ/infer/mod.rs)
+* **Critique**: The Pest grammar parses optional type annotations on let-bindings (e.g. `let x: Group = 5;`), but the AST mapping currently discards them (`let _ = typ_ann;`). Consequently, type annotations on let-bindings are never verified against their assigned values, allowing mismatched types to compile silently.
+* **Proposed Solution**: Modify `Exp::Let` to store the annotation: `Let(Option<Vid>, Option<GTyp<N>>, Box<Exp<N>>, Box<Exp<N>>)`. Update AST traversals, mapper, and pretty-printer. During type inference of let-expressions in `CExp::infer`, unify the RHS inferred type with the type annotation (if present) using `CTyp::lub_equ`.
 
-### Type Alias Cycle Safety (Stack Overflow Prevention)
-* **Location**: `UModule::from_str` in [module.rs](src/ast/module.rs) / [typ/mod.rs](src/typ/mod.rs)
-* **Critique**: Type alias inlining is recursive. If a cyclic type alias is defined (e.g., `type A = B; type B = A;`), calling `type_inline` on `A` results in an infinite recursion stack overflow, crashing the compiler.
-* **Proposed Solution**: Build a dependency graph of type alias declarations to check for cycles before inlining, or track visited type variables during inlining.
-
-### Unification Diagnostic Mistake
-* **Location**: `Tid::unify` in [unify.rs](src/typ/unify.rs)
-* **Critique**: If the second type variable `b` is missing from the kind context (line 64), the error incorrectly blames the first type variable `a`:
-  ```rust
-  let kb = ctx.get(b).ok_or(UnifyError::kind_not_found(a))?;
-  ```
-* **Proposed Solution**: Fix the typo to return `UnifyError::kind_not_found(b)`.
-
-### Fragile Type Coercion Fallback in `to_scalar`
-* **Location**: `Typ::to_scalar` in [typ/mod.rs](src/typ/mod.rs)
-* **Critique**: When coercing `Fin` to a scalar field type, `to_scalar` eagerly returns the alphabetically first field in the kind context `ctx`. If multiple fields are defined (e.g. `<E: Field, F: Field>`), this arbitrary choice is fragile and leads to incorrect type resolutions.
-* **Proposed Solution**: Retain generic type information on `Fin` or lazily unify it with the expected target type context instead of eagerly resolving to the first field.
-
-### `lub_concat` Arm Precedence for Nested Vectors
-* **Location**: `CTyp::lub_concat` in [lub/mod.rs](src/typ/lub/mod.rs)
-* **Critique**: Concatenating a vector `B` to a vector of vectors `Vec<B, n>` should append `B` as an element. However, because the `Vec ++ Vec` arm is matched first, it treats it as concatenating two vectors of elements and tries to unify `Vec` with `Base`, leading to a type mismatch error.
-* **Proposed Solution**: Verify and compare element levels before choosing to concatenate or append.
+### Environment-Aware Protocol Purity Checks
+* **Location**: `CBody::typecheck` in [decl.rs](src/ast/decl.rs) / `Exp::is_pure` in [exp.rs](src/ast/exp.rs)
+* **Critique**: Specification relations (`where` clauses) are required to be pure. Currently, the purity checker `Exp::is_pure` operates shallowly on function application nodes (`App`), only checking if the arguments are pure. This allows relations calling impure protocols or functions containing side-effects (such as `verify()` or `challenge<F>`) to be bypass-accepted as pure.
+* **Proposed Solution**: Update `Exp::is_pure` to accept a set of impure function names: `is_pure(&self, impure_funcs: &Set<Vid>)`. Prior to typechecking, perform a static fixed-point dependency analysis over all module declarations to compute the set of all impure protocols and functions. Reject any relation that calls any function in this set.
 
 ---
 

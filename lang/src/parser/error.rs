@@ -40,6 +40,8 @@ pub enum InputError<'pest> {
     ReservedType,
     #[error("EmptyDeclaration: Empty declaration body found: {0}{1}{2}")]
     EmptyDecl(Vid, UTypeVars, UArgs),
+    #[error("Cyclic type alias dependency: {0}")]
+    CyclicTypeAlias(Tid),
 }
 
 impl From<EvalError> for ConversionError<InputError<'_>> {

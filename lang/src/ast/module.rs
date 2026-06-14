@@ -116,11 +116,21 @@ impl UModule {
 
         // Collect type aliases from type_decl declarations
         let mut type_ctx: Ctx<Tid, UTyp> = Ctx::new();
-        let mut m = Ctx::new();
-        for d in decls.into_iter() {
+        for d in decls.0.iter() {
             if d.body.is_type_alias() {
                 // Store the alias: name (as Tid) → aliased type (in sig.ret)
                 type_ctx.insert(&Tid::from(d.sig.name.0.as_str()), &d.sig.ret);
+            }
+        }
+
+        // Validate type aliases do not have cycles
+        detect_alias_cycles(&type_ctx).map_err(ConversionError::Malformed)?;
+
+        let mut m = Ctx::new();
+        for d in decls.into_iter() {
+            if d.body.is_type_alias() {
+                // Already stored and validated, type aliases do not go to Module execution decls
+                continue;
             } else {
                 // Inline type aliases in the declaration
                 let d = if type_ctx.is_empty() {
@@ -179,6 +189,71 @@ impl UModule {
         // Return the concretized module
         Ok(Module(ctx))
     }
+}
+
+// Helper to extract type alias dependencies from UTyp
+fn type_dependencies(typ: &UTyp) -> share::Set<Tid> {
+    use crate::typ::Typ;
+    let mut deps = share::Set::new();
+    fn recurse(typ: &UTyp, deps: &mut share::Set<Tid>) {
+        match typ {
+            Typ::Base(t) => {
+                deps.insert(t.clone());
+            }
+            Typ::Poly(t, _, _) => {
+                deps.insert(t.clone());
+            }
+            Typ::Vec(box_typ, _) => {
+                recurse(box_typ, deps);
+            }
+            Typ::Record(ctx) => {
+                for (_, t) in ctx.iter() {
+                    recurse(t, deps);
+                }
+            }
+            Typ::Fin(_) | Typ::Bool => {}
+        }
+    }
+    recurse(typ, &mut deps);
+    deps
+}
+
+// DFS cycle checker
+fn check_cycle<'pest>(
+    node: &Tid,
+    type_ctx: &Ctx<Tid, UTyp>,
+    visiting: &mut share::Set<Tid>,
+    visited: &mut share::Set<Tid>,
+) -> Result<(), InputError<'pest>> {
+    if visiting.contains(node) {
+        return Err(InputError::CyclicTypeAlias(node.clone()));
+    }
+    if visited.contains(node) {
+        return Ok(());
+    }
+    visiting.insert(node.clone());
+    if let Some(typ) = type_ctx.get(node) {
+        for dep in type_dependencies(typ).into_iter() {
+            if type_ctx.contains(&dep) {
+                check_cycle(&dep, type_ctx, visiting, visited)?;
+            }
+        }
+    }
+    visiting.retain(|k| k != node);
+    visited.insert(node.clone());
+    Ok(())
+}
+
+fn detect_alias_cycles<'pest>(type_ctx: &Ctx<Tid, UTyp>) -> Result<(), InputError<'pest>> {
+    let mut visiting = share::Set::new();
+    let mut visited = share::Set::new();
+
+    for name in type_ctx.keys() {
+        if !visited.contains(&name) {
+            check_cycle(&name, type_ctx, &mut visiting, &mut visited)?;
+        }
+    }
+    Ok(())
 }
 
 impl<N: Ord + Clone> IntoIterator for Module<N>
