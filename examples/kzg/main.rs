@@ -3,24 +3,15 @@ use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, thread, time::Instant};
+use std::path::PathBuf;
 use zippel::*;
 
-const KZG_EXAMPLE_STACK_SIZE: usize = 256 * 1024 * 1024;
+#[path = "../common/analysis.rs"]
+mod common;
+
 const PUBLIC_INPUT_NAMES: &[&str] = &["eval_point", "eval_result", "gen_g1", "gen_g2", "srs_g2_s"];
 
 fn main() {
-    let worker = thread::Builder::new()
-        .name("zippel-kzg-example".to_string())
-        .stack_size(KZG_EXAMPLE_STACK_SIZE)
-        .spawn(run_kzg_example)
-        .expect("failed to spawn kzg example worker thread");
-    if let Err(payload) = worker.join() {
-        std::panic::resume_unwind(payload);
-    }
-}
-
-fn run_kzg_example() {
     println!("=== KZG (ArkBls12_381) ===");
     let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
     let mut handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
@@ -34,77 +25,21 @@ fn run_kzg_example() {
         .into_iter()
         .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    let prover_scheduled = handler.default_schedule_prover();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
+    handler.set_public_inputs(public_inputs);
+    common::run_prover_and_verify(&mut handler, inputs);
 
-    let args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
-    let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    verifier_handler.compile(&sizes);
-    verifier_handler.set_public_inputs(public_inputs);
-    let verifier_scheduled = verifier_handler.default_schedule_verifier();
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(verifier_scheduled, proof)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if result.passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    println!("\n--- Static Analysis ---");
     // Analyze completeness/ZK at the same (small) N the prover demonstrates.
     // kzg's `where` clause contains `for i in 0..N-1`, which is empty (and
-    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2
-    // rather than via `minimal_analysis()`.
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("N"), &2);
-        analysis_handler.compile(&analysis_sizes);
-        let completeness_start = Instant::now();
-        let completeness = analysis_handler.analyze_completeness();
-        let completeness_time = completeness_start.elapsed();
-        let zk_start = Instant::now();
-        let zk = analysis_handler.analyze_knowledge();
-        let zk_time = zk_start.elapsed();
-        AnalysisResult {
-            completeness,
-            zk,
-            completeness_time,
-            zk_time,
-        }
-    });
-    match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            println!("Completeness time:  {:.2?}", analysis.completeness_time);
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
-            println!("ZK time:            {:.2?}", analysis.zk_time);
-        }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    }
+    // ill-typed) at the auto-minimized N=1, so analyze at the compiled N=2.
+    println!("\n--- Static Analysis ---");
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    let mut analysis_sizes = Ctx::new();
+    analysis_sizes.insert(&Tid::new("N"), &2);
+    analysis_handler.compile(&analysis_sizes);
+
+    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
+    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

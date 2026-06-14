@@ -75,12 +75,6 @@ name = "compilation"
 harness = false
 
 [[example]]
-name = "mle"
-path = "examples/tests/mle_example/main.rs"
-test = true
-harness = false
-
-[[example]]
 name = "kzg"
 path = "examples/kzg/main.rs"
 test = true
@@ -125,12 +119,6 @@ harness = false
 [[example]]
 name = "sumcheck"
 path = "examples/sumcheck/main.rs"
-test = true
-harness = false
-
-[[example]]
-name = "fft_interpolate"
-path = "examples/tests/fft_interpolate/main.rs"
 test = true
 harness = false
 
@@ -185,16 +173,6 @@ harness = false
 [[example]]
 name = "hyrax"
 path = "examples/hyrax/main.rs"
-test = true
-harness = false
-
-[[example]]
-name = "benchmark"
-path = "examples/tests/benchmark/main.rs"
-
-[[example]]
-name = "schnorr_no_random"
-path = "examples/tests/schnorr_no_random/main.rs"
 test = true
 harness = false
 
@@ -265,8 +243,8 @@ test = true
 harness = false
 
 [[example]]
-name = "zk-kzg"
-path = "examples/zk-kzg/main.rs"
+name = "zk_kzg"
+path = "examples/zk_kzg/main.rs"
 test = true
 harness = false
 

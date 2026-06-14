@@ -3,8 +3,11 @@ use ark_std::UniformRand;
 use backend::{ATyp, ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use share::Ctx;
-use std::{path::PathBuf, time::Instant};
+use std::path::PathBuf;
 use zippel::*;
+
+#[path = "../common/analysis.rs"]
+mod common;
 
 const PUBLIC_INPUT_NAMES: &[&str] = &["z", "y", "ss", "g", "h", "h_val"];
 
@@ -22,73 +25,18 @@ fn main() {
         .into_iter()
         .filter(|(vid, _)| PUBLIC_INPUT_NAMES.contains(&vid.0.as_str()))
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-    let prover_scheduled = handler.default_schedule_prover();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
-
-    let args = ZippelArgs::new(PathBuf::from("examples/zk-kzg/zk_kzg.zippel"));
-    let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
-    verifier_handler.compile(&sizes);
-    verifier_handler.set_public_inputs(public_inputs);
-    let verifier_scheduled = verifier_handler.default_schedule_verifier();
-    let verifier_start = Instant::now();
-    let verifier_result = verifier_handler
-        .run_verifier(verifier_scheduled, proof)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if result.passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
+    handler.set_public_inputs(public_inputs);
+    common::run_prover_and_verify(&mut handler, inputs);
 
     println!("\n--- Static Analysis ---");
-    let analysis_result = std::panic::catch_unwind(|| {
-        let analysis_args = ZippelArgs::new(PathBuf::from("examples/zk-kzg/zk_kzg.zippel"));
-        let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
-        let mut analysis_sizes = Ctx::new();
-        analysis_sizes.insert(&Tid::new("N"), &2);
-        analysis_handler.compile(&analysis_sizes);
-        let completeness_start = Instant::now();
-        let completeness = analysis_handler.analyze_completeness();
-        let completeness_time = completeness_start.elapsed();
-        let zk_start = Instant::now();
-        let zk = analysis_handler.analyze_knowledge();
-        let zk_time = zk_start.elapsed();
-        AnalysisResult {
-            completeness,
-            zk,
-            completeness_time,
-            zk_time,
-        }
-    });
-    match analysis_result {
-        Ok(analysis) => {
-            match &analysis.completeness {
-                Ok(()) => println!("Completeness:   ✓"),
-                Err(e) => println!("Completeness:   ✗ {}", e),
-            }
-            println!("Completeness time:  {:.2?}", analysis.completeness_time);
-            match &analysis.zk {
-                Ok(()) => println!("ZK:             ✓"),
-                Err(e) => println!("ZK:             ✗ {}", e),
-            }
-            println!("ZK time:            {:.2?}", analysis.zk_time);
-        }
-        Err(_) => println!("Analysis:       ⚠ not supported (non-polynomial operations)"),
-    }
+    let analysis_args = ZippelArgs::new(PathBuf::from("examples/zk-kzg/zk_kzg.zippel"));
+    let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
+    let mut analysis_sizes = Ctx::new();
+    analysis_sizes.insert(&Tid::new("N"), &2);
+    analysis_handler.compile(&analysis_sizes);
+
+    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
+    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {

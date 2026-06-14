@@ -7,26 +7,15 @@ use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::Vid;
 use rand::Rng;
 use share::Ctx;
-use std::{path::PathBuf, thread, time::Instant};
+use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
-const STACK: usize = 64 * 1024 * 1024;
 const M: usize = 3;
 const NUM_CONS: usize = 1 << M;
 const W_LEN: usize = 1 << (M - 1);
 const IO_LEN: usize = W_LEN - 1;
 
 fn main() {
-    thread::Builder::new()
-        .name("sc-test-m3".into())
-        .stack_size(STACK)
-        .spawn(run)
-        .expect("spawn")
-        .join()
-        .expect("join");
-}
-
-fn run() {
     let zippel_file = PathBuf::from(
         std::env::var("SC_TEST_M3_FILE").unwrap_or_else(|_| "/tmp/sc_test_m3.zippel".to_string()),
     );

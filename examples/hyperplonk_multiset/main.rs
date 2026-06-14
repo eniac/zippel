@@ -6,26 +6,14 @@ use lang::id::{Tid, Vid};
 use rand::Rng;
 use rand::seq::SliceRandom;
 use share::Ctx;
-use std::{path::PathBuf, thread, time::Instant};
+use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 // Edit S to scale; num_points = 2^S follows.
 const S: usize = 2;
 const NUM_POINTS: usize = 1 << S;
 
-const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
-
 fn main() {
-    thread::Builder::new()
-        .name("hyperplonk-multiset".into())
-        .stack_size(WORKER_STACK_BYTES)
-        .spawn(run)
-        .expect("failed to spawn worker thread")
-        .join()
-        .expect("worker thread panicked");
-}
-
-fn run() {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_multiset/hyperplonk_multiset.zippel");
 

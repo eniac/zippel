@@ -4,10 +4,7 @@ use graph::Dag;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{
     UDag, UDags,
-    analyses::{
-        AnalysisError, CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation,
-        UniformityPropagation,
-    },
+    analyses::{CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation, UniformityPropagation},
 };
 use graph::{WritePdf, analyses::KnowledgeAnalysis};
 use lang::ast::{CModule, UModule};
@@ -21,7 +18,6 @@ use share::{Ctx, unwrap};
 use std::fs;
 use std::path::PathBuf;
 use std::process;
-use std::time::{Duration, Instant};
 
 use graph::PRef;
 use graph::scheduler::local_scheduler::LocalScheduler;
@@ -433,40 +429,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         SpecialSoundnessAnalysis::analyze(g_analyze, l_vec)
     }
-
-    /// Run completeness and knowledge analysis with automatically computed minimal sizes.
-    ///
-    /// For each `S: Size` parameter, brute-forces `S = 1..10` to find the smallest
-    /// value where all dependent ranges are non-empty, keeping the analysis graph small.
-    pub fn minimal_analysis(&mut self) -> AnalysisResult<C> {
-        self.parse();
-        let module = self.sized_module.as_ref().unwrap();
-        let sizes = find_minimal_sizes(module);
-        info!("Minimal analysis sizes: {:?}", sizes);
-        self.compile(&sizes);
-        let completeness_start = Instant::now();
-        let completeness = self.analyze_completeness();
-        let completeness_time = completeness_start.elapsed();
-        let zk_start = Instant::now();
-        let zk = self.analyze_knowledge();
-        let zk_time = zk_start.elapsed();
-        AnalysisResult {
-            completeness,
-            zk,
-            completeness_time,
-            zk_time,
-        }
-    }
-}
-
-/// Result of running completeness and knowledge (ZK) analyses.
-pub struct AnalysisResult<C: ArkConfig> {
-    pub completeness: Result<(), AnalysisError<C>>,
-    pub zk: Result<(), AnalysisError<C>>,
-    /// Wall-clock time spent in the completeness analysis (excludes compilation).
-    pub completeness_time: Duration,
-    /// Wall-clock time spent in the knowledge (ZK) analysis (excludes compilation).
-    pub zk_time: Duration,
 }
 
 /// Find the smallest concrete value for each `Kind::SizeVar` parameter in the module
