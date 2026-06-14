@@ -7,10 +7,10 @@ mod tests;
 pub use error::TypeError;
 
 use crate::ast::sig::CSig;
-use crate::ast::{BinOp, CBody, CExp, CExps};
+use crate::ast::{BinOp, CBody, CExp};
 use crate::id::{Tid, Vid};
 use crate::typ::lub::{Lub, LubError};
-use crate::typ::range::{Range, RangeError};
+use crate::typ::range::Range;
 use crate::typ::{CKind, CTyp, CTyps};
 use share::{Ctx, Set};
 

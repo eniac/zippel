@@ -6,7 +6,7 @@ pub use error::LubError;
 
 use crate::ast::BinOp;
 use crate::id::Tid;
-use crate::typ::range::{Range, RangeError};
+use crate::typ::range::Range;
 use crate::typ::{CKind, CTyp, CTypeVar, Kind, Nothing};
 use share::Ctx;
 
