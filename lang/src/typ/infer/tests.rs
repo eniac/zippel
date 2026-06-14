@@ -1486,11 +1486,16 @@ fn test_poly_rejection() {
 #[test]
 fn test_coef_rejection() {
     let fctx = Set::new();
-    let vctx = VAR_CTX.clone();
+    let mut vctx = VAR_CTX.clone();
 
     // coef on non-polynomial should fail
     let coef_bad1 = CExp::coef(CExp::varstr("f1"));
     assert!(coef_bad1.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // coef on multivariate polynomial (MLE) with too many variables to shift (e.g. 128) should fail typecheck (not panic)
+    vctx.insert(&Vid::from("m_large"), &CTyp::Poly(Tid::from("F"), 128, 1));
+    let coef_overflow = CExp::coef(CExp::varstr("m_large"));
+    assert!(coef_overflow.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
 
 #[test]

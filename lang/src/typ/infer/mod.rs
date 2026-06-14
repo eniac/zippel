@@ -139,7 +139,11 @@ impl Typeable for CExp {
                             LubError::kind_not_found(&tid),
                         ))?;
                         if k.is_scalar() {
-                            Ok(CTyp::vec(&CTyp::Base(tid), 1 << n))
+                            if let Some(len) = 1_usize.checked_shl(n as u32) {
+                                Ok(CTyp::vec(&CTyp::Base(tid), len))
+                            } else {
+                                Err(TypeError::coef(kctx, vctx, self))
+                            }
                         } else {
                             Err(TypeError::coef(kctx, vctx, self))
                         }
@@ -571,7 +575,7 @@ impl Typeable for CExp {
                     .infer(kctx, fctx, vctx)
                     .map_err(|e| TypeError::next(TypeError::exp(kctx, vctx, self), e))?;
 
-                // Must be a vector, Uni, MLE and a Fin type
+                // Must be a vector and a Fin type (random access/slice)
                 match (ta.clone(), tb.clone()) {
                     (CTyp::Vec(box typ, n), CTyp::Fin(r)) => {
                         if r.end <= n {
