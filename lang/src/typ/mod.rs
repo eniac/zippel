@@ -17,6 +17,7 @@ pub use ark::Ark;
 pub use distribution::Distribution;
 pub use infer::{TypeError, Typeable};
 pub use kind::{CKind, Kind, UKind};
+pub use lub::LubError;
 pub use nothing::Nothing;
 pub use qualifier::Qualifier;
 pub use range::{CRange, Range, RangeError, RangeTraversal};
