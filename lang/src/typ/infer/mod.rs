@@ -274,11 +274,11 @@ impl Typeable for CExp {
 
                 match typ {
                     CTyp::Vec(box b, n) => {
-                        let n_pow = n.ilog2() as usize;
-                        if 2_usize.pow(n_pow as u32) != n {
+                        if n == 0 || !n.is_power_of_two() {
                             return Err(TypeError::mle(kctx, vctx, self));
                         }
-                        let i = b.to_scalar(kctx).ok_or(TypeError::poly(kctx, vctx, self))?;
+                        let n_pow = n.ilog2() as usize;
+                        let i = b.to_scalar(kctx).ok_or(TypeError::mle(kctx, vctx, self))?;
                         Ok(CTyp::Poly(i, n_pow, 1))
                     }
                     _ => Err(TypeError::mle(kctx, vctx, self)),
@@ -550,10 +550,14 @@ impl Typeable for CExp {
             // Random oracle challenge
             CExp::Challenge(t, _) | CExp::Random(t, _) => {
                 // What kind of [t]?
-                kctx.get(t).ok_or(TypeError::lub(
+                let k = kctx.get(t).ok_or(TypeError::lub(
                     TypeError::exp(kctx, vctx, self),
                     LubError::kind_not_found(t),
                 ))?;
+
+                if !k.is_scalar() {
+                    return Err(TypeError::challenge(kctx, vctx, t, k));
+                }
 
                 Ok(CTyp::base(t))
             }

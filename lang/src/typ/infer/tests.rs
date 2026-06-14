@@ -1187,6 +1187,24 @@ fn test_record_proj_non_record() {
 }
 
 #[test]
+fn test_mle_typecheck_rejection() {
+    let fctx = Set::new();
+    let vctx = VAR_CTX.clone();
+
+    // mle on empty vector (size 0) should fail typecheck (not panic!)
+    let mle_empty = CExp::mle(CExp::vec(vec![]));
+    assert!(mle_empty.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // mle on non-power-of-two size vector (size 3) should fail typecheck
+    let mle_non_pow2 = CExp::mle(CExp::vec(vec![
+        CExp::varstr("f1"),
+        CExp::varstr("f1"),
+        CExp::varstr("f1"),
+    ]));
+    assert!(mle_non_pow2.infer(&KIND_CTX, &fctx, &vctx).is_err());
+}
+
+#[test]
 fn test_mle_eval_inference() {
     let fctx = Set::new();
     let mut vctx = VAR_CTX.clone();
@@ -1498,6 +1516,14 @@ fn test_random_challenge_rejection() {
     // random on non-existent kind "X" should fail
     let random_bad = CExp::random(Tid::from("X"));
     assert!(random_bad.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // challenge on non-scalar kind "G" (Group) should fail
+    let challenge_group = CExp::challenge(Tid::from("G"));
+    assert!(challenge_group.infer(&KIND_CTX, &fctx, &vctx).is_err());
+
+    // random on non-scalar kind "G" (Group) should fail
+    let random_group = CExp::random(Tid::from("G"));
+    assert!(random_group.infer(&KIND_CTX, &fctx, &vctx).is_err());
 }
 
 #[test]
@@ -1530,4 +1556,108 @@ fn test_record_lub_vector_subtyping() {
     // Accessing extra field "y" via ram(v, 0).y is incorrect and must fail typechecking
     let proj_y = CExp::proj(CExp::ram(v, CExp::lit(0)), "y".to_string());
     assert!(proj_y.infer(&KIND_CTX, &fctx, &vctx).is_err());
+}
+
+fn gen_arbitrary_cexp(u: &mut arbitrary::Unstructured, depth: usize) -> arbitrary::Result<CExp> {
+    if depth == 0 {
+        let choice = u.int_in_range(0..=2)?;
+        match choice {
+            0 => Ok(CExp::Lit(u.arbitrary()?)),
+            1 => Ok(CExp::Bool(u.arbitrary()?)),
+            2 => {
+                let vars = ["f1", "f2", "v1", "v2", "g1", "g2", "s1", "s2", "p", "m"];
+                let var = u.choose(&vars)?;
+                Ok(CExp::Var(Vid::from(*var)))
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        let choice = u.int_in_range(0..=12)?;
+        match choice {
+            0..=2 => gen_arbitrary_cexp(u, 0),
+            3 => {
+                let inner = gen_arbitrary_cexp(u, depth - 1)?;
+                Ok(CExp::Poly(Box::new(inner)))
+            }
+            4 => {
+                let inner = gen_arbitrary_cexp(u, depth - 1)?;
+                Ok(CExp::Coef(Box::new(inner)))
+            }
+            5 => {
+                let inner = gen_arbitrary_cexp(u, depth - 1)?;
+                Ok(CExp::Mle(Box::new(inner)))
+            }
+            6 => {
+                let len = u.int_in_range(0..=4)?;
+                let mut elms = Vec::new();
+                for _ in 0..len {
+                    elms.push(gen_arbitrary_cexp(u, depth - 1)?);
+                }
+                Ok(CExp::Vec(Exps(elms)))
+            }
+            7 => {
+                let a = gen_arbitrary_cexp(u, depth - 1)?;
+                let b = gen_arbitrary_cexp(u, depth - 1)?;
+                let op = u.choose(&[
+                    BinOp::Add,
+                    BinOp::Sub,
+                    BinOp::Mul,
+                    BinOp::Div,
+                    BinOp::Pow,
+                    BinOp::Dot,
+                    BinOp::Rem,
+                    BinOp::Concat,
+                    BinOp::Equ,
+                    BinOp::And,
+                ])?;
+                Ok(CExp::Bin(*op, Box::new(a), Box::new(b)))
+            }
+            8 => {
+                let a = gen_arbitrary_cexp(u, depth - 1)?;
+                let b = gen_arbitrary_cexp(u, depth - 1)?;
+                Ok(CExp::Ram(Box::new(a), Box::new(b)))
+            }
+            9 => {
+                let tids = ["F", "G", "S", "X"];
+                let tid = u.choose(&tids)?;
+                Ok(CExp::Challenge(Tid::from(*tid), u.arbitrary()?))
+            }
+            10 => {
+                let tids = ["F", "G", "S", "X"];
+                let tid = u.choose(&tids)?;
+                Ok(CExp::Random(Tid::from(*tid), u.arbitrary()?))
+            }
+            11 => {
+                let inner = gen_arbitrary_cexp(u, depth - 1)?;
+                let range = Range::new(u.int_in_range(0..=5)?, u.int_in_range(0..=5)?);
+                let has_range = u.arbitrary()?;
+                let has_point = u.arbitrary()?;
+                let opt_range = if has_range { Some(range) } else { None };
+                let opt_point = if has_point {
+                    Some(Box::new(gen_arbitrary_cexp(u, depth - 1)?))
+                } else {
+                    None
+                };
+                Ok(CExp::Evaluate(Box::new(inner), opt_range, opt_point))
+            }
+            12 => {
+                let start = u.int_in_range(0..=5)?;
+                let end = u.int_in_range(0..=5)?;
+                Ok(CExp::Range(Range::new(start, end)))
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_no_panic_compiler_fuzzer() {
+    let fctx = Set::new();
+    let vctx = VAR_CTX.clone();
+    arbtest::arbtest(|u| {
+        let e = gen_arbitrary_cexp(u, 3)?;
+        // We only assert that inference does not panic (crash)
+        let _ = e.infer(&KIND_CTX, &fctx, &vctx);
+        Ok(())
+    });
 }

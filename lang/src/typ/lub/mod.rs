@@ -54,7 +54,7 @@ impl Lub for Range<usize> {
         b.check()
             .map_err(|e| LubError::next(LubError::equ(&a, &b), LubError::bad_range(b, e)))?;
 
-        // Find the maximum of the starts and minimum of the ends
+        // Find the minimum of the starts and maximum of the ends
         let new_start = std::cmp::min(a.start, b.start);
         let new_end = std::cmp::max(a.end, b.end);
         let new_step = num::integer::gcd(a.step, b.step);
