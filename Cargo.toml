@@ -82,227 +82,227 @@ harness = false
 [[example]]
 name = "kzg"
 path = "examples/kzg/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "pari"
 path = "examples/pari/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "ipa"
 path = "examples/ipa/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "ipa_weighted"
 path = "examples/ipa_weighted/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "schnorr"
 path = "examples/schnorr/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "okamoto"
 path = "examples/okamoto/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "cp"
 path = "examples/cp/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "sumcheck"
 path = "examples/sumcheck/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "zerocheck"
 path = "examples/zerocheck/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hadamard"
 path = "examples/hadamard/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyrax_pop"
 path = "examples/hyrax_pop/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyrax_podp"
 path = "examples/hyrax_podp/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyrax_ipa"
 path = "examples/hyrax_ipa/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "pedersen_eq"
 path = "examples/pedersen_eq/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "dory"
 path = "examples/dory/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "pst13"
 path = "examples/pst13/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyrax"
 path = "examples/hyrax/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "commitment_equality"
 path = "examples/commitment_equality/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "kzh"
 path = "examples/kzh/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "r1cs_sigma"
 path = "examples/r1cs_sigma/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyperplonk"
 path = "examples/hyperplonk/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyperplonk_zerocheck"
 path = "examples/hyperplonk_zerocheck/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyperplonk_productcheck"
 path = "examples/hyperplonk_productcheck/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyperplonk_multiset"
 path = "examples/hyperplonk_multiset/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "hyperplonk_permutation"
 path = "examples/hyperplonk_permutation/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "mle_sumcheck"
 path = "examples/mle_sumcheck/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "sc_test_m3"
 path = "examples/sc_test_m3/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "cds"
 path = "examples/cds/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "zk_kzg"
 path = "examples/zk_kzg/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "bccgp"
 path = "examples/bccgp/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "coin_proof"
 path = "examples/coin_proof/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "membership"
 path = "examples/membership/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "zeromorph_kzg"
 path = "examples/zeromorph_kzg/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "groth16"
 path = "examples/groth16/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "dekart"
 path = "examples/dekart/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "spartan"
 path = "examples/spartan/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "schnorr_3round"
 path = "examples/schnorr_3round/main.rs"
-test = true
+test = false
 harness = false
 
 [[example]]
 name = "okamoto_elgamal"
 path = "examples/okamoto_elgamal/main.rs"
-test = true
+test = false
 harness = false

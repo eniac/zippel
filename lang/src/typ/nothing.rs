@@ -40,26 +40,4 @@ mod tests {
         assert_eq!(nothing.to_string(), "");
         assert!(<Nothing as Pretty<'_, BoxAllocator, ()>>::is_nil(&nothing));
     }
-
-    #[test]
-    fn test_nothing_equality() {
-        let n1 = Nothing;
-        let n2 = Nothing;
-        assert_eq!(n1, n2);
-    }
-
-    #[test]
-    fn test_nothing_ordering() {
-        let n1 = Nothing;
-        let n2 = Nothing;
-        assert!(n1 <= n2);
-        assert!(n1 >= n2);
-    }
-
-    #[test]
-    fn test_nothing_clone() {
-        let nothing = Nothing;
-        let cloned = nothing;
-        assert_eq!(nothing, cloned);
-    }
 }

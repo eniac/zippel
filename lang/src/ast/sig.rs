@@ -160,3 +160,77 @@ impl<'a, N: Pretty<'a, BoxAllocator, ()> + Clone + 'a> fmt::Display for Sig<N> {
             .render_fmt(100, f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::decl::Decl;
+    use crate::typ::{CKind, CTyp, Typs};
+    use share::Ctx;
+
+    fn make_csig(decl_str: &str) -> CSig {
+        let udecl = Decl::from_str(decl_str).unwrap();
+        let cdecl = udecl
+            .concretize(&crate::typ::subst::SizeSubsts::new())
+            .unwrap();
+        cdecl.sig
+    }
+
+    #[test]
+    fn test_sig_unify_success() {
+        let sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+
+        let t_f = Tid::from("F");
+        let arg_typ = CTyp::base(&t_f);
+        let typs = Typs(vec![arg_typ.clone()]);
+
+        let mut kctx = Ctx::new();
+        kctx.insert(&t_f, &CKind::Field);
+
+        let res = sig.unify(&typs, &kctx);
+        assert!(res.is_ok());
+
+        let (unified_sig, _subs) = res.unwrap();
+        assert_eq!(unified_sig.ret, arg_typ);
+        assert_eq!(unified_sig.args.0[0].typ, arg_typ);
+    }
+
+    #[test]
+    fn test_sig_unify_arity_mismatch() {
+        let sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+        let kctx = Ctx::new();
+        let res = sig.clone().unify(&Typs(vec![]), &kctx);
+        assert_eq!(res, Err(SigError::ArityMismatch(1, 0)));
+
+        let t_f = Tid::from("F");
+        let res2 = sig.unify(&Typs(vec![CTyp::base(&t_f), CTyp::base(&t_f)]), &kctx);
+        assert_eq!(res2, Err(SigError::ArityMismatch(1, 2)));
+    }
+
+    #[test]
+    fn test_sig_unify_type_mismatch() {
+        let sig = make_csig("fn foo<T: Group>(public x: T) -> T { x }");
+
+        let t_f = Tid::from("F");
+        let arg_typ = CTyp::base(&t_f);
+        let typs = Typs(vec![arg_typ.clone()]);
+
+        let mut kctx = Ctx::new();
+        kctx.insert(&t_f, &CKind::Field);
+
+        let res = sig.unify(&typs, &kctx);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), SigError::Unify(_, _, _)));
+    }
+
+    #[test]
+    fn test_sig_helpers() {
+        let mut sig = make_csig("fn foo<T: Field>(public x: T) -> T { x }");
+        sig.tid_subst(&Tid::from("T"), &Tid::from("U"));
+        assert_eq!(sig.ret, CTyp::base(&Tid::from("U")));
+
+        let display_str = sig.to_string();
+        assert!(display_str.contains("foo"));
+        assert!(display_str.contains("<U: Field>"));
+    }
+}

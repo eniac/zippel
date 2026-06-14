@@ -195,3 +195,104 @@ impl<'pest> FromPest<'pest> for UKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pest::Parser;
+
+    #[test]
+    fn test_kind_relations() {
+        let f = Kind::<usize>::Field;
+        let g = Kind::<usize>::Group;
+        let s = Kind::<usize>::scalar2("A", "B");
+        let p = Kind::<usize>::pairing("G1", "G2");
+        let sv = Kind::<usize>::SizeVar;
+        let r = Kind::<usize>::range(1, 1, 5);
+
+        assert!(f.is_scalar());
+        assert!(!f.is_group());
+
+        assert!(!g.is_scalar());
+        assert!(g.is_group());
+
+        assert!(s.is_scalar());
+        assert!(!s.is_group());
+
+        assert!(!p.is_scalar());
+        assert!(p.is_group());
+
+        assert!(!sv.is_scalar());
+        assert!(!sv.is_group());
+
+        assert!(!r.is_scalar());
+        assert!(!r.is_group());
+
+        // pairing relations
+        let t_g1 = Tid::new("G1");
+        let t_g2 = Tid::new("G2");
+        let t_g3 = Tid::new("G3");
+        assert!(p.is_pairing(&t_g1, &t_g2));
+        assert!(p.is_pairing(&t_g2, &t_g1));
+        assert!(!p.is_pairing(&t_g1, &t_g3));
+        assert!(!g.is_pairing(&t_g1, &t_g2));
+
+        assert_eq!(p.get_pairing_of(&t_g1), Some((t_g1.clone(), t_g2.clone())));
+        assert_eq!(p.get_pairing_of(&t_g2), Some((t_g1.clone(), t_g2.clone())));
+        assert_eq!(p.get_pairing_of(&t_g3), None);
+        assert_eq!(g.get_pairing_of(&t_g1), None);
+    }
+
+    #[test]
+    fn test_kind_parsing_success() {
+        // Field
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Field").unwrap();
+        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::Field);
+
+        // Group
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Group").unwrap();
+        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::Group);
+
+        // Size
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Size").unwrap();
+        assert_eq!(UKind::from_pest(&mut pairs).unwrap(), Kind::SizeVar);
+
+        // Scalar
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Scalar<A, B>").unwrap();
+        assert_eq!(
+            UKind::from_pest(&mut pairs).unwrap(),
+            Kind::scalar2("A", "B")
+        );
+
+        // Pairing
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Pairing<G1, G2>").unwrap();
+        assert_eq!(
+            UKind::from_pest(&mut pairs).unwrap(),
+            Kind::pairing("G1", "G2")
+        );
+
+        // Range
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "1..5").unwrap();
+        assert_eq!(
+            UKind::from_pest(&mut pairs).unwrap(),
+            Kind::Range(Range {
+                start: Size::from(1),
+                step: Size::one(),
+                end: Size::from(5)
+            })
+        );
+    }
+
+    #[test]
+    fn test_kind_parsing_duplicate_idents() {
+        let mut pairs = ZippelParser::parse(Rule::kind_ty, "Scalar<A, A>").unwrap();
+        let res = UKind::from_pest(&mut pairs);
+        assert!(res.is_err());
+        match res.unwrap_err() {
+            ConversionError::Malformed(InputError::DuplicateIdents(s)) => {
+                assert!(s.contains("A"));
+            }
+            e => panic!("Expected DuplicateIdents error, got {:?}", e),
+        }
+    }
+}

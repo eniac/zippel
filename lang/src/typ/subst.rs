@@ -299,3 +299,19 @@ fn alias_substs_equ_clos() {
     assert_eq!(alias.get_repr(&Tid::from("D")), Some(Tid::from("D")));
     assert_eq!(alias.get_repr(&Tid::from("E")), Some(Tid::from("D")));
 }
+
+#[test]
+fn alias_substs_tid_subst() {
+    let mut alias = AliasSubsts::new();
+    alias.add_equ(&Tid::from("A"), &Tid::from("B"));
+    alias.add_equ(&Tid::from("B"), &Tid::from("C"));
+
+    use crate::typ::CTyp;
+    let mut typ1 = CTyp::base(&Tid::from("C"));
+    alias.tid_subst(&mut typ1);
+    assert_eq!(typ1, CTyp::base(&Tid::from("A")));
+
+    let mut typ2 = CTyp::base(&Tid::from("B"));
+    alias.tid_subst(&mut typ2);
+    assert_eq!(typ2, CTyp::base(&Tid::from("A")));
+}
