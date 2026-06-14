@@ -44,6 +44,7 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 petgraph = "0.7.1"
+libtest-mimic = "0.8"
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
@@ -57,6 +58,10 @@ ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
+
+[[test]]
+name = "completeness_examples"
+harness = false
 
 [[bench]]
 name = "graph_execution"

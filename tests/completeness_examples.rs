@@ -1,80 +1,171 @@
-//! End-to-end completeness (Gröbner `CompletenessAnalysis`) checks for the
-//! example protocols whose round-polynomial comprehensions lower to a generic
-//! materialized `Op::ReduceMap` (sumcheck, mle_sumcheck) or whose `where`
-//! clause folds loop-index exponents to constants (kzg).
-//!
-//! Each protocol is compiled and analyzed inside a large-stack worker thread:
-//! `compile()` spawns its own bounded stack, but `analyze_completeness()` runs
-//! the deep Gröbner recursion on the calling thread, which overflows the
-//! default `cargo test` stack for these instances.
-
 use backend::ArkBls12_381;
+use graph::analyses::AnalysisError;
 use lang::id::Tid;
+use libtest_mimic::{Failed, Trial};
+use petgraph::Direction;
+use petgraph::visit::EdgeRef;
 use share::Ctx;
 use std::path::PathBuf;
 use zippel::{ZippelArgs, ZippelHandler};
 
 const ANALYSIS_STACK_SIZE: usize = 256 * 1024 * 1024;
 
-/// Compile `rel_path` (relative to the crate root) with the given concrete size
-/// assignments and report whether `CompletenessAnalysis` succeeds. Runs on a
-/// dedicated 256 MiB worker thread so the Gröbner recursion does not overflow.
-fn analyze_complete(rel_path: &'static str, sizes: Vec<(&'static str, usize)>) -> bool {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel_path);
+#[derive(Clone, Copy)]
+struct TestEntry {
+    name: &'static str,
+    zippel_path: &'static str,
+    sizes: &'static [(&'static str, usize)],
+    ignored: bool,
+}
+
+#[rustfmt::skip]
+const COMPLETENESS_TESTS: &[TestEntry] = &[
+    TestEntry { name: "sumcheck", zippel_path: "examples/sumcheck/sumcheck.zippel", sizes: &[("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)], ignored: false },
+    TestEntry { name: "mle_sumcheck", zippel_path: "examples/mle_sumcheck/mle_sumcheck.zippel", sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)], ignored: false },
+    TestEntry { name: "kzg", zippel_path: "examples/kzg/kzg.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "membership", zippel_path: "examples/membership/membership.zippel", sizes: &[("N", 2), ("M", 2), ("S", 2)], ignored: false },
+    TestEntry { name: "schnorr", zippel_path: "examples/schnorr/schnorr.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "schnorr_3round", zippel_path: "examples/schnorr_3round/schnorr_3round.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "cp", zippel_path: "examples/cp/cp.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "okamoto", zippel_path: "examples/okamoto/okamoto.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "okamoto_elgamal", zippel_path: "examples/okamoto_elgamal/okamoto_elgamal.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "coin_proof", zippel_path: "examples/coin_proof/coin_proof.zippel", sizes: &[], ignored: true },
+    TestEntry { name: "r1cs_sigma", zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel", sizes: &[], ignored: true },
+    TestEntry { name: "commitment_equality", zippel_path: "examples/commitment_equality/commitment_equality.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "pedersen_eq", zippel_path: "examples/pedersen_eq/pedersen_eq.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "hyrax_pop", zippel_path: "examples/hyrax_pop/hyrax_pop.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "bccgp", zippel_path: "examples/bccgp/bccgp.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "ipa", zippel_path: "examples/ipa/ipa.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "ipa_weighted", zippel_path: "examples/ipa_weighted/ipa_weighted.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "hyrax_ipa", zippel_path: "examples/hyrax_ipa/hyrax_ipa.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "hyrax_podp", zippel_path: "examples/hyrax_podp/hyrax_podp.zippel", sizes: &[("S", 1)], ignored: false },
+    TestEntry { name: "zerocheck", zippel_path: "examples/zerocheck/zerocheck.zippel", sizes: &[("S", 1)], ignored: false },
+    TestEntry { name: "hyperplonk_zerocheck", zippel_path: "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_productcheck", zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_multiset", zippel_path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_permutation", zippel_path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "cds", zippel_path: "examples/cds/cds.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "hadamard", zippel_path: "examples/hadamard/hadamard.zippel", sizes: &[("S", 2)], ignored: false },
+    TestEntry { name: "pst13", zippel_path: "examples/pst13/pst13.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "zeromorph_kzg", zippel_path: "examples/zeromorph_kzg/zeromorph_kzg.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "zk_kzg", zippel_path: "examples/zk_kzg/zk_kzg.zippel", sizes: &[("N", 2)], ignored: false },
+];
+
+#[rustfmt::skip]
+const INCOMPLETENESS_TESTS: &[TestEntry] = &[
+    TestEntry { name: "sumcheck", zippel_path: "examples/sumcheck/sumcheck.zippel", sizes: &[("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)], ignored: false },
+    TestEntry { name: "mle_sumcheck", zippel_path: "examples/mle_sumcheck/mle_sumcheck.zippel", sizes: &[("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)], ignored: false },
+    TestEntry { name: "kzg", zippel_path: "examples/kzg/kzg.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "membership", zippel_path: "examples/membership/membership.zippel", sizes: &[("N", 2), ("M", 2), ("S", 2)], ignored: false },
+    TestEntry { name: "schnorr", zippel_path: "examples/schnorr/schnorr.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "schnorr_3round", zippel_path: "examples/schnorr_3round/schnorr_3round.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "cp", zippel_path: "examples/cp/cp.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "okamoto", zippel_path: "examples/okamoto/okamoto.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "okamoto_elgamal", zippel_path: "examples/okamoto_elgamal/okamoto_elgamal.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "coin_proof", zippel_path: "examples/coin_proof/coin_proof.zippel", sizes: &[], ignored: true },
+    TestEntry { name: "r1cs_sigma", zippel_path: "examples/r1cs_sigma/r1cs_sigma.zippel", sizes: &[], ignored: true },
+    TestEntry { name: "commitment_equality", zippel_path: "examples/commitment_equality/commitment_equality.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "pedersen_eq", zippel_path: "examples/pedersen_eq/pedersen_eq.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "hyrax_pop", zippel_path: "examples/hyrax_pop/hyrax_pop.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "bccgp", zippel_path: "examples/bccgp/bccgp.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "ipa", zippel_path: "examples/ipa/ipa.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "ipa_weighted", zippel_path: "examples/ipa_weighted/ipa_weighted.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "hyrax_ipa", zippel_path: "examples/hyrax_ipa/hyrax_ipa.zippel", sizes: &[("S", 0)], ignored: false },
+    TestEntry { name: "hyrax_podp", zippel_path: "examples/hyrax_podp/hyrax_podp.zippel", sizes: &[("S", 1)], ignored: false },
+    TestEntry { name: "zerocheck", zippel_path: "examples/zerocheck/zerocheck.zippel", sizes: &[("S", 1)], ignored: false },
+    TestEntry { name: "hyperplonk_zerocheck", zippel_path: "examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_productcheck", zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_multiset", zippel_path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "hyperplonk_permutation", zippel_path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel", sizes: &[("S", 2)], ignored: true },
+    TestEntry { name: "cds", zippel_path: "examples/cds/cds.zippel", sizes: &[], ignored: false },
+    TestEntry { name: "hadamard", zippel_path: "examples/hadamard/hadamard.zippel", sizes: &[("S", 2)], ignored: false },
+    TestEntry { name: "pst13", zippel_path: "examples/pst13/pst13.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "zeromorph_kzg", zippel_path: "examples/zeromorph_kzg/zeromorph_kzg.zippel", sizes: &[("N", 2)], ignored: false },
+    TestEntry { name: "zk_kzg", zippel_path: "examples/zk_kzg/zk_kzg.zippel", sizes: &[("N", 2)], ignored: false },
+];
+
+fn build_sizes_ctx(sizes: &[(&str, usize)]) -> Ctx<Tid, usize> {
+    let mut ctx = Ctx::new();
+    for &(name, value) in sizes {
+        ctx.insert(&Tid::new(name), &value);
+    }
+    ctx
+}
+
+fn run_completeness(entry: &TestEntry) -> Result<(), Failed> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(entry.zippel_path);
+    let sizes = entry.sizes.to_vec();
     std::thread::Builder::new()
-        .name("zippel-completeness-test".to_string())
         .stack_size(ANALYSIS_STACK_SIZE)
         .spawn(move || {
             let mut handler: ZippelHandler<ArkBls12_381> =
                 ZippelHandler::new(ZippelArgs::new(path));
-            let mut ctx = Ctx::new();
-            for &(name, value) in &sizes {
-                ctx.insert(&Tid::new(name), &value);
-            }
+            let ctx = build_sizes_ctx(&sizes);
             handler.compile(&ctx);
-            handler.analyze_completeness().is_ok()
+            handler
+                .analyze_completeness()
+                .map_err(|e| Failed::from(e.to_string()))
         })
-        .expect("failed to spawn completeness worker thread")
+        .expect("failed to spawn thread")
         .join()
-        .expect("completeness worker thread panicked")
+        .expect("thread panicked")
 }
 
-#[test]
-fn sumcheck_completeness() {
-    // Recursive sumcheck: the verifier recomputes round polynomials via
-    // materialized hypercube reduce-maps and selected evaluations. These
-    // verifier-local intermediates reduce once the same DAG node-slot maps to a
-    // single Gröbner variable across the prover/relation/verifier
-    // sub-projections (see `canonicalize_node_slot_vars`). MAX_DEGREE_CONST=1.
-    assert!(analyze_complete(
-        "examples/sumcheck/sumcheck.zippel",
-        vec![("NUM_VARS_CONST", 3), ("MAX_DEGREE_CONST", 1)],
-    ));
+fn strip_relation(handler: &mut ZippelHandler<ArkBls12_381>) {
+    let dag = handler.analyze_graph.as_mut().unwrap();
+    let rel_node = dag.relation_node().unwrap();
+    let edge_ids: Vec<_> = dag
+        .graph
+        .edges_directed(rel_node, Direction::Outgoing)
+        .map(|e| e.id())
+        .collect();
+    for eid in edge_ids {
+        dag.graph.remove_edge(eid);
+    }
 }
 
-#[test]
-fn mle_sumcheck_completeness() {
-    assert!(analyze_complete(
-        "examples/mle_sumcheck/mle_sumcheck.zippel",
-        vec![("NUM_VARS", 3), ("MAX_DEGREE_CONST", 1)],
-    ));
+fn run_incompleteness(entry: &TestEntry) -> Result<(), Failed> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(entry.zippel_path);
+    let sizes = entry.sizes.to_vec();
+    std::thread::Builder::new()
+        .stack_size(ANALYSIS_STACK_SIZE)
+        .spawn(move || {
+            let mut handler: ZippelHandler<ArkBls12_381> =
+                ZippelHandler::new(ZippelArgs::new(path));
+            let ctx = build_sizes_ctx(&sizes);
+            handler.compile(&ctx);
+            strip_relation(&mut handler);
+            match handler.analyze_completeness() {
+                Err(AnalysisError::Incomplete(_)) => Ok(()),
+                Err(e) => Err(Failed::from(format!("expected Incomplete, got: {e}"))),
+                Ok(()) => Err(Failed::from("expected Incomplete, but analysis succeeded")),
+            }
+        })
+        .expect("failed to spawn thread")
+        .join()
+        .expect("thread panicked")
 }
 
-#[test]
-fn kzg_completeness() {
-    assert!(analyze_complete("examples/kzg/kzg.zippel", vec![("N", 2)]));
-}
+fn main() {
+    let mut trials: Vec<Trial> = Vec::new();
 
-#[test]
-fn membership_completeness() {
-    // div_r incompleteness resolved: the membership statement `f(0) in S`, i.e.
-    // `reduce(*, [f_coeffs[0] - r for r in s]) == 0` (= g(0)==0), is now part of
-    // the `where` relation, so the verifier's `prod_eval == h_eval*alpha` check
-    // reduces against it instead of leaving the `g_poly / poly_x` remainder
-    // free. Also exercises the `Op::ReduceMap` Mul degree-widening fix: N=2,
-    // M=2 fold Uni(1)*Uni(1) -> Uni(2) (L=2, S=2).
-    assert!(analyze_complete(
-        "examples/membership/membership.zippel",
-        vec![("N", 2), ("M", 2), ("S", 2)],
-    ));
+    for entry in COMPLETENESS_TESTS {
+        let entry = *entry;
+        let trial = Trial::test(format!("completeness::{}", entry.name), move || {
+            run_completeness(&entry)
+        })
+        .with_ignored_flag(entry.ignored);
+        trials.push(trial);
+    }
+
+    for entry in INCOMPLETENESS_TESTS {
+        let entry = *entry;
+        let trial = Trial::test(format!("incompleteness::{}", entry.name), move || {
+            run_incompleteness(&entry)
+        })
+        .with_ignored_flag(entry.ignored);
+        trials.push(trial);
+    }
+
+    libtest_mimic::run(&libtest_mimic::Arguments::from_args(), trials).exit();
 }
