@@ -2210,15 +2210,11 @@ impl<C: HasOpFactory> UDag<C> {
                             let mut bound_vars = vctx.keys();
                             let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
 
-                            let mle_l = CExp::ram(
-                                CExp::var(&coef_var),
-                                CExp::range(CRange::new(0, mid)),
-                            );
+                            let mle_l =
+                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(0, mid)));
 
-                            let mle_r = CExp::ram(
-                                CExp::var(&coef_var),
-                                CExp::range(CRange::new(mid, end)),
-                            );
+                            let mle_r =
+                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(mid, end)));
 
                             // mle_l + (mle_r - mle_l) * params[0]
                             let fold = CExp::add(
