@@ -53,7 +53,7 @@ use thiserror::Error;
 /// node annotation like costs, schedules etc.
 #[derive(Clone)]
 pub struct Dag<C: ArkConfig, A> {
-    pub(crate) graph: Graph<Node<C, A>, Dep>,
+    pub graph: Graph<Node<C, A>, Dep>,
     /// Variable names for nodes (both let-bindings and transcript vars)
     pub(crate) vctx: Ctx<NodeIndex, Vid>,
     /// Which variables are transcript variables (true) vs let-bindings (false)

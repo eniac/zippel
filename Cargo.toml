@@ -44,6 +44,7 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 petgraph = "0.7.1"
+libtest-mimic = "0.8"
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
@@ -57,6 +58,10 @@ ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", branch = "
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
+
+[[test]]
+name = "completeness_examples"
+harness = false
 
 [[bench]]
 name = "graph_execution"
@@ -72,12 +77,6 @@ harness = false
 
 [[bench]]
 name = "compilation"
-harness = false
-
-[[example]]
-name = "mle"
-path = "examples/tests/mle_example/main.rs"
-test = false
 harness = false
 
 [[example]]
@@ -125,12 +124,6 @@ harness = false
 [[example]]
 name = "sumcheck"
 path = "examples/sumcheck/main.rs"
-test = false
-harness = false
-
-[[example]]
-name = "fft_interpolate"
-path = "examples/tests/fft_interpolate/main.rs"
 test = false
 harness = false
 
@@ -185,16 +178,6 @@ harness = false
 [[example]]
 name = "hyrax"
 path = "examples/hyrax/main.rs"
-test = false
-harness = false
-
-[[example]]
-name = "benchmark"
-path = "examples/tests/benchmark/main.rs"
-
-[[example]]
-name = "schnorr_no_random"
-path = "examples/tests/schnorr_no_random/main.rs"
 test = false
 harness = false
 
@@ -265,8 +248,8 @@ test = false
 harness = false
 
 [[example]]
-name = "zk-kzg"
-path = "examples/zk-kzg/main.rs"
+name = "zk_kzg"
+path = "examples/zk_kzg/main.rs"
 test = false
 harness = false
 
