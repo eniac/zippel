@@ -62,7 +62,6 @@ fn lub_range() {
     );
 }
 
-#[cfg(test)]
 use share::Set;
 #[test]
 fn lub_tid() {
@@ -408,7 +407,6 @@ fn test_ctyp_poly_degree_offbyone() {
     assert!(CTyp::lub_dot(&CTyp::uni(&f, 3), &CTyp::vec(&tf, 5), &ctx).is_err());
 }
 
-#[cfg(test)]
 mod error_tests {
     use super::*;
     use crate::ast::BinOp;
@@ -554,7 +552,6 @@ mod error_tests {
     }
 }
 
-#[cfg(test)]
 mod range_lub_tests {
     use super::*;
     use crate::typ::range::Range;
@@ -773,7 +770,6 @@ mod range_lub_tests {
     }
 }
 
-#[cfg(test)]
 mod tid_lub_tests {
     use super::*;
 
@@ -888,7 +884,6 @@ mod tid_lub_tests {
 /// - `lub_mul`: `Poly(F, n1, m1) * Poly(F, n2, m2) = Poly(F, max(n1, n2), m1 + m2)`
 /// - `lub_div`: `Uni(F, ma) / Uni(F, mb) = Uni(F, ma - mb)` for `ma >= mb`
 /// - `lub_concat`: see arms in `lub_concat` impl
-#[cfg(test)]
 mod ctyp_lub_poly_tests {
     use super::*;
     use arbitrary::Unstructured;
