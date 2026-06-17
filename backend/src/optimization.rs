@@ -76,3 +76,11 @@ pub(crate) fn record_selected_eval_interpolation_fallback() {
 pub(crate) fn record_reduce_univariate_post_materialization() {
     REDUCE_UNIVARIATE_POST_MATERIALIZATION.fetch_add(1, Ordering::Relaxed);
 }
+
+pub(crate) fn record_canonical_sumcheck_rows_fused() {
+    CANONICAL_SUMCHECK_ROWS_FUSED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn record_canonical_sumcheck_rows_seen() {
+    CANONICAL_SUMCHECK_ROWS_SEEN.fetch_add(1, Ordering::Relaxed);
+}

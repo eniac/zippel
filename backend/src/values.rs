@@ -1,19 +1,20 @@
 use crate::optimization::{
+    record_canonical_sumcheck_rows_fused, record_canonical_sumcheck_rows_seen,
     record_reduce_univariate_post_materialization, record_selected_eval_term_materialized,
 };
 use crate::poly_variant::PolyVariant;
 use crate::types::Lub;
-use crate::virtual_polynomial::{SelectedEvalShape, VirtualPolynomial};
+use crate::virtual_polynomial::{
+    SelectedEvalShape, VirtualPolynomial, add_coeffs_assign, trim_trailing_zero_coeffs,
+};
 use crate::{ABase, ATyp, ArkConfig, ArkGroupOps, ArkPairingOps, ArkScalarOps, to_bytes};
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::Field;
-#[cfg(test)]
-use ark_ff::One;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::{One, PrimeField, Zero};
 use ark_poly::{
     DenseMultilinearExtension, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
-    univariate::DensePolynomial,
+    MultilinearExtension, univariate::DensePolynomial,
 };
 use ark_serialize::{CanonicalSerialize, SerializationError};
 use ark_std::log2;
@@ -1764,6 +1765,80 @@ impl<C: ArkConfig> Value<C> {
     }
 
     #[inline]
+    pub fn value_hypercube_reduce_selected(
+        self,
+        free_range: CRange,
+        tail_num_vars: usize,
+        shape: SelectedEvalShape,
+    ) -> Self {
+        record_canonical_sumcheck_rows_seen();
+        assert_eq!(
+            free_range.len(),
+            1,
+            "hypercube reduce fusion currently requires a single free variable"
+        );
+        assert_eq!(
+            free_range.start, 0,
+            "hypercube reduce fusion currently requires the free variable to be at index 0"
+        );
+        assert_eq!(
+            shape.output_num_vars, 1,
+            "hypercube reduce fusion currently returns a univariate round polynomial"
+        );
+        assert_eq!(
+            tail_num_vars,
+            shape.input_num_vars.saturating_sub(1),
+            "hypercube reduce tail arity must match the selected-eval static input shape"
+        );
+
+        let poly_value = if matches!(&self, Value::VecScalar(_) | Value::VecIndex(_)) {
+            self.value_poly()
+        } else {
+            self
+        };
+        let poly = match poly_value {
+            Value::Poly(poly) => poly,
+            other => panic!("Hypercube reduce expects a polynomial, found {}", other),
+        };
+
+        if let Some(round) =
+            hypercube_reduce_selected_mle_products::<C>(&poly, tail_num_vars, shape)
+        {
+            record_canonical_sumcheck_rows_fused();
+            return Value::Poly(round);
+        }
+
+        let tail_count = 1usize
+            .checked_shl(tail_num_vars as u32)
+            .expect("hypercube reduce tail arity exceeds usize bit width");
+        let degree = shape.max_degree.max(poly.degree_bound());
+        let evals: Vec<C::F> = (0..=degree)
+            .into_par_iter()
+            .map(|t_idx| {
+                let t = C::FOps::from_usize(t_idx);
+                let mut sum = C::F::zero();
+                for tail_index in 0..tail_count {
+                    let mut point = Vec::with_capacity(shape.input_num_vars);
+                    point.push(t);
+                    for bit_index in 0..tail_num_vars {
+                        let bit = (tail_index >> bit_index) & 1;
+                        point.push(if bit == 0 { C::F::zero() } else { C::F::one() });
+                    }
+                    sum += poly
+                        .evaluate_mv(&point)
+                        .expect("hypercube reduce selected evaluation failed");
+                }
+                sum
+            })
+            .collect();
+
+        record_canonical_sumcheck_rows_fused();
+        let mut round = round_univariate_from_marginalize_evals(&evals);
+        round.num_variables = Some(1);
+        Value::Poly(round)
+    }
+
+    #[inline]
     pub fn pair(self, other: Self) -> Self {
         let mut other = other;
         self.value_pair(&mut other);
@@ -2974,6 +3049,111 @@ fn boolean_index(bits: &[bool]) -> usize {
         .filter(|(_, b)| **b)
         .map(|(i, _)| 1usize << i)
         .sum()
+}
+
+fn hypercube_reduce_selected_mle_products<C: ArkConfig>(
+    poly: &VirtualPolynomial<C::F>,
+    tail_num_vars: usize,
+    shape: SelectedEvalShape,
+) -> Option<VirtualPolynomial<C::F>> {
+    if shape.output_num_vars != 1 || shape.input_num_vars != tail_num_vars + 1 {
+        return None;
+    }
+    let tail_count = 1usize.checked_shl(tail_num_vars as u32)?;
+    let degree_cap = shape.max_degree.max(poly.degree_bound()) + 1;
+    let mut total = vec![C::F::zero(); degree_cap.max(1)];
+
+    let sparse_mle_maps: Vec<Option<std::collections::HashMap<usize, C::F>>> = poly
+        .flattened_polys
+        .iter()
+        .map(|poly_ref| match poly_ref.as_ref() {
+            PolyVariant::SparseMle { evals, .. } => {
+                let mut map = std::collections::HashMap::with_capacity(evals.len());
+                for &(i, val) in evals {
+                    *map.entry(i).or_insert_with(C::F::zero) += val;
+                }
+                Some(map)
+            }
+            _ => None,
+        })
+        .collect();
+
+    for (coefficient, indices) in &poly.products {
+        for tail_index in 0..tail_count {
+            let mut term = vec![*coefficient];
+            for &idx in indices {
+                let factor = match poly.flattened_polys[idx].as_ref() {
+                    PolyVariant::DenseMle(mle) => {
+                        if mle.num_vars() != shape.input_num_vars {
+                            return None;
+                        }
+                        let base_idx = tail_index.checked_shl(1)?;
+                        let v0 = *mle.evaluations.get(base_idx)?;
+                        let v1 = *mle.evaluations.get(base_idx | 1)?;
+                        [v0, v1 - v0]
+                    }
+                    PolyVariant::SparseMle { num_vars, .. } => {
+                        if *num_vars != shape.input_num_vars {
+                            return None;
+                        }
+                        let map = sparse_mle_maps[idx].as_ref()?;
+                        let base_idx = tail_index.checked_shl(1)?;
+                        let v0 = map.get(&base_idx).copied().unwrap_or_else(C::F::zero);
+                        let v1 = map.get(&(base_idx | 1)).copied().unwrap_or_else(C::F::zero);
+                        [v0, v1 - v0]
+                    }
+                    _ => return None,
+                };
+                term = mul_coeffs_truncated::<C::F>(&term, &factor, degree_cap);
+            }
+            add_coeffs_assign(&mut total, &term);
+        }
+    }
+
+    trim_trailing_zero_coeffs(&mut total);
+    let mut round = VirtualPolynomial::from_poly(PolyVariant::DenseUni(
+        DensePolynomial::from_coefficients_vec(total),
+    ));
+    round.num_variables = Some(1);
+    Some(round)
+}
+
+#[cfg(test)]
+fn sparse_mle_factor_as_univariate<C: ArkConfig>(
+    poly: &PolyVariant<C::F>,
+    input_num_vars: usize,
+    tail_index: usize,
+) -> Option<[C::F; 2]> {
+    let PolyVariant::SparseMle { num_vars, evals } = poly else {
+        return None;
+    };
+    if *num_vars != input_num_vars {
+        return None;
+    }
+    let base_idx = tail_index.checked_shl(1)?;
+    let mut v0 = C::F::zero();
+    let mut v1 = C::F::zero();
+    for (i, val) in evals {
+        if *i == base_idx {
+            v0 += *val;
+        } else if *i == (base_idx | 1) {
+            v1 += *val;
+        }
+    }
+    Some([v0, v1 - v0])
+}
+
+fn mul_coeffs_truncated<F: Field>(left: &[F], right: &[F; 2], max_len: usize) -> Vec<F> {
+    let mut result = vec![F::zero(); (left.len() + 1).min(max_len).max(1)];
+    for (i, coeff) in left.iter().enumerate() {
+        if i < result.len() {
+            result[i] += *coeff * right[0];
+        }
+        if i + 1 < result.len() {
+            result[i + 1] += *coeff * right[1];
+        }
+    }
+    result
 }
 
 fn reduce_univariate_poly_sum<C: ArkConfig>(
@@ -5280,5 +5460,55 @@ mod value_tests {
             assert_eq!(result, a.0);
             Ok(())
         });
+    }
+
+    #[test]
+    fn sparse_reduce_factor_univariate() {
+        // tail_index 1 -> base_idx = 1<<1 = 2; v0 = entries at idx 2 (5+1), v1 = idx 3 (7).
+        let poly = PolyVariant::<Fr>::SparseMle {
+            num_vars: 3,
+            evals: vec![
+                (2, Fr::from(5u64)),
+                (3, Fr::from(7u64)),
+                (2, Fr::from(1u64)),
+            ],
+        };
+        assert_eq!(
+            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 3, 1),
+            Some([Fr::from(6u64), Fr::from(1u64)])
+        );
+        assert_eq!(
+            sparse_mle_factor_as_univariate::<TestConfig>(&poly, 4, 1),
+            None
+        );
+    }
+
+    #[test]
+    fn sparse_reduce_matches_generic() {
+        // A single SparseMle factor forces the sparse fused path; the round poly
+        // must match the trusted generic per-(t, tail) evaluate_mv oracle.
+        let evals = vec![
+            (0, Fr::from(2u64)),
+            (3, Fr::from(5u64)),
+            (5, Fr::from(7u64)),
+        ];
+        let vp = VirtualPolynomial::from_poly(PolyVariant::SparseMle { num_vars: 3, evals });
+        let shape = SelectedEvalShape::new(3, 1, 1);
+        let round = hypercube_reduce_selected_mle_products::<TestConfig>(&vp, 2, shape)
+            .expect("sparse fast path must fire");
+        for t_u in [0u64, 1, 2, 3, 4] {
+            let t = Fr::from(t_u);
+            let mut expected = Fr::zero();
+            for tail in 0..4usize {
+                let b0 = if tail & 1 == 1 { Fr::one() } else { Fr::zero() };
+                let b1 = if (tail >> 1) & 1 == 1 {
+                    Fr::one()
+                } else {
+                    Fr::zero()
+                };
+                expected += vp.evaluate_mv(&[t, b0, b1]).unwrap();
+            }
+            assert_eq!(round.evaluate_uv(&t), expected, "round mismatch at t={t_u}");
+        }
     }
 }
