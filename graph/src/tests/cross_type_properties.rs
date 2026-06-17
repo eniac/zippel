@@ -224,3 +224,70 @@ mod scalar_g1_properties {
         }
     }
 }
+
+#[cfg(test)]
+mod mle_differential_tests {
+    use crate::tests::test_helpers::*;
+    use ark_poly::DenseMultilinearExtension;
+    use backend::{ATyp, Value, poly_variant::PolyVariant, virtual_polynomial::VirtualPolynomial};
+    use lang::ast::UModule;
+    use lang::id::Vid;
+    use share::Ctx;
+
+    type C = TestConfig;
+    type Fr = <C as backend::ArkConfig>::F;
+
+    #[test]
+    fn test_mle_app_evaluation_differential() {
+        let src = r#"
+            fn f<F: Field>(public p: Mle<F, 2>, public x: F) -> Mle<F, 1> {
+                p(x)
+            }
+        "#;
+        let m = UModule::from_str(src)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let dags = crate::UDags::<C>::from_module(m).unwrap();
+        let dag = &dags[0];
+
+        let mut rng = ark_std::test_rng();
+        // Generate random 4 evaluations
+        let v0 = Fr::from(10);
+        let v1 = Fr::from(20);
+        let v2 = Fr::from(30);
+        let v3 = Fr::from(40);
+
+        let mle_poly = PolyVariant::DenseMle(DenseMultilinearExtension::from_evaluations_vec(
+            2,
+            vec![v0, v1, v2, v3],
+        ));
+        let p_val = Value::Poly(VirtualPolynomial::from_poly(mle_poly));
+
+        let x_val = Value::<C>::random(&mut rng, &ATyp::scalar());
+        let x_scalar = match &x_val {
+            Value::Scalar(s) => *s,
+            _ => unreachable!(),
+        };
+
+        // Expected output is a 2-element vector:
+        // [v0 + (v2 - v0)*x, v1 + (v3 - v1)*x]
+        let e0 = v0 + (v2 - v0) * x_scalar;
+        let e1 = v1 + (v3 - v1) * x_scalar;
+
+        let expected_result = Value::VecScalar(vec![e0, e1]);
+
+        let mut inputs = test_inputs();
+        inputs.insert(&Vid::from("p"), &p_val);
+        inputs.insert(&Vid::from("x"), &x_val);
+
+        let actual_result = execute_graph(dag, inputs).unwrap();
+
+        assert!(
+            values_equal(&actual_result, &expected_result),
+            "Compiled MLE evaluation should match expected mathematical fold result. Got: {:?}, Expected: {:?}",
+            actual_result,
+            expected_result
+        );
+    }
+}

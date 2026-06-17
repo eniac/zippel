@@ -29,7 +29,7 @@ pub use pref::PRef;
 use ark_poly::{DenseMultilinearExtension, DenseUVPolynomial, univariate::DensePolynomial};
 use backend::{ATyp, ArkConfig, PolyVariant, Value, VirtualPolynomial};
 use lang::ast::{Arg, BinOp, CBody, CExp, CModule, CSig};
-use lang::id::{Tid, Vid};
+use lang::id::{Fresh, Tid, Vid};
 use lang::typ::infer::{TypeError, Typeable};
 use lang::typ::range::CRange;
 use lang::typ::{CKind, CTyp, CTyps, Distribution, Nothing, Qualifier};
@@ -2205,11 +2205,16 @@ impl<C: HasOpFactory> UDag<C> {
                             assert_eq!(param_types.len(), 1);
 
                             // https://github.com/microsoft/Nova/blob/ad4d77ac89d6bbe9ef943056806e65ceb4ba3b3e/src/spartan/polys/multilinear.rs#L58
+                            let mid = 1_usize << (*n - 1);
+                            let end = 1_usize << *n;
+                            let mut bound_vars = vctx.keys();
+                            let coef_var = Vid::fresh(&format!("__coef_{}", fid), &mut bound_vars);
+
                             let mle_l =
-                                CExp::ram(CExp::var(&fid), CExp::range(CRange::new(0, n - 1)));
+                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(0, mid)));
 
                             let mle_r =
-                                CExp::ram(CExp::var(&fid), CExp::range(CRange::new(n - 1, *n)));
+                                CExp::ram(CExp::var(&coef_var), CExp::range(CRange::new(mid, end)));
 
                             // mle_l + (mle_r - mle_l) * params[0]
                             let fold = CExp::add(
@@ -2217,8 +2222,10 @@ impl<C: HasOpFactory> UDag<C> {
                                 CExp::mul(params[0].clone(), CExp::sub(mle_r, mle_l)),
                             );
 
+                            let bound_exp = CExp::letx(coef_var, CExp::coef(CExp::var(&fid)), fold);
+
                             // Trampoline
-                            exp = fold;
+                            exp = bound_exp;
                             continue;
                         }
                         _ => {

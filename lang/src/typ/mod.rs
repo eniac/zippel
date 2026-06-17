@@ -17,6 +17,7 @@ pub use ark::Ark;
 pub use distribution::Distribution;
 pub use infer::{TypeError, Typeable};
 pub use kind::{CKind, Kind, UKind};
+pub use lub::LubError;
 pub use nothing::Nothing;
 pub use qualifier::Qualifier;
 pub use range::{CRange, Range, RangeError, RangeTraversal};
@@ -163,12 +164,28 @@ impl<N> GTyp<N> {
                     None
                 }
             }
-            Typ::Fin(_) =>
-            // Find the first field and return It
-            {
-                ctx.iter()
-                    .find(|(_, k)| k.is_scalar())
+            Typ::Fin(_) => {
+                let fields: Vec<_> = ctx
+                    .iter()
+                    .filter(|(_, k)| matches!(k, Kind::Field))
                     .map(|(b, _)| b.clone())
+                    .collect();
+                if fields.len() == 1 {
+                    Some(fields[0].clone())
+                } else if fields.is_empty() {
+                    let scalars: Vec<_> = ctx
+                        .iter()
+                        .filter(|(_, k)| matches!(k, Kind::Scalar(_)))
+                        .map(|(b, _)| b.clone())
+                        .collect();
+                    if scalars.len() == 1 {
+                        Some(scalars[0].clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
             _ => None,
         }
