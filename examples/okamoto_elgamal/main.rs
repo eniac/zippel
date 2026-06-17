@@ -9,8 +9,10 @@ use zippel::*;
 mod common;
 
 fn main() {
-    println!("=== Okamoto (ArkBls12_381) ===");
-    let args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
+    println!("=== Okamoto ElGamal (ArkBls12_381) ===");
+    let args = ZippelArgs::new(PathBuf::from(
+        "examples/okamoto_elgamal/okamoto_elgamal.zippel",
+    ));
     let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     handler.compile(&Ctx::new());
 
@@ -18,7 +20,9 @@ fn main() {
     common::run_prover_and_verify(&mut handler, inputs);
 
     println!("\n--- Static Analysis ---");
-    let analysis_args = ZippelArgs::new(PathBuf::from("examples/okamoto/okamoto.zippel"));
+    let analysis_args = ZippelArgs::new(PathBuf::from(
+        "examples/okamoto_elgamal/okamoto_elgamal.zippel",
+    ));
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     analysis_handler.compile(&Ctx::new());
 
@@ -40,13 +44,15 @@ fn prover_create_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let g = G1::rand(&mut rng);
     let h = G1::rand(&mut rng);
 
-    let comm = g * x + h * r;
+    let c1 = g * r;
+    let c2 = h * r + g * x;
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
         (Vid("x".to_string()), Value::Scalar(x)),
         (Vid("r".to_string()), Value::Scalar(r)),
         (Vid("g".to_string()), Value::G1(g)),
         (Vid("h".to_string()), Value::G1(h)),
-        (Vid("comm".to_string()), Value::G1(comm)),
+        (Vid("c1".to_string()), Value::G1(c1)),
+        (Vid("c2".to_string()), Value::G1(c2)),
     ])
 }

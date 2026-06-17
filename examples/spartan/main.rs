@@ -8,12 +8,9 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::Path,
-    thread,
     time::{Duration, Instant},
 };
 use zippel::*;
-
-const WORKER_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 struct RunOpts {
@@ -81,16 +78,6 @@ fn parse_args() -> RunOpts {
     }
 }
 
-fn main() {
-    thread::Builder::new()
-        .name("spartan-main".into())
-        .stack_size(WORKER_STACK_BYTES)
-        .spawn(run)
-        .expect("failed to spawn worker thread")
-        .join()
-        .expect("spartan worker thread panicked");
-}
-
 #[derive(Clone, Debug)]
 struct RunResult {
     m: usize,
@@ -100,7 +87,7 @@ struct RunResult {
     passed: bool,
 }
 
-fn run() {
+fn main() {
     let opts = parse_args();
 
     println!("=== Spartan-NIZK (PIOP + Hyrax PCS, ArkCurve25519) ===");

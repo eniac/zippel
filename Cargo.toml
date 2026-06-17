@@ -39,6 +39,7 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 petgraph = "0.7.1"
+libtest-mimic = "0.8"
 
 [patch.crates-io]
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
@@ -53,8 +54,14 @@ ark-relations = { git = "https://github.com/arkworks-rs/snark.git", branch = "re
 ark-snark = { git = "https://github.com/arkworks-rs/snark.git", branch = "release/0.6.0" }
 ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", branch = "release/0.6.0" }
 
+[[test]]
+name = "completeness_examples"
+test = true
+harness = false
+
 [[bench]]
 name = "graph_execution"
+test = true
 harness = false
 
 [[bench]]
@@ -313,3 +320,8 @@ path = "examples/schnorr_3round/main.rs"
 test = false
 harness = false
 
+[[example]]
+name = "okamoto_elgamal"
+path = "examples/okamoto_elgamal/main.rs"
+test = false
+harness = false

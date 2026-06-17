@@ -74,7 +74,7 @@ where
 
 #[derive(Error, PartialEq, Debug)]
 pub enum ModuleError {
-    #[error("Overlaping declarations: {0}")]
+    #[error("Overlapping declarations: {0}")]
     OverlapDeclaration(CSig),
     #[error("Declaration error: {0}")]
     DeclarationError(#[from] DeclError),
@@ -362,4 +362,58 @@ fn typed_let_binding() {
     assert_eq!(umod.len(), 1);
     let cmod = umod.concretize(&Ctx::new()).unwrap();
     assert_eq!(cmod.len(), 1);
+}
+
+#[test]
+fn test_concretize_size_var() {
+    let ex = "fn foo<S: Size, F: Field>(public a: [F; S]) -> F { a[0] }";
+    let umod = UModule::from_str(ex).unwrap();
+    assert_eq!(umod.len(), 1);
+
+    let mut sizes = Ctx::new();
+    sizes.insert(&Tid::from("S"), &5);
+
+    let cmod = umod.concretize(&sizes).unwrap();
+    assert_eq!(cmod.len(), 1);
+
+    let (sig, _) = cmod.iter().next().unwrap();
+    let arg_typ = &sig.args.0[0].typ;
+    assert_eq!(
+        arg_typ.clone(),
+        crate::typ::Typ::Vec(Box::new(crate::typ::Typ::base(&Tid::from("F"))), 5)
+    );
+}
+
+#[test]
+fn test_module_round_trip() {
+    let ex = concat!(
+        "fn f<F: Field>(public a: F) -> F {\n",
+        "    a\n",
+        "}\n",
+        "fn g<F: Field>(public a: F) -> F {\n",
+        "    a\n",
+        "}\n"
+    );
+    let umod1 = UModule::from_str(ex).unwrap();
+    let formatted = umod1.to_string();
+    let umod2 = UModule::from_str(&formatted).unwrap();
+    assert_eq!(umod1, umod2);
+}
+
+#[test]
+fn test_module_overlap_error_message() {
+    let ex = concat!(
+        "fn sum<N: 1..2, F: Field>(public a: [F; N]) -> F {\n",
+        "    a[0]\n",
+        "}\n",
+        "fn sum<F: Field>(public a: [F; 1]) -> F {\n",
+        "    a[0]\n",
+        "}\n"
+    );
+    let umod = UModule::from_str(ex).unwrap();
+    let res = umod.concretize(&Ctx::new());
+    assert!(res.is_err());
+    let err_msg = res.unwrap_err().to_string();
+    assert!(err_msg.contains("Overlapping declarations"));
+    assert!(err_msg.contains("sum"));
 }

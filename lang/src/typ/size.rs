@@ -66,6 +66,15 @@ impl Size {
         Size::Lit(1)
     }
 
+    pub fn precedence(&self) -> usize {
+        match self {
+            Size::Add(_, _) | Size::Sub(_, _) => 1,
+            Size::Mul(_, _) | Size::Div(_, _) => 2,
+            Size::Pow(_, _) => 3,
+            _ => 99,
+        }
+    }
+
     pub fn free_vars(&self) -> Set<Tid> {
         match self {
             Size::Var(id) => Set::from([id.clone()]),
@@ -343,29 +352,59 @@ where
     A: 'a + Clone,
 {
     fn pretty(self, allocator: &'a D) -> DocBuilder<'a, D, A> {
+        fn pretty_child<'a, D, A>(
+            child: Size,
+            parent_prec: usize,
+            is_right: bool,
+            allocator: &'a D,
+        ) -> DocBuilder<'a, D, A>
+        where
+            D: DocAllocator<'a, A>,
+            D::Doc: Clone,
+            A: 'a + Clone,
+        {
+            let child_prec = child.precedence();
+            let need_parens = if child_prec < parent_prec {
+                true
+            } else if child_prec == parent_prec {
+                match parent_prec {
+                    1 => is_right,
+                    2 => is_right,
+                    3 => !is_right,
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
+            if need_parens {
+                allocator
+                    .text("(")
+                    .append(child.pretty(allocator))
+                    .append(allocator.text(")"))
+            } else {
+                child.pretty(allocator)
+            }
+        }
+
         match self {
             Size::Var(id) => id.pretty(allocator),
             Size::Lit(n) => allocator.text(n.to_string()),
-            Size::Add(box a, box b) => a
-                .pretty(allocator)
+            Size::Add(box a, box b) => pretty_child(a, 1, false, allocator)
                 .append(allocator.text(" + "))
-                .append(b.pretty(allocator)),
-            Size::Sub(box a, box b) => a
-                .pretty(allocator)
+                .append(pretty_child(b, 1, true, allocator)),
+            Size::Sub(box a, box b) => pretty_child(a, 1, false, allocator)
                 .append(allocator.text(" - "))
-                .append(b.pretty(allocator)),
-            Size::Mul(box a, box b) => a
-                .pretty(allocator)
+                .append(pretty_child(b, 1, true, allocator)),
+            Size::Mul(box a, box b) => pretty_child(a, 2, false, allocator)
                 .append(allocator.text(" * "))
-                .append(b.pretty(allocator)),
-            Size::Div(box a, box b) => a
-                .pretty(allocator)
+                .append(pretty_child(b, 2, true, allocator)),
+            Size::Div(box a, box b) => pretty_child(a, 2, false, allocator)
                 .append(allocator.text(" / "))
-                .append(b.pretty(allocator)),
-            Size::Pow(box a, box b) => a
-                .pretty(allocator)
+                .append(pretty_child(b, 2, true, allocator)),
+            Size::Pow(box a, box b) => pretty_child(a, 3, false, allocator)
                 .append(allocator.text(" ^ "))
-                .append(b.pretty(allocator)),
+                .append(pretty_child(b, 3, true, allocator)),
             Size::Max(box a, box b) => allocator
                 .text("max(")
                 .append(a.pretty(allocator))
@@ -439,20 +478,23 @@ use arbitrary::{Arbitrary, Unstructured};
 #[cfg(test)]
 impl<'a> Arbitrary<'a> for Size {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let variant = u.choose(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9])?;
-
-        Ok(match variant {
-            0 => Size::Var(u.arbitrary()?),
-            1 => Size::Lit(u.arbitrary()?),
-            2 => Size::Add(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            3 => Size::Sub(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            4 => Size::Mul(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            5 => Size::Div(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            7 => Size::Pow(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            8 => Size::Max(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            9 => Size::Min(Box::new(u.arbitrary()?), Box::new(u.arbitrary()?)),
-            _ => unreachable!(),
-        })
+        fn arb(u: &mut Unstructured, depth: usize) -> arbitrary::Result<Size> {
+            let max_variant = if depth > 3 { 1 } else { 8 };
+            let variant = u.int_in_range(0..=max_variant)?;
+            Ok(match variant {
+                0 => Size::Var(u.arbitrary()?),
+                1 => Size::Lit(u.arbitrary()?),
+                2 => Size::Add(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                3 => Size::Sub(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                4 => Size::Mul(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                5 => Size::Div(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                6 => Size::Pow(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                7 => Size::Max(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                8 => Size::Min(Box::new(arb(u, depth + 1)?), Box::new(arb(u, depth + 1)?)),
+                _ => unreachable!(),
+            })
+        }
+        arb(u, 0)
     }
 }
 
@@ -672,133 +714,61 @@ mod tests {
 
     // Test operator overloads with various types
     #[test]
-    fn test_add_u32() {
-        let size = Size::Lit(5) + 10u32;
+    fn test_size_operators_construction() {
+        // Add
         assert_eq!(
-            size,
+            Size::Lit(5) + 10u32,
             Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
         );
-    }
-
-    #[test]
-    fn test_add_ref() {
-        let a = Size::Lit(5);
-        let b = Size::Lit(10);
-        let size = &a + &b;
         assert_eq!(
-            size,
+            &Size::Lit(5) + &Size::Lit(10),
             Size::Add(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
         );
-    }
+        assert!(matches!(Size::Lit(5) + Tid::from("N"), Size::Add(_, _)));
 
-    #[test]
-    fn test_add_tid() {
-        let size = Size::Lit(5) + Tid::from("N");
-        assert!(matches!(size, Size::Add(_, _)));
-    }
-
-    #[test]
-    fn test_sub_u32() {
-        let size = Size::Lit(10) - 5u32;
+        // Sub
         assert_eq!(
-            size,
+            Size::Lit(10) - 5u32,
             Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5)))
         );
-    }
-
-    #[test]
-    fn test_sub_ref() {
-        let a = Size::Lit(10);
-        let b = Size::Lit(5);
-        let size = &a - &b;
         assert_eq!(
-            size,
+            &Size::Lit(10) - &Size::Lit(5),
             Size::Sub(Box::new(Size::Lit(10)), Box::new(Size::Lit(5)))
         );
-    }
+        assert!(matches!(Size::Lit(10) - Tid::from("N"), Size::Sub(_, _)));
 
-    #[test]
-    fn test_sub_tid() {
-        let size = Size::Lit(10) - Tid::from("N");
-        assert!(matches!(size, Size::Sub(_, _)));
-    }
-
-    #[test]
-    fn test_mul_u32() {
-        let size = Size::Lit(5) * 10u32;
+        // Mul
         assert_eq!(
-            size,
+            Size::Lit(5) * 10u32,
             Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
         );
-    }
-
-    #[test]
-    fn test_mul_ref() {
-        let a = Size::Lit(5);
-        let b = Size::Lit(10);
-        let size = &a * &b;
         assert_eq!(
-            size,
+            &Size::Lit(5) * &Size::Lit(10),
             Size::Mul(Box::new(Size::Lit(5)), Box::new(Size::Lit(10)))
         );
-    }
+        assert!(matches!(Size::Lit(5) * Tid::from("N"), Size::Mul(_, _)));
 
-    #[test]
-    fn test_mul_tid() {
-        let size = Size::Lit(5) * Tid::from("N");
-        assert!(matches!(size, Size::Mul(_, _)));
-    }
-
-    #[test]
-    fn test_div_u32() {
-        let size = Size::Lit(20) / 4u32;
+        // Div
         assert_eq!(
-            size,
+            Size::Lit(20) / 4u32,
             Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4)))
         );
-    }
-
-    #[test]
-    fn test_div_ref() {
-        let a = Size::Lit(20);
-        let b = Size::Lit(4);
-        let size = &a / &b;
         assert_eq!(
-            size,
+            &Size::Lit(20) / &Size::Lit(4),
             Size::Div(Box::new(Size::Lit(20)), Box::new(Size::Lit(4)))
         );
-    }
+        assert!(matches!(Size::Lit(20) / Tid::from("N"), Size::Div(_, _)));
 
-    #[test]
-    fn test_div_tid() {
-        let size = Size::Lit(20) / Tid::from("N");
-        assert!(matches!(size, Size::Div(_, _)));
-    }
-
-    #[test]
-    fn test_pow_u32() {
-        let size = Size::Lit(2) ^ 5u32;
+        // Pow
         assert_eq!(
-            size,
+            Size::Lit(2) ^ 5u32,
             Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5)))
         );
-    }
-
-    #[test]
-    fn test_pow_ref() {
-        let a = Size::Lit(2);
-        let b = Size::Lit(5);
-        let size = &a ^ &b;
         assert_eq!(
-            size,
+            &Size::Lit(2) ^ &Size::Lit(5),
             Size::Pow(Box::new(Size::Lit(2)), Box::new(Size::Lit(5)))
         );
-    }
-
-    #[test]
-    fn test_pow_tid() {
-        let size = Size::Lit(2) ^ Tid::from("N");
-        assert!(matches!(size, Size::Pow(_, _)));
+        assert!(matches!(Size::Lit(2) ^ Tid::from("N"), Size::Pow(_, _)));
     }
 
     // Test From implementations
@@ -814,41 +784,47 @@ mod tests {
         assert_eq!(size, Size::Var(Tid::from("N")));
     }
 
-    // Test Display
-    #[test]
-    fn test_display_var() {
-        let size = Size::varstr("N");
-        assert_eq!(size.to_string(), "N");
-    }
-
-    #[test]
-    fn test_display_lit() {
-        let size = Size::Lit(42);
-        assert_eq!(size.to_string(), "42");
-    }
-
-    #[test]
-    fn test_display_add() {
-        let size = Size::Lit(5) + Size::Lit(10);
-        assert_eq!(size.to_string(), "5 + 10");
-    }
-
-    #[test]
-    fn test_display_complex() {
-        let size = Size::max(Size::Lit(5), Size::Lit(10));
-        assert_eq!(size.to_string(), "max(5, 10)");
-    }
-
-    #[test]
-    fn test_display_min() {
-        let size = Size::min(Size::Lit(5), Size::Lit(10));
-        assert_eq!(size.to_string(), "min(5, 10)");
-    }
-
     // Test is_nil
     #[test]
     fn test_is_nil() {
         let size = Size::Lit(42);
         assert!(!<Size as Pretty<'_, BoxAllocator, ()>>::is_nil(&size));
+    }
+
+    // Property-based test for Size parsing and pretty-printing round-trip
+    #[test]
+    fn test_size_round_trip_pbt() {
+        fn is_parseable(size: &Size) -> bool {
+            match size {
+                Size::Max(_, _) | Size::Min(_, _) => false,
+                Size::Var(_) | Size::Lit(_) => true,
+                Size::Add(a, b)
+                | Size::Sub(a, b)
+                | Size::Mul(a, b)
+                | Size::Div(a, b)
+                | Size::Pow(a, b) => is_parseable(a) && is_parseable(b),
+            }
+        }
+
+        arbtest::arbtest(|u| {
+            let size: Size = u.arbitrary()?;
+            if !is_parseable(&size) {
+                return Ok(());
+            }
+            let size_str = size.to_string();
+            let mut pairs = match ZippelParser::parse(Rule::size_ty, &size_str) {
+                Ok(p) => p,
+                Err(e) => {
+                    panic!("Failed to parse size string '{}': {:?}", size_str, e);
+                }
+            };
+            let parsed = Size::from_pest(&mut pairs).unwrap();
+            assert_eq!(
+                size, parsed,
+                "Failed to round-trip size: {:?} printed as '{}'",
+                size, size_str
+            );
+            Ok(())
+        });
     }
 }

@@ -1,8 +1,0 @@
-proto repro<G: Group, F: Scalar<G>>(private coeffs: [F; 2], public s: [F; 2], public g: G) where g == g {
-    let poly_f = poly(coeffs);
-    
-    // Panics during the comprehension / reduce
-    let g_poly = reduce(*, [poly_f - r for r in s]);
-    
-    verify(g == g)
-}

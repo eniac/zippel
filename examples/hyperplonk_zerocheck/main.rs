@@ -8,7 +8,7 @@ use backend::{ArkBls12_381, ArkConfig, Value};
 use lang::id::{Tid, Vid};
 use rand::Rng;
 use share::Ctx;
-use std::{path::PathBuf, thread, time::Instant};
+use std::{path::PathBuf, time::Instant};
 use zippel::*;
 
 // ZeroCheck dimension. The proto is parametric over s = log2(num_points);
@@ -17,19 +17,7 @@ use zippel::*;
 const S: usize = 2;
 const NUM_POINTS: usize = 1 << S; // |B_s| = 2^S
 
-const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
-
 fn main() {
-    thread::Builder::new()
-        .name("hyperplonk-zerocheck".into())
-        .stack_size(WORKER_STACK_BYTES)
-        .spawn(run)
-        .expect("failed to spawn worker thread")
-        .join()
-        .expect("worker thread panicked");
-}
-
-fn run() {
     let zippel_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples/hyperplonk_zerocheck/hyperplonk_zerocheck.zippel");
 

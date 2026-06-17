@@ -3,8 +3,11 @@ use backend::{ArkConfig, ArkSecp256k1, Value};
 use lang::id::Vid;
 use share::Ctx;
 use std::ops::Mul;
-use std::{path::PathBuf, time::Instant};
+use std::path::PathBuf;
 use zippel::*;
+
+#[path = "../common/analysis.rs"]
+mod common;
 
 fn main() {
     println!("=== Pedersen Equality (ArkSecp256k1) ===");
@@ -13,49 +16,15 @@ fn main() {
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
-    let prover_scheduled = handler.default_schedule_prover();
-    let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
-    let prover_elapsed = prover_start.elapsed();
-    let proof_bytes = proof_size_bytes::<ArkSecp256k1>(&proof);
-    println!("Prover time:    {prover_elapsed:.2?}");
-    println!(
-        "Proof size:     {proof_bytes} bytes ({} elements)",
-        proof.len()
-    );
+    common::run_prover_and_verify(&mut handler, inputs);
 
-    let verifier_scheduled = handler.default_schedule_verifier();
-    let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(verifier_scheduled, proof)
-        .expect("run_verifier failed");
-    let verifier_elapsed = verifier_start.elapsed();
-    let result = check_verification(verifier_result);
-    println!("Verifier time:  {verifier_elapsed:.2?}");
-    if result.passed {
-        println!("Verification:   ✓ PASSED");
-    } else {
-        println!("Verification:   ✗ FAILED");
-        std::process::exit(1);
-    }
-
-    // Static analysis (completeness & ZK)
     println!("\n--- Static Analysis ---");
     let analysis_args = ZippelArgs::new(PathBuf::from("examples/pedersen_eq/pedersen_eq.zippel"));
     let mut analysis_handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(analysis_args);
-    let analysis = analysis_handler.minimal_analysis();
-    match &analysis.completeness {
-        Ok(()) => println!("Completeness:   ✓"),
-        Err(e) => println!("Completeness:   ✗ {}", e),
-    }
-    println!("Completeness time:  {:.2?}", analysis.completeness_time);
-    match &analysis.zk {
-        Ok(()) => println!("ZK:             ✓"),
-        Err(e) => println!("ZK:             ✗ {}", e),
-    }
-    println!("ZK time:            {:.2?}", analysis.zk_time);
+    analysis_handler.compile(&Ctx::new());
+
+    common::time_analysis!("Completeness", analysis_handler.analyze_completeness());
+    common::time_analysis!("ZK", analysis_handler.analyze_knowledge());
 }
 
 fn prover_create_inputs() -> Ctx<Vid, Value<ArkSecp256k1>> {

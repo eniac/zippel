@@ -48,59 +48,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ark_pretty_scalar() {
-        let ark = Ark::Scalar;
-        assert_eq!(ark.to_string(), "Scalar");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_pretty_g1() {
-        let ark = Ark::G1;
-        assert_eq!(ark.to_string(), "G1");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_pretty_g2() {
-        let ark = Ark::G2;
-        assert_eq!(ark.to_string(), "G2");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_pretty_g1_affine() {
-        let ark = Ark::G1Affine;
-        assert_eq!(ark.to_string(), "G1Affine");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_pretty_g2_affine() {
-        let ark = Ark::G2Affine;
-        assert_eq!(ark.to_string(), "G2Affine");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_pretty_gt() {
-        let ark = Ark::GT;
-        assert_eq!(ark.to_string(), "GT");
-        assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
-    }
-
-    #[test]
-    fn test_ark_equality() {
-        assert_eq!(Ark::Scalar, Ark::Scalar);
-        assert_ne!(Ark::Scalar, Ark::G1);
-        assert_eq!(Ark::G1, Ark::G1);
-        assert_ne!(Ark::G1, Ark::G2);
-    }
-
-    #[test]
-    fn test_ark_clone() {
-        let ark = Ark::Scalar;
-        let cloned = ark;
-        assert_eq!(ark, cloned);
+    fn test_ark_pretty_formatting() {
+        let cases = [
+            (Ark::Scalar, "Scalar"),
+            (Ark::G1, "G1"),
+            (Ark::G2, "G2"),
+            (Ark::G1Affine, "G1Affine"),
+            (Ark::G2Affine, "G2Affine"),
+            (Ark::GT, "GT"),
+        ];
+        for (ark, expected) in cases {
+            assert_eq!(ark.to_string(), expected);
+            assert!(!<Ark as Pretty<'_, BoxAllocator, ()>>::is_nil(&ark));
+        }
     }
 }

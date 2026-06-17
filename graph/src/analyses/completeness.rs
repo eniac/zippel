@@ -1,10 +1,8 @@
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
-use lang::ast::BinOp;
 use share::Set;
 
 use crate::DQDag;
-use crate::Op;
 use crate::PRef;
 use crate::Ref;
 use crate::analyses::TransClos;
@@ -18,15 +16,7 @@ use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 pub struct CompletenessAnalysis<C: ArkConfig> {
     pub prover: GroebnerResult<C, GrevLexTerm>,
     pub verifier: GroebnerResult<C, GrevLexTerm>,
-    /// Verifier transitive closure, retained for `extract_locals` (elimination-
-    /// ordered local extractors) in `run`.
-    verifier_tc: TransClos<C>,
-    /// Verifier closure with `verify`-assertion (`Op::Bin(Equ,..)`) entries
-    /// neutralised to `Op::Ref`, built on an independent clone of the shared
-    /// `GroebnerBuilder` (identical starting state) so its witness PRefs
-    /// coincide with `verifier`. Its basis is the honest verifier computation
-    /// facts (no assertions), incl. the polynomial-division convolution.
-    verifier_comp: GroebnerResult<C, GrevLexTerm>,
+    verifier_locals: GroebnerResult<C, GrevLexTerm>,
 }
 
 impl<C: HasOpFactory> CompletenessAnalysis<C> {
@@ -40,36 +30,22 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         let rel_result = builder.build(TransClos::relation(dag));
         prover_result.merge(&rel_result);
 
+        // inline the prover computation and spec
         let transcript_refs: Set<Ref> = dag.transcript_nodes().into_iter().map(Ref::new).collect();
         prover_result.inline(&transcript_refs);
 
+        // inline the verifier's computation
         let verifier_tc = TransClos::verifier(dag);
+        let mut verifier_locals = extract_locals(&builder, &verifier_tc);
+        verifier_locals.inline(&Set::new());
 
-        // Build the Equ-stripped computation closure on an independent CLONE of
-        // the builder so the original's witness/sentinel name counters are not
-        // advanced: `verifier_result` (built on `builder`) must allocate the
-        // same witness PRefs that `extract_locals` (a fresh builder) will, and
-        // `verifier_comp` (the clone, starting from the identical builder state)
-        // allocates witnesses identical to `verifier_result`. Each build is a
-        // fresh `div_wit` miss, so the division convolution lands in both bases
-        // referencing the very witnesses the verify rows use.
-        let mut comp_builder = builder.clone();
-        let mut verifier_no_equ = verifier_tc.clone();
-        for entry in &mut verifier_no_equ.clos {
-            if let Op::Bin(BinOp::Equ, ..) = entry.1 {
-                let pr = entry.0.clone();
-                entry.1 = Op::Ref(pr.reference, pr.typ.clone());
-            }
-        }
-        let verifier_comp = comp_builder.build(verifier_no_equ);
-
-        let verifier_result = builder.build(verifier_tc.clone());
+        let mut verifier_result = builder.build(verifier_tc.clone());
+        verifier_result.inline(&Set::new());
 
         Self {
             prover: prover_result,
             verifier: verifier_result,
-            verifier_comp,
-            verifier_tc,
+            verifier_locals,
         }
     }
 
@@ -78,23 +54,10 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// W is the packed monomial width. Caller must ensure W is appropriate
     /// for the problem size (W=128 supports up to 1023 variables).
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        // Carry the verifier's honest computation facts as prover hypotheses so
-        // verifier assertions reduce against the honest execution (protocols
-        // where the verifier recomputes public values rather than receiving
-        // them via the transcript). Two complementary, assertion-free sources,
-        // both built so their witness PRefs coincide with `self.verifier`:
-        //   * `extract_locals` expresses verifier-local intermediates in terms
-        //     of arguments via an elimination ordering.
-        //   * `verifier_comp.basis` carries the raw computation rows, including
-        //     the polynomial-division convolution `a = b·q_wit + r_wit` whose
-        //     multi-variable leading term `extract_locals` cannot isolate.
-        let local_extractors = extract_locals(&self.verifier_tc);
-        for (_, lex_poly) in &local_extractors {
-            self.prover.basis.push(lex_poly.clone());
-        }
-        for p in self.verifier_comp.basis.iter() {
+        for p in self.verifier_locals.basis.iter() {
             self.prover.basis.push(p.clone());
         }
+
         // The prover, relation, and verifier sub-projections are built
         // independently and can annotate the same DAG node-slot with divergent
         // type/qualifier/distribution metadata, which `PRef` identity — and thus
