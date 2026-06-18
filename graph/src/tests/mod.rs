@@ -1,6 +1,5 @@
 // Comprehensive test module for graph operations
 pub mod algebraic_properties;
-pub(crate) mod analyses;
 pub mod cross_type_properties;
 pub mod isomorphism_tests;
 pub mod node_tests;

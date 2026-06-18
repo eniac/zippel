@@ -5,7 +5,7 @@
 
 use ark_bls12_381::Fr;
 use graph::PRef;
-use graph::analyses::groebner::{GrevLexTerm, SparsePolynomial};
+use analyses::groebner::{GrevLexTerm, SparsePolynomial};
 
 #[path = "../benches/groebner_shared.rs"]
 mod shared;

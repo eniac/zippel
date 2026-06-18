@@ -1,5 +1,5 @@
-use crate::PRef;
-use crate::analyses::groebner::sparsepoly::SparsePolynomial;
+use graph::PRef;
+use crate::groebner::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
@@ -486,7 +486,7 @@ impl Monomial for GrevLexTerm {
     where
         Self: Sized,
     {
-        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_grevlex;
+        use crate::groebner::ark_gb_adapter::compute_reduced_gb_grevlex;
         compute_reduced_gb_grevlex::<F, W>(num_vars, input)
     }
 }
@@ -528,7 +528,7 @@ impl<E: ElimStrategy> Monomial for ElimMono<E> {
     where
         Self: Sized,
     {
-        use crate::analyses::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
+        use crate::groebner::ark_gb_adapter::compute_reduced_gb_with_elim;
         compute_reduced_gb_with_elim::<F, Self, W>(num_vars, input, E::eliminate_var)
     }
 }

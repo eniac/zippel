@@ -4,5 +4,5 @@ pub mod buchberger;
 pub(crate) mod legacy;
 pub mod regression;
 
-#[path = "../../../../../benches/groebner_shared.rs"]
+#[path = "../../../../benches/groebner_shared.rs"]
 pub(crate) mod shared;

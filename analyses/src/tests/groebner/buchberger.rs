@@ -16,11 +16,11 @@ use log::debug;
 use petgraph::graph::NodeIndex;
 use share::assert_deq;
 
-use crate::PRef;
-use crate::analyses::groebner::buchberger::GroebnerBasis;
-use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::analyses::groebner::sparsepoly::SparsePolynomial;
-use crate::analyses::knowledge::ElimTerm;
+use graph::PRef;
+use crate::groebner::buchberger::GroebnerBasis;
+use crate::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::groebner::sparsepoly::SparsePolynomial;
+use crate::knowledge::ElimTerm;
 use ark_ff::Field;
 
 fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(

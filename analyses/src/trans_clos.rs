@@ -1,4 +1,4 @@
-use crate::{DQDag, GOp, Node, Op, PRef, Ref, mk};
+use graph::{DQDag, GOp, Node, Op, PRef, Ref, mk};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use petgraph::graph::NodeIndex;
@@ -9,8 +9,8 @@ fn named_pref(
     dag: &DQDag<impl ArkConfig>,
     r: Ref,
     typ: backend::ATyp,
-    qualifier: crate::Qualifier,
-    distribution: crate::Distribution,
+    qualifier: lang::typ::Qualifier,
+    distribution: lang::typ::Distribution,
 ) -> PRef {
     let name = dag.find_var(r.node());
     PRef {
@@ -286,7 +286,7 @@ impl<C: ArkConfig + HasOpFactory> TransClos<C> {
     // Internal
     // ----------------------------------------------------------------
 
-    fn prefs_from_marker<A>(dag: &crate::Dag<C, A>, node: NodeIndex) -> Vec<PRef> {
+    fn prefs_from_marker<A>(dag: &graph::Dag<C, A>, node: NodeIndex) -> Vec<PRef> {
         let mut args: Vec<NodeIndex> = dag.nodes_from(node).filter(|n| dag[*n].is_arg()).collect();
         args.sort();
         args.into_iter()
@@ -446,10 +446,8 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        DQDag, UDags,
-        analyses::{QualifierPropagation, UniformityPropagation},
-    };
+    use graph::{DQDag, UDags};
+    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use lang::ast::UModule;
     use share::{Ctx, unwrap};

@@ -10,7 +10,7 @@ use ark_ff::Field;
 use log::debug;
 use rayon::prelude::*;
 
-use crate::analyses::groebner::{GroebnerBasis, Monomial, SparsePolynomial};
+use crate::groebner::{GroebnerBasis, Monomial, SparsePolynomial};
 
 impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
     /// Group-parallel pair selection used by [`Self::legacy_buchberger`].

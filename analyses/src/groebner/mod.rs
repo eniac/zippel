@@ -10,12 +10,9 @@ pub use sparsepoly::SparsePolynomial;
 
 pub(crate) mod ark_gb_adapter;
 
-#[cfg(test)]
-mod speedup_bench;
-
-use crate::analyses::TransClos;
-use crate::pref::PRef;
-use crate::{GOp, HOp, Op, Ref, mk};
+use crate::TransClos;
+use graph::pref::PRef;
+use graph::{GOp, HOp, Op, Ref, mk};
 use lang::ast::BinOp;
 use lang::id::Vid;
 
@@ -281,7 +278,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
             .filter(|p| !p.is_zero())
             .cloned()
             .collect();
-        crate::analyses::groebner::sparsepoly::export_polys_to_python(&polys, &self.prefs, path)
+        crate::groebner::sparsepoly::export_polys_to_python(&polys, &self.prefs, path)
     }
 
     /// Look up a Ref in the namespace. Panics if not found.
@@ -3237,7 +3234,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             .collect::<Option<_>>()?;
         let env: HashMap<Ref, std::sync::Arc<Value<C>>> = HashMap::new();
         let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
-        crate::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params)
+        graph::eval::eval_op_with_loop_params(op.get(), &env, &mut rng, &params)
             .ok()
             .map(|v| (*v).clone())
     }
@@ -3498,10 +3495,10 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 mod tests {
     use super::*;
     #[cfg(test)]
-    use crate::UDags;
-    use crate::analyses::TransClos;
+    use graph::UDags;
+    use crate::TransClos;
     #[cfg(test)]
-    use crate::analyses::{QualifierPropagation, UniformityPropagation};
+    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use backend::op::mk;
     #[cfg(test)]
@@ -3642,8 +3639,8 @@ mod tests {
 
     #[test]
     fn test_ref_vars_vpoly_expands_coefficients() {
-        use crate::PRef;
-        use crate::Ref;
+        use graph::PRef;
+        use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3673,8 +3670,8 @@ mod tests {
 
     #[test]
     fn test_ref_vars_mle_expands_evaluations() {
-        use crate::PRef;
-        use crate::Ref;
+        use graph::PRef;
+        use graph::Ref;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3699,7 +3696,7 @@ mod tests {
 
     #[test]
     fn test_add_op_poly_binds_coefficient_slots() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3730,7 +3727,7 @@ mod tests {
             Distribution::default(),
         );
         let op_poly: GOp<ArkBls12_381> = Op::Poly(mk::<ArkBls12_381>(Op::Ref(
-            crate::Ref::new(NodeIndex::new(0)),
+            graph::Ref::new(NodeIndex::new(0)),
             ATyp::VPoly(1, 2),
         )));
         gresult.register(&pref_p);
@@ -3748,7 +3745,7 @@ mod tests {
     #[test]
     fn test_add_op_coef_roundtrips_poly() {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3783,7 +3780,7 @@ mod tests {
         builder.add_op(
             pref_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(1, 2),
             ))),
             &mut gresult,
@@ -3799,7 +3796,7 @@ mod tests {
             Distribution::default(),
         );
         let ref_p: GOp<ArkBls12_381> =
-            Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
+            Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::VPoly(1, 2));
         builder.add_op(
             pref_c.clone(),
             Op::Coef(mk::<ArkBls12_381>(ref_p)),
@@ -3821,7 +3818,7 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_binds_hypercube_slots() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -3855,7 +3852,7 @@ mod tests {
         builder.add_op(
             pref_m.clone(),
             Op::Mle(mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(2),
             ))),
             &mut gresult,
@@ -3885,7 +3882,7 @@ mod tests {
 
     #[test]
     fn mle1_to_uni1_lift_converts_evals_to_coeffs() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3916,7 +3913,7 @@ mod tests {
 
     #[test]
     fn test_add_op_eval_univariate_batched() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -4022,7 +4019,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_univariate_batched_with_constants() {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
@@ -4056,7 +4053,7 @@ mod tests {
         builder.add_op(
             pref_p.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(1, 1),
             ))),
             &mut gresult,
@@ -4087,7 +4084,7 @@ mod tests {
         builder.add_op(
             pref_xs.clone(),
             Op::Poly(mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(2)),
+                graph::Ref::new(NodeIndex::new(2)),
                 ATyp::Uni(1),
             ))),
             &mut gresult,
@@ -4103,12 +4100,12 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
+                graph::Ref::new(NodeIndex::new(1)),
                 ATyp::VPoly(1, 1),
             )),
             None,
             Some(mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(3)),
+                graph::Ref::new(NodeIndex::new(3)),
                 ATyp::Uni(1),
             ))),
         );
@@ -4136,7 +4133,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_full_multivariate() {
         // VPoly(2, 2) has 6 coef slots; eval at Uni(2) => scalar (one slot).
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4174,12 +4171,12 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(2, 2),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
+                graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
         );
@@ -4203,7 +4200,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_vpoly_partial_multivariate() {
         // VPoly(3, 1) evaluated at Uni(1) => VPoly(2, 1) (2-var linear poly w/ 3 slots).
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4241,12 +4238,12 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::VPoly(3, 1),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
+                graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),
         );
@@ -4267,7 +4264,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_full_multivariate() {
         // Mle(2) has 4 eval slots; eval at Uni(2) => scalar.
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4305,12 +4302,12 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(2),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
+                graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(1),
             ))),
         );
@@ -4329,7 +4326,7 @@ mod tests {
     #[test]
     fn test_add_op_eval_mle_partial_multivariate() {
         // Mle(3) evaluated at Uni(1) => Mle(2) (4 slots).
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4367,12 +4364,12 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Evaluate(
             backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(0)),
+                graph::Ref::new(NodeIndex::new(0)),
                 ATyp::Mle(3),
             )),
             None,
             Some(backend::op::mk::<ArkBls12_381>(Op::Ref(
-                crate::Ref::new(NodeIndex::new(1)),
+                graph::Ref::new(NodeIndex::new(1)),
                 ATyp::Uni(0),
             ))),
         );
@@ -4396,7 +4393,7 @@ mod tests {
     fn test_add_op_vpoly_add_coefficient_wise() {
         // VPoly(2,1) has 3 coefficient slots.  a + b should bind result.slot(i)
         // to a.slot(i) + b.slot(i) for each of the 3 slots.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4467,7 +4464,7 @@ mod tests {
     #[test]
     fn test_add_op_mle_add_pointwise() {
         // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4528,7 +4525,7 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_sub_coefficient_wise() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4586,7 +4583,7 @@ mod tests {
     #[test]
     fn test_add_op_vpoly_mul_univariate_convolution() {
         // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4665,7 +4662,7 @@ mod tests {
         //   [0,0], [0,1], [1,0]   (sizes 3)
         // VPoly(2,2) multi-indices:
         //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4743,7 +4740,7 @@ mod tests {
         //   x^0 :  u_0 v_0
         //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4839,7 +4836,7 @@ mod tests {
         //   VPoly: b_0 + b_1·x
         //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
         //                      + (u_1·b_1 - u_0·b_1)·x²
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4918,7 +4915,7 @@ mod tests {
         // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
         // Result VPoly(2,3) has 10 slots.
         // Just verify all 10 result slots are populated.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -4973,7 +4970,7 @@ mod tests {
     fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
         // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -5067,7 +5064,7 @@ mod tests {
         //   k=[1] (total deg 1): a_1  -  (b_0·q_1 + b_1·q_0)
         //   k=[2] (total deg 2): a_2  -  b_1·q_1
         // link_to_witness emits 2 more rows: var(q_wit[j]) - var(result[j]), j=0,1.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::id::Vid;
         use lang::typ::{Distribution, Qualifier};
@@ -5208,7 +5205,7 @@ mod tests {
     fn test_add_op_vpoly_rem_univariate_identity() {
         // VPoly(1,2) % VPoly(1,1) → VPoly(1,0).
         // Same witnesses as the Div test, but link result to r_wit (1 slot).
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::id::Vid;
         use lang::typ::{Distribution, Qualifier};
@@ -5295,7 +5292,7 @@ mod tests {
     fn test_add_op_div_then_rem_shares_witness() {
         // Both `a/b` and `a%b` on the same source-level operand pair share the
         // witness side-table. Second op should NOT emit new identity rows.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5383,7 +5380,7 @@ mod tests {
         // same named-source expression (`a * b - c`) while still having
         // distinct raw HOp refs. Div and Rem over those equivalent operands
         // should share a single witness pair.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::id::Vid;
         use lang::typ::{Distribution, Qualifier};
@@ -5503,7 +5500,7 @@ mod tests {
         // Scalar / Scalar → Scalar: legacy zip path (a - b·var(pr) = 0).
         // Scalar fallback does not build a canonical polynomial witness key, so
         // no witness side-table entry is created.
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5564,7 +5561,7 @@ mod tests {
 
     #[test]
     fn test_add_op_scalar_div_vec_scalar_recurses_without_div_wit() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5621,7 +5618,7 @@ mod tests {
 
     #[test]
     fn test_add_op_uni_div_scalar_slot_wise_without_div_wit() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5670,7 +5667,7 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_div_scalar_slot_wise_without_div_wit() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -5719,7 +5716,7 @@ mod tests {
 
     #[test]
     fn test_add_op_vector_poly_div_rem_propagates_witness_cache() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6211,7 +6208,7 @@ mod tests {
 
     #[test]
     fn test_reduce_add_over_scalar_vec() {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6269,7 +6266,7 @@ mod tests {
         // Vec(Poly(1,2), 3) has 3 elements × 3 coefficients = 9 physical slots.
         // reduce should produce 3 polynomials (one per coefficient position),
         // where result[j] = v0[j] + v1[j] + v2[j].
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6404,7 +6401,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_constant_points() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6425,7 +6422,7 @@ mod tests {
         let points: GOp<ArkBls12_381> =
             Op::Value(Value::VecScalar(vec![Fr::from(0u64), Fr::from(1u64)]));
         let evals: GOp<ArkBls12_381> =
-            Op::Ref(crate::Ref::new(NodeIndex::new(0)), evals_typ.clone());
+            Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let result_typ = ATyp::uni(2);
         let pref_result = PRef::from_node(
@@ -6495,7 +6492,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_3_constant_points() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6517,7 +6514,7 @@ mod tests {
             [1u64, 2, 3].iter().map(|&x| Fr::from(x)).collect(),
         ));
         let evals: GOp<ArkBls12_381> =
-            Op::Ref(crate::Ref::new(NodeIndex::new(0)), evals_typ.clone());
+            Op::Ref(graph::Ref::new(NodeIndex::new(0)), evals_typ.clone());
 
         let result_typ = ATyp::uni(3);
         let pref_result = PRef::from_node(
@@ -6595,7 +6592,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6638,8 +6635,8 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t.clone());
-        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_t.clone());
+        let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
@@ -6686,7 +6683,7 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_symbolic_points() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6800,8 +6797,8 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let points: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(2)), vec_t.clone());
-        let evals: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(5)), vec_t.clone());
+        let points: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(2)), vec_t.clone());
+        let evals: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(5)), vec_t.clone());
 
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
@@ -6882,7 +6879,7 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at duplicate-interpolate-points"
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6910,7 +6907,7 @@ mod tests {
         gresult.register(&pref_result);
 
         let points = Op::Value(Value::VecIndex(vec![0, 0, 1]));
-        let evals = Op::Ref(crate::Ref::new(NodeIndex::new(1)), evals_typ);
+        let evals = Op::Ref(graph::Ref::new(NodeIndex::new(1)), evals_typ);
         let op: GOp<ArkBls12_381> =
             Op::Interpolate(mk::<ArkBls12_381>(points), mk::<ArkBls12_381>(evals));
 
@@ -6919,7 +6916,7 @@ mod tests {
 
     #[test]
     fn test_add_op_div_scalar_slot_wise() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6952,8 +6949,8 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::scalar());
-        let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::scalar());
+        let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
+        let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::scalar());
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(a),
@@ -6977,7 +6974,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_add_op_rem_scalar_panics() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7010,8 +7007,8 @@ mod tests {
         );
         gresult.register(&pref_result);
 
-        let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::scalar());
-        let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::scalar());
+        let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::scalar());
+        let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::scalar());
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Rem,
             mk::<ArkBls12_381>(a),
@@ -7023,7 +7020,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_scalar_uses_slot_wise_div() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7050,7 +7047,7 @@ mod tests {
         );
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
-            mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+            mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
@@ -7083,7 +7080,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Rem: non-polynomial remainder")]
     fn test_reduce_rem_scalar_panics() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7112,7 +7109,7 @@ mod tests {
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Rem,
-            mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+            mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
         builder.add_op(result, op, &mut gresult);
     }
@@ -7120,7 +7117,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "MLE division is not supported")]
     fn test_add_op_div_mle_panics() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7153,8 +7150,8 @@ mod tests {
         );
         gresult.register(&result);
 
-        let a = Op::Ref(crate::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
-        let b = Op::Ref(crate::Ref::new(NodeIndex::new(1)), ATyp::Mle(2));
+        let a = Op::Ref(graph::Ref::new(NodeIndex::new(0)), ATyp::Mle(2));
+        let b = Op::Ref(graph::Ref::new(NodeIndex::new(1)), ATyp::Mle(2));
         let op: GOp<ArkBls12_381> = Op::Bin(
             BinOp::Div,
             mk::<ArkBls12_381>(a),
@@ -7166,7 +7163,7 @@ mod tests {
 
     #[test]
     fn test_reduce_div_vpoly_uses_handle_div_rem() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7195,7 +7192,7 @@ mod tests {
 
         let op: GOp<ArkBls12_381> = Op::Reduce(
             BinOp::Div,
-            mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+            mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
         );
         builder.add_op(result.clone(), op, &mut gresult);
 
@@ -7207,7 +7204,7 @@ mod tests {
 
     #[test]
     fn reduce_mul_poly_accumulator_widens() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7239,7 +7236,7 @@ mod tests {
             result.clone(),
             Op::Reduce(
                 BinOp::Mul,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
             ),
             &mut gresult,
         );
@@ -7260,7 +7257,7 @@ mod tests {
     /// `reduce_mul_poly_accumulator_widens`.
     #[test]
     fn reduce_map_mul_poly_accumulator_widens() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7290,7 +7287,7 @@ mod tests {
 
         // reduce(*, [x for x in polys]) — ReduceMap(Mul) with identity body over a
         // length-3 vector of degree-1 univariates → degree-3 product (Uni(3)).
-        let domain = mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t));
+        let domain = mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t));
         let body = mk::<ArkBls12_381>(Op::LoopParam(0, elem_t.clone()));
         builder.add_op(
             result.clone(),
@@ -7307,7 +7304,7 @@ mod tests {
 
     #[test]
     fn reduce_rem_poly_left_fold_semantics() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7339,7 +7336,7 @@ mod tests {
             result.clone(),
             Op::Reduce(
                 BinOp::Rem,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_t)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_t)),
             ),
             &mut gresult,
         );
@@ -7357,7 +7354,7 @@ mod tests {
 
     #[test]
     fn poly_rem_smaller_dividend_passes_through() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7397,8 +7394,8 @@ mod tests {
             result.clone(),
             Op::Bin(
                 BinOp::Rem,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), dividend_t)),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), divisor_t)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), dividend_t)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), divisor_t)),
                 ATyp::Uni(2),
             ),
             &mut gresult,
@@ -7433,7 +7430,7 @@ mod tests {
 
     #[test]
     fn test_record_scalar_fields_bind_slots() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7467,11 +7464,11 @@ mod tests {
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
             &"x".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
         );
         fields.insert(
             &"y".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
 
         let pref_r = PRef::from_node(
@@ -7512,7 +7509,7 @@ mod tests {
 
     #[test]
     fn test_record_mixed_type_fields_bind_slots() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7547,11 +7544,11 @@ mod tests {
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
             &"a".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
         );
         fields.insert(
             &"p".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni_typ.clone())),
         );
 
         let pref_r = PRef::from_node(
@@ -7595,7 +7592,7 @@ mod tests {
 
     #[test]
     fn test_record_basis_count_matches_physical_len() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7632,11 +7629,11 @@ mod tests {
         let mut fields = Ctx::<String, HOp<ArkBls12_381>>::new();
         fields.insert(
             &"x".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
         );
         fields.insert(
             &"v".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), v2.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), v2.clone())),
         );
 
         let pref_r = PRef::from_node(
@@ -7663,7 +7660,7 @@ mod tests {
 
     #[test]
     fn test_proj_scalar_field_from_record() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7686,7 +7683,7 @@ mod tests {
         );
         gresult.register(&pref_rec);
 
-        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
@@ -7718,7 +7715,7 @@ mod tests {
 
     #[test]
     fn test_proj_second_field_offset_correct() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7744,7 +7741,7 @@ mod tests {
         );
         gresult.register(&pref_rec);
 
-        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
@@ -7783,7 +7780,7 @@ mod tests {
 
     #[test]
     fn test_proj_first_field_of_multi_field_record() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7809,7 +7806,7 @@ mod tests {
         );
         gresult.register(&pref_rec);
 
-        let inner_op: GOp<ArkBls12_381> = Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ);
+        let inner_op: GOp<ArkBls12_381> = Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ);
 
         let pref_proj = PRef::from_node(
             NodeIndex::new(1),
@@ -7852,7 +7849,7 @@ mod tests {
 
     #[test]
     fn test_add_uni_different_degrees() {
-        use crate::PRef;
+        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
         use lang::ast::BinOp;
@@ -7905,8 +7902,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Add,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), uni2)),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni4)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), uni2)),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni4)),
                 uni4_result,
             ),
             &mut gresult,
@@ -7925,7 +7922,7 @@ mod tests {
 
     #[test]
     fn test_mul_scalar_poly_broadcast() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -7967,8 +7964,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Mul,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), uni2.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), uni2.clone())),
                 uni2.clone(),
             ),
             &mut gresult,
@@ -7991,7 +7988,7 @@ mod tests {
 
     #[test]
     fn test_mul_vec_scalar_broadcast() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8033,8 +8030,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Mul,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), v3.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), v3.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
                 v3.clone(),
             ),
             &mut gresult,
@@ -8052,12 +8049,12 @@ mod tests {
         scalar_left: bool,
         poly_typ: ATyp,
     ) -> (
-        crate::PRef,
-        crate::PRef,
-        crate::PRef,
+        graph::PRef,
+        graph::PRef,
+        graph::PRef,
         GroebnerResult<ArkBls12_381, GrevLexTerm>,
     ) {
-        use crate::{PRef, Ref};
+        use graph::{PRef, Ref};
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8111,7 +8108,7 @@ mod tests {
 
     fn assert_result_slot(
         gresult: &GroebnerResult<ArkBls12_381, GrevLexTerm>,
-        pref_r: &crate::PRef,
+        pref_r: &graph::PRef,
         slot: usize,
         expected: SparsePolynomial<ark_bls12_381::Fr, GrevLexTerm>,
     ) {
@@ -8229,7 +8226,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_uni_different_degrees() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8275,11 +8272,11 @@ mod tests {
             Op::Bin(
                 BinOp::Concat,
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(0)),
+                    graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
                 )),
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(1)),
+                    graph::Ref::new(NodeIndex::new(1)),
                     vec_uni4.clone(),
                 )),
                 vec_result.clone(),
@@ -8308,7 +8305,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_scalar_element() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8351,8 +8348,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Concat,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
                 vec_result.clone(),
             ),
             &mut gresult,
@@ -8371,7 +8368,7 @@ mod tests {
 
     #[test]
     fn test_equ_vec_uni_different_degrees() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8417,11 +8414,11 @@ mod tests {
             Op::Bin(
                 BinOp::Equ,
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(0)),
+                    graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
                 )),
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(1)),
+                    graph::Ref::new(NodeIndex::new(1)),
                     vec_uni4.clone(),
                 )),
                 bool_typ.clone(),
@@ -8437,7 +8434,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_scalar() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8479,8 +8476,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Dot,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_s.clone())),
                 s.clone(),
             ),
             &mut gresult,
@@ -8498,7 +8495,7 @@ mod tests {
 
     #[test]
     fn test_dot_vec_uni() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8544,11 +8541,11 @@ mod tests {
             Op::Bin(
                 BinOp::Dot,
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(0)),
+                    graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
                 )),
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(1)),
+                    graph::Ref::new(NodeIndex::new(1)),
                     vec_uni4.clone(),
                 )),
                 dot_result.clone(),
@@ -8568,7 +8565,7 @@ mod tests {
 
     #[test]
     fn test_pair_vec() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8612,8 +8609,8 @@ mod tests {
         builder.add_op(
             pref_r.clone(),
             Op::Pair(
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_g1.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_g2.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_g1.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_g2.clone())),
                 vec_gt.clone(),
             ),
             &mut gresult,
@@ -8634,7 +8631,7 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn test_pow_vec_element_wise() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8679,8 +8676,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
                 vec_result.clone(),
             ),
             &mut gresult,
@@ -8690,7 +8687,7 @@ mod tests {
 
     #[test]
     fn test_pow_uni_const_exp() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8724,7 +8721,7 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), uni2.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), uni2.clone())),
                 mk::<ArkBls12_381>(Op::Value(Value::Index(2))),
                 result_uni4.clone(),
             ),
@@ -8744,7 +8741,7 @@ mod tests {
 
     #[test]
     fn test_pow_vec_uni_const_exp() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8781,7 +8778,7 @@ mod tests {
             Op::Bin(
                 BinOp::Pow,
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(0)),
+                    graph::Ref::new(NodeIndex::new(0)),
                     vec_uni2.clone(),
                 )),
                 mk::<ArkBls12_381>(Op::Value(Value::Index(2))),
@@ -8807,7 +8804,7 @@ mod tests {
 
     #[test]
     fn test_pow_vec_vecindex_per_element() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8842,7 +8839,7 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
                 mk::<ArkBls12_381>(Op::Value(Value::VecIndex(vec![2, 3]))),
                 vec_result.clone(),
             ),
@@ -8865,7 +8862,7 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn test_pow_vec_mixed_const_and_opaque() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -8911,8 +8908,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
                 vec_result.clone(),
             ),
             &mut gresult,
@@ -8926,7 +8923,7 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_wider_uni() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -8965,7 +8962,7 @@ mod tests {
 
     #[test]
     fn test_lift_mle_to_wider_mle() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9004,7 +9001,7 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_same_arity_prefix() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9042,7 +9039,7 @@ mod tests {
 
     #[test]
     fn test_lift_vpoly_cross_arity_embedding() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9144,7 +9141,7 @@ mod tests {
 
     #[test]
     fn test_lift_uni_to_vpoly_same_arity() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9180,7 +9177,7 @@ mod tests {
 
     #[test]
     fn test_equ_scalar_has_var_constraint_and_diff() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9242,7 +9239,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_bool_result_bare_diffs() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9315,7 +9312,7 @@ mod tests {
 
     #[test]
     fn test_equ_uni_different_degrees_lifts_both() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9391,7 +9388,7 @@ mod tests {
 
     #[test]
     fn test_concat_vec_vec_elements() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9456,7 +9453,7 @@ mod tests {
 
     #[test]
     fn test_reduce_add_poly_vec_direct_fold() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9510,7 +9507,7 @@ mod tests {
 
     #[test]
     fn test_ref_lift_to_wider_type() {
-        use crate::PRef;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9756,11 +9753,11 @@ mod tests {
             Op::Bin(
                 lang::ast::BinOp::Add,
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(201)),
+                    graph::Ref::new(NodeIndex::new(201)),
                     ATyp::scalar(),
                 )),
                 mk::<ArkBls12_381>(Op::Ref(
-                    crate::Ref::new(NodeIndex::new(200)),
+                    graph::Ref::new(NodeIndex::new(200)),
                     ATyp::scalar(),
                 )),
                 ATyp::scalar(),
@@ -9821,8 +9818,8 @@ mod tests {
         builder.add_op(
             pair_result_pref.clone(),
             Op::Pair(
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(300)), ATyp::g1())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(301)), ATyp::g2())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(300)), ATyp::g1())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(301)), ATyp::g2())),
                 ATyp::gt(),
             ),
             &mut result,
@@ -9860,7 +9857,7 @@ mod tests {
     fn record_projection_resolves_without_np_lookup() {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9909,11 +9906,11 @@ mod tests {
         let mut field_ops: Ctx<String, backend::op::HOp<ArkBls12_381>> = Ctx::new();
         field_ops.insert(
             &"a".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), s.clone())),
         );
         field_ops.insert(
             &"b".to_string(),
-            &mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(2)), s.clone())),
+            &mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(2)), s.clone())),
         );
 
         builder.add_op(pref_rec.clone(), Op::Record(field_ops), &mut gresult);
@@ -9929,7 +9926,7 @@ mod tests {
         gresult.register(&pref_proj);
 
         let inner_op: GOp<ArkBls12_381> =
-            Op::Ref(crate::Ref::new(NodeIndex::new(0)), rec_typ.clone());
+            Op::Ref(graph::Ref::new(NodeIndex::new(0)), rec_typ.clone());
 
         builder.add_op(
             pref_proj.clone(),
@@ -9965,7 +9962,7 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -10011,8 +10008,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), vec_s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), vec_fin.clone())),
                 ATyp::Vec(Box::new(s.clone()), 2),
             ),
             &mut gresult,
@@ -10025,7 +10022,7 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn uncovered_op_dynamic_pow_scalar_panics() {
-        use crate::PRef;
+        use graph::PRef;
         use backend::op::mk;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
@@ -10069,8 +10066,8 @@ mod tests {
             pref_r.clone(),
             Op::Bin(
                 BinOp::Pow,
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), fin.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(0)), s.clone())),
+                mk::<ArkBls12_381>(Op::Ref(graph::Ref::new(NodeIndex::new(1)), fin.clone())),
                 s.clone(),
             ),
             &mut gresult,

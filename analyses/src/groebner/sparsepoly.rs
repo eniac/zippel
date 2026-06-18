@@ -1,5 +1,5 @@
-use crate::PRef;
-use crate::analyses::groebner::monomial::Monomial;
+use graph::PRef;
+use crate::groebner::monomial::Monomial;
 use ark_ff::Field;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
@@ -500,7 +500,7 @@ where
 #[allow(dead_code)]
 pub fn export_polys_to_python<F: Field, T: Monomial>(
     polys: &[SparsePolynomial<F, T>],
-    prefs: &std::collections::HashMap<crate::Ref, PRef>,
+    prefs: &std::collections::HashMap<graph::Ref, PRef>,
     path: &str,
 ) -> std::io::Result<()> {
     use std::collections::HashMap as StdHashMap;

@@ -11,7 +11,7 @@ use ark_bls12_381::Fr;
 use ark_ff::One;
 use backend::ATyp;
 use graph::PRef;
-use graph::analyses::groebner::{GroebnerBasis, Monomial, SparsePolynomial};
+use analyses::groebner::{GroebnerBasis, Monomial, SparsePolynomial};
 use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;

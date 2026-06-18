@@ -60,12 +60,12 @@ use ark_gb::poly::Poly;
 use ark_gb::ring::Ring;
 use share::{Ctx, Set};
 
-use crate::PRef;
-use crate::analyses::groebner::monomial::{
+use graph::PRef;
+use crate::groebner::monomial::{
     ElimMono, ElimStrategy, GrevLexTerm, MonoTerm as ZipMonoTerm, Monomial as ZipMonomial,
 };
-use crate::analyses::groebner::sparsepoly::SparsePolynomial;
-use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
+use crate::groebner::sparsepoly::SparsePolynomial;
+use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
 
 /// Max per-variable exponent ark-gb's 7-bit packing supports.
 const MAX_EXPONENT: usize = 127;

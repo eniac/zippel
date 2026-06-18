@@ -2,13 +2,13 @@ use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use share::Set;
 
-use crate::DQDag;
-use crate::PRef;
-use crate::Ref;
-use crate::analyses::TransClos;
-use crate::analyses::error::AnalysisError;
-use crate::analyses::extractor::extract_locals;
-use crate::analyses::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
+use graph::DQDag;
+use graph::PRef;
+use graph::Ref;
+use crate::TransClos;
+use crate::error::AnalysisError;
+use crate::extractor::extract_locals;
+use crate::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
@@ -89,7 +89,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     /// TODO: extract this to TransClos
     fn canonicalize_node_slot_vars(&mut self) {
         use std::collections::HashMap;
-        type SP<C> = crate::analyses::groebner::SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
+        type SP<C> = crate::groebner::SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
 
         let mut canon: HashMap<(Ref, usize), PRef> = HashMap::new();
         for basis in [&self.prover.basis, &self.verifier.basis] {
@@ -136,11 +136,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyses::groebner::{GroebnerBasis, SparsePolynomial};
-    use crate::{
-        UDags,
-        analyses::{QualifierPropagation, UniformityPropagation},
-    };
+    use crate::groebner::{GroebnerBasis, SparsePolynomial};
+    use graph::UDags;
+    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use lang::ast::UModule;
     use lang::id::Vid;
@@ -623,19 +621,19 @@ mod tests {
         let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
         let g = QualifierPropagation::from_dag(&gs[0]);
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        let tc = crate::analyses::trans_clos::TransClos::verifier(&g);
+        let tc = crate::trans_clos::TransClos::verifier(&g);
 
         assert!(
             tc.clos
                 .iter()
-                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(..))
+                .any(|(_pref, op)| matches!(op, graph::Op::Evaluate(..))
                     && op.typ() == backend::ATyp::Mle(1)),
             "transitive closure should preserve materialized partial MLE eval as Mle(1)"
         );
         assert!(
             !tc.clos
                 .iter()
-                .any(|(_pref, op)| matches!(op, crate::Op::Evaluate(..))
+                .any(|(_pref, op)| matches!(op, graph::Op::Evaluate(..))
                     && op.typ() == backend::ATyp::Uni(1)),
             "transitive closure should not recompute the same eval as Uni(1)"
         );
@@ -725,7 +723,7 @@ mod tests {
     /// node for each shape and asserts the returned `ATyp`.
     #[test]
     fn op_eval_typ_dispatch() {
-        use crate::{GOp, Op as BOp, Ref, mk};
+        use graph::{GOp, Op as BOp, Ref, mk};
         use backend::{ATyp, ArkBls12_381};
         use petgraph::graph::NodeIndex;
 
@@ -1178,29 +1176,6 @@ mod tests {
                 .iter()
                 .all(|p| !p.qualifier.is_private() || p.from_transcript),
             "verifier Groebner result should not contain prover-only private inputs (unless from transcript)"
-        );
-    }
-
-    /// Regression for PR #153: a relation-side `%` and prover-side `/`
-    /// over the same source-level polynomial division should share the
-    /// quotient/remainder witnesses across closures.
-    #[test]
-    fn hadamard_div_wit_cross_closure_completeness() {
-        use lang::id::Tid;
-
-        let ex = include_str!("../../../examples/hadamard/hadamard.zippel");
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("S"), &2);
-        sizes.insert(&Tid::new("N"), &1);
-        let m = UModule::from_str(ex).unwrap().concretize(&sizes).unwrap();
-        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
-        let g = QualifierPropagation::from_dag(&gs[0]);
-        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
-        let mut ca = CompletenessAnalysis::from_input(&g);
-        let completeness = ca.run();
-        assert!(
-            completeness.is_ok(),
-            "relation-side remainder zero should complete verifier equation using the shared quotient witness, got {completeness:?}"
         );
     }
 

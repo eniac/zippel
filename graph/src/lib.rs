@@ -9,7 +9,6 @@
 #[cfg(test)]
 extern crate self as graph;
 
-pub mod analyses;
 mod dep;
 pub mod domain_seperator;
 pub mod eval;
@@ -55,9 +54,9 @@ use thiserror::Error;
 pub struct Dag<C: ArkConfig, A> {
     pub graph: Graph<Node<C, A>, Dep>,
     /// Variable names for nodes (both let-bindings and transcript vars)
-    pub(crate) vctx: Ctx<NodeIndex, Vid>,
+    pub vctx: Ctx<NodeIndex, Vid>,
     /// Which variables are transcript variables (true) vs let-bindings (false)
-    pub(crate) transcript_vars: Ctx<NodeIndex, bool>,
+    pub transcript_vars: Ctx<NodeIndex, bool>,
 }
 
 /// Dag with no annotations

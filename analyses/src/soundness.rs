@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::analyses::TransClos;
-use crate::analyses::error::{AnalysisError, ExtractorRejection};
-use crate::analyses::extractor::{extract_locals, valid_extractor};
-use crate::analyses::groebner::ark_gb_adapter::LocalRankGuard;
-use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
-use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
-use crate::{DQDag, PRef, Ref};
+use crate::TransClos;
+use crate::error::{AnalysisError, ExtractorRejection};
+use crate::extractor::{extract_locals, valid_extractor};
+use crate::groebner::ark_gb_adapter::LocalRankGuard;
+use crate::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
+use crate::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
+use graph::{DQDag, PRef, Ref};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -621,8 +621,8 @@ fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UDags;
-    use crate::analyses::{QualifierPropagation, UniformityPropagation};
+    use graph::UDags;
+    use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use lang::ast::UModule;
     use share::Ctx;

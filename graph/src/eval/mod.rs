@@ -510,7 +510,7 @@ where
 /// Internal evaluator threading a de Bruijn loop-parameter stack for
 /// `Op::Map` / `Op::ReduceMap` bodies. `loop_params[level]` resolves
 /// `Op::LoopParam(level, _)`; the public `eval_op` calls this with `&[]`.
-pub(crate) fn eval_op_with_loop_params<C, R>(
+pub fn eval_op_with_loop_params<C, R>(
     op: &GOp<C>,
     env: &HashMap<Ref, Arc<Value<C>>>,
     rng: &mut R,

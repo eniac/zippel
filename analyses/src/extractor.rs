@@ -1,10 +1,10 @@
-use crate::Op;
-use crate::PRef;
-use crate::analyses::groebner::ark_gb_adapter::get_local_rank;
-use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::analyses::groebner::tiered::{TieredElimMono, TieredElimStrategy};
-use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
-use crate::analyses::trans_clos::TransClos;
+use graph::Op;
+use graph::PRef;
+use crate::groebner::ark_gb_adapter::get_local_rank;
+use crate::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
+use crate::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
+use crate::trans_clos::TransClos;
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};

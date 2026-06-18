@@ -1,4 +1,4 @@
-use crate::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
+use graph::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
 use backend::ArkConfig;
 use lang::ast::BinOp;
 use lang::typ::Distribution;
@@ -289,8 +289,8 @@ fn compute_distribution_loops<C: ArkConfig>(
 /// Mirrors the old unrolled `Vec`+`Reduce` where each element's
 /// `Ram(domain, i)` carried the domain's distribution and ancestors.
 fn compute_reduce_map_generic<C: ArkConfig>(
-    d: &crate::HOp<C>,
-    b: &crate::HOp<C>,
+    d: &graph::HOp<C>,
+    b: &graph::HOp<C>,
     ancestors: &Ctx<NodeIndex, Set<NodeIndex>>,
     distributions: &Ctx<Ref, Distribution>,
     dist_loops: &[Distribution],
@@ -385,8 +385,8 @@ impl fmt::Display for UniformityPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UDags;
-    use crate::analyses::QualifierPropagation;
+    use graph::UDags;
+    use crate::QualifierPropagation;
     use backend::ArkBls12_381;
     use lang::ast::UModule;
     use petgraph::graph::NodeIndex;
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_poly() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Poly(mk::<ArkBls12_381>(inner));
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_mle() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Mle(mk::<ArkBls12_381>(inner));
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_coef() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Coef(mk::<ArkBls12_381>(inner));
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_fft() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Fft(mk::<ArkBls12_381>(inner));
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_interpolate() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Interpolate(mk::<ArkBls12_381>(GOp::index(0)), mk::<ArkBls12_381>(inner));
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_check() {
-        use crate::mk;
+        use graph::mk;
         let inner =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let op = Op::Check(mk::<ArkBls12_381>(inner));
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_rem() {
-        use crate::mk;
+        use graph::mk;
         let a = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(10u64)));
         let b = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(3u64)));
         let op = Op::Bin(
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_pow() {
-        use crate::mk;
+        use graph::mk;
         let a = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(2u64)));
         let b = GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(3u64)));
         let op = Op::Bin(
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_compute_distribution_vec() {
-        use crate::mk;
+        use graph::mk;
         let val1 =
             GOp::<ArkBls12_381>::Value(backend::Value::Scalar(ark_bls12_381::Fr::from(1u64)));
         let val2 =

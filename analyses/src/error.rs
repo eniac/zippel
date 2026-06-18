@@ -1,6 +1,6 @@
-use crate::analyses::groebner::{GrevLexTerm, SparsePolynomial};
-use crate::analyses::knowledge::ElimTerm;
-use crate::{GraphError, PRef};
+use crate::groebner::{GrevLexTerm, SparsePolynomial};
+use crate::knowledge::ElimTerm;
+use graph::{GraphError, PRef};
 use backend::ArkConfig;
 use thiserror::Error;
 

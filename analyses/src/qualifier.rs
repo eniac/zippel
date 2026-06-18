@@ -1,4 +1,4 @@
-use crate::{Dag, GOp, Node, Op, QDag, UDag};
+use graph::{Dag, GOp, Node, Op, QDag, UDag};
 use backend::ArkConfig;
 use lang::typ::Qualifier;
 use petgraph::Direction;
@@ -138,7 +138,7 @@ impl QualifierPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Node, UDags};
+    use graph::{Node, UDags};
     use backend::ArkBls12_381;
     use backend::op::mk;
     use lang::ast::UModule;

@@ -22,12 +22,12 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
-use crate::PRef;
-use crate::analyses::groebner::monomial::{GrevLexTerm, Monomial};
-use crate::analyses::groebner::sparsepoly::SparsePolynomial;
-use crate::analyses::knowledge::ElimTerm;
-use crate::tests::analyses::groebner::legacy::legacy_compute_reduced_gb;
-use crate::tests::analyses::groebner::shared;
+use graph::PRef;
+use crate::groebner::monomial::{GrevLexTerm, Monomial};
+use crate::groebner::sparsepoly::SparsePolynomial;
+use crate::knowledge::ElimTerm;
+use crate::tests::groebner::legacy::legacy_compute_reduced_gb;
+use crate::tests::groebner::shared;
 use ark_ff::Field;
 
 /// Compute the reduced Gröbner basis of `input` through both the legacy

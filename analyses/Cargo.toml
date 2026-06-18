@@ -1,0 +1,30 @@
+[package]
+name = "analyses"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+backend = { path = "../backend" }
+share = { path = "../share" }
+lang = { path = "../lang" }
+graph = { path = "../graph" }
+ark-gb = { git = "https://github.com/elefthei/ark-gb.git" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", features = ["parallel"] }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-std = { version = "0.6.0", features = ["parallel"] }
+petgraph = "0.7.1"
+thiserror = "2.0.11"
+log = "0.4.27"
+rand = { version = "0.8", features = ["std"] }
+num-bigint = "0.4.6"
+itertools = "0.14.0"
+hashconsing = "1.6"
+
+[dev-dependencies]
+arbitrary = { version = "1.4.1", features = ["derive"] }
+arbtest = "0.3.2"
+serial_test = "3.2.0"
+rayon = "1.10.0"

@@ -2,11 +2,9 @@ use backend::op::HasOpFactory;
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::Dag;
 use graph::domain_seperator::ZippelDomainSeparator;
-use graph::{
-    UDag, UDags,
-    analyses::{CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation, UniformityPropagation},
-};
-use graph::{WritePdf, analyses::KnowledgeAnalysis};
+use graph::{UDag, UDags};
+use analyses::{CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation, UniformityPropagation, KnowledgeAnalysis};
+use graph::WritePdf;
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
 use lang::typ::range::Range;
@@ -399,7 +397,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         )
     }
 
-    pub fn analyze_completeness(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
+    pub fn analyze_completeness(&self) -> Result<(), analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut completeness = CompletenessAnalysis::from_input(g_analyze);
         let result = completeness.run();
@@ -410,7 +408,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         result
     }
 
-    pub fn analyze_knowledge(&self) -> Result<(), graph::analyses::AnalysisError<C>> {
+    pub fn analyze_knowledge(&self) -> Result<(), analyses::AnalysisError<C>> {
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         let mut knowledge = KnowledgeAnalysis::from_input_with_w::<DEFAULT_GB_W>(g_analyze);
         let result = knowledge.run::<DEFAULT_GB_W>();
@@ -424,8 +422,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_special_soundness(
         &self,
         l_vec: Vec<usize>,
-    ) -> Result<(), graph::analyses::AnalysisError<C>> {
-        use graph::analyses::SpecialSoundnessAnalysis;
+    ) -> Result<(), analyses::AnalysisError<C>> {
+        use analyses::SpecialSoundnessAnalysis;
         let g_analyze = self.analyze_graph.as_ref().unwrap();
         SpecialSoundnessAnalysis::analyze(g_analyze, l_vec)
     }
