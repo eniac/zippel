@@ -49,7 +49,7 @@ impl Setup {
         let inputs = prover_create_inputs(m);
 
         let compile_start = Instant::now();
-        let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
+        let args = ZippelArgs::new(source_file.path().to_path_buf());
         let mut handler: ZippelHandler<ArkCurve25519> = ZippelHandler::new(args);
         let (_l_h, m_h) = hyrax_split(m);
         let mut sizes = Ctx::new();

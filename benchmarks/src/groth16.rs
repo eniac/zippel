@@ -513,7 +513,7 @@ pub mod zippel_side {
 
             let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/groth16/groth16.zippel"))
-                .with_skip_analyses();
+                ;
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("M"), &translated.m);

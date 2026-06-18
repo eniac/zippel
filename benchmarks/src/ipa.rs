@@ -100,7 +100,7 @@ pub mod zippel_side {
                 .join("..")
                 .join("examples/ipa/ipa.zippel");
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(zippel_file).with_skip_analyses();
+            let args = ZippelArgs::new(zippel_file);
             let mut handler: ZippelHandler<ArkSecp256k1> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("S"), &s_const);

@@ -80,7 +80,7 @@ pub mod zippel_side {
             // graph→TDag work the runtime does) and excludes the actual
             // prove/verify execution.
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(source_file.path().to_path_buf()).with_skip_analyses();
+            let args = ZippelArgs::new(source_file.path().to_path_buf());
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
             let compile_time = compile_start.elapsed();
@@ -137,8 +137,8 @@ pub mod zippel_side {
 
         pub fn graph_sizes(&self) -> (usize, usize) {
             (
-                self.handler.prover_graph.as_ref().unwrap().node_count(),
-                self.handler.verifier_graph.as_ref().unwrap().node_count(),
+                self.handler.prover_graph().node_count(),
+                self.handler.verifier_graph().node_count(),
             )
         }
     }

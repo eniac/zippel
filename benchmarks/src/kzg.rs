@@ -105,13 +105,13 @@ pub mod zippel_side {
                 file.write_all(render_zippel_source_no_srs_check().as_bytes())
                     .expect("write tempfile");
                 (
-                    ZippelArgs::new(file.path().to_path_buf()).with_skip_analyses(),
+                    ZippelArgs::new(file.path().to_path_buf()),
                     Some(file),
                 )
             } else {
                 (
                     ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel"))
-                        .with_skip_analyses(),
+                        ,
                     None,
                 )
             };

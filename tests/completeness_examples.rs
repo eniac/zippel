@@ -112,7 +112,7 @@ fn run_completeness(entry: &TestEntry) -> Result<(), Failed> {
 }
 
 fn strip_relation(handler: &mut ZippelHandler<ArkBls12_381>) {
-    let dag = handler.analyze_graph.as_mut().unwrap();
+    let dag = handler.analyze_graph();
     let rel_node = dag.relation_node().unwrap();
     let edge_ids: Vec<_> = dag
         .graph

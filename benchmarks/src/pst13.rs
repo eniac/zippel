@@ -490,7 +490,7 @@ pub mod zippel_side {
 
             let compile_start = Instant::now();
             let args = ZippelArgs::new(PathBuf::from("examples/pst13/pst13.zippel"))
-                .with_skip_analyses();
+                ;
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             let mut sizes = Ctx::new();
             sizes.insert(&Tid::new("N"), &shared.n);

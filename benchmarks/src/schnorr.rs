@@ -34,7 +34,7 @@ pub mod zippel_side {
                 .join("..")
                 .join("examples/schnorr/schnorr.zippel");
             let compile_start = Instant::now();
-            let args = ZippelArgs::new(zippel_file).with_skip_analyses();
+            let args = ZippelArgs::new(zippel_file);
             let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
             handler.compile(&Ctx::new());
             let compile_time = compile_start.elapsed();

@@ -45,17 +45,6 @@ pub struct ZippelArgs {
 
     /// An optional subgraph name to analyze
     pub subgraph: Option<String>,
-
-    /// When true, `ZippelHandler::compile` skips the
-    /// `QualifierPropagation` + `UniformityPropagation` static-analysis
-    /// passes and the prover/verifier `combine_dag` step. Their results
-    /// feed only `analyze_completeness` / `analyze_knowledge` (which the
-    /// caller must not invoke when this flag is set) and the
-    /// `combined_graph` PDF (which is silently dropped when no PDF path
-    /// is configured). Set this in benchmarks so the `compile` timer
-    /// reflects only the work needed to produce a runnable prover/
-    /// verifier graph.
-    pub skip_analyses: bool,
 }
 
 impl ZippelArgs {
@@ -65,7 +54,6 @@ impl ZippelArgs {
             domain_separator_session: None,
             pdf_path_opt: None,
             subgraph: None,
-            skip_analyses: false,
         }
     }
 
@@ -96,24 +84,18 @@ impl ZippelArgs {
         self.subgraph = Some(subgraph);
         self
     }
-
-    pub fn with_skip_analyses(mut self) -> Self {
-        self.skip_analyses = true;
-        self
-    }
 }
 
 pub struct ZippelHandler<C: ArkConfig> {
-    pub args: ZippelArgs,
-    pub sized_module: Option<UModule>,
-    pub concrete_module: Option<CModule>,
-    pub proto_graph: Option<UDag<C>>,
+    args: ZippelArgs,
+    sized_module: Option<UModule>,
+    concrete_module: Option<CModule>,
     pub prover_graph: Option<UDag<C>>,
     pub verifier_graph: Option<UDag<C>>,
-    pub entry_point: Option<String>,
-    pub public_inputs: Option<Ctx<Vid, Value<C>>>,
-    pub prover_args: Option<Vec<PRef>>,
-    pub analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
+    entry_point: Option<String>,
+    public_inputs: Option<Ctx<Vid, Value<C>>>,
+    prover_args: Option<Vec<PRef>>,
+    analyze_graph: Option<Dag<C, (Qualifier, Distribution)>>,
 }
 
 impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
@@ -126,7 +108,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             args,
             sized_module: None,
             concrete_module: None,
-            proto_graph: None,
             prover_graph: None,
             verifier_graph: None,
             entry_point: None,
@@ -134,6 +115,55 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             prover_args: None,
             analyze_graph: None,
         }
+    }
+
+    pub fn args(&self) -> &ZippelArgs {
+        &self.args
+    }
+
+    pub fn prover_graph(&self) -> &UDag<C> {
+        self.prover_graph
+            .as_ref()
+            .expect("prover_graph not set; call compile() first")
+    }
+
+    pub fn verifier_graph(&self) -> &UDag<C> {
+        self.verifier_graph
+            .as_ref()
+            .expect("verifier_graph not set; call compile() first")
+    }
+
+    /// Lazily build and return the `DQDag` used by the `analyze_*` methods.
+    ///
+    /// Rebuilds the `UDags` from the cached `concrete_module` (no extra
+    /// parse / concretize cost the first time the analysis graph is
+    /// requested after `compile`), runs `QualifierPropagation` +
+    /// `UniformityPropagation`, and caches the result. Subsequent calls
+    /// return a `&mut` into the cache.
+    ///
+    /// The `DQDag` returned here is a fresh construction each time the
+    /// cache is empty; once populated, it lives for the rest of the
+    /// handler's lifetime. Tests that need to mutate it between `compile`
+    /// and `analyze_*` (e.g. `tests/completeness_examples.rs::strip_relation`)
+    /// use this method's `&mut` return to operate directly on the cached DAG.
+    pub fn analyze_graph(&mut self) -> &mut Dag<C, (Qualifier, Distribution)> {
+        if self.analyze_graph.is_none() {
+            self.analyze_graph = Some(self.build_analyze_graph());
+        }
+        self.analyze_graph
+            .as_mut()
+            .expect("analyze_graph cache populated above")
+    }
+
+    fn build_analyze_graph(&self) -> Dag<C, (Qualifier, Distribution)> {
+        let gs = unwrap!(UDags::<C>::from_module(
+            self.concrete_module
+                .as_ref()
+                .expect("compile() must be called before analyze_*()")
+                .clone()
+        ));
+        let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
+        UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze)
     }
 
     fn get_protocol_subgraph<'a>(&self, gs: &'a UDags<C>) -> &'a UDag<C> {
@@ -185,7 +215,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
             })
         }
     }
-    // at this point only have access to args, should set combined_graph, verifier_graph, prover_graph
+    /// Parse, concretize, build the protocol DAG, and project prover/verifier
+    /// graphs. Does not run static-analysis passes; call `analyze_*` methods
+    /// to invoke completeness/knowledge/soundness analyses on demand.
     pub fn compile(&mut self, sizes: &Ctx<Tid, usize>) {
         let stack_size = std::env::var("ZIPPEL_COMPILE_STACK_SIZE")
             .ok()
@@ -222,17 +254,6 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         ));
         self.output_pdf(&gs, "symbolic_protocol_graph");
 
-        // Static-analysis passes: qualifier + uniformity propagation.
-        // Their result is stored in `self.analyze_graph` and is consumed
-        // ONLY by `analyze_completeness` / `analyze_knowledge`. Callers
-        // that won't invoke either (e.g. benchmarks) can set
-        // `args.skip_analyses = true` to skip this work entirely.
-        if !self.args.skip_analyses {
-            let g_analyze = QualifierPropagation::from_dag(self.get_protocol_subgraph(&gs));
-            let g_analyze = UniformityPropagation::from_dag(&g_analyze).annotate_dag(&g_analyze);
-            self.analyze_graph = Some(g_analyze);
-        }
-
         // Extract protocol subgraph and rename inner nodes
         let g = self.get_protocol_subgraph(&gs).clone().rename_inner_nodes();
         self.output_pdf(&g, "concrete_protocol_graph");
@@ -246,16 +267,17 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         let verifier = g.clone().get_verifier().unwrap();
         self.verifier_graph = Some(verifier.clone());
         self.output_pdf(&verifier, "verifier_graph");
+    }
 
-        // `combined` feeds only `output_pdf("combined_graph")` — silently
-        // dropped when no PDF path is configured. Skip it under the same
-        // flag so the bench compile timer doesn't pay for a debug
-        // artifact it won't materialize.
-        if !self.args.skip_analyses {
-            debug!("Combining prover and verifier");
-            let combined = verifier.combine_dag(&prover);
-            self.output_pdf(&combined, "combined_graph");
-        }
+    /// Compose the prover and verifier graphs into a single combined DAG and
+    /// emit it as a PDF (if `pdf_path_opt` was set on `ZippelArgs`). No-op
+    /// when no PDF path is configured.
+    pub fn output_combined_graph(&self) {
+        let (Some(prover), Some(verifier)) = (&self.prover_graph, &self.verifier_graph) else {
+            return;
+        };
+        let combined = verifier.combine_dag(prover);
+        self.output_pdf(&combined, "combined_graph");
     }
 
     pub fn set_public_inputs(&mut self, public_inputs: Ctx<Vid, Value<C>>) {
@@ -400,35 +422,37 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         )
     }
 
-    pub fn analyze_completeness(&self) -> Result<(), analyses::AnalysisError<C>> {
-        let g_analyze = self.analyze_graph.as_ref().unwrap();
-        let mut completeness = CompletenessAnalysis::from_input(g_analyze);
+    pub fn analyze_completeness(&mut self) -> Result<(), analyses::AnalysisError<C>> {
+        let g = self.analyze_graph();
+        let name = g.name();
+        let mut completeness = CompletenessAnalysis::from_input(&*g);
         let result = completeness.run();
         match &result {
-            Ok(()) => info!("Complete protocol: {}", g_analyze.name()),
-            Err(e) => info!("Incomplete protocol {}: {}", g_analyze.name(), e),
+            Ok(()) => info!("Complete protocol: {}", name),
+            Err(e) => info!("Incomplete protocol {}: {}", name, e),
         }
         result
     }
 
-    pub fn analyze_knowledge(&self) -> Result<(), analyses::AnalysisError<C>> {
-        let g_analyze = self.analyze_graph.as_ref().unwrap();
-        let mut knowledge = KnowledgeAnalysis::from_input_with_w::<DEFAULT_GB_W>(g_analyze);
+    pub fn analyze_knowledge(&mut self) -> Result<(), analyses::AnalysisError<C>> {
+        let g = self.analyze_graph();
+        let name = g.name();
+        let mut knowledge = KnowledgeAnalysis::from_input_with_w::<DEFAULT_GB_W>(&*g);
         let result = knowledge.run::<DEFAULT_GB_W>();
         match &result {
-            Ok(()) => info!("ZK protocol: {}", g_analyze.name()),
-            Err(e) => info!("Knowledge leak in {}: {}", g_analyze.name(), e),
+            Ok(()) => info!("ZK protocol: {}", name),
+            Err(e) => info!("Knowledge leak in {}: {}", name, e),
         }
         result
     }
 
     pub fn analyze_special_soundness(
-        &self,
+        &mut self,
         l_vec: Vec<usize>,
     ) -> Result<(), analyses::AnalysisError<C>> {
         use analyses::SpecialSoundnessAnalysis;
-        let g_analyze = self.analyze_graph.as_ref().unwrap();
-        SpecialSoundnessAnalysis::analyze(g_analyze, l_vec)
+        let g = self.analyze_graph();
+        SpecialSoundnessAnalysis::analyze(&*g, l_vec)
     }
 }
 
