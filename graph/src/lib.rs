@@ -14,7 +14,6 @@ pub mod domain_seperator;
 pub mod eval;
 mod node;
 pub mod pref;
-pub mod scheduler;
 
 #[cfg(test)]
 mod tests;

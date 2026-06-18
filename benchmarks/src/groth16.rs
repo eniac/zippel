@@ -536,12 +536,9 @@ pub mod zippel_side {
         }
 
         pub fn time_protocol(&mut self) -> Timing {
-            let prover_scheduled = self.handler.default_schedule_prover();
-
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
             for _ in 0..*crate::PROVER_SAMPLES {
-                let sched = prover_scheduled.clone();
                 let t = Instant::now();
                 let mut h_coeffs = witness_map(
                     &self.translated.mat,
@@ -554,7 +551,7 @@ pub mod zippel_side {
                 inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
                 let proof = self
                     .handler
-                    .run_prover(sched, inputs)
+                    .run_prover(inputs)
                     .expect("zippel groth16 prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -563,16 +560,14 @@ pub mod zippel_side {
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
 
             self.handler.set_public_inputs(self.public_inputs.clone());
-            let verifier_scheduled = self.handler.default_schedule_verifier();
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_result = None;
             for _ in 0..crate::VERIFY_SAMPLES {
-                let sched = verifier_scheduled.clone();
                 let proof_c = proof.clone();
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(sched, proof_c)
+                    .run_verifier(proof_c)
                     .expect("zippel groth16 verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);
@@ -1004,9 +999,8 @@ mod cross_tests {
         //      run_verifier against the NATIVE-produced proof --------------
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
-        let prover_sched = handler.default_schedule_prover();
         let _ = handler
-            .run_prover(prover_sched, zip_inputs)
+            .run_prover(zip_inputs)
             .expect("zippel run_prover (priming handler state)");
 
         // The zippel transcript is [a_proof, b_proof, c_proof] in `<-` order
@@ -1016,9 +1010,8 @@ mod cross_tests {
             Value::G2(proof_n.b),
             Value::G1(proof_n.c),
         ];
-        let verifier_sched = handler.default_schedule_verifier();
         let verifier_result = handler
-            .run_verifier(verifier_sched, cross_proof)
+            .run_verifier(cross_proof)
             .expect("zippel run_verifier on cross-proof");
         let result = check_verification(verifier_result);
         assert!(
@@ -1043,9 +1036,8 @@ mod cross_tests {
         // ---- Zippel: run_prover and extract (a, b, c) from the transcript -
         let mut handler = zippel_handler(&t);
         let zip_inputs = zip_inputs_from_translated(&t);
-        let prover_sched = handler.default_schedule_prover();
         let zip_proof: Vec<Value<ArkBls12_381>> = handler
-            .run_prover(prover_sched, zip_inputs)
+            .run_prover(zip_inputs)
             .expect("zippel run_prover");
 
         assert_eq!(

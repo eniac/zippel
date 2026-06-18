@@ -282,7 +282,6 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("L"), &l);
                 sizes.insert(&Tid::new("H"), &h);
                 handler.compile(&sizes);
-                let scheduled = handler.default_schedule_prover();
                 group.bench_with_input(BenchmarkId::new("zippel_opt_prover", size), &(), |b, _| {
                     b.iter(|| {
                         let h_coeffs = LibsnarkReduction::witness_map_from_matrices::<
@@ -306,7 +305,7 @@ fn groth16_bench(c: &mut Criterion) {
                             &Vid("h_coeffs".to_string()),
                             &Value::VecScalar(h_coeffs_padded),
                         );
-                        handler.run_prover(scheduled.clone(), inputs).unwrap()
+                        handler.run_prover(inputs).unwrap()
                     });
                 });
             }
@@ -342,7 +341,6 @@ fn groth16_bench(c: &mut Criterion) {
                     .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
-                let scheduled_prover = handler.default_schedule_prover();
                 let mut prover_inputs = zippel_inputs.clone();
                 let mut h_coeffs_padded = data.h_coeffs.clone();
                 h_coeffs_padded.resize(data.h_size, F::zero());
@@ -350,13 +348,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &Vid("h_coeffs".to_string()),
                     &Value::VecScalar(h_coeffs_padded),
                 );
-                let proof = handler.run_prover(scheduled_prover, prover_inputs).unwrap();
-                let scheduled_verifier = handler.default_schedule_verifier();
-                let verification = check_verification(
-                    handler
-                        .run_verifier(scheduled_verifier.clone(), proof.clone())
-                        .unwrap(),
-                );
+                let proof = handler.run_prover(prover_inputs).unwrap();
+                let verification = check_verification(handler.run_verifier(proof.clone()).unwrap());
                 assert!(
                     verification.passed,
                     "opt verification failed in bench setup"
@@ -367,8 +360,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &(),
                     |b, _| {
                         b.iter_batched(
-                            || (scheduled_verifier.clone(), proof.clone()),
-                            |(scheduled, proof)| handler.run_verifier(scheduled, proof).unwrap(),
+                            || proof.clone(),
+                            |proof| handler.run_verifier(proof).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },
@@ -458,11 +451,10 @@ fn groth16_bench(c: &mut Criterion) {
                 sizes.insert(&Tid::new("C"), &c);
                 sizes.insert(&Tid::new("D"), &d);
                 handler.compile(&sizes);
-                let scheduled = handler.default_schedule_prover();
                 group.bench_with_input(BenchmarkId::new("zippel_noh_prover", size), &(), |b, _| {
                     b.iter_batched(
-                        || (scheduled.clone(), noh_inputs.clone()),
-                        |(scheduled, inputs)| handler.run_prover(scheduled, inputs).unwrap(),
+                        || noh_inputs.clone(),
+                        |inputs| handler.run_prover(inputs).unwrap(),
                         criterion::BatchSize::SmallInput,
                     );
                 });
@@ -504,16 +496,8 @@ fn groth16_bench(c: &mut Criterion) {
                     .filter(|(vid, _)| public_input_names.contains(&vid.0.as_str()))
                     .collect();
                 handler.set_public_inputs(public_inputs_ctx);
-                let scheduled_prover = handler.default_schedule_prover();
-                let proof = handler
-                    .run_prover(scheduled_prover, noh_inputs.clone())
-                    .unwrap();
-                let scheduled_verifier = handler.default_schedule_verifier();
-                let verification = check_verification(
-                    handler
-                        .run_verifier(scheduled_verifier.clone(), proof.clone())
-                        .unwrap(),
-                );
+                let proof = handler.run_prover(noh_inputs.clone()).unwrap();
+                let verification = check_verification(handler.run_verifier(proof.clone()).unwrap());
                 assert!(
                     verification.passed,
                     "noh verification failed in bench setup"
@@ -524,8 +508,8 @@ fn groth16_bench(c: &mut Criterion) {
                     &(),
                     |b, _| {
                         b.iter_batched(
-                            || (scheduled_verifier.clone(), proof.clone()),
-                            |(scheduled, proof)| handler.run_verifier(scheduled, proof).unwrap(),
+                            || proof.clone(),
+                            |proof| handler.run_verifier(proof).unwrap(),
                             criterion::BatchSize::SmallInput,
                         );
                     },

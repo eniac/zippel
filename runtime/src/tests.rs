@@ -5,8 +5,6 @@ mod runtime_tests {
     use backend::Value;
     use backend::config::ArkBls12_381;
     use graph::UDags;
-    use graph::scheduler::local_scheduler::LocalScheduler;
-    use graph::scheduler::{AsymptoticCost, Scheduler};
     use lang::ast::UModule;
     use share::Ctx;
     use std::sync::Arc;
@@ -41,13 +39,9 @@ mod runtime_tests {
 
         // Prover graph
         let (prover, _) = dag.get_prover();
-        let scheduler_p = LocalScheduler::new_with_system(&prover, &AsymptoticCost::new(), 30.0);
-        let prover_scheduled = scheduler_p.schedule(prover);
 
         // Verifier graph
         let verifier = dag.get_verifier().unwrap();
-        let scheduler_v = LocalScheduler::new_with_system(&verifier, &AsymptoticCost::new(), 30.0);
-        let verifier_scheduled = scheduler_v.schedule(verifier.clone());
 
         // Prover execution
         let mut inputs = Ctx::new();
@@ -66,7 +60,7 @@ mod runtime_tests {
         );
         let mut prover_state = separator.std_prover();
 
-        let mg_prover = Arc::new(MutexGraph::new(prover_scheduled));
+        let mg_prover = Arc::new(MutexGraph::new(prover));
         let proof = MutexGraph::run_graph(
             mg_prover,
             Arc::new(inputs),
@@ -110,7 +104,7 @@ mod runtime_tests {
         }
 
         let mut verifier_state = separator.std_prover();
-        let mg_verifier = Arc::new(MutexGraph::new(verifier_scheduled));
+        let mg_verifier = Arc::new(MutexGraph::new(verifier.clone()));
         let verify_results = MutexGraph::run_graph(
             mg_verifier,
             Arc::new(verifier_inputs),
@@ -143,9 +137,6 @@ mod runtime_tests {
         let dag = gs.protocols()[0].clone().rename_inner_nodes();
         let (prover, _) = dag.get_prover();
 
-        let scheduler = LocalScheduler::new_with_system(&prover, &AsymptoticCost::new(), 30.0);
-        let scheduled = scheduler.schedule(prover);
-
         // Omit 'b' in inputs to cause a MissingArg runtime error on verify(b == 999)
         let mut inputs = Ctx::new();
         inputs.insert(
@@ -159,7 +150,7 @@ mod runtime_tests {
         );
         let mut prover_state = separator.std_prover();
 
-        let mg = Arc::new(MutexGraph::new(scheduled));
+        let mg = Arc::new(MutexGraph::new(prover));
         let result = MutexGraph::run_graph(
             mg,
             Arc::new(inputs),

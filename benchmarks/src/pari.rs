@@ -459,16 +459,14 @@ pub mod zippel_side {
             ]);
 
             // --- Time prove (mean of PROVER_SAMPLES samples) ---
-            let prover_scheduled = self.handler.default_schedule_prover();
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
             for _ in 0..*crate::PROVER_SAMPLES {
-                let sched = prover_scheduled.clone();
                 let inputs_c = inputs.clone();
                 let t = Instant::now();
                 let proof = self
                     .handler
-                    .run_prover(sched, inputs_c)
+                    .run_prover(inputs_c)
                     .expect("zippel pari prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
@@ -478,16 +476,14 @@ pub mod zippel_side {
 
             // --- Time verify (mean of VERIFY_SAMPLES samples) ---
             self.handler.set_public_inputs(public_inputs);
-            let verifier_scheduled = self.handler.default_schedule_verifier();
             let mut verify_sum = std::time::Duration::ZERO;
             let mut last_result = None;
             for _ in 0..crate::VERIFY_SAMPLES {
-                let sched = verifier_scheduled.clone();
                 let proof_c = proof.clone();
                 let t = Instant::now();
                 let verifier_result = self
                     .handler
-                    .run_verifier(sched, proof_c)
+                    .run_verifier(proof_c)
                     .expect("zippel pari verifier failed");
                 verify_sum += t.elapsed();
                 last_result = Some(verifier_result);

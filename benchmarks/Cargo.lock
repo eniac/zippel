@@ -36,6 +36,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "analyses"
+version = "0.1.0"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff",
+ "ark-gb",
+ "ark-poly",
+ "ark-serialize",
+ "ark-std 0.6.0",
+ "backend",
+ "graph",
+ "hashconsing",
+ "itertools 0.14.0",
+ "lang",
+ "log",
+ "num-bigint",
+ "petgraph",
+ "rand 0.8.6",
+ "share",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3150,6 +3174,7 @@ dependencies = [
 name = "zippel"
 version = "0.1.0"
 dependencies = [
+ "analyses",
  "ark-ff",
  "ark-poly",
  "ark-std 0.6.0",

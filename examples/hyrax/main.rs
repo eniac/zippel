@@ -22,19 +22,12 @@ fn main() {
     handler.compile(&Ctx::new());
 
     let inputs = prover_create_inputs();
-    let prover_scheduled = handler.default_schedule_prover();
     let t = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
+    let proof = handler.run_prover(inputs).expect("run_prover failed");
     println!("Prover time:    {:.2?}", t.elapsed());
     println!("Proof items:    {}", proof.len());
-
-    let verifier_scheduled = handler.default_schedule_verifier();
     let t = Instant::now();
-    let verifier_result = handler
-        .run_verifier(verifier_scheduled, proof)
-        .expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
     println!("Verifier time:  {:.2?}", t.elapsed());
 
     let result = check_verification(verifier_result);

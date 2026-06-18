@@ -72,16 +72,14 @@ impl Setup {
     }
 
     pub fn time_protocol(&mut self) -> ZippelTiming {
-        let prover_scheduled = self.handler.default_schedule_prover();
         let mut prove_sum = std::time::Duration::ZERO;
         let mut last_proof = None;
         for _ in 0..*crate::PROVER_SAMPLES {
-            let sched = prover_scheduled.clone();
             let inputs_c = self.inputs.clone();
             let t = Instant::now();
             let proof = self
                 .handler
-                .run_prover(sched, inputs_c)
+                .run_prover(inputs_c)
                 .expect("zippel spartan prover failed");
             prove_sum += t.elapsed();
             last_proof = Some(proof);
@@ -89,17 +87,14 @@ impl Setup {
         let prove = prove_sum / *crate::PROVER_SAMPLES;
         let proof = last_proof.expect("PROVER_SAMPLES > 0");
         let proof_bytes = proof_size_bytes::<ArkCurve25519>(&proof);
-
-        let verifier_scheduled = self.handler.default_schedule_verifier();
         let mut verify_sum = std::time::Duration::ZERO;
         let mut last_result = None;
         for _ in 0..crate::VERIFY_SAMPLES {
-            let sched = verifier_scheduled.clone();
             let proof_c = proof.clone();
             let t = Instant::now();
             let verifier_result = self
                 .handler
-                .run_verifier(sched, proof_c)
+                .run_verifier(proof_c)
                 .expect("zippel spartan verifier failed");
             verify_sum += t.elapsed();
             last_result = Some(verifier_result);

@@ -29,12 +29,8 @@ fn main() {
         .into_iter()
         .filter(|(vid, _)| vid.0 != "f_coeffs")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
-
-    let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
+    let proof = handler.run_prover(inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     let proof_bytes = proof_size_bytes::<ArkBls12_381>(&proof);
     println!("Prover time:    {prover_elapsed:.2?}");
@@ -47,10 +43,9 @@ fn main() {
     let mut verifier_handler: zippel::ZippelHandler<ArkBls12_381> = ZippelHandler::new(args);
     verifier_handler.compile(&sizes);
     verifier_handler.set_public_inputs(public_inputs);
-    let verifier_scheduled = verifier_handler.default_schedule_verifier();
     let verifier_start = Instant::now();
     let verifier_result = verifier_handler
-        .run_verifier(verifier_scheduled, proof)
+        .run_verifier(proof)
         .expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     let result = check_verification(verifier_result);

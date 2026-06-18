@@ -1,6 +1,5 @@
 use backend::{ArkConfig, Value, value_to_bytes};
-use graph::scheduler::TDag;
-use graph::{Dag, GOp, Node, Op};
+use graph::{Dag, GOp, Node, Op, UDag};
 use lang::id::Vid;
 use log::debug;
 use petgraph::Direction;
@@ -243,9 +242,9 @@ fn log_double_execute(kind: &str, node: NodeIndex, op_disc: usize) {
 // ---------------------------------------------------------------------------
 
 impl<C: ArkConfig> MutexGraph<C> {
-    pub fn new(tdag: TDag<C>) -> Self {
+    pub fn new(dag: UDag<C>) -> Self {
         MutexGraph {
-            mutex_graph: tdag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
+            mutex_graph: dag.map_annotations(&|_, _| Arc::new(RuntimeInformation::<C>::new())),
         }
     }
 

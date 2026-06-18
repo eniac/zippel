@@ -160,29 +160,24 @@ pub mod zippel_side {
                     Value::VecScalar(self.inputs.sum_vec.clone()),
                 ),
             ]);
-
-            let prover_scheduled = self.handler.default_schedule_prover();
             let mut prove_sum = std::time::Duration::ZERO;
             let mut last_proof = None;
             for _ in 0..*crate::PROVER_SAMPLES {
-                let sched = prover_scheduled.clone();
                 let inputs_c = inputs.clone();
                 let t = Instant::now();
                 let proof = self
                     .handler
-                    .run_prover(sched, inputs_c)
+                    .run_prover(inputs_c)
                     .expect("run_prover failed");
                 prove_sum += t.elapsed();
                 last_proof = Some(proof);
             }
             let prove = prove_sum / *crate::PROVER_SAMPLES;
             let proof = last_proof.expect("PROVER_SAMPLES > 0");
-
-            let verifier_scheduled = self.handler.default_schedule_verifier();
             let t = Instant::now();
             let verifier_result = self
                 .handler
-                .run_verifier(verifier_scheduled, proof)
+                .run_verifier(proof)
                 .expect("run_verifier failed");
             let verify = t.elapsed();
 

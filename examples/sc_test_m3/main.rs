@@ -56,20 +56,12 @@ fn main() {
         (Vid("alpha_h_w".to_string()), Value::VecG2(alpha_h_w)),
         (Vid("f_one".to_string()), Value::Scalar(one)),
     ]);
-
-    let prover_scheduled = handler.default_schedule_prover();
     let prover_start = Instant::now();
-    let proof = handler
-        .run_prover(prover_scheduled, inputs)
-        .expect("run_prover failed");
+    let proof = handler.run_prover(inputs).expect("run_prover failed");
     let prover_elapsed = prover_start.elapsed();
     println!("Prover:   {prover_elapsed:.2?}");
-
-    let verifier_scheduled = handler.default_schedule_verifier();
     let verifier_start = Instant::now();
-    let verifier_result = handler
-        .run_verifier(verifier_scheduled, proof)
-        .expect("run_verifier failed");
+    let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
     let verifier_elapsed = verifier_start.elapsed();
     println!("Verifier: {verifier_elapsed:.2?}");
 

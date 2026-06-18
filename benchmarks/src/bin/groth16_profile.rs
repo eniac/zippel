@@ -307,10 +307,8 @@ fn main() {
     let mut inputs = inputs_base.clone();
     inputs.insert(&Vid("h_coeffs".to_string()), &Value::VecScalar(h_coeffs));
     eprintln!("  witness_map + input clone:      {:>9.2?}", tic.elapsed());
-
-    let sched = handler.default_schedule_prover();
     let tic = Instant::now();
-    let _proof = handler.run_prover(sched, inputs).expect("zippel prove");
+    let _proof = handler.run_prover(inputs).expect("zippel prove");
     eprintln!("  run_prover (all 5 MSMs + arith): {:>9.2?}", tic.elapsed());
 
     // Suppress unused warnings.

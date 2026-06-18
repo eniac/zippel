@@ -21,8 +21,6 @@ use std::path::PathBuf;
 use std::process;
 
 use graph::PRef;
-use graph::scheduler::local_scheduler::LocalScheduler;
-use graph::scheduler::{AsymptoticCost, Scheduler, TDag};
 use runtime::MutexGraph;
 use share::traversal::ToTraversal1;
 use std::sync::Arc;
@@ -289,20 +287,9 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.prover_args = Some(prover_args);
     }
 
-    //Schedule prover with default scheduler
-    pub fn default_schedule_prover(&self) -> TDag<C> {
-        let scheduler = LocalScheduler::new_with_system(
-            self.prover_graph.as_ref().unwrap(),
-            &AsymptoticCost::new(),
-            30.0,
-        );
-        scheduler.schedule(self.prover_graph.as_ref().unwrap().clone())
-    }
-
     //Run prover, takes inputs and returns proof
     pub fn run_prover(
         &mut self,
-        prover_scheduled: TDag<C>,
         inputs: Ctx<Vid, Value<C>>,
     ) -> Result<Vec<Value<C>>, RuntimeError> {
         let prover = self.prover_graph.as_ref().unwrap();
@@ -355,29 +342,15 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         self.public_inputs = Some(public_inputs);
         let mut prover_state = prover_seperator.std_prover();
         MutexGraph::run_graph(
-            Arc::new(MutexGraph::new(prover_scheduled)),
+            Arc::new(MutexGraph::new(prover.clone())),
             Arc::new(inputs.clone()),
             &mut prover_state,
             ResultKind::Prover,
         )
     }
 
-    //Schedule verifier with default scheduler
-    pub fn default_schedule_verifier(&self) -> TDag<C> {
-        let scheduler = LocalScheduler::new_with_system(
-            self.verifier_graph.as_ref().unwrap(),
-            &AsymptoticCost::new(),
-            30.0,
-        );
-        scheduler.schedule(self.verifier_graph.as_ref().unwrap().clone())
-    }
-
     //Run verifier, takes proof and returns result
-    pub fn run_verifier(
-        &mut self,
-        verifier_scheduled: TDag<C>,
-        proof: Vec<Value<C>>,
-    ) -> Result<Vec<Value<C>>, RuntimeError> {
+    pub fn run_verifier(&mut self, proof: Vec<Value<C>>) -> Result<Vec<Value<C>>, RuntimeError> {
         let verifier = self.verifier_graph.as_ref().unwrap();
         let prover_args = self.prover_args.as_ref().unwrap();
 
@@ -415,7 +388,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
         // TODO: Fix this to use proper verifier state when narg_string is available
         let mut verifier_state = verifier_seperator.std_prover();
         MutexGraph::run_graph(
-            Arc::new(MutexGraph::new(verifier_scheduled)),
+            Arc::new(MutexGraph::new(verifier.clone())),
             Arc::new(inputs),
             &mut verifier_state,
             ResultKind::Verifier,
@@ -622,14 +595,8 @@ proto eq_proof<F: Field>(private a: F, private b: F) where a == b {
             &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
-        let scheduled_prover = handler.default_schedule_prover();
-        let proof = handler
-            .run_prover(scheduled_prover, inputs)
-            .expect("run_prover failed");
-        let scheduled_verifier = handler.default_schedule_verifier();
-        let verifier_result = handler
-            .run_verifier(scheduled_verifier, proof)
-            .expect("run_verifier failed");
+        let proof = handler.run_prover(inputs).expect("run_prover failed");
+        let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
         let result = check_verification(verifier_result);
         assert!(
             result.passed,
@@ -668,20 +635,14 @@ proto repro<F: Field>(private s: F) where s == s {
             &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(5u64)),
         );
 
-        let scheduled_prover = handler.default_schedule_prover();
-        let proof = handler
-            .run_prover(scheduled_prover, inputs)
-            .expect("run_prover failed");
+        let proof = handler.run_prover(inputs).expect("run_prover failed");
         assert_eq!(
             proof.len(),
             EXPECTED_PROOF_VALUES,
             "issue #157 repro should emit all six non-challenge transcript proof values"
         );
 
-        let scheduled_verifier = handler.default_schedule_verifier();
-        let verifier_result = handler
-            .run_verifier(scheduled_verifier, proof)
-            .expect("run_verifier failed");
+        let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
         let result = check_verification(verifier_result);
         assert!(
             result.passed,
@@ -723,14 +684,8 @@ proto bad_check<F: Field>(private a: F, private b: F, public c: F) where a == b 
             &Value::Scalar(<ArkBls12_381 as ArkConfig>::F::from(42u64)),
         );
 
-        let scheduled_prover = handler.default_schedule_prover();
-        let proof = handler
-            .run_prover(scheduled_prover, inputs)
-            .expect("run_prover failed");
-        let scheduled_verifier = handler.default_schedule_verifier();
-        let verifier_result = handler
-            .run_verifier(scheduled_verifier, proof)
-            .expect("run_verifier failed");
+        let proof = handler.run_prover(inputs).expect("run_prover failed");
+        let verifier_result = handler.run_verifier(proof).expect("run_verifier failed");
         let result = check_verification(verifier_result);
         assert!(
             !result.passed,
