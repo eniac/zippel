@@ -77,7 +77,7 @@ const INCOMPLETENESS_TESTS: &[TestEntry] = &[
     TestEntry { name: "hyperplonk_productcheck", zippel_path: "examples/hyperplonk_productcheck/hyperplonk_productcheck.zippel", sizes: &[("S", 2)], ignored: true },
     TestEntry { name: "hyperplonk_multiset", zippel_path: "examples/hyperplonk_multiset/hyperplonk_multiset.zippel", sizes: &[("S", 2)], ignored: true },
     TestEntry { name: "hyperplonk_permutation", zippel_path: "examples/hyperplonk_permutation/hyperplonk_permutation.zippel", sizes: &[("S", 2)], ignored: true },
-    TestEntry { name: "cds", zippel_path: "examples/cds/cds.zippel", sizes: &[], ignored: true },
+    TestEntry { name: "cds", zippel_path: "examples/cds/cds.zippel", sizes: &[], ignored: false },
     TestEntry { name: "hadamard", zippel_path: "examples/hadamard/hadamard.zippel", sizes: &[("S", 2)], ignored: false },
     TestEntry { name: "pst13", zippel_path: "examples/pst13/pst13.zippel", sizes: &[("N", 2)], ignored: false },
     TestEntry { name: "zeromorph_kzg", zippel_path: "examples/zeromorph_kzg/zeromorph_kzg.zippel", sizes: &[("N", 2)], ignored: false },

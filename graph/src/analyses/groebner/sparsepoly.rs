@@ -474,3 +474,155 @@ where
         false
     }
 }
+
+/// Export a list of polynomials as a Python (sympy/sage) compatible text file.
+///
+/// Each variable is assigned a unique `x{i}` name based on the full `PRef`
+/// identity (node index, slot, qualifier, distribution, transcript flag, name).
+/// The output file has two sections separated by a newline:
+///
+/// ```text
+/// vars: x0: human_name, x1: other_name, ...
+/// <polynomial 0>
+/// <polynomial 1>
+/// ...
+/// ```
+///
+/// Human names use `name[idx]` when the PRef is a slot of a compound type
+/// (detected by comparing `v.typ` against the parent PRef's `typ` in `prefs`),
+/// or just `name` when index 0 refers to the original object. Falls back to
+/// `str(ref)` when no name exists.
+///
+/// Exponentiation uses `**` (Python convention). Coefficients are printed
+/// using their `Display` impl (field-element representation).
+///
+/// NOTE: Do not remove. This is for debugging.
+#[allow(dead_code)]
+pub fn export_polys_to_python<F: Field, T: Monomial>(
+    polys: &[SparsePolynomial<F, T>],
+    prefs: &std::collections::HashMap<crate::Ref, PRef>,
+    path: &str,
+) -> std::io::Result<()> {
+    use std::collections::HashMap as StdHashMap;
+    use std::io::Write;
+
+    let mut pref_to_idx: StdHashMap<(usize, usize, String, String, bool, String), usize> =
+        StdHashMap::new();
+    let mut idx_to_name: StdHashMap<usize, String> = StdHashMap::new();
+    let mut next_idx: usize = 0;
+
+    let mut register = |v: &PRef| -> usize {
+        let key = (
+            v.reference.node().index(),
+            v.index,
+            format!("{:?}", v.qualifier),
+            format!("{:?}", v.distribution),
+            v.from_transcript,
+            v.name.as_ref().map(|n| n.0.clone()).unwrap_or_default(),
+        );
+        if let Some(&i) = pref_to_idx.get(&key) {
+            i
+        } else {
+            let i = next_idx;
+            next_idx += 1;
+            pref_to_idx.insert(key, i);
+            let is_slot = prefs
+                .get(&v.reference)
+                .map_or(false, |parent| parent.typ != v.typ);
+            let base = if let Some(n) = &v.name {
+                n.0.clone()
+            } else {
+                format!("n{}", v.reference.node().index())
+            };
+            let human = if is_slot {
+                format!("{}[{}]", base, v.index)
+            } else {
+                base
+            };
+            idx_to_name.insert(i, human);
+            i
+        }
+    };
+
+    for poly in polys.iter() {
+        if poly.is_zero() {
+            continue;
+        }
+        for (term, _) in poly.terms.iter() {
+            for v in term.vars() {
+                register(&v);
+            }
+        }
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for poly in polys.iter() {
+        if poly.is_zero() {
+            continue;
+        }
+        let mut terms: Vec<String> = Vec::new();
+        let mut first = true;
+        for (term, coeff) in poly.terms.iter() {
+            let vars = term.vars();
+            let powers = term.powers();
+            let mono_parts: Vec<String> = vars
+                .iter()
+                .zip(powers.iter())
+                .map(|(v, &p)| {
+                    let vi = register(v);
+                    if p == 1 {
+                        format!("x{}", vi)
+                    } else {
+                        format!("x{}**{}", vi, p)
+                    }
+                })
+                .collect();
+            let mono_str = mono_parts.join("*");
+            if mono_str.is_empty() {
+                if first {
+                    terms.push(format!("{}", coeff));
+                    first = false;
+                } else {
+                    terms.push(format!("+ {}", coeff));
+                }
+            } else if coeff.is_one() {
+                if first {
+                    terms.push(mono_str);
+                    first = false;
+                } else {
+                    terms.push(format!("+ {}", mono_str));
+                }
+            } else if (-*coeff).is_one() {
+                if first {
+                    terms.push(format!("- {}", mono_str));
+                    first = false;
+                } else {
+                    terms.push(format!("- {}", mono_str));
+                }
+            } else {
+                let coeff_str = format!("{}", coeff);
+                if first {
+                    terms.push(format!("{}*{}", coeff_str, mono_str));
+                    first = false;
+                } else {
+                    terms.push(format!("+ {}*{}", coeff_str, mono_str));
+                }
+            }
+        }
+        lines.push(terms.join(" "));
+    }
+    let var_info: Vec<String> = (0..next_idx)
+        .map(|i| {
+            let name = idx_to_name.get(&i).cloned().unwrap_or_default();
+            format!("x{}: {}", i, name)
+        })
+        .collect();
+    let header = format!("vars: {}", var_info.join(", "));
+
+    let mut file = std::fs::File::create(path)?;
+    writeln!(file, "{}", header)?;
+    for line in &lines {
+        writeln!(file, "{}", line)?;
+    }
+    Ok(())
+}

@@ -274,6 +274,16 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerResult<C, T> {
         }
     }
 
+    pub fn export_polys_to_python(&self, path: &str) -> std::io::Result<()> {
+        let polys: Vec<_> = self
+            .basis
+            .iter()
+            .filter(|p| !p.is_zero())
+            .cloned()
+            .collect();
+        crate::analyses::groebner::sparsepoly::export_polys_to_python(&polys, &self.prefs, path)
+    }
+
     /// Look up a Ref in the namespace. Panics if not found.
     pub fn find_ref(&self, r: &Ref) -> PRef {
         if let Some(v) = self.prefs.get(r) {
@@ -862,11 +872,6 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
             target.verbose()
         )
     }
-
-    /// Admit a target PRef as an unconstrained free identifier: emit no
-    /// basis equations and no `pl` binding.
-    #[allow(unused_variables)]
-    fn admit_unconstrained_identifier(context: &str, target: &PRef) {}
 
     /// Clear only cached polynomial division witnesses; keep sentinel and generated-name state intact.
     pub fn clear_div_witness_cache(&mut self) {
@@ -2572,7 +2577,7 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
                     }
                 }
                 _ => {
-                    Self::admit_unconstrained_identifier("dynamic-ram", &pr);
+                    Self::uncovered_op("dynamic-ram", &pr);
                 }
             },
             // Phase 12: `Op::Pair(a, b, t)` — bilinear pairing.
@@ -10069,76 +10074,6 @@ mod tests {
                 s.clone(),
             ),
             &mut gresult,
-        );
-    }
-
-    /// dynamic-ram: a runtime (non-literal) index in Ram is admitted as an
-    /// unconstrained free identifier.  The result PRef must emit no basis
-    /// equations and no pl binding.
-    #[test]
-    fn dynamic_ram_admits_unconstrained_identifier() {
-        use crate::PRef;
-        use backend::op::mk;
-        use lang::typ::{Distribution, Qualifier};
-        use petgraph::graph::NodeIndex;
-
-        let mut builder = GroebnerBuilder::<ArkBls12_381, GrevLexTerm>::new();
-        let mut gresult = GroebnerResult::<ArkBls12_381, GrevLexTerm>::new();
-
-        let s = ATyp::scalar();
-        let fin = ATyp::fin(lang::typ::range::CRange::default());
-        let vec_s = ATyp::Vec(Box::new(s.clone()), 2);
-
-        // Array operand (must be a Ref).
-        let pref_arr = PRef::from_node(
-            NodeIndex::new(0),
-            vec_s.clone(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        gresult.register(&pref_arr);
-
-        // Index operand is a Ref (runtime), not a Value::Index.
-        let pref_idx = PRef::from_node(
-            NodeIndex::new(1),
-            fin.clone(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        gresult.register(&pref_idx);
-
-        let pref_r = PRef::from_node(
-            NodeIndex::new(2),
-            s.clone(),
-            0,
-            Qualifier::Private,
-            Distribution::default(),
-        );
-        gresult.register(&pref_r);
-
-        // Must not panic — dynamic RAM is admitted as a free identifier.
-        builder.add_op(
-            pref_r.clone(),
-            Op::Ram(
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(0)), vec_s.clone())),
-                mk::<ArkBls12_381>(Op::Ref(crate::Ref::new(NodeIndex::new(1)), fin.clone())),
-            ),
-            &mut gresult,
-        );
-
-        // No basis equation, no pl binding for the result PRef.
-        for slot in pref_r.slots() {
-            assert!(
-                !gresult.pl.contains(&slot),
-                "dynamic-ram result must not appear in pl"
-            );
-        }
-        assert!(
-            gresult.basis.is_empty(),
-            "dynamic-ram must emit no basis equations; got {} rows",
-            gresult.basis.len()
         );
     }
 }

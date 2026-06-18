@@ -7,7 +7,7 @@ use crate::analyses::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomia
 use crate::analyses::trans_clos::TransClos;
 use backend::ATyp;
 use backend::ArkConfig;
-use backend::op::HasOpFactory;
+use backend::op::{GOp, HasOpFactory, mk};
 use lang::ast::BinOp;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -114,13 +114,61 @@ pub fn extract_locals<C: ArkConfig + HasOpFactory>(
     comp_builder.build(tc_no_equ)
 }
 
-fn strip_equ<C: ArkConfig>(tc: &TransClos<C>) -> TransClos<C> {
+fn strip_equ<C: ArkConfig + HasOpFactory>(tc: &TransClos<C>) -> TransClos<C> {
     let mut tc_no_equ = tc.clone();
     for entry in &mut tc_no_equ.clos {
-        if let Op::Bin(BinOp::Equ, ..) = entry.1 {
-            let pr = entry.0.clone();
-            entry.1 = Op::Ref(pr.reference, pr.typ.clone());
-        }
+        let pr = entry.0.clone();
+        entry.1 = strip_equ_op(entry.1.clone(), &pr);
     }
     tc_no_equ
+}
+
+fn strip_equ_op<C: ArkConfig + HasOpFactory>(op: GOp<C>, result: &PRef) -> GOp<C> {
+    match op {
+        Op::Bin(BinOp::Equ, ..) => Op::Ref(
+            backend::op::Ref(result.reference.node()),
+            result.typ.clone(),
+        ),
+        Op::Map(d, b) => Op::Map(
+            mk(strip_equ_op(d.get().clone(), result)),
+            mk(strip_equ_op(b.get().clone(), result)),
+        ),
+        Op::ReduceMap(rop, d, b) => Op::ReduceMap(
+            rop,
+            mk(strip_equ_op(d.get().clone(), result)),
+            mk(strip_equ_op(b.get().clone(), result)),
+        ),
+        Op::Reduce(rop, v) => Op::Reduce(rop, mk(strip_equ_op(v.get().clone(), result))),
+        Op::Bin(bop, a, b, typ) => Op::Bin(
+            bop,
+            mk(strip_equ_op(a.get().clone(), result)),
+            mk(strip_equ_op(b.get().clone(), result)),
+            typ,
+        ),
+        Op::Check(a) => Op::Check(mk(strip_equ_op(a.get().clone(), result))),
+        Op::Interpolate(pts, evals) => Op::Interpolate(
+            mk(strip_equ_op(pts.get().clone(), result)),
+            mk(strip_equ_op(evals.get().clone(), result)),
+        ),
+        Op::Evaluate(p, range, xs) => Op::Evaluate(
+            mk(strip_equ_op(p.get().clone(), result)),
+            range,
+            xs.map(|v| mk(strip_equ_op(v.get().clone(), result))),
+        ),
+        Op::Vec(vs) => Op::Vec(
+            vs.into_iter()
+                .map(|v| mk(strip_equ_op(v.get().clone(), result)))
+                .collect(),
+        ),
+        Op::Ram(a, b) => Op::Ram(
+            mk(strip_equ_op(a.get().clone(), result)),
+            mk(strip_equ_op(b.get().clone(), result)),
+        ),
+        Op::Poly(v) => Op::Poly(mk(strip_equ_op(v.get().clone(), result))),
+        Op::Mle(v) => Op::Mle(mk(strip_equ_op(v.get().clone(), result))),
+        Op::Coef(v) => Op::Coef(mk(strip_equ_op(v.get().clone(), result))),
+        Op::Ifft(v) => Op::Ifft(mk(strip_equ_op(v.get().clone(), result))),
+        Op::Fft(v) => Op::Fft(mk(strip_equ_op(v.get().clone(), result))),
+        other => other,
+    }
 }

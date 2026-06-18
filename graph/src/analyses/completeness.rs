@@ -58,11 +58,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             self.prover.basis.push(p.clone());
         }
 
-        // The prover, relation, and verifier sub-projections are built
-        // independently and can annotate the same DAG node-slot with divergent
-        // type/qualifier/distribution metadata, which `PRef` identity — and thus
-        // monomial-variable identity — distinguishes. Unify them so honest
-        // verifier equations reduce against the prover ideal.
         self.canonicalize_node_slot_vars();
 
         self.prover.run::<128>();

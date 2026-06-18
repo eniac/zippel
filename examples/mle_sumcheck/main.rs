@@ -35,7 +35,7 @@ fn main() {
     let analysis_args = ZippelArgs::new(zippel_file);
     let mut analysis_handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(analysis_args);
     let mut analysis_sizes = Ctx::new();
-    analysis_sizes.insert(&Tid::new("NUM_VARS"), &1usize);
+    analysis_sizes.insert(&Tid::new("NUM_VARS"), &2usize);
     analysis_sizes.insert(&Tid::new("MAX_DEGREE_CONST"), &1usize);
     analysis_handler.compile(&analysis_sizes);
 
