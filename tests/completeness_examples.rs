@@ -1,5 +1,5 @@
-use backend::ArkBls12_381;
 use analyses::AnalysisError;
+use backend::ArkBls12_381;
 use lang::id::Tid;
 use libtest_mimic::{Failed, Trial};
 use petgraph::Direction;

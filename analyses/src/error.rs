@@ -1,7 +1,7 @@
 use crate::groebner::{GrevLexTerm, SparsePolynomial};
 use crate::knowledge::ElimTerm;
-use graph::{GraphError, PRef};
 use backend::ArkConfig;
+use graph::{GraphError, PRef};
 use thiserror::Error;
 
 /// Reason why no valid extractor was found for a witness slot.

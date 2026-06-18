@@ -38,10 +38,10 @@
 
 use std::time::Duration;
 
-use ark_bls12_381::Fr;
-use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use analyses::groebner::{GrevLexTerm, GroebnerBasis, Monomial};
 use analyses::knowledge::ElimTerm;
+use ark_bls12_381::Fr;
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 
 #[path = "groebner_shared.rs"]
 mod shared;

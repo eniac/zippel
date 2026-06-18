@@ -1,5 +1,5 @@
-use graph::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
 use backend::ArkConfig;
+use graph::{DQDag, Dag, GOp, Node, Op, QDag, Ref};
 use lang::ast::BinOp;
 use lang::typ::Distribution;
 #[cfg(test)]
@@ -385,9 +385,9 @@ impl fmt::Display for UniformityPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graph::UDags;
     use crate::QualifierPropagation;
     use backend::ArkBls12_381;
+    use graph::UDags;
     use lang::ast::UModule;
     use petgraph::graph::NodeIndex;
     use share::unwrap;

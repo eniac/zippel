@@ -1,6 +1,6 @@
-use graph::{DQDag, GOp, Node, Op, PRef, Ref, mk};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
+use graph::{DQDag, GOp, Node, Op, PRef, Ref, mk};
 use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -446,9 +446,9 @@ impl<C: ArkConfig> fmt::Display for TransClos<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graph::{DQDag, UDags};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
+    use graph::{DQDag, UDags};
     use lang::ast::UModule;
     use share::{Ctx, unwrap};
     use std::collections::HashSet;

@@ -1,7 +1,7 @@
-use graph::PRef;
 use crate::groebner::monomial::Monomial;
 use ark_ff::Field;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use graph::PRef;
 use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
 use std::fmt;
 use std::fmt::Debug;

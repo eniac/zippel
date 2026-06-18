@@ -7,10 +7,10 @@ use crate::groebner::ark_gb_adapter::LocalRankGuard;
 use crate::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
 use crate::groebner::{GroebnerBuilder, GroebnerResult, SparsePolynomial};
-use graph::{DQDag, PRef, Ref};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
+use graph::{DQDag, PRef, Ref};
 use lang::id::Vid;
 use log::{info, warn};
 use petgraph::Direction;
@@ -621,9 +621,9 @@ fn factor_group_gcd<C: ArkConfig>(result: &mut GroebnerResult<C, SoundnessElimTe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graph::UDags;
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
+    use graph::UDags;
     use lang::ast::UModule;
     use share::Ctx;
     use share::unwrap;

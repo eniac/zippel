@@ -3494,13 +3494,13 @@ impl<C: ArkConfig + HasOpFactory, T: Monomial> GroebnerBuilder<C, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(test)]
-    use graph::UDags;
     use crate::TransClos;
     #[cfg(test)]
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use backend::op::mk;
+    #[cfg(test)]
+    use graph::UDags;
     #[cfg(test)]
     use lang::ast::UModule;
     #[cfg(test)]
@@ -3696,9 +3696,9 @@ mod tests {
 
     #[test]
     fn test_add_op_poly_binds_coefficient_slots() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3745,9 +3745,9 @@ mod tests {
     #[test]
     fn test_add_op_coef_roundtrips_poly() {
         // Op::Coef(Op::Poly(v)) bound to the same slots should reduce to `v`.
-        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3818,9 +3818,9 @@ mod tests {
 
     #[test]
     fn test_add_op_mle_binds_hypercube_slots() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -3913,9 +3913,9 @@ mod tests {
 
     #[test]
     fn test_add_op_eval_univariate_batched() {
-        use graph::{PRef, Ref};
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4019,9 +4019,9 @@ mod tests {
     #[test]
     fn test_add_op_eval_univariate_batched_with_constants() {
         // p(x) = 3 + 5x evaluated at [7, 11] should give [38, 58].
-        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -4393,8 +4393,8 @@ mod tests {
     fn test_add_op_vpoly_add_coefficient_wise() {
         // VPoly(2,1) has 3 coefficient slots.  a + b should bind result.slot(i)
         // to a.slot(i) + b.slot(i) for each of the 3 slots.
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4464,8 +4464,8 @@ mod tests {
     #[test]
     fn test_add_op_mle_add_pointwise() {
         // Mle(2) has 4 evaluation slots. add is pointwise over hypercube.
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4525,8 +4525,8 @@ mod tests {
 
     #[test]
     fn test_add_op_vpoly_sub_coefficient_wise() {
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4583,8 +4583,8 @@ mod tests {
     #[test]
     fn test_add_op_vpoly_mul_univariate_convolution() {
         // VPoly(1,1) × VPoly(1,1) → VPoly(1,2), a_0 b_0, a_0 b_1 + a_1 b_0, a_1 b_1.
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4662,8 +4662,8 @@ mod tests {
         //   [0,0], [0,1], [1,0]   (sizes 3)
         // VPoly(2,2) multi-indices:
         //   [0,0], [0,1], [1,0], [0,2], [1,1], [2,0]   (size 6)
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4740,8 +4740,8 @@ mod tests {
         //   x^0 :  u_0 v_0
         //   x^1 :  -2 u_0 v_0 + u_0 v_1 + u_1 v_0
         //   x^2 :  u_0 v_0 - u_0 v_1 - u_1 v_0 + u_1 v_1
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4836,8 +4836,8 @@ mod tests {
         //   VPoly: b_0 + b_1·x
         //   Product: p(x)·q(x) = (u_0·b_0) + (u_1·b_0 - u_0·b_0 + u_0·b_1)·x
         //                      + (u_1·b_1 - u_0·b_1)·x²
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4915,8 +4915,8 @@ mod tests {
         // Mle(2) has 4 slots: evals at (0,0), (1,0), (0,1), (1,1).
         // Result VPoly(2,3) has 10 slots.
         // Just verify all 10 result slots are populated.
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -4970,8 +4970,8 @@ mod tests {
     fn test_add_op_mle_vpoly_mul_bivariate_coefficients() {
         // Mle(2) × VPoly(2, 1) → VPoly(2, 3).
         // Verify the constant-term slot (multi-index [0,0]) and a cross-term.
-        use graph::{PRef, Ref};
         use backend::op::mk;
+        use graph::{PRef, Ref};
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -6401,8 +6401,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_constant_points() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6492,8 +6492,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_3_constant_points() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6592,8 +6592,8 @@ mod tests {
 
     #[test]
     fn test_add_op_interpolate_ref_with_constant_points_in_pl() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -6879,8 +6879,8 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at duplicate-interpolate-points"
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -7849,9 +7849,9 @@ mod tests {
 
     #[test]
     fn test_add_uni_different_degrees() {
-        use graph::PRef;
         use ark_bls12_381::Fr;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8687,8 +8687,8 @@ mod tests {
 
     #[test]
     fn test_pow_uni_const_exp() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8741,8 +8741,8 @@ mod tests {
 
     #[test]
     fn test_pow_vec_uni_const_exp() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8804,8 +8804,8 @@ mod tests {
 
     #[test]
     fn test_pow_vec_vecindex_per_element() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -8862,8 +8862,8 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn test_pow_vec_mixed_const_and_opaque() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -9857,8 +9857,8 @@ mod tests {
     fn record_projection_resolves_without_np_lookup() {
         // Build a record {a: Scalar, b: Scalar} from scalar refs, project
         // field "a", assert pl/basis aliases the field directly.
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
 
@@ -9962,8 +9962,8 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -10022,8 +10022,8 @@ mod tests {
         expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
     )]
     fn uncovered_op_dynamic_pow_scalar_panics() {
-        use graph::PRef;
         use backend::op::mk;
+        use graph::PRef;
         use lang::ast::BinOp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;

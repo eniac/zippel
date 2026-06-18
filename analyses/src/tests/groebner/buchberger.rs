@@ -16,12 +16,12 @@ use log::debug;
 use petgraph::graph::NodeIndex;
 use share::assert_deq;
 
-use graph::PRef;
 use crate::groebner::buchberger::GroebnerBasis;
 use crate::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::groebner::sparsepoly::SparsePolynomial;
 use crate::knowledge::ElimTerm;
 use ark_ff::Field;
+use graph::PRef;
 
 fn sparse_poly<F: Field, T: Monomial + From<Vec<(PRef, usize)>>>(
     terms: Vec<(F, Vec<(&PRef, usize)>)>,

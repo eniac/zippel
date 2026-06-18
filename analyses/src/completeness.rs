@@ -2,13 +2,13 @@ use backend::ArkConfig;
 use backend::op::HasOpFactory;
 use share::Set;
 
-use graph::DQDag;
-use graph::PRef;
-use graph::Ref;
 use crate::TransClos;
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
+use graph::DQDag;
+use graph::PRef;
+use graph::Ref;
 
 /// Perform a completeness analysis using Groebner bases.
 /// This analysis checks if the relation is included in the implementation.
@@ -137,9 +137,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 mod tests {
     use super::*;
     use crate::groebner::{GroebnerBasis, SparsePolynomial};
-    use graph::UDags;
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
+    use graph::UDags;
     use lang::ast::UModule;
     use lang::id::Vid;
     use share::Ctx;
@@ -723,8 +723,8 @@ mod tests {
     /// node for each shape and asserts the returned `ATyp`.
     #[test]
     fn op_eval_typ_dispatch() {
-        use graph::{GOp, Op as BOp, Ref, mk};
         use backend::{ATyp, ArkBls12_381};
+        use graph::{GOp, Op as BOp, Ref, mk};
         use petgraph::graph::NodeIndex;
 
         // Build an Op::Evaluate(p, x) where p has type `p_typ` and x has type `x_typ`.

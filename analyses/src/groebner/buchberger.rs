@@ -12,8 +12,8 @@ use ark_ff::Field;
 use std::fmt;
 use std::ops::Index;
 
-use graph::PRef;
 use crate::groebner::{Monomial, SparsePolynomial};
+use graph::PRef;
 
 use share::Set;
 

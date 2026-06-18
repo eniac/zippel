@@ -3,9 +3,9 @@
 //! small-n examples. See `benches/groebner_shared.rs` for the generator code
 //! and `benches/groebner.rs` for the upstream provenance.
 
+use analyses::groebner::{GrevLexTerm, SparsePolynomial};
 use ark_bls12_381::Fr;
 use graph::PRef;
-use analyses::groebner::{GrevLexTerm, SparsePolynomial};
 
 #[path = "../benches/groebner_shared.rs"]
 mod shared;

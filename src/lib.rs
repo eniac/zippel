@@ -1,10 +1,13 @@
+use analyses::{
+    CompletenessAnalysis, DEFAULT_GB_W, KnowledgeAnalysis, QualifierPropagation,
+    UniformityPropagation,
+};
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, Value, value_to_bytes};
 use graph::Dag;
+use graph::WritePdf;
 use graph::domain_seperator::ZippelDomainSeparator;
 use graph::{UDag, UDags};
-use analyses::{CompletenessAnalysis, DEFAULT_GB_W, QualifierPropagation, UniformityPropagation, KnowledgeAnalysis};
-use graph::WritePdf;
 use lang::ast::{CModule, UModule};
 use lang::id::{Tid, Vid};
 use lang::typ::range::Range;

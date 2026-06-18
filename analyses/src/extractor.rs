@@ -1,5 +1,3 @@
-use graph::Op;
-use graph::PRef;
 use crate::groebner::ark_gb_adapter::get_local_rank;
 use crate::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::groebner::tiered::{TieredElimMono, TieredElimStrategy};
@@ -8,6 +6,8 @@ use crate::trans_clos::TransClos;
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};
+use graph::Op;
+use graph::PRef;
 use lang::ast::BinOp;
 
 #[derive(Clone, PartialEq, Eq, Debug)]

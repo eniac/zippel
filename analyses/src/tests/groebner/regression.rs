@@ -22,13 +22,13 @@ use lang::id::Vid;
 use lang::typ::{Distribution, Qualifier};
 use petgraph::graph::NodeIndex;
 
-use graph::PRef;
 use crate::groebner::monomial::{GrevLexTerm, Monomial};
 use crate::groebner::sparsepoly::SparsePolynomial;
 use crate::knowledge::ElimTerm;
 use crate::tests::groebner::legacy::legacy_compute_reduced_gb;
 use crate::tests::groebner::shared;
 use ark_ff::Field;
+use graph::PRef;
 
 /// Compute the reduced Gröbner basis of `input` through both the legacy
 /// in-tree Buchberger and the ark-gb-backed `T::compute_reduced_gb`, then

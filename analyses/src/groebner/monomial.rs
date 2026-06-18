@@ -1,8 +1,8 @@
-use graph::PRef;
 use crate::groebner::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
+use graph::PRef;
 use share::Ctx;
 use std::fmt;
 use std::fmt::Debug;

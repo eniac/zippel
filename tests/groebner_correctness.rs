@@ -33,11 +33,11 @@
 //! to grevlex on the full variable set. The pinned `_elim` and `_grevlex`
 //! results therefore should match — that itself is a useful invariant.
 
+use analyses::groebner::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
+use analyses::knowledge::ElimTerm;
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
 use graph::PRef;
-use analyses::groebner::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
-use analyses::knowledge::ElimTerm;
 
 #[path = "../benches/groebner_shared.rs"]
 mod shared;

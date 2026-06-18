@@ -1,12 +1,12 @@
-#[cfg(test)]
-use graph::WritePdf;
 use crate::TransClos;
 use crate::error::AnalysisError;
 use crate::groebner::monomial::{ElimMono, ElimStrategy};
 use crate::groebner::{GroebnerBasis, GroebnerBuilder, GroebnerResult, SparsePolynomial};
-use graph::{DQDag, PRef};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
+#[cfg(test)]
+use graph::WritePdf;
+use graph::{DQDag, PRef};
 #[cfg(test)]
 use log::debug;
 use log::warn;
@@ -188,11 +188,11 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 }
 
 #[cfg(test)]
-use graph::UDags;
-#[cfg(test)]
 use crate::{QualifierPropagation, UniformityPropagation};
 #[cfg(test)]
 use backend::ArkBls12_381;
+#[cfg(test)]
+use graph::UDags;
 #[cfg(test)]
 use lang::ast::UModule;
 #[cfg(test)]

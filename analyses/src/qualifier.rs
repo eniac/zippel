@@ -1,5 +1,5 @@
-use graph::{Dag, GOp, Node, Op, QDag, UDag};
 use backend::ArkConfig;
+use graph::{Dag, GOp, Node, Op, QDag, UDag};
 use lang::typ::Qualifier;
 use petgraph::Direction;
 use petgraph::graph::NodeIndex;
@@ -138,9 +138,9 @@ impl QualifierPropagation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graph::{Node, UDags};
     use backend::ArkBls12_381;
     use backend::op::mk;
+    use graph::{Node, UDags};
     use lang::ast::UModule;
     use lang::typ::Qualifier;
     use share::unwrap;

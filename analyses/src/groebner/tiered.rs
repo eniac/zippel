@@ -1,9 +1,9 @@
-use graph::PRef;
 use crate::groebner::ark_gb_adapter::get_local_rank;
 use crate::groebner::sparsepoly::SparsePolynomial;
 use ark_ff::Field;
 use core::cmp::Ordering;
 use core::ops::{Div, Mul, MulAssign};
+use graph::PRef;
 use share::Ctx;
 use std::fmt;
 use std::fmt::Debug;
