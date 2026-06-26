@@ -179,7 +179,16 @@ proto hyrax<G: Group, F: Scalar<G>>(
     public g_vec:  [G; {ncols}],
     public g_base: G,
     public h_base: G
-) where g_base == g_base
+) where
+    // Hyrax proves y == p̃(z_row, z_col), where p̃ is the multilinear
+    // extension of `p` indexed row-major as a {nrows}×{ncols} matrix.
+    // Flatten the tensored eq-basis over (z_row, z_col) into one vector
+    // so the relation is a single dot product against `p`, matching how
+    // pst13.zippel expresses `y == dot(eq_mle(z), p)`.
+    let l_vec = eq_weights(z_row);
+    let r_vec = eq_weights(z_col);
+    let eq_full = [l_vec[i / {ncols}] * r_vec[i % {ncols}] for i in 0..{ntot}];
+    y == dot(eq_full, p)
 {{
     let r_rows = [random<F> for i in 0..{nrows}];
     c_rows <- [

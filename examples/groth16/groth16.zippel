@@ -27,8 +27,26 @@ proto groth16<G1: Group, G2: Group, GT: Pairing<G1, G2>, F: Scalar<G1, G2>, M: S
     private l_query: [G1; L],
     public instance_assignment: [F; M],
     private witness_assignment: [F; L],
-    private h_coeffs: [F; H]
-) where alpha_g1 == alpha_g1
+    private h_coeffs: [F; H],
+    // Relation-only trapdoor witnesses (analogous to pst13.zippel's
+    // `private alpha`). The proto body and verifier never reference
+    // these; they exist so the `where` clause can express the QAP
+    // identity at the trusted-setup trapdoor τ:
+    //   ⟨A(τ), z⟩ · ⟨B(τ), z⟩ - ⟨C(τ), z⟩ == H(τ) · t(τ),
+    // where z = instance ++ witness and A_i(τ), B_i(τ), C_i(τ) are the
+    // QAP polynomial evaluations at τ.
+    private a_evs: [F; M+L],
+    private b_evs: [F; M+L],
+    private c_evs: [F; M+L],
+    private tau: F,
+    private t_at_tau: F
+) where
+    let full_assign = instance_assignment ++ witness_assignment;
+    let a_at_tau = dot(a_evs, full_assign);
+    let b_at_tau = dot(b_evs, full_assign);
+    let c_at_tau = dot(c_evs, full_assign);
+    let h_at_tau = dot(h_coeffs, [tau ^ j for j in 0..H]);
+    a_at_tau * b_at_tau - c_at_tau == h_at_tau * t_at_tau
 {
     let r = random<F>;
     let s = random<F>;
