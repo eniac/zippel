@@ -113,6 +113,17 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
             .collect()
     }
 
+    /// Returns `true` if the basis is the unit ideal — i.e. it contains a
+    /// nonzero constant polynomial. Any nonzero constant generates the whole
+    /// ring, so the ideal is trivially `{0}`. This happens when the protocol
+    /// is self-contradictory or when something went wrong computing the
+    /// basis. Callers should warn the user when this is detected.
+    pub fn is_unit(&self) -> bool {
+        self.basis
+            .iter()
+            .any(|p| p.is_constant() && !p.is_zero())
+    }
+
     /// Reduces polynomial `p` with respect to the basis `G`.
     /// Returns the remainder `r` such that `p = sum(q_i * g_i) + r`, and no term in `r`
     /// is divisible by the leading term of any `g_i` in `G`.

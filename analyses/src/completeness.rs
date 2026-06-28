@@ -7,7 +7,6 @@ use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
 use crate::groebner::{GrevLexTerm, GroebnerBuilder, GroebnerResult};
 use graph::DQDag;
-use graph::PRef;
 use graph::Ref;
 
 /// Perform a completeness analysis using Groebner bases.
@@ -58,9 +57,16 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             self.prover.basis.push(p.clone());
         }
 
-        self.canonicalize_node_slot_vars();
-
         self.prover.run::<128>();
+
+        if self.prover.basis.is_unit() {
+            eprintln!(
+                "WARNING: completeness analysis: prover Groebner basis reduced to the unit ideal \
+                 (contains 1). This indicates the protocol is self-contradictory or that \
+                 something went wrong computing the basis. Please report this to the zippel \
+                 developers."
+            );
+        }
 
         for p in self.verifier.basis.iter() {
             if p.is_zero() {
@@ -73,64 +79,6 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
         }
         Ok(())
     }
-
-    /// Unify Gröbner variables that denote the same `(node, slot)`.
-    ///
-    /// The prover, relation, and verifier sub-projections are built
-    /// independently and can annotate the same DAG node with divergent
-    /// `typ`/`qualifier`/`distribution` metadata — e.g. a transcript scalar
-    /// vector seen as `Scalar` in the prover binding but as an index `Fin` in
-    /// the verifier's element access. `PRef` identity includes that metadata,
-    /// so the same `(reference, index)` otherwise splits into distinct monomial
-    /// variables that never cancel, leaving honest verifier equations
-    /// irreducible. Rewrite every basis polynomial so each `(reference, index)`
-    /// uses one canonical `PRef` (the `Ord`-minimal occurrence).
-    ///
-    /// TODO: extract this to TransClos
-    fn canonicalize_node_slot_vars(&mut self) {
-        use std::collections::HashMap;
-        type SP<C> = crate::groebner::SparsePolynomial<<C as ArkConfig>::F, GrevLexTerm>;
-
-        let mut canon: HashMap<(Ref, usize), PRef> = HashMap::new();
-        for basis in [&self.prover.basis, &self.verifier.basis] {
-            for p in basis.iter() {
-                for v in p.vars().iter() {
-                    let key = (v.reference, v.index);
-                    match canon.get(&key) {
-                        Some(c) if c <= v => {}
-                        _ => {
-                            canon.insert(key, v.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut subs: share::Ctx<PRef, SP<C>> = share::Ctx::new();
-        let mut any = false;
-        for basis in [&self.prover.basis, &self.verifier.basis] {
-            for p in basis.iter() {
-                for v in p.vars().iter() {
-                    let c = &canon[&(v.reference, v.index)];
-                    if v != c && subs.get(v).is_none() {
-                        subs.insert(v, &SP::<C>::var(c));
-                        any = true;
-                    }
-                }
-            }
-        }
-        if !any {
-            return;
-        }
-        for p in self.prover.basis.iter_mut() {
-            let (np, _) = p.clone().inline_vars(&subs);
-            *p = np;
-        }
-        for p in self.verifier.basis.iter_mut() {
-            let (np, _) = p.clone().inline_vars(&subs);
-            *p = np;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -139,6 +87,7 @@ mod tests {
     use crate::groebner::{GroebnerBasis, SparsePolynomial};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
+    use graph::PRef;
     use graph::UDags;
     use lang::ast::UModule;
     use lang::id::Vid;
@@ -1304,6 +1253,31 @@ mod tests {
         assert!(
             ca.run().is_ok(),
             "c = a*b, verify c == a*b should be complete"
+        );
+    }
+
+    /// Guard-rail: a self-contradictory relation `x == x + 1` drives the
+    /// prover Gröbner basis to the unit ideal (contains a nonzero constant).
+    /// Confirms `GroebnerBasis::is_unit` detects this condition.
+    #[test]
+    fn unit_ideal_detection_smoke() {
+        let ex = r#"
+            proto contradiction<F: Field>(public x: F) where x == x + 1 {
+                t <- x;
+                verify(t == t)
+            }"#;
+        let m = UModule::from_str(ex)
+            .unwrap()
+            .concretize(&Ctx::new())
+            .unwrap();
+        let gs = unwrap!(UDags::<ArkBls12_381>::from_module(m));
+        let g = QualifierPropagation::from_dag(&gs[0]);
+        let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
+        let mut ca = CompletenessAnalysis::from_input(&g);
+        ca.run().ok();
+        assert!(
+            ca.prover.basis.is_unit(),
+            "verify(x == x+1) should drive the prover GB to the unit ideal"
         );
     }
 }

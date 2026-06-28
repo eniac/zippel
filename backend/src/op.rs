@@ -286,7 +286,16 @@ impl<C: ArkConfig, R> Op<C, R> {
                     let k = match &x_typ {
                         ATyp::Vec(_, n) => *n,
                         ATyp::Uni(n) => *n,
-                        _ => return x_typ,
+                        // Scalar point: univariate evaluation `p(t)`. The
+                        // result is the polynomial's coefficient type, which
+                        // is always Scalar under the canonical encoding (see
+                        // `coef_typ_from_poly`). Returning `x_typ` here was a
+                        // bug: a Fin-typed point (e.g. a loop iterator bound
+                        // to `0..2`) leaked its index type into the result,
+                        // diverging from the inferred `Scalar` and splitting
+                        // one `(node, slot)` into distinct monomial variables
+                        // across the prover/verifier projections.
+                        _ => return ATyp::scalar(),
                     };
                     match p.typ() {
                         ATyp::VPoly(n, _) if k == n => ATyp::scalar(),

@@ -164,6 +164,15 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         // Compute the Groebner basis
         self.result.run::<W>();
 
+        if self.result.basis.is_unit() {
+            eprintln!(
+                "WARNING: knowledge analysis: Groebner basis reduced to the unit ideal \
+                 (contains 1). This indicates the protocol is self-contradictory or that \
+                 something went wrong computing the basis. Please report this to the zippel \
+                 developers."
+            );
+        }
+
         // Delete varieties with elimination variables
         self.eliminate_var();
 

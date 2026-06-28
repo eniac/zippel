@@ -382,6 +382,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         lex_search.run::<128>();
         factor_group_gcd(&mut lex_search);
 
+        if lex_search.basis.is_unit() {
+            eprintln!(
+                "WARNING: soundness analysis (search): Groebner basis reduced to the unit ideal \
+                 (contains 1). This indicates the protocol is self-contradictory or that \
+                 something went wrong computing the basis. Please report this to the zippel \
+                 developers."
+            );
+        }
+
         // Phase 5: Extract witnesses.
         let mut extractors: Vec<(PRef, SparsePolynomial<C::F, SoundnessElimTerm>)> = Vec::new();
 
@@ -465,6 +474,15 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         lex_validity.inline(&Set::new());
         lex_validity.run::<128>();
+
+        if lex_validity.basis.is_unit() {
+            eprintln!(
+                "WARNING: soundness analysis (validity): Groebner basis reduced to the unit ideal \
+                 (contains 1). This indicates the protocol is self-contradictory or that \
+                 something went wrong computing the basis. Please report this to the zippel \
+                 developers."
+            );
+        }
 
         let lex_rel_polys: Vec<SparsePolynomial<C::F, SoundnessElimTerm>> = grev_rel_result
             .basis
