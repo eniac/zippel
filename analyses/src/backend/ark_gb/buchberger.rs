@@ -12,10 +12,8 @@ use ark_ff::Field;
 use std::fmt;
 use std::ops::Index;
 
-use crate::backend::ark_gb::{Monomial, SparsePolynomial};
-use graph::PRef;
-
-use share::Set;
+use crate::backend::ark_gb::SparsePolynomial;
+use crate::backend::ark_gb::monomial::Monomial;
 
 /// A struct representing a Gröbner basis.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,49 +44,13 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
         Self { basis, num_vars }
     }
 
-    pub fn empty(num_vars: usize) -> Self {
-        Self {
-            basis: Vec::new(),
-            num_vars,
-        }
-    }
-
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.basis.is_empty()
     }
 
-    pub fn len(&self) -> usize {
-        self.basis.len()
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = &SparsePolynomial<F, T>> {
         self.basis.iter()
-    }
-
-    pub fn push(&mut self, poly: SparsePolynomial<F, T>) {
-        self.basis.push(poly);
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut SparsePolynomial<F, T>> {
-        self.basis.iter_mut()
-    }
-
-    pub fn vars(&self) -> Set<PRef> {
-        self.basis
-            .iter()
-            .flat_map(|p| p.vars().into_iter())
-            .collect()
-    }
-
-    /// Returns `true` if the basis is the unit ideal — i.e. it contains a
-    /// nonzero constant polynomial. Any nonzero constant generates the whole
-    /// ring, so the ideal is trivially `{0}`. This happens when the protocol
-    /// is self-contradictory or when something went wrong computing the
-    /// basis. Callers should warn the user when this is detected.
-    pub fn is_unit(&self) -> bool {
-        self.basis
-            .iter()
-            .any(|p| p.is_constant() && !p.is_zero())
     }
 
     /// Reduces polynomial `p` with respect to the basis `G`.
@@ -133,38 +95,14 @@ impl<F: Field, T: Monomial> GroebnerBasis<F, T> {
 
     /// Compute the reduced Gröbner basis.
     ///
-    /// Dispatches via [`Monomial::compute_reduced_gb`]: `GrevLexTerm`
-    /// routes through the ark-gb grevlex adapter, and `ElimTerm` routes
-    /// through the ark-gb elim adapter.
+    /// Dispatches via [`Monomial::compute_reduced_gb`].
     ///
     /// W is the packed monomial width (8 or 16). Caller must ensure W is
     /// appropriate for the problem size.
+    #[allow(dead_code)]
     pub fn buchberger_and_reduce<const W: usize>(self) -> Self {
         let reduced = T::compute_reduced_gb::<_, W>(self.num_vars, self.basis);
         Self::new(self.num_vars, reduced)
-    }
-
-    /// Compute a Gröbner basis. Same backend dispatch as
-    /// [`Self::buchberger_and_reduce`]; the result is fully reduced
-    /// (`buchberger_and_reduce`'s output is also a Gröbner basis, so
-    /// returning it from `buchberger` satisfies the weaker contract).
-    ///
-    /// W is the packed monomial width (8 or 16). Caller must ensure W is
-    /// appropriate for the problem size.
-    pub fn buchberger<const W: usize>(&self) -> Self {
-        let reduced = T::compute_reduced_gb::<_, W>(self.num_vars, self.basis.clone());
-        Self::new(self.num_vars, reduced)
-    }
-
-    /// Reduce an existing Gröbner basis to its minimal, reduced form.
-    /// Uses the same backend dispatch as [`Self::buchberger_and_reduce`]
-    /// and is idempotent on an already-reduced basis.
-    ///
-    /// W is the packed monomial width (8 or 16). Caller must ensure W is
-    /// appropriate for the problem size.
-    pub fn reduce_groebner_basis<const W: usize>(&mut self) {
-        let basis = std::mem::take(&mut self.basis);
-        self.basis = T::compute_reduced_gb::<_, W>(self.num_vars, basis);
     }
 }
 

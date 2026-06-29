@@ -125,7 +125,10 @@ pub fn reduce<F: Field>(
             seen.insert(v.reference);
         }
     }
-    let is_lex = matches!(order.blocks().first().map(|b| &b.kind), Some(BlockKind::Lex));
+    let is_lex = matches!(
+        order.blocks().first().map(|b| &b.kind),
+        Some(BlockKind::Lex)
+    );
 
     // Compute a sort key for a monomial: a Vec of values that, when compared
     // lexicographically, gives the correct monomial ordering.
@@ -157,7 +160,8 @@ pub fn reduce<F: Field>(
         .iter()
         .filter(|p| !p.is_zero())
         .filter_map(|g| {
-            let mut terms: Vec<(Monomial, F)> = g.terms.iter().map(|(m, c)| (m.clone(), *c)).collect();
+            let mut terms: Vec<(Monomial, F)> =
+                g.terms.iter().map(|(m, c)| (m.clone(), *c)).collect();
             terms.sort_by_key(|a| sort_key(&a.0));
             let (lt_mono, lt_coeff) = terms.first()?;
             Some((*lt_coeff, lt_mono.clone(), terms))
@@ -176,7 +180,9 @@ pub fn reduce<F: Field>(
             continue;
         }
 
-        let found = reducers.iter().find(|(_, g_lt, _)| lt_mono.is_divided(g_lt));
+        let found = reducers
+            .iter()
+            .find(|(_, g_lt, _)| lt_mono.is_divided(g_lt));
 
         if let Some((g_lc, g_lt, g_terms)) = found {
             let multiplier_term = (lt_mono.clone() / g_lt.clone()).expect("divisibility checked");

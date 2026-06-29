@@ -33,12 +33,12 @@
 //! to grevlex on the full variable set. The pinned `_elim` and `_grevlex`
 //! results therefore should match — that itself is a useful invariant.
 
-use super::super::{GrevLexTerm, GroebnerBasis, Monomial, SparsePolynomial};
+use super::super::monomial::Monomial;
+use super::super::{GrevLexTerm, GroebnerBasis, SparsePolynomial};
 use crate::knowledge::ElimTerm;
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
 use graph::PRef;
-
 
 use super::shared::{cyclic_basis, katsura_basis, mk_vars, var_poly};
 
@@ -368,11 +368,17 @@ fn cross_order_consistency_via_inclusion(label: &str, n: usize) {
     let inputs_grev = katsura_basis::<GrevLexTerm>(n);
     let inputs_elim = katsura_basis::<ElimTerm>(n);
     assert!(
-        inputs_grev.basis.iter().all(|p| g_grev.reduce(p.clone()).is_zero()),
+        inputs_grev
+            .basis
+            .iter()
+            .all(|p| g_grev.reduce(p.clone()).is_zero()),
         "[{label}] grevlex GB doesn't contain its own inputs"
     );
     assert!(
-        inputs_elim.basis.iter().all(|p| g_elim.reduce(p.clone()).is_zero()),
+        inputs_elim
+            .basis
+            .iter()
+            .all(|p| g_elim.reduce(p.clone()).is_zero()),
         "[{label}] elim GB doesn't contain its own inputs"
     );
 }

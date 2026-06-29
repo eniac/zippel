@@ -9,8 +9,8 @@ use std::marker::PhantomData;
 
 use backend::ArkConfig;
 
+use super::{GbBackend, GbBasis};
 use crate::frontend::{MonoOrder, Polynomial, UnsupportedMonoOrder};
-use super::{GbBasis, GbBackend};
 
 pub struct Singular<C: ArkConfig> {
     _phantom: PhantomData<C>,

@@ -18,7 +18,7 @@ pub mod uniform;
 pub use completeness::CompletenessAnalysis;
 pub use error::AnalysisError;
 pub use frontend::TransClos;
-pub use ideal::{IdealBuilder, GroebnerNamespace, Ideal};
+pub use ideal::{GroebnerNamespace, Ideal, IdealBuilder};
 pub use knowledge::KnowledgeAnalysis;
 pub use qualifier::QualifierPropagation;
 pub use soundness::SpecialSoundnessAnalysis;

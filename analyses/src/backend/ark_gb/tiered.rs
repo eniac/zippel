@@ -167,20 +167,12 @@ impl<E: TieredElimStrategy> ZipMonomial for TieredElimMono<E> {
         self.0.is_constant()
     }
 
-    fn evaluate<F: Field>(&self, p: &Ctx<PRef, F>) -> F {
-        self.0.evaluate(p)
-    }
-
     fn is_divided(&self, other: &Self) -> bool {
         self.0.is_divided(&other.0)
     }
 
     fn lcm(&self, other: &Self) -> Self {
         TieredElimMono(self.0.lcm(&other.0), std::marker::PhantomData)
-    }
-
-    fn gcd(&self, other: &Self) -> Self {
-        TieredElimMono(self.0.gcd(&other.0), std::marker::PhantomData)
     }
 
     fn compute_reduced_gb<F: Field, const W: usize>(

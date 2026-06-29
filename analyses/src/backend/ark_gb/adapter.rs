@@ -762,7 +762,10 @@ impl BoundedCompositionTable {
     }
 }
 
-pub(crate) fn build_tier_layout<const W: usize>(group_lens: &[(usize, usize)], nvars: usize) -> TierLayout {
+pub(crate) fn build_tier_layout<const W: usize>(
+    group_lens: &[(usize, usize)],
+    nvars: usize,
+) -> TierLayout {
     let mut start = 0;
     let mut tiers = Vec::new();
 
@@ -1095,6 +1098,7 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelTieredElimMono<W> {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn compute_reduced_gb_with_tiered_elim<F, T, E, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, T>>,

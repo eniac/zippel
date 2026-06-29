@@ -3,11 +3,11 @@ use backend::op::HasOpFactory;
 use share::Set;
 
 use crate::TransClos;
+use crate::backend::{GbBackend, ark_gb::ArkGb};
 use crate::error::AnalysisError;
 use crate::extractor::extract_locals;
-use crate::ideal::{IdealBuilder, Ideal};
-use crate::backend::{GbBackend, ark_gb::ArkGb};
 use crate::frontend::MonoOrder;
+use crate::ideal::{Ideal, IdealBuilder};
 use graph::DQDag;
 use graph::Ref;
 
@@ -87,7 +87,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ark_gb::{GroebnerBasis, GrevLexTerm, SparsePolynomial};
+    use crate::backend::ark_gb::{GrevLexTerm, GroebnerBasis, SparsePolynomial};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use graph::PRef;

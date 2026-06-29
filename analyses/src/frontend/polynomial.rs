@@ -229,10 +229,7 @@ impl<F: Field> Polynomial<F> {
     }
 
     pub fn vars(&self) -> Set<PRef> {
-        self.terms
-            .keys()
-            .flat_map(|t| t.vars())
-            .collect()
+        self.terms.keys().flat_map(|t| t.vars()).collect()
     }
 
     pub fn square(&mut self) {

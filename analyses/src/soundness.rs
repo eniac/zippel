@@ -5,7 +5,7 @@ use crate::backend::{GbBackend, ark_gb::ArkGb};
 use crate::error::{AnalysisError, ExtractorRejection};
 use crate::extractor::{extract_locals, valid_extractor};
 use crate::frontend::{MonoOrder, Polynomial};
-use crate::ideal::{IdealBuilder, Ideal};
+use crate::ideal::{Ideal, IdealBuilder};
 use ark_ff::One;
 use backend::op::HasOpFactory;
 use backend::{ATyp, ArkConfig};
@@ -227,8 +227,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                             let d_poly = Polynomial::<C::F>::var(&d);
                             let cm_poly = Polynomial::<C::F>::var(cm_ref);
                             let cn_poly = Polynomial::<C::F>::var(cn_ref);
-                            let factor =
-                                d_poly * (cm_poly - cn_poly) - Polynomial::<C::F>::lit(&C::F::one());
+                            let factor = d_poly * (cm_poly - cn_poly)
+                                - Polynomial::<C::F>::lit(&C::F::one());
                             product *= factor;
                         }
 
@@ -303,16 +303,40 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
             let all_vars: Set<PRef> = grev_search.vars();
 
-            let mut rel: Vec<PRef> = all_vars.iter().filter(|v| rel_locals_set.contains(v)).cloned().collect();
+            let mut rel: Vec<PRef> = all_vars
+                .iter()
+                .filter(|v| rel_locals_set.contains(v))
+                .cloned()
+                .collect();
             rel.sort();
-            let mut priv_v: Vec<PRef> = all_vars.iter().filter(|v| priv_set.contains(v) && !rel_locals_set.contains(v)).cloned().collect();
+            let mut priv_v: Vec<PRef> = all_vars
+                .iter()
+                .filter(|v| priv_set.contains(v) && !rel_locals_set.contains(v))
+                .cloned()
+                .collect();
             priv_v.sort();
-            let mut pub_v: Vec<PRef> = all_vars.iter().filter(|v| pub_set.contains(v) && !rel_locals_set.contains(v) && !priv_set.contains(v)).cloned().collect();
+            let mut pub_v: Vec<PRef> = all_vars
+                .iter()
+                .filter(|v| {
+                    pub_set.contains(v) && !rel_locals_set.contains(v) && !priv_set.contains(v)
+                })
+                .cloned()
+                .collect();
             pub_v.sort();
-            let mut other: Vec<PRef> = all_vars.iter().filter(|v| !rel_locals_set.contains(v) && !priv_set.contains(v) && !pub_set.contains(v)).cloned().collect();
+            let mut other: Vec<PRef> = all_vars
+                .iter()
+                .filter(|v| {
+                    !rel_locals_set.contains(v) && !priv_set.contains(v) && !pub_set.contains(v)
+                })
+                .cloned()
+                .collect();
             other.sort();
 
-            rel.into_iter().chain(priv_v).chain(other).chain(pub_v).collect()
+            rel.into_iter()
+                .chain(priv_v)
+                .chain(other)
+                .chain(pub_v)
+                .collect()
         };
         let lex_order = MonoOrder::lex(lex_var_order);
 
@@ -370,12 +394,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
                     }
                     if !valid_extractor::<C>(&w.typ, poly) {
                         if w.typ.is_scalar() {
-                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(
-                                poly.clone(),
-                            ));
+                            rejection = Some(ExtractorRejection::FieldDependsOnGroup(poly.clone()));
                         } else {
-                            rejection =
-                                Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
+                            rejection = Some(ExtractorRejection::MultiGroupTerm(poly.clone()));
                         }
                         continue;
                     }

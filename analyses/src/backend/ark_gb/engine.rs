@@ -19,16 +19,18 @@ use backend::{ArkConfig, op::HasOpFactory};
 use graph::PRef;
 use share::{Ctx, Set};
 
-use crate::frontend::{BlockKind, MonoOrder, Monomial as FrontMonomial, Polynomial, UnsupportedMonoOrder};
 use crate::backend::ark_gb::adapter::{
-    ZippelTieredElimMono, build_tier_layout, compute_gb_pipeline,
-    compute_reduced_gb_grevlex, compute_reduced_gb_with_elim, collect_and_validate,
-    constant_only_basis, assert_fits_in_ark_gb, TierLayoutGuard,
+    TierLayoutGuard, ZippelTieredElimMono, assert_fits_in_ark_gb, build_tier_layout,
+    collect_and_validate, compute_gb_pipeline, compute_reduced_gb_grevlex,
+    compute_reduced_gb_with_elim, constant_only_basis,
 };
 use crate::backend::ark_gb::monomial::{GrevLexTerm, Monomial as OldMonomial};
 use crate::backend::ark_gb::sparsepoly::SparsePolynomial;
+use crate::frontend::{
+    BlockKind, MonoOrder, Monomial as FrontMonomial, Polynomial, UnsupportedMonoOrder,
+};
 
-use crate::backend::{GbBasis, GbBackend};
+use crate::backend::{GbBackend, GbBasis};
 
 pub struct ArkGb<C: ArkConfig> {
     _phantom: PhantomData<C>,
@@ -114,21 +116,11 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
             let old: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
                 ideal.into_iter().map(to_internal_poly).collect();
             let result = match w {
-                8 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 8>(
-                    0,
-                    old,
-                    &eliminate_fn,
-                ),
-                16 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 16>(
-                    0,
-                    old,
-                    &eliminate_fn,
-                ),
-                128 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 128>(
-                    0,
-                    old,
-                    &eliminate_fn,
-                ),
+                8 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 8>(0, old, &eliminate_fn),
+                16 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 16>(0, old, &eliminate_fn),
+                128 => {
+                    compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 128>(0, old, &eliminate_fn)
+                }
                 _ => panic!("unsupported W={w}"),
             };
             return Ok(GbBasis {
@@ -139,7 +131,9 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
 
         // Case 3: first block Lex, rest GrevLex (tiered order).
         if matches!(blocks[0].kind, BlockKind::Lex)
-            && blocks[1..].iter().all(|b| matches!(b.kind, BlockKind::GrevLex))
+            && blocks[1..]
+                .iter()
+                .all(|b| matches!(b.kind, BlockKind::GrevLex))
         {
             let old: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
                 ideal.into_iter().map(to_internal_poly).collect();
@@ -154,9 +148,9 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
     }
 
     fn reduce(&self, p: Polynomial<C::F>, basis: &GbBasis<C::F>) -> Polynomial<C::F> {
+        use crate::backend::ark_gb::adapter::{LocalRankGuard, get_local_rank};
         use crate::backend::ark_gb::buchberger::GroebnerBasis;
         use crate::backend::ark_gb::tiered::{TieredElimMono, TieredElimStrategy};
-        use crate::backend::ark_gb::adapter::{LocalRankGuard, get_local_rank};
 
         let blocks = basis.order.blocks();
         let is_single_grevlex = blocks.len() == 1
@@ -165,8 +159,11 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
 
         if is_single_grevlex {
             // GrevLex: use old proven reduce.
-            let old_basis: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
-                basis.polys.iter().map(|p| to_internal_poly(p.clone())).collect();
+            let old_basis: Vec<SparsePolynomial<C::F, GrevLexTerm>> = basis
+                .polys
+                .iter()
+                .map(|p| to_internal_poly(p.clone()))
+                .collect();
             let old_gb = GroebnerBasis::new(0, old_basis);
             from_internal_poly(old_gb.reduce(to_internal_poly(p)))
         } else if matches!(blocks[0].kind, crate::frontend::BlockKind::Lex) {
@@ -187,15 +184,20 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
             // Strategy: all variables in tier 0 (lex).
             struct LexRank;
             impl TieredElimStrategy for LexRank {
-                fn tier(_: &PRef) -> Option<usize> { Some(0) }
+                fn tier(_: &PRef) -> Option<usize> {
+                    Some(0)
+                }
                 fn lex_rank(v: &PRef) -> usize {
                     get_local_rank(v).unwrap()
                 }
             }
 
             let _guard = LocalRankGuard::install(rank_map);
-            let old_basis: Vec<SparsePolynomial<C::F, TieredElimMono<LexRank>>> =
-                basis.polys.iter().map(|p| to_internal_poly(p.clone())).collect();
+            let old_basis: Vec<SparsePolynomial<C::F, TieredElimMono<LexRank>>> = basis
+                .polys
+                .iter()
+                .map(|p| to_internal_poly(p.clone()))
+                .collect();
             let old_gb = GroebnerBasis::new(0, old_basis);
             let old_p = to_internal_poly(p);
             from_internal_poly(old_gb.reduce(old_p))
@@ -266,8 +268,12 @@ fn dispatch_tiered<F: Field>(
 
     match w {
         8 => compute_tiered_with_layout::<F, 8>(input, var_order, group_lens, nvars, exponents_fit),
-        16 => compute_tiered_with_layout::<F, 16>(input, var_order, group_lens, nvars, exponents_fit),
-        128 => compute_tiered_with_layout::<F, 128>(input, var_order, group_lens, nvars, exponents_fit),
+        16 => {
+            compute_tiered_with_layout::<F, 16>(input, var_order, group_lens, nvars, exponents_fit)
+        }
+        128 => {
+            compute_tiered_with_layout::<F, 128>(input, var_order, group_lens, nvars, exponents_fit)
+        }
         _ => panic!("unsupported W={w}"),
     }
 }
@@ -284,12 +290,13 @@ fn compute_tiered_with_layout<F: Field, const W: usize>(
     let layout = build_tier_layout::<W>(&group_lens, nvars);
     let _guard = TierLayoutGuard::<W>::install(layout);
 
-    Ok(compute_gb_pipeline::<F, GrevLexTerm, ZippelTieredElimMono<W>, W, _>(
-        input,
-        var_order,
-        exponents_fit,
-        |ring, polys| {
-            ark_gb::bba::compute_gb_serial::<F, ZippelTieredElimMono<W>, W>(ring, polys)
-        },
-    ))
+    Ok(compute_gb_pipeline::<
+        F,
+        GrevLexTerm,
+        ZippelTieredElimMono<W>,
+        W,
+        _,
+    >(input, var_order, exponents_fit, |ring, polys| {
+        ark_gb::bba::compute_gb_serial::<F, ZippelTieredElimMono<W>, W>(ring, polys)
+    }))
 }

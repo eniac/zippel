@@ -1,8 +1,8 @@
 use crate::TransClos;
+use crate::backend::{GbBackend, GbBasis, ark_gb::ArkGb};
 use crate::error::AnalysisError;
 use crate::frontend::{Block, BlockKind, MonoOrder, Polynomial};
-use crate::ideal::{IdealBuilder, Ideal};
-use crate::backend::{GbBasis, GbBackend, ark_gb::ArkGb};
+use crate::ideal::{Ideal, IdealBuilder};
 use backend::ArkConfig;
 use backend::op::HasOpFactory;
 #[cfg(test)]
@@ -43,8 +43,14 @@ fn knowledge_order(result: &Ideal<impl ArkConfig>) -> MonoOrder {
         .cloned()
         .collect();
     MonoOrder::block(vec![
-        Block { vars: Some(elim_vars), kind: BlockKind::GrevLex },
-        Block { vars: None, kind: BlockKind::GrevLex },
+        Block {
+            vars: Some(elim_vars),
+            kind: BlockKind::GrevLex,
+        },
+        Block {
+            vars: None,
+            kind: BlockKind::GrevLex,
+        },
     ])
 }
 
@@ -79,9 +85,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             let mut rel_gb = gb.fork_with_clean_div_witness_cache();
             let rel_result = rel_gb.build(TransClos::relation(dag));
             let order = knowledge_order(&rel_result);
-            backend
-                .compute_gb(rel_result.basis, &order, W)
-                .ok()
+            backend.compute_gb(rel_result.basis, &order, W).ok()
         } else {
             None
         };

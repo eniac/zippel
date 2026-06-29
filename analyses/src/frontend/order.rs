@@ -97,7 +97,11 @@ impl MonoOrder {
     /// **Note**: this requires all variables in both monomials to be covered
     /// by the blocks. Variables not in any block are treated as belonging to
     /// a final implicit GrevLex block.
-    pub fn compare(&self, a: &crate::frontend::Monomial, b: &crate::frontend::Monomial) -> core::cmp::Ordering {
+    pub fn compare(
+        &self,
+        a: &crate::frontend::Monomial,
+        b: &crate::frontend::Monomial,
+    ) -> core::cmp::Ordering {
         use core::cmp::Ordering;
 
         // Collect all variables from both monomials.

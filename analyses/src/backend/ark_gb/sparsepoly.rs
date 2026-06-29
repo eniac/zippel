@@ -2,7 +2,7 @@ use crate::backend::ark_gb::monomial::Monomial;
 use ark_ff::Field;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use graph::PRef;
-use share::{Ctx, DocAllocator, DocBuilder, Pretty, Set};
+use share::{Ctx, DocAllocator, DocBuilder, Pretty};
 use std::fmt;
 use std::fmt::Debug;
 use std::iter::Sum;
@@ -189,36 +189,23 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         SparsePolynomial { terms }
     }
 
+    #[allow(dead_code)]
     pub fn var(v: &PRef) -> SparsePolynomial<F, T> {
         let mut terms = Ctx::new();
         terms.insert(&T::from(vec![(v.clone(), 1)]), &F::one());
         SparsePolynomial { terms }
     }
 
-    pub fn degree(&self) -> usize {
-        self.terms
-            .iter()
-            .map(|(t, _)| t.degree())
-            .max()
-            .unwrap_or(0)
-    }
-
-    pub fn is_constant(&self) -> bool {
-        self.degree() == 0
-    }
-
     pub fn leading_term(&self) -> Option<(F, T)> {
         self.terms.first().map(|(t, c)| (*c, t.clone()))
     }
 
-    pub fn contains(&self, v: &PRef) -> bool {
-        self.vars().contains(v)
-    }
-
+    #[allow(dead_code)]
     pub fn square(&mut self) {
         *self *= self.clone();
     }
 
+    #[allow(dead_code)]
     pub fn pow(&mut self, exp: usize) {
         if exp == 0 {
             *self = SparsePolynomial::lit(&F::one());
@@ -238,58 +225,6 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
             *self *= mul.clone();
             i -= 1;
         }
-    }
-
-    pub fn vars(&self) -> Set<PRef> {
-        self.terms
-            .keys()
-            .into_iter()
-            .flat_map(|t| t.vars())
-            .collect()
-    }
-
-    pub fn flat_map_vars<FF: Fn(PRef) -> Self>(self, f: &FF) -> SparsePolynomial<F, T> {
-        let mut new_poly = SparsePolynomial::zero();
-        for (term, coeff) in self.terms.into_iter() {
-            // Start with the coefficient
-            let mut new_mono = SparsePolynomial::lit(&coeff);
-            // Apply the mapping function to each variable in the term
-            for (var, power) in term.vars().into_iter().zip(term.powers()) {
-                let mut p = f(var);
-                p.pow(power);
-                new_mono *= p;
-            }
-            new_poly += new_mono;
-        }
-        new_poly
-    }
-
-    /// Inline variables from `substitutions` into this polynomial.
-    /// Returns `(result, did_change)` where `did_change` is true if any
-    /// substitution was applied.
-    pub fn inline_vars(
-        self,
-        substitutions: &Ctx<PRef, SparsePolynomial<F, T>>,
-    ) -> (SparsePolynomial<F, T>, bool) {
-        let mut new_poly = SparsePolynomial::zero();
-        let mut did_change = false;
-        for (term, coeff) in self.terms.into_iter() {
-            let mut new_mono = SparsePolynomial::lit(&coeff);
-            for (var, power) in term.vars().into_iter().zip(term.powers()) {
-                if let Some(sub) = substitutions.get(&var) {
-                    did_change = true;
-                    let mut p = sub.clone();
-                    p.pow(power);
-                    new_mono *= p;
-                } else {
-                    let mut p = SparsePolynomial::var(&var);
-                    p.pow(power);
-                    new_mono *= p;
-                };
-            }
-            new_poly += new_mono;
-        }
-        (new_poly, did_change)
     }
 
     pub fn mul_by_term_and_scalar(&self, scalar: F, term: &T) -> SparsePolynomial<F, T> {
@@ -316,6 +251,7 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
 
     /// Compute the "syzygy" polynomial of two sparse polynomials
     /// for Buchberger's algorithm.
+    #[allow(dead_code)]
     pub fn s_poly(&self, other: &SparsePolynomial<F, T>) -> SparsePolynomial<F, T> {
         if self.is_zero() || other.is_zero() {
             return SparsePolynomial::zero();
@@ -355,7 +291,6 @@ impl<F: Field, T: Monomial> SparsePolynomial<F, T> {
         poly_self_scaled -= poly_other_scaled;
         poly_self_scaled
     }
-
 }
 
 impl<'a, D, A, F, T> Pretty<'a, D, A> for SparsePolynomial<F, T>
@@ -374,4 +309,3 @@ where
         false
     }
 }
-

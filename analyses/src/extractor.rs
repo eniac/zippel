@@ -1,5 +1,5 @@
-use crate::ideal::{IdealBuilder, Ideal};
 use crate::frontend::{Polynomial, TransClos};
+use crate::ideal::{Ideal, IdealBuilder};
 use backend::ATyp;
 use backend::ArkConfig;
 use backend::op::{GOp, HasOpFactory, mk};
@@ -15,10 +15,7 @@ use lang::ast::BinOp;
 /// - **G2**: each term may contain at most one G2 var; no G1 or GT vars.
 /// - **GT**: each term may contain either at most one GT var (no G1/G2),
 ///   or at most one G1 and one G2 var (no GT).
-pub(crate) fn valid_extractor<C: ArkConfig>(
-    witness_typ: &ATyp,
-    poly: &Polynomial<C::F>,
-) -> bool {
+pub(crate) fn valid_extractor<C: ArkConfig>(witness_typ: &ATyp, poly: &Polynomial<C::F>) -> bool {
     for term in poly.terms.keys() {
         let vars = term.vars();
         let pows = term.powers();

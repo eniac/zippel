@@ -139,8 +139,7 @@ impl Div for Monomial {
         if !self.is_divided(&other) {
             return None;
         }
-        let mut powers1: Vec<(PRef, usize)> =
-            self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
+        let mut powers1: Vec<(PRef, usize)> = self.0.iter().map(|(v, p)| (v.clone(), *p)).collect();
         for (var, power2) in other.0.iter() {
             if let Some(power1) = powers1.iter_mut().find(|(v, _)| v == var) {
                 power1.1 -= power2;
