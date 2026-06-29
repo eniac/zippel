@@ -45,26 +45,15 @@ pub struct KnowledgeAnalysis<C: ArkConfig> {
     relation_basis: Option<GbBasis<C::F>>,
 }
 
-impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
-    pub fn new(gb: Ideal<C>) -> Self {
-        Self {
-            prover_rel_ideal: gb,
-            relation_basis: None,
-        }
-    }
-
+impl<C: HasOpFactory> KnowledgeAnalysis<C> {
     pub fn from_input(dag: &DQDag<C>) -> Self {
-        Self::from_input_with_w(dag)
-    }
-
-    pub fn from_input_with_w(dag: &DQDag<C>) -> Self {
         let mut gb = IdealBuilder::new();
         let mut prover_ideal = gb.build(TransClos::prover(dag));
 
         let backend = ArkGb::default();
 
         let relation_basis = if dag.relation_node().is_some() {
-            let mut rel_gb = gb.fork_with_clean_div_witness_cache();
+            let mut rel_gb = gb.clone();
             let rel_ideal = rel_gb.build(TransClos::relation(dag));
             let order = knowledge_order(&rel_ideal);
             backend.compute_gb(rel_ideal.generating_set, &order).ok()
@@ -80,16 +69,6 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         Self {
             prover_rel_ideal: prover_ideal,
             relation_basis,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn from_relation(dag: &DQDag<C>) -> Self {
-        let mut gb = IdealBuilder::new();
-        let prover_rel_ideal = gb.build(TransClos::relation(dag));
-        Self {
-            prover_rel_ideal,
-            relation_basis: None,
         }
     }
 
@@ -118,23 +97,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         })
     }
 
-    pub fn private(&self) -> Vec<PRef> {
-        self.prover_rel_ideal
-            .vars()
-            .into_iter()
-            .filter(|v| v.is_private())
-            .collect()
-    }
-
-    pub fn public(&self) -> Vec<PRef> {
-        self.prover_rel_ideal
-            .vars()
-            .into_iter()
-            .filter(|v| v.is_public())
-            .collect()
-    }
-
-    pub fn eliminate_var(&mut self) {
+    fn eliminate_var(&mut self) {
         self.prover_rel_ideal.generating_set.retain(|p| {
             let vars = p.vars();
             if vars.is_empty() {
@@ -154,7 +117,7 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
         });
     }
 
-    pub fn eliminate_groups(&mut self) {
+    fn eliminate_groups(&mut self) {
         self.prover_rel_ideal.eliminate_monomial(&|t| {
             let mono_sum = t
                 .iter()

@@ -407,7 +407,7 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_knowledge(&mut self) -> Result<(), analyses::AnalysisError<C>> {
         let g = self.analyze_graph();
         let name = g.name();
-        let mut knowledge = KnowledgeAnalysis::from_input_with_w(&*g);
+        let mut knowledge = KnowledgeAnalysis::from_input(&*g);
         let result = knowledge.run();
         match &result {
             Ok(()) => info!("ZK protocol: {}", name),
