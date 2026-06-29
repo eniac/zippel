@@ -158,65 +158,6 @@ fn bench_hadamard_verifier(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// Map comprehension benchmark (ArkBls12_381) — various sizes N = 4, 16, 64
-// ---------------------------------------------------------------------------
-
-fn map_comp_inputs(n: usize) -> Ctx<Vid, Value<ArkBls12_381>> {
-    let mut rng = rand::rngs::OsRng;
-
-    let g_vec: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec(&ATyp::g1(), n));
-    let x_vec: Value<ArkBls12_381> = Value::random(&mut rng, &ATyp::vec_scalar(n));
-
-    Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("g_vec".to_string()), g_vec),
-        (Vid("x_vec".to_string()), x_vec),
-    ])
-}
-
-fn bench_map_comp_prover(c: &mut Criterion) {
-    let mut group = c.benchmark_group("map_comp");
-    group.sample_size(10);
-
-    for &n in &[4usize, 16, 64] {
-        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
-            PathBuf::from("examples/map_comp_bench/map_comp_bench.zippel"),
-        ));
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("S"), &n);
-        handler.compile(&sizes);
-        let inputs = map_comp_inputs(n);
-
-        group.bench_function(format!("prover/N={}", n).as_str(), |b| {
-            b.iter(|| handler.run_prover(&inputs).expect("run_prover failed"));
-        });
-    }
-
-    group.finish();
-}
-
-fn bench_map_comp_verifier(c: &mut Criterion) {
-    let mut group = c.benchmark_group("map_comp");
-    group.sample_size(10);
-
-    for &n in &[4usize, 16, 64] {
-        let mut handler: ZippelHandler<ArkBls12_381> = ZippelHandler::new(ZippelArgs::new(
-            PathBuf::from("examples/map_comp_bench/map_comp_bench.zippel"),
-        ));
-        let mut sizes = Ctx::new();
-        sizes.insert(&Tid::new("S"), &n);
-        handler.compile(&sizes);
-        let inputs = map_comp_inputs(n);
-        let proof = handler.run_prover(&inputs).expect("run_prover failed");
-
-        group.bench_function(format!("verifier/N={}", n).as_str(), |b| {
-            b.iter(|| handler.run_verifier(&proof).expect("run_verifier failed"));
-        });
-    }
-
-    group.finish();
-}
-
-// ---------------------------------------------------------------------------
 // Pedersen commitment equality (ArkBls12_381) — classic ZK primitive
 // ---------------------------------------------------------------------------
 
@@ -581,34 +522,34 @@ fn kzg_inputs() -> Ctx<Vid, Value<ArkBls12_381>> {
     let n_size = 2;
 
     let g_input = <ArkBls12_381 as ArkConfig>::G1::rand(&mut rng);
-    let g: Value<ArkBls12_381> = Value::G1(g_input);
 
     let h_input = <ArkBls12_381 as ArkConfig>::G2::rand(&mut rng);
-    let h: Value<ArkBls12_381> = Value::G2(h_input);
 
-    let p: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
-    let z: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
+    let poly_coeffs: Value<ArkBls12_381> =
+        Value::<ArkBls12_381>::random(&mut rng, &ATyp::vec_scalar(n_size));
+    let eval_point: Value<ArkBls12_381> = Value::<ArkBls12_381>::random(&mut rng, &ATyp::scalar());
     let tau_input = <ArkBls12_381 as ArkConfig>::F::rand(&mut rng);
-    let tau: Value<ArkBls12_381> = Value::Scalar(tau_input);
 
     let ss_g: Value<ArkBls12_381> = Value::VecG1((0..n_size).map(|_| g_input).collect());
     let ss_index = Value::VecScalar((0..n_size).map(|i| tau_input.pow([i as u64])).collect());
-    let ss = ss_g * ss_index;
-    let _s = Value::G1(<ArkBls12_381 as ArkConfig>::G1::rand(&mut rng)) * tau;
+    let srs_g1 = ss_g * ss_index;
 
-    let z_val: Value<ArkBls12_381> =
-        Value::Vec((0..n_size).map(|i| z.clone() ^ Value::Index(i)).collect());
-    let y: Value<ArkBls12_381> = p.clone().dot(z_val);
-    let h_val: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
+    let z_val: Value<ArkBls12_381> = Value::Vec(
+        (0..n_size)
+            .map(|i| eval_point.clone() ^ Value::Index(i))
+            .collect(),
+    );
+    let eval_result: Value<ArkBls12_381> = poly_coeffs.clone().dot(z_val);
+    let srs_g2_s: Value<ArkBls12_381> = Value::G2(h_input * tau_input);
 
     Ctx::<Vid, Value<ArkBls12_381>>::from_iter([
-        (Vid("p".to_string()), p),
-        (Vid("g".to_string()), g),
-        (Vid("h".to_string()), h),
-        (Vid("z".to_string()), z),
-        (Vid("y".to_string()), y),
-        (Vid("ss".to_string()), ss),
-        (Vid("h_val".to_string()), h_val),
+        (Vid("poly_coeffs".to_string()), poly_coeffs),
+        (Vid("eval_point".to_string()), eval_point),
+        (Vid("eval_result".to_string()), eval_result),
+        (Vid("srs_g1".to_string()), srs_g1),
+        (Vid("gen_g1".to_string()), Value::G1(g_input)),
+        (Vid("gen_g2".to_string()), Value::G2(h_input)),
+        (Vid("srs_g2_s".to_string()), srs_g2_s),
     ])
 }
 
@@ -619,7 +560,7 @@ fn bench_kzg_prover(c: &mut Criterion) {
     let mut handler: ZippelHandler<ArkBls12_381> =
         ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &2usize);
+    sizes.insert(&Tid::new("N"), &2usize);
     handler.compile(&sizes);
     let inputs = kzg_inputs();
 
@@ -637,15 +578,15 @@ fn bench_kzg_verifier(c: &mut Criterion) {
     let mut handler: ZippelHandler<ArkBls12_381> =
         ZippelHandler::new(ZippelArgs::new(PathBuf::from("examples/kzg/kzg.zippel")));
     let mut sizes = Ctx::new();
-    sizes.insert(&Tid::new("S"), &2usize);
+    sizes.insert(&Tid::new("N"), &2usize);
     handler.compile(&sizes);
     let inputs = kzg_inputs();
 
-    // Extract public inputs (everything except "p") for the verifier.
+    // Extract public inputs (private params are poly_coeffs, srs_g1)
     let public_inputs = inputs
         .clone()
         .into_iter()
-        .filter(|(vid, _)| vid.0 != "p")
+        .filter(|(vid, _)| vid.0 != "poly_coeffs" && vid.0 != "srs_g1")
         .collect::<Ctx<Vid, Value<ArkBls12_381>>>();
     let proof = handler.run_prover(&inputs).expect("run_prover failed");
 
@@ -670,8 +611,6 @@ criterion_group!(
     bench_schnorr_verifier,
     bench_hadamard_prover,
     bench_hadamard_verifier,
-    bench_map_comp_prover,
-    bench_map_comp_verifier,
     bench_pedersen_eq_prover,
     bench_pedersen_eq_verifier,
     bench_ipa_prover,
