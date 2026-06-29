@@ -19,7 +19,7 @@ use std::marker::PhantomData;
 // Keep record/projection materialization bounded. Large protocol helper records
 // can contain polynomial state with enormous flattened slot counts; failing
 // explicitly is preferable to attempting an allocation that aborts the process.
-const MAX_GROEBNER_MATERIALIZED_SLOTS: usize = 1 << 20;
+const MAX_IDEAL_MATERIALIZED_SLOTS: usize = 1 << 20;
 
 // ---------------------------------------------------------------------------
 // PRef-slot enumeration helpers for polynomial / MLE values.
@@ -170,22 +170,22 @@ pub struct DivWitnessKey {
 }
 
 /// Namespace for division-witness and sentinel allocation shared across
-/// Groebner builders.
+/// Ideal builders.
 #[derive(Clone)]
-pub struct GroebnerNamespace<C: ArkConfig> {
+pub struct IdealNamespace<C: ArkConfig> {
     pub div_wit: Ctx<DivWitnessKey, (PRef, PRef)>,
     sentinel_counter: usize,
     name_counters: HashMap<String, usize>,
     _phantom: PhantomData<C>,
 }
 
-impl<C: ArkConfig + HasOpFactory> Default for GroebnerNamespace<C> {
+impl<C: ArkConfig + HasOpFactory> Default for IdealNamespace<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
+impl<C: ArkConfig + HasOpFactory> IdealNamespace<C> {
     pub fn new() -> Self {
         Self {
             div_wit: Ctx::new(),
@@ -216,7 +216,7 @@ impl<C: ArkConfig + HasOpFactory> GroebnerNamespace<C> {
 /// polynomial definitions (pl), and the prefs used in the basis.
 #[derive(Clone)]
 pub struct Ideal<C: ArkConfig> {
-    pub basis: Vec<Polynomial<C::F>>,
+    pub generating_set: Vec<Polynomial<C::F>>,
     pub pl: Ctx<PRef, Polynomial<C::F>>,
     pub prefs: HashMap<Ref, PRef>,
     pub var_order: Vec<PRef>,
@@ -225,7 +225,7 @@ pub struct Ideal<C: ArkConfig> {
 impl<C: ArkConfig + HasOpFactory> Ideal<C> {
     pub fn new() -> Self {
         Self {
-            basis: Vec::new(),
+            generating_set: Vec::new(),
             pl: Ctx::new(),
             prefs: HashMap::new(),
             var_order: Vec::new(),
@@ -243,12 +243,12 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         if let Some(v) = self.prefs.get(r) {
             return v.clone();
         }
-        panic!("groebner: ref {} not found in namespace prefs", r)
+        panic!("ideal: ref {} not found in namespace prefs", r)
     }
 
     pub fn vars(&self) -> Set<PRef> {
         let mut vars: Set<PRef> = self.pl.keys().into_iter().collect();
-        for p in &self.basis {
+        for p in &self.generating_set {
             for v in p.vars() {
                 vars.insert(v);
             }
@@ -258,13 +258,15 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
 
     /// Filter out variables that satisfy the predicate
     pub fn eliminate_var<F: Fn(&PRef) -> bool>(&mut self, f: &F) {
-        self.basis.retain(|p| p.vars().iter().all(|v| !f(v)));
+        self.generating_set
+            .retain(|p| p.vars().iter().all(|v| !f(v)));
         self.pl.retain(|p, _| !f(p));
     }
 
     pub fn eliminate_monomial<F: Fn(&crate::frontend::Monomial) -> bool>(&mut self, f: &F) {
-        self.basis.retain(|p| p.terms.keys().any(|t| !f(t)));
-        let basis_vars: Set<PRef> = self.basis.iter().flat_map(|p| p.vars()).collect();
+        self.generating_set
+            .retain(|p| p.terms.keys().any(|t| !f(t)));
+        let basis_vars: Set<PRef> = self.generating_set.iter().flat_map(|p| p.vars()).collect();
         self.pl.retain(|p, _| basis_vars.contains(p));
     }
 
@@ -344,11 +346,11 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
         }
 
         // fully inline all non-transcript vars
-        for p in self.basis.iter_mut() {
+        for p in self.generating_set.iter_mut() {
             let (new_p, _) = p.clone().inline_vars(&self.pl);
             *p = new_p;
         }
-        self.basis.retain(|p| !p.is_zero());
+        self.generating_set.retain(|p| !p.is_zero());
 
         for (k, v) in saved {
             self.pl.insert(&k, &v);
@@ -361,7 +363,8 @@ impl<C: ArkConfig + HasOpFactory> Ideal<C> {
 
     /// Merge another ideal's basis and polynomial definitions into this ideal.
     pub fn merge(&mut self, other: &Self) {
-        self.basis.extend(other.basis.iter().cloned());
+        self.generating_set
+            .extend(other.generating_set.iter().cloned());
         for (k, v) in other.pl.iter() {
             self.pl.insert(k, v);
         }
@@ -390,7 +393,7 @@ where
             allocator.text("Basis: "),
             allocator.hardline(),
             allocator.intersperse(
-                self.basis
+                self.generating_set
                     .into_iter()
                     .map(|p| p.pretty(allocator).indent(8)),
                 allocator.hardline(),
@@ -399,7 +402,7 @@ where
     }
 
     fn is_nil(&self) -> bool {
-        self.basis.is_empty() && self.pl.is_empty()
+        self.generating_set.is_empty() && self.pl.is_empty()
     }
 }
 
@@ -771,12 +774,12 @@ impl<C: ArkConfig> PolySource<C> {
 }
 
 /// Constructs `Ideal`s from `TransClos` inputs. Owns a
-/// `GroebnerNamespace` for division-witness and sentinel allocation
+/// `IdealNamespace` for division-witness and sentinel allocation
 /// that persists across `build()` calls. Each call to `build(TransClos)`
 /// returns a fresh `Ideal` with its own `prefs` namespace.
 #[derive(Clone)]
 pub struct IdealBuilder<C: ArkConfig> {
-    pub ns: GroebnerNamespace<C>,
+    pub ns: IdealNamespace<C>,
     /// When true, `a / b` where `a`'s op is `Mul(cofactor, b)` (or `Mul(b, cofactor)`)
     /// lowers as the exact-division copy `q = cofactor` instead of the generic
     /// quotient/remainder convolution. Set only by the completeness analysis.
@@ -796,7 +799,7 @@ impl<C: ArkConfig + HasOpFactory> Default for IdealBuilder<C> {
 impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     pub fn new() -> Self {
         Self {
-            ns: GroebnerNamespace::new(),
+            ns: IdealNamespace::new(),
             detect_exact_division: false,
             node_ops: HashMap::new(),
         }
@@ -808,13 +811,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
     }
 
     /// Panic with a clear, searchable message when an operation has no
-    /// polynomial-ideal treatment in the Groebner analysis.
+    /// polynomial-ideal treatment in the analysis.
     ///
     /// `context` is a short kebab-case string identifying the code path
     /// (e.g. `"concat-non-vector"`, `"dynamic-pow"`).
     fn uncovered_op(context: &str, target: &PRef) -> ! {
         panic!(
-            "Groebner operation has no polynomial-ideal treatment at {} for {}",
+            "ideal: operation has no polynomial-ideal treatment at {} for {}",
             context,
             target.verbose()
         )
@@ -1124,7 +1127,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         let lifted = a.lift_to(&target.typ);
                         for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
                             ideal.pl.insert(&pf, &p);
-                            ideal.basis.push(p - Polynomial::var(&pf));
+                            ideal.generating_set.push(p - Polynomial::var(&pf));
                         }
                         return;
                     }
@@ -1143,10 +1146,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     for (ka_pos, _k) in a_idx.iter().enumerate() {
                         let rhs: Polynomial<C::F> =
                             b_poly * &Polynomial::var(&q_wit.with_slot(ka_pos).unwrap());
-                        ideal.basis.push(&a.polys()[ka_pos] - &rhs);
+                        ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
                     }
                     for rf in r_wit.slots() {
-                        ideal.basis.push(Polynomial::var(&rf));
+                        ideal.generating_set.push(Polynomial::var(&rf));
                     }
                     let wit = if is_rem { &r_wit } else { &q_wit };
                     self.link_to_witness(target, wit, ideal);
@@ -1199,7 +1202,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         let rf = r_wit.clone().with_slot(r_pos).unwrap();
                         rhs = &rhs + &Polynomial::var(&rf);
                     }
-                    ideal.basis.push(&a.polys()[ka_pos] - &rhs);
+                    ideal.generating_set.push(&a.polys()[ka_pos] - &rhs);
                 }
 
                 let wit = if is_rem { &r_wit } else { &q_wit };
@@ -1268,7 +1271,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             ) && a.typ().physical_len() == b.typ().physical_len() =>
             {
                 for (ap, bp) in a.polys().iter().zip(b.polys()) {
-                    ideal.basis.push(ap - bp);
+                    ideal.generating_set.push(ap - bp);
                 }
             }
             _ => {
@@ -1278,7 +1281,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let b_lifted = b.lift_to(&lub);
                 for j in 0..lub.physical_len() {
                     let diff = &a_lifted.polys[j] - &b_lifted.polys[j];
-                    ideal.basis.push(diff);
+                    ideal.generating_set.push(diff);
                 }
             }
         }
@@ -1293,7 +1296,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         let lifted = source.lift_to(target_typ);
         for (pf, p) in target.slots().into_iter().zip(lifted.polys) {
             ideal.pl.insert(&pf, &p);
-            ideal.basis.push(p - Polynomial::var(&pf));
+            ideal.generating_set.push(p - Polynomial::var(&pf));
         }
     }
 
@@ -1366,7 +1369,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         for ((pf, left_poly), right_poly) in pr_slots.iter().zip(left).zip(right) {
             let combined = self.apply_binop(op, left_poly, right_poly);
             ideal.pl.insert(pf, &combined);
-            ideal.basis.push(combined - Polynomial::var(pf));
+            ideal.generating_set.push(combined - Polynomial::var(pf));
         }
     }
 
@@ -1534,7 +1537,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for (ap, pf) in a.polys().iter().zip(&target_slots) {
                     let prod = ap * &b.polys()[0];
                     ideal.pl.insert(pf, &prod);
-                    ideal.basis.push(prod - Polynomial::var(pf));
+                    ideal.generating_set.push(prod - Polynomial::var(pf));
                 }
             }
             (ATyp::Base(ABase::Scalar), _) if b.is_poly() => {
@@ -1542,7 +1545,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for (bp, pf) in b.polys().iter().zip(&target_slots) {
                     let prod = &a.polys()[0] * bp;
                     ideal.pl.insert(pf, &prod);
-                    ideal.basis.push(prod - Polynomial::var(pf));
+                    ideal.generating_set.push(prod - Polynomial::var(pf));
                 }
             }
             (ATyp::Mle(na), ATyp::Mle(nb)) if na == nb => {
@@ -1590,7 +1593,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, poly) in target.slots().into_iter().zip(out) {
                     ideal.pl.insert(&pf, &poly);
-                    ideal.basis.push(poly - Polynomial::var(&pf));
+                    ideal.generating_set.push(poly - Polynomial::var(&pf));
                 }
             }
             (ATyp::Mle(na), ATyp::VPoly(nb, mb)) | (ATyp::VPoly(nb, mb), ATyp::Mle(na))
@@ -1662,7 +1665,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, poly) in target.slots().into_iter().zip(out) {
                     ideal.pl.insert(&pf, &poly);
-                    ideal.basis.push(poly - Polynomial::var(&pf));
+                    ideal.generating_set.push(poly - Polynomial::var(&pf));
                 }
             }
             _ if a.is_poly() && b.is_poly() => {
@@ -1700,7 +1703,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         }
                         for (pf, poly) in target.slots().into_iter().zip(out) {
                             ideal.pl.insert(&pf, &poly);
-                            ideal.basis.push(poly - Polynomial::var(&pf));
+                            ideal.generating_set.push(poly - Polynomial::var(&pf));
                         }
                     }
                     _ => {
@@ -1718,7 +1721,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for ((ap, bp), pf) in a.polys().iter().zip(b.polys()).zip(&target_slots) {
                     let prod = ap * bp;
                     ideal.pl.insert(pf, &prod);
-                    ideal.basis.push(prod - Polynomial::var(pf));
+                    ideal.generating_set.push(prod - Polynomial::var(pf));
                 }
             }
             _ => {
@@ -1759,7 +1762,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             (ATyp::Base(_), ATyp::Base(_)) => {
@@ -1772,7 +1775,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let sum: Polynomial<C::F> =
                     a.polys().iter().zip(b.polys()).map(|(a, b)| a * b).sum();
                 ideal.pl.insert(&pr_slots[0], &sum);
-                ideal.basis.push(sum - Polynomial::var(&pr_slots[0]));
+                ideal
+                    .generating_set
+                    .push(sum - Polynomial::var(&pr_slots[0]));
             }
             _ => {
                 unreachable!(
@@ -1796,7 +1801,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     for (j, pf) in t_i.slots().iter().enumerate() {
                         let e = &a_lifted.polys()[j] * &b_lifted.polys()[j];
                         ideal.pl.insert(pf, &e);
-                        ideal.basis.push(&e - &Polynomial::var(pf));
+                        ideal.generating_set.push(&e - &Polynomial::var(pf));
                     }
                 }
             }
@@ -1810,7 +1815,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 {
                     let e = e_a * e_b;
                     ideal.pl.insert(pf, &e);
-                    ideal.basis.push(&e - &Polynomial::var(pf));
+                    ideal.generating_set.push(&e - &Polynomial::var(pf));
                 }
             }
             _ => {
@@ -1909,14 +1914,16 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             let one = Polynomial::<C::F>::lit(&C::F::one());
             for pf in target.slots() {
                 ideal.pl.insert(&pf, &one);
-                ideal.basis.push(one.clone() - Polynomial::var(&pf));
+                ideal
+                    .generating_set
+                    .push(one.clone() - Polynomial::var(&pf));
             }
             return;
         }
         if k == 1 {
             for (pf, p) in target.slots().into_iter().zip(base.polys().iter().cloned()) {
                 ideal.pl.insert(&pf, &p);
-                ideal.basis.push(p - Polynomial::var(&pf));
+                ideal.generating_set.push(p - Polynomial::var(&pf));
             }
             return;
         }
@@ -1938,7 +1945,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         }
         for (pf, p) in target.slots().into_iter().zip(acc.polys) {
             ideal.pl.insert(&pf, &p);
-            ideal.basis.push(p - Polynomial::var(&pf));
+            ideal.generating_set.push(p - Polynomial::var(&pf));
         }
     }
 
@@ -1954,7 +1961,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         let target_slots = target.slots();
         for (j, pf) in target_slots.iter().enumerate() {
             ideal
-                .basis
+                .generating_set
                 .push(a_polys[j].clone() - b_polys[j].clone() * Polynomial::var(pf));
         }
     }
@@ -1969,7 +1976,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
         for (pf, wf) in pr.slots().into_iter().zip(wit.slots()) {
             let wvar = Polynomial::var(&wf);
             ideal.pl.insert(&pf, &wvar);
-            ideal.basis.push(&wvar - &Polynomial::var(&pf));
+            ideal.generating_set.push(&wvar - &Polynomial::var(&pf));
         }
     }
 
@@ -2137,7 +2144,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             offset += ftyp.physical_len();
         }
         panic!(
-            "Groebner record_field_offset: field '{}' not found in record fields {:?}",
+            "ideal: record_field_offset: field '{}' not found in record fields {:?}",
             field_name,
             fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
         )
@@ -2184,7 +2191,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             Op::Ref(v, typ) => {
                 let pf = prefs
                     .get(v)
-                    .unwrap_or_else(|| panic!("groebner: ref {} not found in namespace prefs", v));
+                    .unwrap_or_else(|| panic!("ideal: ref {} not found in namespace prefs", v));
                 debug_assert_eq!(
                     pf.typ, *typ,
                     "find_ref type mismatch: namespace has {:?} but Op::Ref says {:?}",
@@ -2219,7 +2226,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let lifted = ref_src.lift_to(&pr.typ);
                 for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Bin(BinOp::Add, a, b, _) => {
@@ -2253,7 +2260,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let lifted = cof_src.lift_to(&pr.typ);
                     for (pf, p) in pr.slots().into_iter().zip(lifted.polys) {
                         ideal.pl.insert(&pf, &p);
-                        ideal.basis.push(p - Polynomial::var(&pf));
+                        ideal.generating_set.push(p - Polynomial::var(&pf));
                     }
                 } else {
                     let a_src = PolySource::from_ref_vars(&ideal.prefs, a);
@@ -2293,7 +2300,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let idft_j = dft_row::<C>(&v_polys, omega_inv, j);
                     let lhs = &idft_j * &Polynomial::lit(&n_inv);
                     ideal.pl.insert(pf, &lhs);
-                    ideal.basis.push(&lhs - &Polynomial::var(pf));
+                    ideal.generating_set.push(&lhs - &Polynomial::var(pf));
                 }
             }
             // Op::Fft(p): v = fft(p) — forward DFT. Each evaluation is:
@@ -2308,7 +2315,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for (i, pf) in pr_slots.iter().enumerate() {
                     let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     ideal.pl.insert(pf, &lhs);
-                    ideal.basis.push(&lhs - &Polynomial::var(pf));
+                    ideal.generating_set.push(&lhs - &Polynomial::var(pf));
                 }
             }
             // Op::Poly / Op::Mle / Op::Coef: bind the i-th PRef slot of `pr`
@@ -2328,7 +2335,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 );
                 for (pf, p) in pr.slots().into_iter().zip(polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             Op::Vec(vs) => {
@@ -2362,7 +2369,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 let polys = self.eval_to_poly_as(p, xs, &pr.typ, &ideal.prefs);
                 for (pf, poly) in pr.slots().into_iter().zip(polys) {
                     ideal.pl.insert(&pf, &poly);
-                    ideal.basis.push(poly - Polynomial::var(&pf));
+                    ideal.generating_set.push(poly - Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(ref p, Some(range), Some(ref fixed)) => {
@@ -2370,7 +2377,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     Some(polys) => {
                         for (pf, poly) in pr.slots().into_iter().zip(polys) {
                             ideal.pl.insert(&pf, &poly);
-                            ideal.basis.push(poly - Polynomial::var(&pf));
+                            ideal.generating_set.push(poly - Polynomial::var(&pf));
                         }
                     }
                     None => Self::uncovered_op("selected-evaluate", &pr),
@@ -2385,7 +2392,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 for (i, pf) in pr.slots().into_iter().enumerate() {
                     let lhs = dft_row::<C>(&coeff_polys, omega, i);
                     ideal.pl.insert(&pf, &lhs);
-                    ideal.basis.push(&lhs - &Polynomial::var(&pf));
+                    ideal.generating_set.push(&lhs - &Polynomial::var(&pf));
                 }
             }
             Op::Evaluate(_, Some(_), None) => {
@@ -2431,7 +2438,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     Some(polys) => {
                         for (pf, p) in pr.slots().into_iter().zip(polys) {
                             ideal.pl.insert(&pf, &p);
-                            ideal.basis.push(p - Polynomial::var(&pf));
+                            ideal.generating_set.push(p - Polynomial::var(&pf));
                         }
                     }
                     None => {
@@ -2462,7 +2469,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
                     for (pf, e) in pr.slots().into_iter().zip(elem_pref.slots()) {
                         let e_poly = Polynomial::var(&e);
-                        ideal.basis.push(e_poly.clone() - Polynomial::var(&pf));
+                        ideal
+                            .generating_set
+                            .push(e_poly.clone() - Polynomial::var(&pf));
                         ideal.pl.insert(&pf, &e_poly);
                     }
                 }
@@ -2479,7 +2488,9 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         let dst_pref = pr.with_index(j).unwrap();
                         for (pf, e) in dst_pref.slots().into_iter().zip(src_pref.slots()) {
                             let e_poly = Polynomial::var(&e);
-                            ideal.basis.push(e_poly.clone() - Polynomial::var(&pf));
+                            ideal
+                                .generating_set
+                                .push(e_poly.clone() - Polynomial::var(&pf));
                             ideal.pl.insert(&pf, &e_poly);
                         }
                     }
@@ -2509,10 +2520,10 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             // the field's polynomial values.
             Op::Record(ref fields) => {
                 let pr_len = pr.typ.physical_len();
-                if pr_len > MAX_GROEBNER_MATERIALIZED_SLOTS {
+                if pr_len > MAX_IDEAL_MATERIALIZED_SLOTS {
                     panic!(
-                        "Groebner Record has {} physical slots, above materialization limit {}",
-                        pr_len, MAX_GROEBNER_MATERIALIZED_SLOTS
+                        "ideal: Record has {} physical slots, above materialization limit {}",
+                        pr_len, MAX_IDEAL_MATERIALIZED_SLOTS
                     );
                 }
                 let mut slot_offset = 0usize;
@@ -2524,7 +2535,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                             .with_slot(slot_offset + j)
                             .expect("record field slot must be within record physical layout");
                         ideal.pl.insert(&pf, &p);
-                        ideal.basis.push(p - Polynomial::var(&pf));
+                        ideal.generating_set.push(p - Polynomial::var(&pf));
                     }
                     slot_offset += field_op.typ().physical_len();
                 }
@@ -2557,13 +2568,13 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                         for (j, pf) in pr_slots.iter().enumerate() {
                             ideal.pl.insert(pf, &inner_polys[offset + j]);
                             ideal
-                                .basis
+                                .generating_set
                                 .push(inner_polys[offset + j].clone() - Polynomial::var(pf));
                         }
                     }
                     _ => {
                         unreachable!(
-                            "Groebner Proj: non-record inner type {:?} for field '{}'; \
+                            "ideal: Proj: non-record inner type {:?} for field '{}'; \
                              all Proj ops must operate on Record types after IR lowering",
                             inner_typ, field
                         );
@@ -2637,7 +2648,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     }
                 }
                 ideal.pl.insert(pf, &acc);
-                ideal.basis.push(acc - Polynomial::var(pf));
+                ideal.generating_set.push(acc - Polynomial::var(pf));
             }
         } else {
             for i in 0..xs_polys.len() {
@@ -2663,7 +2674,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     let d_name = self.ns.next_name("interp_inv");
                     let d = self.sentinel_pref(&d_name, ATyp::scalar(), ideal);
                     ideal
-                        .basis
+                        .generating_set
                         .push(Polynomial::var(&d) * diff - Polynomial::<C::F>::lit(&C::F::one()));
                     denom_inverses[i][j] = Some(d);
                 }
@@ -2714,7 +2725,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
 
             for (pf, poly) in pr_slots.iter().zip(ideal_polys) {
                 ideal.pl.insert(pf, &poly);
-                ideal.basis.push(poly - Polynomial::var(pf));
+                ideal.generating_set.push(poly - Polynomial::var(pf));
             }
         }
     }
@@ -2783,7 +2794,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::And => {
@@ -2803,7 +2814,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     );
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Sub => {
@@ -2817,7 +2828,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Mul => {
@@ -2842,7 +2853,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             BinOp::Concat => {
                 for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Div | BinOp::Rem => {
@@ -2919,7 +2930,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::And => {
@@ -2939,7 +2950,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                     );
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Sub => {
@@ -2953,7 +2964,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
                 }
                 for (pf, p) in pr.slots().into_iter().zip(acc.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Mul => {
@@ -2978,7 +2989,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             BinOp::Concat => {
                 for (pf, p) in pr.slots().into_iter().zip(v_src.polys) {
                     ideal.pl.insert(&pf, &p);
-                    ideal.basis.push(p - Polynomial::var(&pf));
+                    ideal.generating_set.push(p - Polynomial::var(&pf));
                 }
             }
             BinOp::Div | BinOp::Rem => {
@@ -3297,7 +3308,7 @@ impl<C: ArkConfig + HasOpFactory> IdealBuilder<C> {
             ideal.register(&elem_pf);
             for (slot, poly) in elem_pf.slots().into_iter().zip(es.polys) {
                 ideal.pl.insert(&slot, &poly);
-                ideal.basis.push(poly - Polynomial::var(&slot));
+                ideal.generating_set.push(poly - Polynomial::var(&slot));
             }
             elems.push((elem_pf, elem_values.get(i).cloned().flatten()));
         }
@@ -3419,7 +3430,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_scalar() {
+    fn test_ideal_builder_to_poly_value_scalar() {
         use ark_bls12_381::Fr;
         use backend::Value;
 
@@ -3429,7 +3440,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_bool_true() {
+    fn test_ideal_builder_to_poly_value_bool_true() {
         use backend::Value;
 
         let val = Value::Bool(true);
@@ -3438,7 +3449,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_bool_false() {
+    fn test_ideal_builder_to_poly_value_bool_false() {
         use backend::Value;
 
         let val = Value::Bool(false);
@@ -3447,7 +3458,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_index() {
+    fn test_ideal_builder_to_poly_value_index() {
         use backend::Value;
 
         let val = Value::Index(5);
@@ -3456,7 +3467,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_vec_scalar() {
+    fn test_ideal_builder_to_poly_value_vec_scalar() {
         use ark_bls12_381::Fr;
         use backend::Value;
 
@@ -3466,7 +3477,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_vec_bool() {
+    fn test_ideal_builder_to_poly_value_vec_bool() {
         use backend::Value;
 
         let val = Value::VecBool(vec![true, false, true]);
@@ -3475,7 +3486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_groebner_builder_to_poly_value_vec_index() {
+    fn test_ideal_builder_to_poly_value_vec_index() {
         use backend::Value;
 
         let val = Value::VecIndex(vec![0, 1, 2]);
@@ -3627,7 +3638,7 @@ mod tests {
             assert!(ideal.pl.contains(&slot), "slot {} missing from pl", i);
         }
         // Six basis equations: 3 from Vec binding + 3 from Poly identity.
-        assert_eq!(ideal.basis.len(), 6);
+        assert_eq!(ideal.generating_set.len(), 6);
     }
 
     #[test]
@@ -3747,7 +3758,7 @@ mod tests {
         );
 
         // 4 from Vec binding + 4 from Mle identity.
-        assert_eq!(ideal.basis.len(), 8);
+        assert_eq!(ideal.generating_set.len(), 8);
         for i in 0..4 {
             assert!(
                 ideal.pl.contains(&pref_m.clone().with_slot(i).unwrap()),
@@ -3999,7 +4010,7 @@ mod tests {
         assert!(!slot1.is_zero());
         // 2 Vec bindings * 2 slots each = 4, plus 2 Poly identities * 2 = 4,
         // plus 2 eval ideals = 2. Total = 10.
-        assert_eq!(ideal.basis.len(), 10);
+        assert_eq!(ideal.generating_set.len(), 10);
     }
 
     #[test]
@@ -4942,7 +4953,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let basis_before = ideal.basis.len();
+        let basis_before = ideal.generating_set.len();
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 1),
@@ -4994,7 +5005,7 @@ mod tests {
 
         // 3 identity rows + 2 linking rows.
         assert_eq!(
-            ideal.basis.len() - basis_before,
+            ideal.generating_set.len() - basis_before,
             5,
             "expected 3 identity + 2 linking rows"
         );
@@ -5009,7 +5020,7 @@ mod tests {
             ("k2", &expected_k2),
         ] {
             assert!(
-                ideal.basis.iter().any(|row| row == expected),
+                ideal.generating_set.iter().any(|row| row == expected),
                 "basis missing identity row {}",
                 lbl
             );
@@ -5034,11 +5045,11 @@ mod tests {
         let link0 = &var(&q0) - &var(&r0_slot);
         let link1 = &var(&q1) - &var(&r1_slot);
         assert!(
-            ideal.basis.iter().any(|row| row == &link0),
+            ideal.generating_set.iter().any(|row| row == &link0),
             "basis missing link row var(q_wit[0]) - var(ideal[0])"
         );
         assert!(
-            ideal.basis.iter().any(|row| row == &link1),
+            ideal.generating_set.iter().any(|row| row == &link1),
             "basis missing link row var(q_wit[1]) - var(ideal[1])"
         );
         assert_eq!(
@@ -5077,7 +5088,7 @@ mod tests {
         );
         ideal.register(&_pref_b);
 
-        let basis_before = ideal.basis.len();
+        let basis_before = ideal.generating_set.len();
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::VPoly(1, 0),
@@ -5110,7 +5121,7 @@ mod tests {
 
         // 3 identity rows + 1 linking row (ideal has only 1 slot).
         assert_eq!(
-            ideal.basis.len() - basis_before,
+            ideal.generating_set.len() - basis_before,
             4,
             "expected 3 identity + 1 linking row"
         );
@@ -5126,7 +5137,7 @@ mod tests {
         let r0_slot = pref.clone().with_slot(0).unwrap();
         let link = &var(&r0) - &var(&r0_slot);
         assert!(
-            ideal.basis.iter().any(|row| row == &link),
+            ideal.generating_set.iter().any(|row| row == &link),
             "basis missing link row var(r_wit[0]) - var(ideal[0])"
         );
         assert_eq!(builder.ns.div_wit.len(), 1, "one div_wit entry after Rem");
@@ -5160,7 +5171,7 @@ mod tests {
         );
         ideal.register(&_pref_b);
 
-        let basis_before_div = ideal.basis.len();
+        let basis_before_div = ideal.generating_set.len();
         let _q_res = {
             let pref = PRef::from_node(
                 NodeIndex::new(2),
@@ -5178,7 +5189,7 @@ mod tests {
             builder.add_op(pref.clone(), op, &mut ideal);
             pref
         };
-        let after_div = ideal.basis.len();
+        let after_div = ideal.generating_set.len();
 
         let _r_res = {
             let pref = PRef::from_node(
@@ -5197,7 +5208,7 @@ mod tests {
             builder.add_op(pref.clone(), op, &mut ideal);
             pref
         };
-        let after_rem = ideal.basis.len();
+        let after_rem = ideal.generating_set.len();
 
         // Div added 3 identity + 2 linking = 5 rows.
         assert_eq!(
@@ -5368,7 +5379,7 @@ mod tests {
         );
         ideal.register(&pref_b);
 
-        let basis_before = ideal.basis.len();
+        let basis_before = ideal.generating_set.len();
         let pref = PRef::from_node(
             NodeIndex::new(2),
             ATyp::scalar(),
@@ -5386,14 +5397,14 @@ mod tests {
 
         // Legacy zip emits exactly one row: a - b · var(ideal).
         assert_eq!(
-            ideal.basis.len() - basis_before,
+            ideal.generating_set.len() - basis_before,
             1,
             "scalar fallback emits 1 row"
         );
         let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         let expected = &var(&pref_a) - &(&var(&pref_b) * &var(&pref));
         assert!(
-            ideal.basis.iter().any(|row| row == &expected),
+            ideal.generating_set.iter().any(|row| row == &expected),
             "scalar fallback row should be `a - b · var(ideal)`"
         );
         assert_eq!(
@@ -5443,17 +5454,17 @@ mod tests {
             ATyp::vec_scalar(2),
         );
 
-        let before = ideal.basis.len();
+        let before = ideal.generating_set.len();
         builder.add_op(pref.clone(), op, &mut ideal);
 
-        assert_eq!(ideal.basis.len() - before, 2);
+        assert_eq!(ideal.generating_set.len() - before, 2);
         let var = |p: &PRef| Polynomial::<ark_bls12_381::Fr>::var(p);
         for i in 0..2 {
             let b_i = pref_b.clone().with_index(i).unwrap();
             let r_i = pref.clone().with_index(i).unwrap();
             let expected = &var(&pref_a) - &(&var(&b_i) * &var(&r_i));
             assert!(
-                ideal.basis.iter().any(|row| row == &expected),
+                ideal.generating_set.iter().any(|row| row == &expected),
                 "basis missing scalar/vector div row {i}"
             );
         }
@@ -5493,7 +5504,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        let before = ideal.basis.len();
+        let before = ideal.generating_set.len();
         builder.add_op(
             pref.clone(),
             Op::Bin(
@@ -5505,7 +5516,7 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(ideal.basis.len() - before, 3);
+        assert_eq!(ideal.generating_set.len() - before, 3);
         assert_eq!(builder.ns.div_wit.len(), 0);
     }
 
@@ -5542,7 +5553,7 @@ mod tests {
             Qualifier::Private,
             Distribution::default(),
         );
-        let before = ideal.basis.len();
+        let before = ideal.generating_set.len();
         builder.add_op(
             pref,
             Op::Bin(
@@ -5554,7 +5565,7 @@ mod tests {
             &mut ideal,
         );
 
-        assert_eq!(ideal.basis.len() - before, 4);
+        assert_eq!(ideal.generating_set.len() - before, 4);
         assert_eq!(builder.ns.div_wit.len(), 0);
     }
 
@@ -5597,7 +5608,7 @@ mod tests {
             &mut ideal,
         );
         assert_eq!(builder.ns.div_wit.len(), 2);
-        let after_div = ideal.basis.len();
+        let after_div = ideal.generating_set.len();
 
         builder.add_op(
             PRef::from_node(
@@ -5618,7 +5629,7 @@ mod tests {
 
         assert_eq!(builder.ns.div_wit.len(), 2);
         assert_eq!(
-            ideal.basis.len() - after_div,
+            ideal.generating_set.len() - after_div,
             2,
             "cached vector Rem should add only one link row per element"
         );
@@ -5831,7 +5842,7 @@ mod tests {
     }
 
     #[test]
-    fn groebner_nested_div() {
+    fn ideal_nested_div() {
         use lang::id::Tid;
         let src = r#"
             proto nd<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 2>, public c: Uni<F, 2>) where a == a {
@@ -5867,12 +5878,12 @@ mod tests {
         // Div witness vars (q_wit, r_wit) must appear in basis.vars().
         // GB computation moved to backend; skipped in unit test();
         assert!(
-            !gr.basis.is_empty(),
+            !gr.generating_set.is_empty(),
             "basis should not be empty after nested div"
         );
 
         let basis_vars = gr
-            .basis
+            .generating_set
             .iter()
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
@@ -5893,7 +5904,7 @@ mod tests {
     }
 
     #[test]
-    fn groebner_shared_div_rem_witnesses() {
+    fn ideal_shared_div_rem_witnesses() {
         use lang::id::Tid;
         let src = r#"
             proto sdr<F: Field>(public a: Uni<F, 4>, public b: Uni<F, 2>) where a == a {
@@ -5943,13 +5954,13 @@ mod tests {
 
         // GB computation moved to backend; skipped in unit test();
         assert!(
-            !gr.basis.is_empty(),
+            !gr.generating_set.is_empty(),
             "basis should not be empty after shared div/rem"
         );
     }
 
     #[test]
-    fn groebner_vec_add_1d() {
+    fn ideal_vec_add_1d() {
         let src = r#"
             proto va1d<F: Field>(public a: F, public b: F, public c: F, public d: F) where a == a {
                 let v = [a, b] + [c, d];
@@ -5968,14 +5979,14 @@ mod tests {
         );
 
         assert!(
-            gr.basis.len() >= 2,
+            gr.generating_set.len() >= 2,
             "basis should have at least 2 rows (add constraint + verify eq), got {}",
-            gr.basis.len()
+            gr.generating_set.len()
         );
     }
 
     #[test]
-    fn groebner_vec_add_2d() {
+    fn ideal_vec_add_2d() {
         let src = r#"
             proto va2d<F: Field>(
                 public a: F, public b: F, public c: F, public d: F,
@@ -6001,9 +6012,9 @@ mod tests {
 
         // Basis should contain the add constraint + verify eq
         assert!(
-            gr.basis.len() >= 2,
+            gr.generating_set.len() >= 2,
             "basis should have at least 2 rows, got {}",
-            gr.basis.len()
+            gr.generating_set.len()
         );
 
         // Namespace should register all 8 public inputs
@@ -6016,7 +6027,7 @@ mod tests {
     }
 
     #[test]
-    fn groebner_vec_add_3d() {
+    fn ideal_vec_add_3d() {
         let src = r#"
             proto va3d<F: Field>(
                 public a: F, public b: F, public c: F, public d: F,
@@ -6041,9 +6052,9 @@ mod tests {
         );
 
         assert!(
-            gr.basis.len() >= 2,
+            gr.generating_set.len() >= 2,
             "basis should have at least 2 rows, got {}",
-            gr.basis.len()
+            gr.generating_set.len()
         );
 
         let ns_named_count = gr.prefs.values().filter(|p| p.name.is_some()).count();
@@ -6097,9 +6108,9 @@ mod tests {
         let expected = &var(&v0) + &(&var(&v1) + &var(&v2));
         let row = &expected - &var(&pref);
         assert!(
-            ideal.basis.iter().any(|r| r == &row),
+            ideal.generating_set.iter().any(|r| r == &row),
             "basis should contain v0+v1+v2 - ideal, got {:?}",
-            ideal.basis
+            ideal.generating_set
         );
         assert_eq!(
             ideal.pl.get(&pref).cloned(),
@@ -6186,15 +6197,15 @@ mod tests {
         let row1 = &expected_c1 - &var(&r_c1);
         let row2 = &expected_c2 - &var(&r_c2);
         assert!(
-            ideal.basis.iter().any(|r| r == &row0),
+            ideal.generating_set.iter().any(|r| r == &row0),
             "basis should contain row for coefficient 0"
         );
         assert!(
-            ideal.basis.iter().any(|r| r == &row1),
+            ideal.generating_set.iter().any(|r| r == &row1),
             "basis should contain row for coefficient 1"
         );
         assert!(
-            ideal.basis.iter().any(|r| r == &row2),
+            ideal.generating_set.iter().any(|r| r == &row2),
             "basis should contain row for coefficient 2"
         );
     }
@@ -6324,8 +6335,18 @@ mod tests {
             "pl[c2] = 0"
         );
 
-        assert!(ideal.basis.iter().any(|r| r == &(&expected_c0 - &var(&r0))));
-        assert!(ideal.basis.iter().any(|r| r == &(&expected_c1 - &var(&r1))));
+        assert!(
+            ideal
+                .generating_set
+                .iter()
+                .any(|r| r == &(&expected_c0 - &var(&r0)))
+        );
+        assert!(
+            ideal
+                .generating_set
+                .iter()
+                .any(|r| r == &(&expected_c1 - &var(&r1)))
+        );
     }
 
     #[test]
@@ -6687,22 +6708,22 @@ mod tests {
         let r1_eq = &r1_poly - &Polynomial::var(&r1);
         let r2_eq = &r2_poly - &Polynomial::var(&r2);
         assert!(
-            ideal.basis.contains(&r0_eq),
+            ideal.generating_set.contains(&r0_eq),
             "basis should contain p[0] - r0 equation"
         );
         assert!(
-            ideal.basis.contains(&r1_eq),
+            ideal.generating_set.contains(&r1_eq),
             "basis should contain p[1] - r1 equation"
         );
         assert!(
-            ideal.basis.contains(&r2_eq),
+            ideal.generating_set.contains(&r2_eq),
             "basis should contain p[2] - r2 equation"
         );
     }
 
     #[test]
     #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at duplicate-interpolate-points"
+        expected = "ideal: operation has no polynomial-ideal treatment at duplicate-interpolate-points"
     )]
     fn test_add_op_interpolate_duplicate_points_panics_explicitly() {
         use backend::op::mk;
@@ -6792,7 +6813,7 @@ mod tests {
         let r_slot = pref_ideal.with_slot(0).unwrap();
         let expected = &var(&a_slot) - &(&var(&b_slot) * &var(&r_slot));
         assert!(
-            ideal.basis.iter().any(|r| r == &expected),
+            ideal.generating_set.iter().any(|r| r == &expected),
             "basis should contain a - b*var(pr)"
         );
     }
@@ -6883,7 +6904,7 @@ mod tests {
         let r_slot = pref.with_slot(0).unwrap();
 
         let step1_vars: Vec<_> = ideal
-            .basis
+            .generating_set
             .iter()
             .filter(|row| row.contains(&r_slot) && row.contains(&v2))
             .collect();
@@ -6893,7 +6914,7 @@ mod tests {
         );
 
         let step0_vars: Vec<_> = ideal
-            .basis
+            .generating_set
             .iter()
             .filter(|row| row.contains(&v0) && row.contains(&v1))
             .collect();
@@ -7023,7 +7044,7 @@ mod tests {
         builder.add_op(pref.clone(), op, &mut ideal);
 
         assert!(
-            !ideal.basis.is_empty(),
+            !ideal.generating_set.is_empty(),
             "Reduce Div on VPoly should emit identity rows via handle_div_rem"
         );
     }
@@ -7069,7 +7090,10 @@ mod tests {
 
         let high_slot = pref.with_slot(3).unwrap();
         assert!(
-            ideal.basis.iter().any(|row| row.contains(&high_slot)),
+            ideal
+                .generating_set
+                .iter()
+                .any(|row| row.contains(&high_slot)),
             "reduce(*) should lower the widened Uni(3) accumulator all the way to the final high-degree slot"
         );
     }
@@ -7123,7 +7147,10 @@ mod tests {
 
         let high_slot = pref.with_slot(3).unwrap();
         assert!(
-            ideal.basis.iter().any(|row| row.contains(&high_slot)),
+            ideal
+                .generating_set
+                .iter()
+                .any(|row| row.contains(&high_slot)),
             "reduce(*) via ReduceMap must widen the Uni(1) accumulator to the Uni(3) product"
         );
     }
@@ -7173,7 +7200,7 @@ mod tests {
             "Uni(3) % Uni(3) % Uni(3) is lowered as the left-fold remainder type Uni(2)"
         );
         assert!(
-            !ideal.basis.is_empty(),
+            !ideal.generating_set.is_empty(),
             "reduce(%) should emit constraints for every polynomial fold step"
         );
     }
@@ -7237,7 +7264,7 @@ mod tests {
             let dst = pref.clone().with_slot(i).unwrap();
             assert!(
                 ideal
-                    .basis
+                    .generating_set
                     .iter()
                     .any(|row| row.contains(&src) && row.contains(&dst)),
                 "pass-through remainder should bind source slot {i} to the ideal"
@@ -7245,7 +7272,7 @@ mod tests {
         }
         let padded = pref.with_slot(2).unwrap();
         assert!(
-            ideal.basis.iter().any(|row| row.contains(&padded)),
+            ideal.generating_set.iter().any(|row| row.contains(&padded)),
             "lifted pass-through remainder should constrain the padded high slot"
         );
     }
@@ -7474,7 +7501,7 @@ mod tests {
         builder.add_op(pref_r.clone(), Op::Record(fields), &mut ideal);
 
         assert_eq!(
-            ideal.basis.len(),
+            ideal.generating_set.len(),
             phys_len,
             "basis should have one row per physical slot"
         );
@@ -7795,7 +7822,7 @@ mod tests {
         );
 
         assert_eq!(
-            ideal.basis.len(),
+            ideal.generating_set.len(),
             3,
             "Scalar * Uni(2) should produce 3 basis rows (one per coefficient)"
         );
@@ -7861,7 +7888,7 @@ mod tests {
         );
 
         assert_eq!(
-            ideal.basis.len(),
+            ideal.generating_set.len(),
             3,
             "Vec<Scalar,3> * Scalar should produce 3 basis rows"
         );
@@ -7940,7 +7967,7 @@ mod tests {
         let (pref_s, pref_p, pref_r, ideal) =
             scalar_poly_binop_ideal(BinOp::Add, true, ATyp::Uni(2));
         assert_eq!(
-            ideal.basis.len(),
+            ideal.generating_set.len(),
             3,
             "Scalar + Uni(2) should produce one row per coefficient slot"
         );
@@ -8245,7 +8272,7 @@ mod tests {
         );
 
         assert!(
-            !ideal.basis.is_empty(),
+            !ideal.generating_set.is_empty(),
             "Vec(Uni(2),2) == Vec(Uni(4),2) should produce basis constraints (zero-padded per element)"
         );
     }
@@ -8306,7 +8333,7 @@ mod tests {
             "Dot Vec(Scalar,3)·Vec(Scalar,3) ideal should be in pl"
         );
         assert!(
-            !ideal.basis.is_empty(),
+            !ideal.generating_set.is_empty(),
             "Dot Vec(Scalar,3)·Vec(Scalar,3) should produce basis rows"
         );
     }
@@ -8445,9 +8472,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
-    )]
+    #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_element_wise() {
         use graph::PRef;
         use lang::ast::BinOp;
@@ -8676,9 +8701,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
-    )]
+    #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn test_pow_vec_mixed_const_and_opaque() {
         use backend::op::mk;
         use graph::PRef;
@@ -9041,9 +9064,15 @@ mod tests {
         let b_slot = pref_b.with_slot(0).unwrap();
         let r_slot = pref_r.with_slot(0).unwrap();
         let diff = &Polynomial::var(&a_slot) - &Polynomial::var(&b_slot);
-        assert!(ideal.basis.contains(&diff), "basis should contain a-b diff");
         assert!(
-            !ideal.basis.iter().any(|p| *p == Polynomial::var(&r_slot)),
+            ideal.generating_set.contains(&diff),
+            "basis should contain a-b diff"
+        );
+        assert!(
+            !ideal
+                .generating_set
+                .iter()
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool ideal (== is an assertion, not a computation)"
         );
     }
@@ -9096,7 +9125,10 @@ mod tests {
         let r_slot = pref_r.with_slot(0).unwrap();
 
         assert!(
-            !ideal.basis.iter().any(|p| *p == Polynomial::var(&r_slot)),
+            !ideal
+                .generating_set
+                .iter()
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool ideal"
         );
 
@@ -9105,7 +9137,7 @@ mod tests {
             let b_j = pref_b.clone().with_slot(j).unwrap();
             let diff = &Polynomial::var(&a_j) - &Polynomial::var(&b_j);
             assert!(
-                ideal.basis.contains(&diff),
+                ideal.generating_set.contains(&diff),
                 "basis should contain a[{}]-b[{}] diff",
                 j,
                 j
@@ -9165,7 +9197,10 @@ mod tests {
 
         let r_slot = pref_r.with_slot(0).unwrap();
         assert!(
-            !ideal.basis.iter().any(|p| *p == Polynomial::var(&r_slot)),
+            !ideal
+                .generating_set
+                .iter()
+                .any(|p| *p == Polynomial::var(&r_slot)),
             "basis should NOT contain var(r) for Bool ideal"
         );
 
@@ -9180,7 +9215,7 @@ mod tests {
             let b_j = Polynomial::var(&pref_b.clone().with_slot(j).unwrap());
             let diff = a_j - b_j;
             assert!(
-                ideal.basis.contains(&diff),
+                ideal.generating_set.contains(&diff),
                 "basis should contain lifted diff at slot {}",
                 j
             );
@@ -9418,7 +9453,7 @@ mod tests {
 
         let mut ideal = Ideal::<ArkBls12_381>::new();
         ideal.pl.insert(&pl_ref, &Polynomial::<Fr>::zero());
-        ideal.basis.push(Polynomial::<Fr>::var(&basis_ref));
+        ideal.generating_set.push(Polynomial::<Fr>::var(&basis_ref));
 
         let vars = ideal.vars();
         assert!(
@@ -9457,7 +9492,7 @@ mod tests {
         );
 
         assert!(
-            ideal.basis.is_empty(),
+            ideal.generating_set.is_empty(),
             "challenge should not emit basis polynomials"
         );
         assert!(
@@ -9489,7 +9524,7 @@ mod tests {
         builder.add_op(pref.clone(), Op::Random(ATyp::scalar(), false), &mut ideal);
 
         assert!(
-            ideal.basis.is_empty(),
+            ideal.generating_set.is_empty(),
             "random should not emit basis polynomials"
         );
         assert!(
@@ -9566,7 +9601,7 @@ mod tests {
 
         // The challenge should now be visible through basis.vars() and ideal.vars()
         let basis_vars = ideal
-            .basis
+            .generating_set
             .iter()
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
@@ -9631,7 +9666,7 @@ mod tests {
         // The basis should contain a row: pair_ideal - g1*g2 = 0
         // (no GT sentinel variable)
         let basis_vars = ideal
-            .basis
+            .generating_set
             .iter()
             .flat_map(|p| p.vars())
             .collect::<share::Set<_>>();
@@ -9762,9 +9797,7 @@ mod tests {
     /// dynamic-pow: Vec^Vec with non-const exponent must panic rather
     /// than silently weakening the ideal.
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
-    )]
+    #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_vec_vec_panics() {
         use backend::op::mk;
         use graph::PRef;
@@ -9822,9 +9855,7 @@ mod tests {
 
     /// dynamic-pow: scalar^scalar with non-const exponent must panic.
     #[test]
-    #[should_panic(
-        expected = "Groebner operation has no polynomial-ideal treatment at dynamic-pow"
-    )]
+    #[should_panic(expected = "ideal: operation has no polynomial-ideal treatment at dynamic-pow")]
     fn uncovered_op_dynamic_pow_scalar_panics() {
         use backend::op::mk;
         use graph::PRef;

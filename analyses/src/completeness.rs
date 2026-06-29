@@ -49,14 +49,14 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
     }
 
     pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
-        for p in self.verifier_locals.basis.iter() {
-            self.prover.basis.push(p.clone());
+        for p in self.verifier_locals.generating_set.iter() {
+            self.prover.generating_set.push(p.clone());
         }
 
         let backend = ArkGb::<C>::default();
         let prover_gb = backend
             .compute_gb(
-                std::mem::take(&mut self.prover.basis),
+                std::mem::take(&mut self.prover.generating_set),
                 &MonoOrder::grevlex(),
                 crate::DEFAULT_GB_W,
             )
@@ -71,7 +71,7 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             );
         }
 
-        for p in self.verifier.basis.iter() {
+        for p in self.verifier.generating_set.iter() {
             if p.is_zero() {
                 continue;
             }
@@ -86,8 +86,9 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::backend::ark_gb::{GrevLexTerm, GroebnerBasis, SparsePolynomial};
+    use super::CompletenessAnalysis;
+    use crate::backend::GbBackend;
+    use crate::frontend::Polynomial;
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
     use graph::PRef;
@@ -289,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buchberger_spoly_produces_ux_hr() {
+    fn test_buchberger_completeness_schnorr_like() {
         use backend::ATyp;
         use lang::typ::{Distribution, Qualifier};
         use petgraph::graph::NodeIndex;
@@ -310,22 +311,22 @@ mod tests {
         let r_var = mk_var("r", 3);
         let u_var = mk_var("u", 4);
 
-        type Poly = SparsePolynomial<<ArkBls12_381 as backend::ArkConfig>::F, GrevLexTerm>;
-        let var = |p: &PRef| -> Poly { SparsePolynomial::var(p) };
+        type Poly = Polynomial<<ArkBls12_381 as backend::ArkConfig>::F>;
+        let var = |p: &PRef| -> Poly { Polynomial::var(p) };
 
         let p1 = var(&g_var) * var(&x_var) - var(&h_var);
         let p2 = var(&g_var) * var(&r_var) - var(&u_var);
 
-        let spoly = p1.s_poly(&p2);
-        let expected_positive = var(&u_var) * var(&x_var) - var(&h_var) * var(&r_var);
-        let expected_negative = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
-        assert!(spoly == expected_positive || spoly == expected_negative);
+        use crate::backend::ark_gb::ArkGb;
+        use crate::frontend::MonoOrder;
 
-        let basis = GroebnerBasis::new(5, vec![p1, p2]);
-        let gb = basis.buchberger_and_reduce::<8>();
+        let backend = ArkGb::<ArkBls12_381>::default();
+        let gb = backend
+            .compute_gb(vec![p1, p2], &MonoOrder::grevlex(), 8)
+            .expect("ark-gb grevlex should succeed for Schnorr-like input");
 
         let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);
-        let rem = gb.reduce(target);
+        let rem = backend.reduce(target, &gb);
         assert!(
             rem.is_zero(),
             "h*r - u*x should reduce to 0 given g*x = h and g*r = u"
@@ -1101,7 +1102,7 @@ mod tests {
         // The prover ideal was consumed by run(); we verify the contradiction
         // indirectly: the ideal contained x - (x+1) = -1, a nonzero constant.
         assert!(
-            ca.prover.basis.is_empty(),
+            ca.prover.generating_set.is_empty(),
             "prover basis should be consumed after run"
         );
     }

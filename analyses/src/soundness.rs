@@ -251,8 +251,8 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         let mut priv_prefs: Vec<PRef> = Vec::new();
 
         for eq in &all_d_equations {
-            grev_search.basis.push(eq.clone());
-            grev_validity.basis.push(eq.clone());
+            grev_search.generating_set.push(eq.clone());
+            grev_validity.generating_set.push(eq.clone());
         }
         for d in &all_d_prefs {
             verifier_visible.insert(d.clone());
@@ -345,7 +345,11 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         let backend = ArkGb::<C>::default();
         let search_gb = backend
-            .compute_gb(std::mem::take(&mut grev_search.basis), &lex_order, 128)
+            .compute_gb(
+                std::mem::take(&mut grev_search.generating_set),
+                &lex_order,
+                128,
+            )
             .expect("ark-gb backend should support lex order");
 
         let mut search_polys = search_gb.polys.clone();
@@ -429,14 +433,18 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
 
         // Phase 5: Build validity GB and verify.
         for (_, ext_poly) in &extractors {
-            grev_validity.basis.push(ext_poly.clone());
+            grev_validity.generating_set.push(ext_poly.clone());
         }
 
         grev_validity.merge(&rel_locals);
         grev_validity.inline(&Set::new());
 
         let validity_gb = backend
-            .compute_gb(std::mem::take(&mut grev_validity.basis), &lex_order, 128)
+            .compute_gb(
+                std::mem::take(&mut grev_validity.generating_set),
+                &lex_order,
+                128,
+            )
             .expect("ark-gb backend should support lex order");
 
         if validity_gb.is_unit() {
@@ -448,7 +456,7 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             );
         }
 
-        for r in grev_rel_result.basis.iter() {
+        for r in grev_rel_result.generating_set.iter() {
             if r.is_zero() {
                 continue;
             }
@@ -588,13 +596,14 @@ fn factor_group_gcd<F: ark_ff::Field>(polys: &mut Vec<Polynomial<F>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SpecialSoundnessAnalysis;
+    use crate::error::{AnalysisError, ExtractorRejection};
     use crate::{QualifierPropagation, UniformityPropagation};
     use backend::ArkBls12_381;
-    use graph::UDags;
+    use graph::{PRef, UDags};
     use lang::ast::UModule;
-    use share::Ctx;
-    use share::unwrap;
+    use share::Set;
+    use share::{Ctx, unwrap};
 
     fn analyze_soundness(
         proto: &str,

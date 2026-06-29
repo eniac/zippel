@@ -4,7 +4,7 @@
 //! Internal types (`SparsePolynomial`, `GroebnerBasis`, `GrevLexTerm`, etc.)
 //! live in submodules and are an implementation detail of this backend.
 
-pub mod adapter;
+pub(crate) mod adapter;
 pub(crate) mod buchberger;
 mod engine;
 pub(crate) mod monomial;

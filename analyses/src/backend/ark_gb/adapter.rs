@@ -83,7 +83,7 @@ pub(crate) const fn max_vars_for_w(w: usize) -> usize {
 
 /// Adapter-local accessor for the underlying zippel `MonoTerm` map.
 ///
-/// Implemented for `GrevLexTerm` and `ElimTerm` via their `pub(crate)`
+/// Implemented for `GrevLexTerm` and `ElimMono<E>` via their `pub(crate)`
 /// `as_mono_term()` inherent methods. This lets the conversion helpers be
 /// generic over the zippel term type without exposing `MonoTerm` outside
 /// the crate.
@@ -178,7 +178,7 @@ pub(crate) fn compute_reduced_gb_grevlex<F: Field, const W: usize>(
 }
 
 // ---------------------------------------------------------------------------
-// ElimTerm path.
+// ElimMono path.
 // ---------------------------------------------------------------------------
 
 thread_local! {
@@ -294,9 +294,9 @@ fn elim_total_deg<const W: usize>(packed: &[u64; W], mask: &[u64; W]) -> u32 {
 ///   assigns elim `PRef`s to *high* ark-gb indices (i.e. MSB byte
 ///   positions), the natural degrevlex byte-order tiebreak gives
 ///   "elim block rev-lex first, then keep block rev-lex" — the exact
-///   ordering zippel's [`ElimTerm`] produces.
+///   ordering zippel's [`ElimMono`] produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ZippelElimMono<const W: usize>(ArkMono<W>);
+struct ZippelElimMono<const W: usize>(ArkMono<W>);
 
 impl<const W: usize> From<ArkMono<W>> for ZippelElimMono<W> {
     fn from(m: ArkMono<W>) -> Self {
@@ -640,14 +640,14 @@ impl Drop for LocalRankGuard {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum TierKind {
+enum TierKind {
     Lex,
     GrevLex,
 }
 
 #[derive(Clone)]
 #[allow(dead_code)]
-pub(crate) struct TierBlock {
+struct TierBlock {
     raw_tier: usize,
     start: usize,
     len: usize,
@@ -1098,7 +1098,6 @@ impl<F: Field, const W: usize> ArkMonomial<F, W> for ZippelTieredElimMono<W> {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn compute_reduced_gb_with_tiered_elim<F, T, E, const W: usize>(
     _num_vars: usize,
     input: Vec<SparsePolynomial<F, T>>,

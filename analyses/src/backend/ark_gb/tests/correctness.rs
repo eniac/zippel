@@ -33,14 +33,23 @@
 //! to grevlex on the full variable set. The pinned `_elim` and `_grevlex`
 //! results therefore should match — that itself is a useful invariant.
 
-use super::super::monomial::Monomial;
+use super::super::monomial::{ElimMono, ElimStrategy, Monomial};
 use super::super::{GrevLexTerm, GroebnerBasis, SparsePolynomial};
-use crate::knowledge::ElimTerm;
 use ark_bls12_381::Fr;
 use ark_ff::{Field, Zero};
 use graph::PRef;
 
 use super::shared::{cyclic_basis, katsura_basis, mk_vars, var_poly};
+
+// Local elim-strategy so correctness tests can exercise ElimMono without
+// depending on the removed `knowledge::Knowledge` strategy.
+struct TestElim;
+impl ElimStrategy for TestElim {
+    fn eliminate_var(_: &PRef) -> bool {
+        true
+    }
+}
+type ElimTerm = ElimMono<TestElim>;
 
 // ---------------------------------------------------------------------------
 // Helpers — kept in this file so the bench surface stays bench-only.
