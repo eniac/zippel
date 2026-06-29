@@ -7,26 +7,25 @@
 
 use std::marker::PhantomData;
 
-use backend::ArkConfig;
+use ark_ff::Field;
 
 use super::{GbBackend, GbBasis};
 use crate::frontend::{MonoOrder, Polynomial, UnsupportedMonoOrder};
 
-pub struct Singular<C: ArkConfig> {
-    _phantom: PhantomData<C>,
+pub struct Singular<F: Field> {
+    _phantom: PhantomData<F>,
 }
 
-impl<C: ArkConfig + backend::op::HasOpFactory> GbBackend<C> for Singular<C> {
+impl<F: Field> GbBackend<F> for Singular<F> {
     fn compute_gb(
         &self,
-        _ideal: Vec<Polynomial<C::F>>,
+        _ideal: Vec<Polynomial<F>>,
         _order: &MonoOrder,
-        _w: usize,
-    ) -> Result<GbBasis<C::F>, UnsupportedMonoOrder> {
+    ) -> Result<GbBasis<F>, UnsupportedMonoOrder> {
         unimplemented!("Singular backend is not yet implemented");
     }
 
-    fn reduce(&self, _p: Polynomial<C::F>, _basis: &GbBasis<C::F>) -> Polynomial<C::F> {
+    fn reduce(&self, _p: Polynomial<F>, _basis: &GbBasis<F>) -> Polynomial<F> {
         unimplemented!("Singular backend is not yet implemented");
     }
 }

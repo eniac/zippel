@@ -54,20 +54,20 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
     }
 
     pub fn from_input(dag: &DQDag<C>) -> Self {
-        Self::from_input_with_w::<8>(dag)
+        Self::from_input_with_w(dag)
     }
 
-    pub fn from_input_with_w<const W: usize>(dag: &DQDag<C>) -> Self {
+    pub fn from_input_with_w(dag: &DQDag<C>) -> Self {
         let mut gb = IdealBuilder::new();
         let mut prover_ideal = gb.build(TransClos::prover(dag));
 
-        let backend = ArkGb::<C>::default();
+        let backend = ArkGb::default();
 
         let relation_basis = if dag.relation_node().is_some() {
             let mut rel_gb = gb.fork_with_clean_div_witness_cache();
             let rel_ideal = rel_gb.build(TransClos::relation(dag));
             let order = knowledge_order(&rel_ideal);
-            backend.compute_gb(rel_ideal.generating_set, &order, W).ok()
+            backend.compute_gb(rel_ideal.generating_set, &order).ok()
         } else {
             None
         };
@@ -166,10 +166,10 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
 
     /// Run knowledge analysis.
     ///
-    /// W is the packed monomial width. Caller must ensure W is appropriate
-    /// for the problem size (W=128 supports up to 1023 variables).
-    pub fn run<const W: usize>(&mut self) -> Result<(), AnalysisError<C>> {
-        let backend = ArkGb::<C>::default();
+    /// Uses the default packed monomial width (W=128, supports up to 1023
+    /// variables). Use [`ArkGb::with_width`] to override for smaller problems.
+    pub fn run(&mut self) -> Result<(), AnalysisError<C>> {
+        let backend = ArkGb::default();
         let order = knowledge_order(&self.prover_rel_ideal);
 
         // Compute the Groebner basis
@@ -177,7 +177,6 @@ impl<C: ArkConfig + HasOpFactory> KnowledgeAnalysis<C> {
             .compute_gb(
                 std::mem::take(&mut self.prover_rel_ideal.generating_set),
                 &order,
-                W,
             )
             .expect("ark-gb backend should support knowledge block order");
 
@@ -259,7 +258,7 @@ mod tests {
         let mut kz = KnowledgeAnalysis::from_input(&g);
 
         // Compute the Groebner bases
-        assert!(kz.run::<8>().is_err());
+        assert!(kz.run().is_err());
     }
 
     #[test]
@@ -294,7 +293,7 @@ mod tests {
         let mut kz = KnowledgeAnalysis::from_input(&g);
 
         // Compute the Groebner basis
-        assert!(kz.run::<8>().is_ok());
+        assert!(kz.run().is_ok());
     }
 
     #[test]
@@ -328,7 +327,7 @@ mod tests {
         let mut kz = KnowledgeAnalysis::from_input(&g);
 
         // Compute the Groebner basis
-        assert!(kz.run::<8>().is_ok());
+        assert!(kz.run().is_ok());
     }
 
     /// This example is somewhat contrived. Here is how we leak s = s'.
@@ -370,7 +369,7 @@ mod tests {
         // Create an object computing the Groebner basis
         let mut kz = KnowledgeAnalysis::from_input(&g);
 
-        assert!(kz.run::<8>().is_err());
+        assert!(kz.run().is_err());
     }
 
     #[test]
@@ -393,7 +392,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_ok(),
+            kz.run().is_ok(),
             "Schnorr protocol should be zero-knowledge"
         );
     }
@@ -418,7 +417,7 @@ mod tests {
         let g = UniformityPropagation::from_dag(&g).annotate_dag(&g);
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
-        let result = kz.run::<8>();
+        let result = kz.run();
         if let Err(ref e) = result {
             eprintln!("Leak detected: {}", e);
         }
@@ -447,7 +446,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_err(),
+            kz.run().is_err(),
             "d <- x + y leaks x (verifier knows y and d)"
         );
     }
@@ -472,7 +471,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_err(),
+            kz.run().is_err(),
             "z <- x*c without random blinding leaks x"
         );
     }
@@ -497,7 +496,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_err(),
+            kz.run().is_err(),
             "a - b = s - t leaks relationship between secrets"
         );
     }
@@ -524,7 +523,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_ok(),
+            kz.run().is_ok(),
             "Schnorr with proper blinding should be ZK"
         );
     }
@@ -553,7 +552,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_err(),
+            kz.run().is_err(),
             "One safe and one leaking verify should fail knowledge analysis"
         );
     }
@@ -583,7 +582,7 @@ mod tests {
 
         let mut kz = KnowledgeAnalysis::from_input(&g);
         assert!(
-            kz.run::<8>().is_ok(),
+            kz.run().is_ok(),
             "Two verify statements both properly blinded with independent randoms should pass knowledge analysis"
         );
     }
@@ -617,7 +616,7 @@ mod tests {
         let mut kz = KnowledgeAnalysis::from_input(&g);
         // All inputs are public so nothing could leak; trivially ZK.
         assert!(
-            kz.run::<8>().is_ok(),
+            kz.run().is_ok(),
             "public-only eval protocol should be ZK (no private secrets to leak)"
         );
     }
@@ -651,7 +650,7 @@ mod tests {
                 .any(|v| v.is_local()),
             "relation-only basis should contain polynomial div/rem witness variables"
         );
-        let result = kz.run::<8>();
+        let result = kz.run();
         assert!(
             result.is_ok(),
             "relation-only basis must rebuild polynomial div_wit identities with a clean cache when filtering relation-derived polynomials, got {result:?}"

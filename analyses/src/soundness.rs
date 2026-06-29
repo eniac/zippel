@@ -343,13 +343,9 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
         // Phase 3: Inline & compute the search GB via the backend.
         grev_search.inline(&Set::new());
 
-        let backend = ArkGb::<C>::default();
+        let backend = ArkGb::default();
         let search_gb = backend
-            .compute_gb(
-                std::mem::take(&mut grev_search.generating_set),
-                &lex_order,
-                128,
-            )
+            .compute_gb(std::mem::take(&mut grev_search.generating_set), &lex_order)
             .expect("ark-gb backend should support lex order");
 
         let mut search_polys = search_gb.polys.clone();
@@ -443,7 +439,6 @@ impl<C: ArkConfig + HasOpFactory> SpecialSoundnessAnalysis<C> {
             .compute_gb(
                 std::mem::take(&mut grev_validity.generating_set),
                 &lex_order,
-                128,
             )
             .expect("ark-gb backend should support lex order");
 

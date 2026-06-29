@@ -53,12 +53,11 @@ impl<C: HasOpFactory> CompletenessAnalysis<C> {
             self.prover.generating_set.push(p.clone());
         }
 
-        let backend = ArkGb::<C>::default();
+        let backend = ArkGb::default();
         let prover_gb = backend
             .compute_gb(
                 std::mem::take(&mut self.prover.generating_set),
                 &MonoOrder::grevlex(),
-                crate::DEFAULT_GB_W,
             )
             .expect("ark-gb backend should support grevlex");
 
@@ -320,9 +319,9 @@ mod tests {
         use crate::backend::ark_gb::ArkGb;
         use crate::frontend::MonoOrder;
 
-        let backend = ArkGb::<ArkBls12_381>::default();
+        let backend = ArkGb::with_width(8);
         let gb = backend
-            .compute_gb(vec![p1, p2], &MonoOrder::grevlex(), 8)
+            .compute_gb(vec![p1, p2], &MonoOrder::grevlex())
             .expect("ark-gb grevlex should succeed for Schnorr-like input");
 
         let target = var(&h_var) * var(&r_var) - var(&u_var) * var(&x_var);

@@ -1,6 +1,5 @@
 use analyses::{
-    CompletenessAnalysis, DEFAULT_GB_W, KnowledgeAnalysis, QualifierPropagation,
-    UniformityPropagation,
+    CompletenessAnalysis, KnowledgeAnalysis, QualifierPropagation, UniformityPropagation,
 };
 use backend::op::HasOpFactory;
 use backend::{ArkConfig, Value, value_to_bytes};
@@ -408,8 +407,8 @@ impl<C: ArkConfig + HasOpFactory> ZippelHandler<C> {
     pub fn analyze_knowledge(&mut self) -> Result<(), analyses::AnalysisError<C>> {
         let g = self.analyze_graph();
         let name = g.name();
-        let mut knowledge = KnowledgeAnalysis::from_input_with_w::<DEFAULT_GB_W>(&*g);
-        let result = knowledge.run::<DEFAULT_GB_W>();
+        let mut knowledge = KnowledgeAnalysis::from_input_with_w(&*g);
+        let result = knowledge.run();
         match &result {
             Ok(()) => info!("ZK protocol: {}", name),
             Err(e) => info!("Knowledge leak in {}: {}", name, e),

@@ -7,7 +7,6 @@ mod backend_tests {
     use ark_bls12_381::Fr;
     use ark_ff::One;
     use backend::ATyp;
-    use backend::ArkBls12_381;
     use graph::PRef;
     use lang::id::Vid;
     use lang::typ::{Distribution, Qualifier};
@@ -36,9 +35,9 @@ mod backend_tests {
         let p1 = var(&g) * var(&x) - var(&h);
         let p2 = var(&g) * var(&r) - var(&u);
 
-        let backend = ArkGb::<ArkBls12_381>::default();
+        let backend = ArkGb::<Fr>::default();
         let basis = backend
-            .compute_gb(vec![p1.clone(), p2.clone()], &MonoOrder::grevlex(), 8)
+            .compute_gb(vec![p1.clone(), p2.clone()], &MonoOrder::grevlex())
             .unwrap();
 
         // Input polys should reduce to 0
@@ -60,9 +59,9 @@ mod backend_tests {
         let one = Polynomial::lit(&Fr::one());
 
         // x and 1 → unit ideal
-        let backend = ArkGb::<ArkBls12_381>::default();
+        let backend = ArkGb::<Fr>::default();
         let basis = backend
-            .compute_gb(vec![var(&x), one], &MonoOrder::grevlex(), 8)
+            .compute_gb(vec![var(&x), one], &MonoOrder::grevlex())
             .unwrap();
         assert!(basis.is_unit(), "basis with constant should be unit ideal");
     }
@@ -73,12 +72,12 @@ mod backend_tests {
         let x = mk_var("x", 0);
         let var = |p: &PRef| Polynomial::<Fr>::var(p);
 
-        let backend = ArkGb::<ArkBls12_381>::default();
+        let backend = ArkGb::<Fr>::default();
         let order = MonoOrder::block(vec![Block {
             vars: None,
             kind: BlockKind::DegLex,
         }]);
-        let result = backend.compute_gb(vec![var(&x)], &order, 8);
+        let result = backend.compute_gb(vec![var(&x)], &order);
         assert!(result.is_err(), "DegLex should be unsupported by ark-gb");
     }
 }

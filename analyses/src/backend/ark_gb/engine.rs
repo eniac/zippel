@@ -15,7 +15,6 @@
 use std::marker::PhantomData;
 
 use ark_ff::Field;
-use backend::{ArkConfig, op::HasOpFactory};
 use graph::PRef;
 use share::{Ctx, Set};
 
@@ -32,14 +31,29 @@ use crate::frontend::{
 
 use crate::backend::{GbBackend, GbBasis};
 
-pub struct ArkGb<C: ArkConfig> {
-    _phantom: PhantomData<C>,
+/// ark-gb backend with a configurable packed monomial width `w`.
+///
+/// Defaults to `w=128` (supports up to 1023 symbolic variables).
+/// Use [`with_width`](Self::with_width) for smaller problems.
+pub struct ArkGb<F: Field> {
+    _phantom: PhantomData<F>,
+    w: usize,
 }
 
-impl<C: ArkConfig> Default for ArkGb<C> {
+impl<F: Field> ArkGb<F> {
+    pub fn with_width(w: usize) -> Self {
+        ArkGb {
+            _phantom: PhantomData,
+            w,
+        }
+    }
+}
+
+impl<F: Field> Default for ArkGb<F> {
     fn default() -> Self {
         ArkGb {
             _phantom: PhantomData,
+            w: 128,
         }
     }
 }
@@ -74,13 +88,13 @@ fn from_internal_poly<F: Field, T: OldMonomial>(p: SparsePolynomial<F, T>) -> Po
 // GbBackend impl
 // -----------------------------------------------------------------------
 
-impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
+impl<F: Field> GbBackend<F> for ArkGb<F> {
     fn compute_gb(
         &self,
-        ideal: Vec<Polynomial<C::F>>,
+        ideal: Vec<Polynomial<F>>,
         order: &MonoOrder,
-        w: usize,
-    ) -> Result<GbBasis<C::F>, UnsupportedMonoOrder> {
+    ) -> Result<GbBasis<F>, UnsupportedMonoOrder> {
+        let w = self.w;
         let blocks = order.blocks();
 
         // Case 1: single GrevLex block, vars inferred.
@@ -88,12 +102,12 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
             && blocks[0].vars.is_none()
             && matches!(blocks[0].kind, BlockKind::GrevLex)
         {
-            let old: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
+            let old: Vec<SparsePolynomial<F, GrevLexTerm>> =
                 ideal.into_iter().map(to_internal_poly).collect();
             let result = match w {
-                8 => compute_reduced_gb_grevlex::<C::F, 8>(0, old),
-                16 => compute_reduced_gb_grevlex::<C::F, 16>(0, old),
-                128 => compute_reduced_gb_grevlex::<C::F, 128>(0, old),
+                8 => compute_reduced_gb_grevlex::<F, 8>(0, old),
+                16 => compute_reduced_gb_grevlex::<F, 16>(0, old),
+                128 => compute_reduced_gb_grevlex::<F, 128>(0, old),
                 _ => panic!("unsupported W={w}"),
             };
             return Ok(GbBasis {
@@ -113,14 +127,12 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
                 .map(|vs| vs.iter().cloned().collect())
                 .unwrap_or_default();
             let eliminate_fn = |v: &PRef| elim_vars.contains(v);
-            let old: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
+            let old: Vec<SparsePolynomial<F, GrevLexTerm>> =
                 ideal.into_iter().map(to_internal_poly).collect();
             let result = match w {
-                8 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 8>(0, old, &eliminate_fn),
-                16 => compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 16>(0, old, &eliminate_fn),
-                128 => {
-                    compute_reduced_gb_with_elim::<C::F, GrevLexTerm, 128>(0, old, &eliminate_fn)
-                }
+                8 => compute_reduced_gb_with_elim::<F, GrevLexTerm, 8>(0, old, &eliminate_fn),
+                16 => compute_reduced_gb_with_elim::<F, GrevLexTerm, 16>(0, old, &eliminate_fn),
+                128 => compute_reduced_gb_with_elim::<F, GrevLexTerm, 128>(0, old, &eliminate_fn),
                 _ => panic!("unsupported W={w}"),
             };
             return Ok(GbBasis {
@@ -135,7 +147,7 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
                 .iter()
                 .all(|b| matches!(b.kind, BlockKind::GrevLex))
         {
-            let old: Vec<SparsePolynomial<C::F, GrevLexTerm>> =
+            let old: Vec<SparsePolynomial<F, GrevLexTerm>> =
                 ideal.into_iter().map(to_internal_poly).collect();
             let result = dispatch_tiered(old, order, w)?;
             return Ok(GbBasis {
@@ -147,7 +159,7 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
         Err(UnsupportedMonoOrder)
     }
 
-    fn reduce(&self, p: Polynomial<C::F>, basis: &GbBasis<C::F>) -> Polynomial<C::F> {
+    fn reduce(&self, p: Polynomial<F>, basis: &GbBasis<F>) -> Polynomial<F> {
         use crate::backend::ark_gb::adapter::{LocalRankGuard, get_local_rank};
         use crate::backend::ark_gb::buchberger::GroebnerBasis;
         use crate::backend::ark_gb::tiered::{TieredElimMono, TieredElimStrategy};
@@ -159,7 +171,7 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
 
         if is_single_grevlex {
             // GrevLex: use old proven reduce.
-            let old_basis: Vec<SparsePolynomial<C::F, GrevLexTerm>> = basis
+            let old_basis: Vec<SparsePolynomial<F, GrevLexTerm>> = basis
                 .polys
                 .iter()
                 .map(|p| to_internal_poly(p.clone()))
@@ -193,7 +205,7 @@ impl<C: ArkConfig + HasOpFactory> GbBackend<C> for ArkGb<C> {
             }
 
             let _guard = LocalRankGuard::install(rank_map);
-            let old_basis: Vec<SparsePolynomial<C::F, TieredElimMono<LexRank>>> = basis
+            let old_basis: Vec<SparsePolynomial<F, TieredElimMono<LexRank>>> = basis
                 .polys
                 .iter()
                 .map(|p| to_internal_poly(p.clone()))

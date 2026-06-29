@@ -24,11 +24,5 @@ pub use qualifier::QualifierPropagation;
 pub use soundness::SpecialSoundnessAnalysis;
 pub use uniform::UniformityPropagation;
 
-/// Default packed monomial width for public static-analysis entry points.
-///
-/// W=128 supports up to 1023 symbolic variables in ark-gb's packed layout,
-/// which covers larger IPA and multilinear-sumcheck analyses.
-pub const DEFAULT_GB_W: usize = 128;
-
 #[cfg(test)]
 mod tests;
